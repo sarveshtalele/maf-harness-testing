@@ -61,7 +61,34 @@ Two defects found earlier in this target by hand-written acceptance tests remain
 
 ## 4. Petstore (Java EE 7) — run `live-petstore-5`
 
-PETSTORE_SECTION
+Target: `agoncal-application-petstore-ee7` at `725839cad3c5`, Maven/JDK 11, live baseline application on WildFly 26 at
+`http://127.0.0.1:8080/applicationPetstore` (`--app-url`). The run **stopped because it reached the 2,000,000-token workflow limit
+(1,952,602 used, 59 provider calls)** during the first heal round — the budget guard refused the next call with a clear message and no
+partial state was lost. Petstore is a large target (30 requirements, 47 cases in 16 generation batches), so a full heal cycle does not fit in
+2M tokens with this model; the remaining options are a stronger/cheaper model, a smaller design, or a new run. No ZIP is produced for a stopped run.
+
+| Stage | Result |
+|---|---|
+| Requirements | 30 requirements; actors: API consumer, Customer, Administrator, system; environment needs: JDK, Maven, application server, JUnit 4, Arquillian, EqualsVerifier (with evidence files) |
+| Environment | ecosystem `maven`; step `resolve-dependencies` (isolated Maven repository under the harness cache dir); status `ready` after approval |
+| Design | 47 cases: 29 api, 17 unit, 1 integration; 66.7% requirement coverage with stated gaps. UI/E2E cases were allowed (live app URL supplied) but the model chose API-level cases |
+| Generation | 16 batches. The Java gates rejected undeclared `RestAssured` imports, truncated files, and paths that already existed in the repository (each was a real failure of an earlier run — [ERRORS.md](ERRORS.md) B11, B12, F12); batches were repaired with the host error and accepted |
+| Execution attempt 1 (`mvn test`) | 45 tests executed: **7 passed, 6 failed, 32 errors**; 2 uncompilable generated files were **quarantined** so the other 45 tests still ran (before the quarantine, one bad file made every case "not executed") |
+
+What the failures say (from the QA report's diagnostics, grouped):
+
+| Count | Evidence | Reading |
+|---|---|---|
+| 17 | `no Bean Validation provider could be found` | model-authored unit tests need a validation provider on the test classpath; the repo scopes it `provided` → test-defect, or add the dependency |
+| 13 | `DeploymentScenario contains a target (_DEFAULT_) not matching any defined Container` | Arquillian integration tests were generated but no container is configured for `mvn test` → needs the container profile; not a test-logic defect |
+| 3 | `expected:<201> but was:<405>` | live API returned 405 for a create call → check the endpoint mapping first, then the expectation |
+| 2 | `Provider org.glassfish.json.JsonProviderImpl not found` | missing JSON-P implementation on the test classpath |
+
+These are exactly the "files to update" cases the report is designed to surface. **This run therefore does not prove the Petstore
+application correct or defective**; it proves the harness can plan, generate, compile-triage, execute and diagnose a Java EE repository end to end,
+and that its cost guard works. The two defects known in this application (unverified password on login; see [ERRORS.md §E](ERRORS.md)) were
+found earlier by hand-written acceptance tests, not by this run.
+
 
 ## 5. Reproduce
 
