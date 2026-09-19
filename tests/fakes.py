@@ -118,7 +118,7 @@ class ScriptedStageRuntime:
         }
 
 
-def local_env_plan(stack, root, cache_dir, timeout=900):
+def local_env_plan(stack, root, cache_dir, timeout=900, needs=None):
     """Environment plan whose only step is a harmless local command (unit tests have no network)."""
     return {
         "ecosystem": "python",

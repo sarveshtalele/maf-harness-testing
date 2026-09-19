@@ -4,6 +4,7 @@ Only the model call is scripted. Export, stack detection, planning, subprocess e
 mapping to approved cases and the QA report are all real.
 """
 
+import json
 import sys
 from pathlib import Path
 
@@ -489,3 +490,17 @@ def test_remedies_for_mocked_exit_and_patching_missing_module_attributes():
     assert "sys.modules" in remedy_for(
         "AttributeError: module 'engine.ai_analysis' has no attribute 'anthropic'"
     )
+
+
+def test_missing_import_is_repaired_by_the_host_without_another_model_call(drive):
+    runtime = ScriptedStageRuntime(test_body="assert add(1, 2) == 3 and os.sep")
+    host, answer = drive(runtime)
+    to_execution_gate(host, answer)
+    source = host.state["artifacts"]["test_generation"]["files"][0]["content"]
+    assert "import os" in source
+    assert runtime.calls.count("test_generation") == 1  # accepted first time: no repair round trip
+    audit = [json.loads(line) for line in (host.run_dir / "audit.jsonl").read_text().splitlines()]
+    assert any(e["event"] == "autofix" and e["detail"] == "import os" for e in audit)
+    assert host.state["tooling"]["autofix"] == 1
+    answer(decision="approve")
+    assert host.state["artifacts"]["test_execution"]["qa_report"]["verdict"] == "PASS"

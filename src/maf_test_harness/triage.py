@@ -95,6 +95,14 @@ REMEDIES: list[tuple[re.Pattern[str], str]] = [
         "`def test_x(monkeypatch, capsys):`.",
     ),
     (
+        re.compile(
+            r"expected:?\s*<?\d+>?\s*but\s*was:?\s*<?(?:404|405)>?|\b(?:404|405)\b.*(?:Not Found|Not Allowed)",
+            re.I,
+        ),
+        "The URL or HTTP method is not one the application serves: build the URL as BASE_URL + a route from "
+        "generation_policy.live_app.routes (BASE_URL already contains the context path) and use a method listed for it.",
+    ),
+    (
         re.compile(r"no Bean Validation provider", re.I),
         "There is no Bean Validation provider on the test classpath: do not call Validation.buildDefaultValidatorFactory(); "
         "assert with plain Java (constructors, setters, getters) instead.",

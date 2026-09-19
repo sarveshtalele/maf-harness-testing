@@ -22,6 +22,10 @@ from agent_framework import (
     response_handler,
 )
 
+from .agent_tools import HarnessToolbox
+from .autofix import autofix_files
+from .build_gate import try_build
+from .code_intel import RepoContext, static_gate
 from .environment import build_environment_plan, steps_from_plan
 from .execution import copy_repo, write_generated
 from .models import GeneratedFilesDraft, RequirementsDraft, TestDesignDraft, TestPlan
@@ -32,19 +36,22 @@ from .repo_analyzer import (
     analyze_repository,
     build_repository_evidence,
     clone_repository,
+    collaborator_signatures,
     declared_dependencies,
     extract_target_sources,
     validate_github_url,
 )
+from .routes import extract_routes
 from .runners import RunPlan, Step, build_plan, execute_plan, execute_setup
 from .settings import (
+    AGENT_TOOLS,
+    AUTOFIX,
+    BUILD_GATE,
     EXECUTION_TIMEOUT_SECONDS,
     GENERATION_BATCH_SIZE,
     GENERATION_MAX_ATTEMPTS,
 )
 from .skill_contracts import (
-    check_java_imports,
-    check_python_imports,
     ensure_generated_case_markers,
     expand_generated_lines,
     extra_import_roots,
@@ -181,6 +188,22 @@ def _compact_design(design: dict[str, Any]) -> dict[str, Any]:
     return {"cases": cases, "gaps_report": design.get("gaps_report", {})}
 
 
+_COMMON_LIBRARIES = {
+    "com.jayway.restassured / io.restassured": "restassured",
+    "org.jboss.arquillian": "arquillian",
+    "org.mockito": "mockito",
+    "org.assertj": "assertj",
+    "org.hamcrest": "hamcrest",
+    "org.testng": "testng",
+}
+
+
+def _undeclared_libraries(declared: list[str]) -> list[str]:
+    """Popular test libraries the build files do NOT declare: a model reaches for them by habit."""
+    text = " ".join(declared).lower().replace("-", "")
+    return [name for name, token in _COMMON_LIBRARIES.items() if token not in text]
+
+
 def _generation_policy(repo: dict[str, Any], state: dict[str, Any] | None = None) -> dict[str, Any]:
     languages = repo.get("languages") or {}
     dominant = max(languages, key=languages.get) if languages else "Unknown"
@@ -196,6 +219,7 @@ def _generation_policy(repo: dict[str, Any], state: dict[str, Any] | None = None
         "package_files": (repo.get("package_files") or [])[:30],
         "python_import_roots": extra_import_roots(repo.get("source_files") or []),
         "declared_dependencies": (state.get("declared_dependencies") or [])[:120],
+        "forbidden_imports": _undeclared_libraries(state.get("declared_dependencies") or []),
         "dependency_rule": (
             "Use only the JDK/standard library and the declared_dependencies. Any other import is rejected by the "
             "host before you are asked again, which wastes a call."
@@ -206,7 +230,14 @@ def _generation_policy(repo: dict[str, Any], state: dict[str, Any] | None = None
         "live_app": {
             "available": bool(state.get("app_url")),
             "base_url_env_var": "BASE_URL",
-            "rule": "UI/E2E tests must read the target from the BASE_URL environment variable; never hard-code a host.",
+            "base_url": state.get("app_url"),
+            "routes": (state.get("routes") or [])[:60],
+            "rule": (
+                "UI/E2E/API tests against the running application read the target from the BASE_URL environment "
+                "variable; never hard-code a host. BASE_URL ALREADY INCLUDES the application's context path: append "
+                "only a route from `routes` (BASE_URL + '/rest/items'), never a guessed prefix such as '/petstore'. "
+                "Use only the HTTP methods listed for a route and send bodies in the format the source shows."
+            ),
         },
         "level_rules": {
             "unit": "Isolated, no network; mock boundaries but never the behavior under test.",
@@ -216,7 +247,9 @@ def _generation_policy(repo: dict[str, Any], state: dict[str, Any] | None = None
             "jvm": (
                 "`mvn test` runs without an application server: no Arquillian container, no CDI/EJB injection, no Bean "
                 "Validation provider unless declared. Test plain classes with plain JUnit; for the live application use "
-                'java.net.http.HttpClient with System.getenv("BASE_URL").'
+                'java.net.http.HttpClient with System.getenv("BASE_URL"). Call only constructors and methods that '
+                "appear verbatim in target_source or collaborator_signatures; a class you cannot see is a class you must not "
+                "instantiate. If a case cannot be tested without a container, test the nearest plain-Java behavior instead."
             ),
             "python": "Never nest more than 5 `with` blocks (CPython allows 20): use @patch decorators or contextlib.ExitStack.",
             "ui/e2e/accessibility": "Only with live_app.available; existing browser framework first, else Playwright.",
@@ -272,6 +305,8 @@ class Harness:
         self.run_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
         self.skills_root = skills_root.resolve()
         self.runtime = runtime
+        if AGENT_TOOLS and runtime is not None and getattr(runtime, "tool_provider", None) is None:
+            runtime.tool_provider = HarnessToolbox(self._repo_context, self._build_files).tools_for
         self.view_path = self.run_dir / "run.json"
         self.view = (
             json.loads(self.view_path.read_text())
@@ -686,7 +721,12 @@ class Harness:
         await self._ensure_workspace()
         stack = await asyncio.to_thread(detect_stack, self.workspace)
         plan = await asyncio.to_thread(
-            build_environment_plan, stack, self.workspace, self.cache_dir, EXECUTION_TIMEOUT_SECONDS
+            build_environment_plan,
+            stack,
+            self.workspace,
+            self.cache_dir,
+            EXECUTION_TIMEOUT_SECONDS,
+            state["artifacts"].get("requirements", {}).get("environment_needs"),
         )
         state["environment"] = {"plan": plan, "hash": digest(plan), "status": "planned"}
         if (
@@ -978,6 +1018,9 @@ class Harness:
         if cache.get("signature") != signature:
             cache.clear()
             cache.update(signature=signature, batches={})
+        state["routes"] = await asyncio.to_thread(
+            extract_routes, self.run_dir / "repo", state["artifacts"]["repo_analysis"].get("source_files", [])
+        )
         policy = _generation_policy(state["artifacts"]["repo_analysis"], state)
         failed_ids = {str(i) for i in (state.get("heal") or {}).get("failed_case_ids", [])}
         schema = GeneratedFilesDraft.model_json_schema()
@@ -1029,7 +1072,18 @@ class Harness:
                 elif validate_generated_files(accepted, batch_ids)["uncovered_case_ids"]:
                     accepted = None
             work_ids = {str(case["id"]) for case in work}
+            source_files = state["artifacts"]["repo_analysis"].get("source_files", [])
+            batch_source = (
+                extract_target_sources(
+                    self.run_dir / "repo", [str(case.get("target") or "") for case in work], source_files
+                )
+                or target_source
+            )
+            collaborators = collaborator_signatures(self.run_dir / "repo", batch_source, source_files)
+            rounds = state.setdefault("generation_rounds", {})
             for attempt in range(1, 1 if accepted is not None else TEST_GENERATION_MAX_ATTEMPTS + 1):
+                # A deterministic model repeats a rejected answer verbatim: vary the sampling on every retry.
+                retry_temperature = min(0.8, 0.3 * (attempt - 1) + 0.25 * rounds.get(str(batch_index), 0))
                 prompt = json.dumps(
                     {
                         "assignment": (
@@ -1053,12 +1107,8 @@ class Harness:
                                 ),
                             },
                         },
-                        "target_source": extract_target_sources(
-                            self.run_dir / "repo",
-                            [str(case.get("target") or "") for case in work],
-                            state["artifacts"]["repo_analysis"].get("source_files", []),
-                        )
-                        or target_source,
+                        "target_source": batch_source,
+                        "collaborator_signatures": collaborators or None,
                         "repository_evidence": evidence or state.get("evidence", ""),
                         "revision_feedback": state.get("feedback", {}).get("test_generation"),
                         "repair_feedback": repair_feedback or None,
@@ -1084,6 +1134,7 @@ class Harness:
                         state=state,
                         persist=self.save,
                         response_format=GeneratedFilesDraft,
+                        temperature=retry_temperature,
                     )
                     if result.get("status") != "completed":
                         raise ValueError(f"Unexpected test-generation model status: {result.get('status')}")
@@ -1109,6 +1160,14 @@ class Harness:
                             )
                             self.audit("nested_with_flattened", batch=batch_index, path=item["path"])
                     candidate = ensure_generated_case_markers(candidate)
+                    if AUTOFIX:
+                        candidate, fixes = autofix_files(self._repo_context(), candidate)
+                        tooling = state.setdefault(
+                            "tooling", {"autofix": 0, "build_checks": 0, "build_failures": 0}
+                        )
+                        tooling["autofix"] += len(fixes)
+                        for fix in fixes:
+                            self.audit("autofix", batch=batch_index, attempt=attempt, **fix)
                     raw_batches.append(json.dumps(candidate, separators=(",", ":"), default=str))
                     validation = validate_generated_files(candidate, work_ids)
                     self._check_imports(candidate, state)
@@ -1126,6 +1185,7 @@ class Harness:
                             "Generated batch reuses paths from an earlier batch: "
                             + ", ".join(sorted(collisions))
                         )
+                    await self._build_gate(candidate, batch_index)
                     accepted = {**candidate, "files": kept_files + candidate["files"]}
                     cache["batches"][str(batch_index)] = accepted
                     self.save()
@@ -1147,6 +1207,8 @@ class Harness:
                         error=str(exc),
                     )
                     if attempt == TEST_GENERATION_MAX_ATTEMPTS:
+                        rounds[str(batch_index)] = rounds.get(str(batch_index), 0) + 1
+                        self.save()
                         raise ValueError(
                             f"Test generation batch {batch_index}/{total_batches} failed after "
                             f"{TEST_GENERATION_MAX_ATTEMPTS} attempts: {exc}"
@@ -1254,6 +1316,56 @@ class Harness:
             return
         raise ValueError(" ".join(problems))
 
+    def _repo_context(self) -> RepoContext:
+        """Live repository facts for the central tools (routes are extracted once and cached in the run state)."""
+        state = self.state
+        analysis = state.get("artifacts", {}).get("repo_analysis", {})
+        files = analysis.get("source_files", [])
+        if "routes" not in state:
+            state["routes"] = extract_routes(self.run_dir / "repo", files)
+        return RepoContext(
+            root=self.run_dir / "repo",
+            source_files=files,
+            test_files=analysis.get("test_files", []),
+            package_files=analysis.get("package_files", []),
+            workspace=self.workspace if self.workspace.exists() else None,
+            routes=state["routes"],
+            app_url=state.get("app_url"),
+        )
+
+    def _build_files(self, files: list[dict]) -> dict:
+        """Compile/collect candidate files in the prepared workspace (only once the environment install is done)."""
+        if not BUILD_GATE:
+            return {"status": "skipped", "reason": "disabled by HARNESS_BUILD_GATE=off", "errors": []}
+        if self.state.get("environment", {}).get("status") != "ready":
+            return {"status": "skipped", "reason": "isolated environment not installed", "errors": []}
+        return try_build(
+            detect_stack(self.workspace),
+            self.workspace,
+            files,
+            cache_dir=self.cache_dir,
+            out_root=self.run_dir / "build_checks" / uuid4().hex[:10],
+        )
+
+    async def _build_gate(self, candidate: dict, batch: int) -> None:
+        report = await asyncio.to_thread(self._build_files, candidate["files"])
+        tooling = self.state.setdefault("tooling", {"autofix": 0, "build_checks": 0, "build_failures": 0})
+        if report["status"] != "skipped":
+            tooling["build_checks"] += 1
+        self.audit(
+            "build_gate",
+            batch=batch,
+            status=report["status"],
+            tool=report.get("tool"),
+            seconds=report.get("seconds"),
+            reason=report.get("reason"),
+            errors=len(report.get("errors", [])),
+        )
+        if report["status"] == "failed":
+            tooling["build_failures"] += 1
+            detail = "; ".join(f"{e['file']}:{e['line']} {e['message']}" for e in report["errors"][:6])
+            raise ValueError(f"Build check ({report['tool']}) failed: {detail}"[:1800])
+
     def _read_repo_file(self, rel: str) -> str | None:
         target = self.run_dir / "repo" / rel
         return target.read_text(encoding="utf-8", errors="replace") if target.is_file() else None
@@ -1268,26 +1380,10 @@ class Harness:
             )
 
     def _check_imports(self, candidate: dict, state: dict) -> None:
-        """Static import-resolution gate for Python tests against the cloned repository."""
-        analysis = state["artifacts"].get("repo_analysis", {})
-        repo_files = list(analysis.get("source_files", []))
-        dependency_text = "\n".join(
-            (self.run_dir / "repo" / rel).read_text(encoding="utf-8", errors="replace")
-            for rel in analysis.get("package_files", [])
-            if (self.run_dir / "repo" / rel).is_file()
-        )
-        all_files = [*repo_files, *analysis.get("test_files", [])]
+        """Static gates (syntax, imports, undefined names, mocks, patch targets, URLs) on every generated file."""
+        ctx = self._repo_context()
         for item in candidate["files"]:
-            if item["path"].endswith(".py") and repo_files:
-                check_python_imports(
-                    item["content"],
-                    repo_files,
-                    dependency_text,
-                    item["path"],
-                    read_source=self._read_repo_file,
-                )
-            elif item["path"].endswith((".java", ".kt")) and dependency_text:
-                check_java_imports(item["content"], all_files, dependency_text, item["path"])
+            static_gate(ctx, item["path"], item["content"])
 
     async def validate(self, stage, state):
 
@@ -1308,6 +1404,7 @@ class Harness:
                     self.run_dir / "repo",
                     self.cache_dir,
                     EXECUTION_TIMEOUT_SECONDS,
+                    requirements.get("environment_needs"),
                 )
             return requirements
         if stage == "test_planning":

@@ -101,10 +101,21 @@ never reported as pass).
 
 * **Unit tests are required** in the design when the repository has source code; every actor (persona) needs cases; every requirement needs a case or a stated reason.
 * Cases carry **level, actor, target, preconditions, data**; UI/E2E/accessibility cases only when a running application URL is supplied.
-* Source is generated **one file per approved case**, validated (syntax, no placeholders/skips, import resolution) before you see it.
+* Source is generated **one file per approved case**, validated (syntax, no placeholders/skips, import resolution, undefined names, mocked `sys.exit`, patch targets that do not exist, URL paths that are not routes of the application) before you see it.
 * Skills are loaded through MAF's `SkillsProvider` and verified from a tool trace; see `verify-run`.
 
-## 7. Agent Skills
+## 7. Central tools (less LLM guessing)
+
+Import and build errors are facts, so the harness answers them itself before asking a model again:
+
+| Layer | What it does | Switch |
+|---|---|---|
+| Agent tools (MAF function tools) | `resolve_import`, `module_api`, `find_symbol`, `read_source`, `check_test`, `list_routes`, `installed_packages`, `probe_tools`, `try_build` — small per-stage selection, read-only or scratch-only | `HARNESS_AGENT_TOOLS` |
+| Auto-fix | adds an unambiguous missing import (stdlib, mock, JDK, unique repository class, JUnit) or corrects a module path to the one repository module with that name; every fix is audited | `HARNESS_AUTOFIX` |
+| Static gates | syntax, imports, undefined names, mocked `sys.exit`, patch targets, URL paths | always on |
+| Build gate | `pytest --collect-only` / `mvn test-compile` in the prepared workspace, after the approved environment install; reports `file:line` and symbol detail | `HARNESS_BUILD_GATE` |
+
+## 8. Agent Skills
 
 Ten skills are configured as MAF Agent Skills (`SkillsProvider`, progressive disclosure); the host verifies every assigned skill was really loaded.
 Six come from [shivswami/awesome-agent-skills](https://github.com/shivswami/awesome-agent-skills) (pinned commit in `skills/SKILLS.lock.json`, audited offline
@@ -127,7 +138,7 @@ git clone https://github.com/shivswami/awesome-agent-skills.git /tmp/awesome-age
 uv run python scripts/vendor_skills.py --source /tmp/awesome-agent-skills    # re-vendor + re-audit + rewrite the lock
 ```
 
-## 8. Development
+## 9. Development
 
 ```bash
 uv run ruff check src tests app.py scripts && uv run ruff format --check src tests app.py scripts
@@ -135,7 +146,7 @@ uv run pytest -q --ignore=tests/targets                    # unit + component (r
 HARNESS_BROWSER=1 PLAYWRIGHT_BROWSERS_PATH=$PWD/.browser-cache uv run pytest tests/targets/test_harness_browser.py -q   # UI in a real browser
 ```
 
-## 9. Troubleshooting
+## 10. Troubleshooting
 
 | Symptom | Cause / fix |
 |---|---|
@@ -146,7 +157,7 @@ HARNESS_BROWSER=1 PLAYWRIGHT_BROWSERS_PATH=$PWD/.browser-cache uv run pytest tes
 | "Daily token cap of 5,000,000 reached" | wait for local midnight; all runs on this machine share the cap (`maf-harness run` prints today's usage) |
 | UI tests need a live app | pass the running application URL; the harness does not start the system under test |
 
-## 10. Security notes
+## 11. Security notes
 
 Credentials are environment-only and never forwarded to install/test commands; commands are argv-only with timeouts and a plan hash checked after approval;
 npm lifecycle scripts are disabled during install; generated files never touch the clone. Execution is a local process, not a sandbox — see

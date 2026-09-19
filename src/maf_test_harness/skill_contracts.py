@@ -15,6 +15,7 @@ from copy import deepcopy
 from datetime import UTC, datetime
 from pathlib import Path, PurePosixPath
 from typing import Any
+from urllib.parse import urlsplit
 
 import jsonschema
 import yaml
@@ -658,6 +659,16 @@ def _native_syntax_check(path: str, content: str) -> str | None:
     return None
 
 
+def _test_declaration_names(path: str, content: str) -> list[str]:
+    """Names of the test methods a file declares (Java/Kotlin/Python), for actionable feedback."""
+    suffix = PurePosixPath(path).suffix.lower()
+    if suffix in {".java", ".kt"}:
+        return re.findall(r"@(?:[\w.]+\.)?Test\b[^\n]*\s+(?:public\s+)?(?:void|fun)\s+(\w+)", content)
+    if suffix == ".py":
+        return [t.name for t in _python_tests(content)]
+    return []
+
+
 def _test_declaration_count(path: str, content: str) -> int:
     """Best-effort cross-language count of concrete test declarations."""
     suffix = PurePosixPath(path).suffix.lower()
@@ -843,9 +854,11 @@ def validate_generated_files(payload: dict[str, Any], case_ids: set[str]) -> dic
         if not declarations:
             raise ValueError(f"generated file has no recognized concrete test declarations: {path}")
         if declarations != 1:
+            names = ", ".join(_test_declaration_names(path, content)[:6])
             raise ValueError(
                 f"generated file must contain exactly one concrete test declaration for its one case ID: {path} "
-                f"(found {declarations})"
+                f"(found {declarations}{': ' + names if names else ''}). Keep ONE test method and move the extra "
+                "assertions of the others into it; do not add a second test for a second assertion."
             )
         declaration_total += declarations
         covered.update(linked)
@@ -1063,6 +1076,249 @@ def check_python_imports(
                 f"import '{name}' in {path or 'generated test'} is not stdlib, not a repository module "
                 f"and not a declared dependency.{hint} Derive import paths from source_files."
             )
+
+
+def _call_name(node: ast.Call) -> str:
+    """Dotted name of the callee: ``mocker.patch.object`` -> 'mocker.patch.object'."""
+    parts: list[str] = []
+    func: ast.AST = node.func
+    while isinstance(func, ast.Attribute):
+        parts.append(func.attr)
+        func = func.value
+    if isinstance(func, ast.Name):
+        parts.append(func.id)
+    return ".".join(reversed(parts))
+
+
+def _string_arg(node: ast.Call, index: int = 0) -> str | None:
+    if len(node.args) > index and isinstance(node.args[index], ast.Constant):
+        value = node.args[index].value
+        return value if isinstance(value, str) else None
+    return None
+
+
+def _mocks_sys_exit(node: ast.Call) -> bool:
+    """patch("sys.exit") / patch.object(sys, "exit") / monkeypatch.setattr(sys, "exit", mock) without side_effect."""
+    name = _call_name(node)
+    if any(k.arg == "side_effect" for k in node.keywords):
+        return False  # patch("sys.exit", side_effect=SystemExit) is the correct way to mock it
+    if name.endswith(("patch", "patch.object")):
+        target = _string_arg(node)
+        if (
+            name.endswith("patch")
+            and target
+            and (target in {"sys.exit", "exit"} or target.endswith(".sys.exit"))
+        ):
+            return True  # also 'pkg.module.sys.exit', which patches the same global function
+        return (
+            name.endswith("patch.object")
+            and bool(node.args)
+            and isinstance(node.args[0], ast.Name)
+            and node.args[0].id == "sys"
+            and _string_arg(node, 1) == "exit"
+        )
+    if name.endswith("setattr"):
+        first = node.args[0] if node.args else None
+        by_string = isinstance(first, ast.Constant) and first.value == "sys.exit"
+        by_module = isinstance(first, ast.Name) and first.id == "sys" and _string_arg(node, 1) == "exit"
+        value = node.args[-1] if len(node.args) >= (2 if by_string else 3) else None
+        return (by_string or by_module) and isinstance(value, ast.Lambda | ast.Call)
+    return False
+
+
+_BUILTIN_NAMES = frozenset(dir(__import__("builtins"))) | {
+    "__file__",
+    "__name__",
+    "__doc__",
+    "__spec__",
+    "__package__",
+    "__loader__",
+    "__builtins__",
+    "__class__",
+    "__path__",
+    "__debug__",
+}
+
+
+def _bound_names(tree: ast.AST) -> set[str] | None:
+    """Every name bound anywhere in the module (any scope); ``None`` when a star import makes that unknowable."""
+    bound: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Store | ast.Del):
+            bound.add(node.id)
+        elif isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef | ast.ClassDef):
+            bound.add(node.name)
+        elif isinstance(node, ast.arg):
+            bound.add(node.arg)
+        elif isinstance(node, ast.Import):
+            bound.update((a.asname or a.name).split(".")[0] for a in node.names)
+        elif isinstance(node, ast.ImportFrom):
+            if any(a.name == "*" for a in node.names):
+                return None
+            bound.update(a.asname or a.name for a in node.names)
+        elif isinstance(node, ast.ExceptHandler) and node.name:
+            bound.add(node.name)
+        elif isinstance(node, ast.Global | ast.Nonlocal):
+            bound.update(node.names)
+        elif isinstance(node, ast.MatchAs | ast.MatchStar) and node.name:
+            bound.add(node.name)
+        elif isinstance(node, ast.MatchMapping) and node.rest:
+            bound.add(node.rest)
+    return bound
+
+
+def _repo_module_files(repo_files: list[str]) -> dict[str, str]:
+    """Dotted module name -> repository file, for every layout the runner puts on PYTHONPATH."""
+    py_files = [f for f in repo_files if f.endswith(".py")]
+    roots = ("", "src/", "lib/", *(f"{r}/" for r in extra_import_roots(py_files)))
+    modules: dict[str, str] = {}
+    for f in py_files:
+        for root in roots:
+            if f.startswith(root):
+                dotted = f[len(root) :].removesuffix(".py").removesuffix("/__init__").replace("/", ".")
+                modules.setdefault(dotted, f)
+    return modules
+
+
+def check_python_test_hygiene(
+    content: str,
+    path: str = "",
+    repo_files: list[str] | None = None,
+    read_source: Callable[[str], str | None] | None = None,
+) -> None:
+    """Static defects that always fail at run time, found before a run is spent on them.
+
+    * mocking ``sys.exit`` (execution continues past the exit and fails later),
+    * a name used but never bound or imported anywhere in the file (a missing ``import unittest``),
+    * ``patch("pkg.mod.name")`` where ``name`` is not a module-level binding of ``pkg/mod.py`` (typically a package that
+      the code imports lazily inside a function, so the attribute does not exist when the patch is applied).
+    """
+    try:
+        tree = ast.parse(content)
+    except SyntaxError:
+        return
+    where = path or "generated test"
+    modules = _repo_module_files(repo_files or [])
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        if _mocks_sys_exit(node):
+            raise ValueError(
+                f"{where} line {node.lineno} mocks sys.exit: code keeps running past the mocked exit and fails later. "
+                "Use `with pytest.raises(SystemExit) as exc:` and assert `exc.value.code`."
+            )
+        name = _call_name(node)
+        target = _string_arg(node)
+        if (
+            name.endswith("patch")
+            and target
+            and modules
+            and read_source
+            and not any(k.arg == "create" for k in node.keywords)
+        ):
+            parts = target.split(".")
+            for cut in range(len(parts) - 1, 0, -1):
+                module_file = modules.get(".".join(parts[:cut]))
+                if module_file is None:
+                    continue
+                parsed = _module_symbols(read_source(module_file) or "")
+                attribute = parts[cut]
+                if ".".join(parts[: cut + 1]) in modules or (
+                    attribute in _BUILTIN_NAMES and not attribute.startswith("_")
+                ):
+                    break  # a submodule, or a builtin (mock.patch creates those on module targets)
+                if parsed is not None and attribute not in parsed[0]:
+                    local = parsed[1].get(attribute)
+                    hint = (
+                        f" It is only imported/assigned inside {local[0]}(), so it does not exist on the module: patch "
+                        f"`sys.modules` with a stub before calling {local[0]}(), or patch a module-level name."
+                        if local
+                        else (
+                            " Patch only module-level names shown in target_source; if it is a package the module imports "
+                            "lazily inside a function, patch `sys.modules` with a stub instead."
+                        )
+                    )
+                    raise ValueError(
+                        f"{where} line {node.lineno} patches '{target}' but {module_file} has no module-level "
+                        f"'{attribute}'.{hint}"
+                    )
+                break
+    _reject_unused_setup(tree, where)
+    bound = _bound_names(tree)
+    if bound is not None:
+        for node in ast.walk(tree):
+            if (
+                isinstance(node, ast.Name)
+                and isinstance(node.ctx, ast.Load)
+                and node.id not in bound
+                and node.id not in _BUILTIN_NAMES
+            ):
+                raise ValueError(
+                    f"NameError: name '{node.id}' is not defined in {where} line {node.lineno}: add the missing import "
+                    "or definition."
+                )
+
+
+_COLLECTION_VALUES = (ast.List, ast.Dict, ast.Set, ast.Tuple, ast.ListComp, ast.DictComp, ast.SetComp)
+
+
+def _reject_unused_setup(tree: ast.AST, where: str) -> None:
+    """A collection built in a test function and never read: the setup never reaches the code under test.
+
+    The typical case is a boundary test that builds the inputs it describes (``sections = [...]``) and then calls the
+    function with unrelated empty arguments, so the assertion checks something else entirely.
+    """
+    for func in ast.walk(tree):
+        if not isinstance(func, ast.FunctionDef | ast.AsyncFunctionDef) or not func.name.startswith("test"):
+            continue
+        assigned = {
+            target.id: node.lineno
+            for node in ast.walk(func)
+            if isinstance(node, ast.Assign) and isinstance(node.value, _COLLECTION_VALUES)
+            for target in node.targets
+            if isinstance(target, ast.Name) and not target.id.startswith("_")
+        }
+        loaded = {n.id for n in ast.walk(func) if isinstance(n, ast.Name) and isinstance(n.ctx, ast.Load)}
+        for name, line in assigned.items():
+            if name not in loaded:
+                raise ValueError(
+                    f"{where} line {line}: '{name}' is built but never used, so the test's setup never reaches the code "
+                    "under test. Pass it to the function under test (or patch the collaborators that produce it)."
+                )
+
+
+_URL_LINE = re.compile(r"BASE_URL|base_url|baseUrl", re.I)
+_URL_LITERAL = re.compile(r"""["'`](/[A-Za-z0-9_\-./{}%$]*)""")
+
+
+def check_route_literals(content: str, path: str, routes: list[str], app_url: str | None) -> None:
+    """Live-application tests must use URL paths the code defines, relative to the BASE_URL the human supplied.
+
+    Only lines that build a URL from BASE_URL are checked (high precision). The common failure this catches is a
+    guessed context path (``/petstore/rest/items``) when BASE_URL already ends in the real one.
+    """
+    if not routes:
+        return
+    first_segments = {r.split(" ", 1)[1].strip("/").split("/")[0] for r in routes if " " in r}
+    context = (urlsplit(app_url).path.strip("/").split("/")[0]) if app_url else ""
+    for number, line in enumerate(content.splitlines(), 1):
+        if not _URL_LINE.search(line):
+            continue
+        for literal in _URL_LITERAL.findall(line):
+            segment = literal.strip("/").split("/")[0]
+            if not segment or segment.startswith(("{", "$")):
+                continue
+            if context and segment == context:
+                raise ValueError(
+                    f"{path} line {number}: '{literal}' repeats the context path '/{context}' that BASE_URL "
+                    f"({app_url}) already contains. Append only the route, e.g. BASE_URL + '/{sorted(first_segments)[0]}'."
+                )
+            if segment not in first_segments:
+                known = ", ".join(sorted(f"/{s}" for s in first_segments)[:8])
+                raise ValueError(
+                    f"{path} line {number}: '{literal}' is not a route this application defines. Routes start with: "
+                    f"{known}. BASE_URL already contains the application context path."
+                )
 
 
 _JAVA_IMPORT = re.compile(r"(?m)^\s*import\s+(?:static\s+)?([A-Za-z_][\w.]*)\s*(?:\.\*)?;")

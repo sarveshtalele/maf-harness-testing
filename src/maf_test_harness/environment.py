@@ -8,6 +8,8 @@ harness cache directories), never into the system interpreter.
 
 from __future__ import annotations
 
+import os
+import re
 import shutil
 import subprocess
 from pathlib import Path
@@ -45,6 +47,63 @@ ISOLATION = {
 }
 
 
+_SKIP_DIRS = {
+    ".git",
+    "node_modules",
+    ".venv",
+    "venv",
+    ".harness-venv",
+    "__pycache__",
+    "tests",
+    "test",
+    "docs",
+}
+_PIP_SPEC = re.compile(
+    r"[A-Za-z][A-Za-z0-9._-]*(?:\[[A-Za-z0-9,_-]+\])?(?:(?:==|>=|<=|~=|!=|<|>)[A-Za-z0-9.*+!_-]+)?"
+)
+_PIP_INSTALL = re.compile(r"^\s*(?:python3?\s+-m\s+)?pip3?\s+install\s+(.+?)\s*$")
+
+
+def nested_requirements(root: Path, limit: int = 6) -> list[str]:
+    """`requirements*.txt` files below the repository root (monorepos keep them next to each package)."""
+    root = Path(root)
+    found: list[str] = []
+    for current, dirs, files in os.walk(root):
+        dirs[:] = sorted(d for d in dirs if d not in _SKIP_DIRS and not d.startswith("."))
+        depth = Path(current).relative_to(root).parts
+        if not depth or len(depth) > 3:
+            continue
+        found += [
+            (Path(current) / f).relative_to(root).as_posix()
+            for f in sorted(files)
+            if re.fullmatch(r"requirements[\w.-]*\.txt", f)
+        ]
+    return found[:limit]
+
+
+def documented_packages(needs: list[dict], root: Path, limit: int = 8) -> list[str]:
+    """Python packages the model listed as dependencies, kept only when the repository itself supports the claim.
+
+    A need survives when its install command is a plain ``pip install <specs>`` (no URLs, no flags) and the cited
+    evidence file exists in the repository and mentions the package. Anything else stays a note for a human.
+    """
+    root = Path(root)
+    kept: dict[str, None] = {}
+    for need in needs or []:
+        if need.get("kind") not in {"dependency", "test_tool"}:
+            continue
+        match = _PIP_INSTALL.match(str(need.get("how_to_install", "")))
+        evidence = root / str(need.get("evidence_file") or "")
+        if not match or not need.get("evidence_file") or not evidence.is_file():
+            continue
+        text = evidence.read_text(encoding="utf-8", errors="replace").lower()
+        for spec in match.group(1).split():
+            spec = spec.strip("\"'")
+            if _PIP_SPEC.fullmatch(spec) and re.split(r"[\[<>=!~]", spec)[0].lower() in text:
+                kept[spec] = None
+    return list(kept)[:limit]
+
+
 def _probe(tool: str) -> dict:
     command, hint = TOOLS.get(tool, ([tool, "--version"], f"Install {tool}"))
     path = shutil.which(tool)
@@ -59,14 +118,29 @@ def _probe(tool: str) -> dict:
 
 
 def build_environment_plan(
-    stack: StackProfile, repo_or_workspace: Path, cache_dir: Path, timeout: float = 900
+    stack: StackProfile,
+    repo_or_workspace: Path,
+    cache_dir: Path,
+    timeout: float = 900,
+    needs: list[dict] | None = None,
 ) -> dict:
-    """Prerequisites, isolation strategy and the exact install steps for the primary ecosystem."""
+    """Prerequisites, isolation strategy and the exact install steps for the primary ecosystem.
+
+    ``needs`` are the model's environment needs; only those the repository's own files support are installed.
+    """
     eco = resolve_ecosystem(stack)
     root = Path(repo_or_workspace)
     wrapper = eco == "maven" and (root / "mvnw").exists()
     prerequisites = [_probe(t) for t in REQUIRED_TOOLS.get(eco, ()) if not (wrapper and t == "mvn")]
-    steps: list[Step] = setup_steps(eco, root, str(Path(cache_dir).resolve()), timeout)
+    python = eco == "python"
+    steps: list[Step] = setup_steps(
+        eco,
+        root,
+        str(Path(cache_dir).resolve()),
+        timeout,
+        extra_requirements=nested_requirements(root) if python else None,
+        extra_packages=documented_packages(needs or [], root) if python else None,
+    )
     missing = [p["tool"] for p in prerequisites if not p["present"]]
     return {
         "ecosystem": eco,

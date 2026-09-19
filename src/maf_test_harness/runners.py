@@ -137,6 +137,8 @@ def setup_steps(
     helpers: list[str] | None = None,
     need_playwright: bool = False,
     env_ready: bool = False,
+    extra_requirements: list[str] | None = None,
+    extra_packages: list[str] | None = None,
 ) -> list[Step]:
     """Dependency installation into an ISOLATED location (venv / project node_modules / cache-dir repositories).
 
@@ -169,6 +171,28 @@ def setup_steps(
                     Step(
                         "install-project",
                         [*pip_cmd, "-e", "."],
+                        "setup",
+                        env=pip,
+                        timeout=timeout,
+                        continue_on_failure=True,
+                    )
+                )
+            for rel in extra_requirements or []:
+                steps.append(
+                    Step(
+                        f"install-{rel.replace('/', '_')}",
+                        [*pip_cmd, "-r", rel],
+                        "setup",
+                        env=pip,
+                        timeout=timeout,
+                        continue_on_failure=True,
+                    )
+                )
+            if extra_packages:
+                steps.append(
+                    Step(
+                        "install-documented-packages",
+                        [*pip_cmd, *extra_packages],
                         "setup",
                         env=pip,
                         timeout=timeout,

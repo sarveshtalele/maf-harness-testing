@@ -51,7 +51,7 @@ def test_retry_reuses_accepted_batches_only_with_matching_inputs(tmp_path, monke
             code = (
                 ["import sys"]
                 if case == "TC-2" and self.fail_second
-                else ["def test_value():", "    assert value() == 2"]
+                else ["def value():", "    return 2", "", "def test_value():", "    assert value() == 2"]
             )
             return {
                 "status": "completed",
@@ -98,7 +98,13 @@ def test_generated_paths_that_exist_in_the_repository_are_repaired_not_overwritt
                     "files": [
                         {
                             "path": path,
-                            "lines": ["def test_value():", "    assert value() == 2"],
+                            "lines": [
+                                "def value():",
+                                "    return 2",
+                                "",
+                                "def test_value():",
+                                "    assert value() == 2",
+                            ],
                             "case_ids": ["TC-1"],
                         }
                     ],

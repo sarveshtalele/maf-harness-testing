@@ -1,3 +1,5 @@
+import pytest
+
 from maf_test_harness import triage
 from maf_test_harness.qa_report import build_qa_report, render_markdown
 
@@ -103,3 +105,15 @@ def test_target_source_handles_java_and_missing_targets(tmp_path):
     out = extract_target_sources(tmp_path, ["A.java total()"], ["A.java"])
     assert "return a * 2" in out
     assert extract_target_sources(tmp_path, ["nothing here"], ["A.java"]) == ""
+
+
+@pytest.mark.parametrize(
+    "message",
+    [
+        "java.lang.AssertionError: expected:<200> but was:<404>",
+        "AssertionError: expected:<201> but was:<405>",
+        "requests.exceptions.HTTPError: 405 Client Error: Method Not Allowed",
+    ],
+)
+def test_wrong_url_or_method_failures_point_at_the_route_inventory(message):
+    assert "live_app.routes" in triage.remedy_for(message)

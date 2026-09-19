@@ -81,6 +81,55 @@ may be real behavior of the live app (or wrong assumptions in the tests), and th
 production classes (private access, constructor shape) and were quarantined so the rest could run. This run does not prove Petstore correct or defective; the
 two defects found earlier by hand-written acceptance tests are in [ERRORS.md §E](ERRORS.md).
 
+## 4b. Remaining failures of `final4-reverse` / `final3-petstore` → fixes (rerun pending)
+
+Every remaining failure was traced to a test-authoring or environment defect the harness can detect (defects F28–F31 in
+[ERRORS.md](ERRORS.md)); none was an application bug except the reverse skill's Java-parser wildcard-import assertion,
+which is left failing on purpose (a FAIL is a result, not a harness error).
+
+| Failure (run) | Root cause | Fix now in the harness |
+|---|---|---|
+| 3 CLI tests (reverse) | `mocker.patch.object(sys, "exit")` | sys.exit-mock gate |
+| 1 test (reverse) | missing `import unittest` | undefined-name gate |
+| 1 test (reverse) | `patch("engine.ai_analysis.anthropic")`, package imported lazily | patch-target gate |
+| `anthropic` not installed (reverse) | declared only in nested `skill-packages/*/requirements.txt` and the README | nested requirements + evidence-backed documented packages in the approved plan |
+| 8 API tests (Petstore) | guessed `/petstore/rest/...` path while `BASE_URL` = `http://127.0.0.1:8080/applicationPetstore` | route inventory + `check_route_literals` + 404/405 remedy |
+| 3 quarantined Java tests (Petstore) | guessed constructors/methods of collaborators | `collaborator_signatures` in the prompt |
+
+Replaying the new static gates on the previously generated tests flags 4 of 36 reverse files and 5 of 33 Petstore files, each one
+a test that failed at run time. The live rerun of both targets needs gateway credentials in the shell (`OPENAI_API_KEY`,
+`OPENAI_BASE_URL`) and about 2.4M tokens; today's shared cap has 1,871,820 left, so Petstore may need to wait for local midnight.
+
+## 4c. Central-tools runs (`final5-reverse`, Petstore `final5`/`final6`/`final7`)
+
+Code under test: central tools, auto-fix, build gate, route/hygiene gates (see [ERRORS.md](ERRORS.md) F28–F33).
+
+**reverse-engineering-skill (`final5-reverse`)** — complete, 0 stage errors: verdict **FAIL**, 25 passed / 9 failed, 44 provider calls,
+1.15M tokens, 25 build-gate checks (0 build failures), 1 auto-fix. The 9 failures are authentic requirement-derived tests that were
+badly written; none proves an application defect:
+
+| Failures | Cause | Now caught before the run? |
+|---|---|---|
+| 2 CLI tests | mocked `sys.exit` (`patch("reverse_engineer_skill.sys.exit")`), so `main()` ran on into `input()` / `repo_name_from_url(None)` | yes (gate now also matches module-qualified `sys.exit`) |
+| 3 evaluation-boundary tests (60/40/39) | `sections = [...]` built and never passed to the function under test | yes (unused-setup gate) |
+| 1 evaluation-boundary test (80) | `sections` only used for a self-check sum | no (needs semantic judgement) |
+| 2 `--ai` fallback tests | drive `_ask_mode(["--ai"])`, which returns `"ai"` before any key/package check; the fallback exists only on interactive choice 2 | no |
+| 1 `_layer` test | `_layer` is a closure that runs only above 300 files; the test uses 6 and patches `os.path.join` globally | no |
+
+Replaying the new gates on the generated tests flags 6 of 34 files (5 of the 9 failures plus one test that passed by luck).
+Honest finding: **the agents never called the harness tools** (`harness_tool_calls` is empty for every stage). The gains come from the host
+layer (auto-fix, gates, build gate), which does not depend on the model choosing to call anything.
+
+**Petstore** — no completed run on this code; three attempts stopped in test generation, 2.0M tokens in total:
+
+| Run | Stopped at | Cause | Response |
+|---|---|---|---|
+| `final5-petstore` | batch 6/11 after 5 accepted batches (5 build gates OK, 61 auto-fixes of missing imports) | model wrote 2 `@Test` methods (and Arquillian) for a one-case file, verbatim on every retry | feedback now names the methods; Arquillian gate |
+| `final6-petstore` | batch 1/12 | model re-imported undeclared RestAssured on 9 straight attempts (temperature 0 repeats a rejected answer) | retry temperature rises per attempt and per round; `forbidden_imports` in the generation policy |
+| `final7-petstore` | batch 1/11 | **gateway quota**: `daily token limit exceeded (25,003,793/25,000,000)` (the provider's own cap, separate from the harness's ledger) | none possible; not circumvented |
+
+The Petstore fixes above are covered by unit tests and replays, not by a live pass. The next full run should start after the gateway quota resets.
+
 ## 5. Daily token accounting
 
 The ledger (`~/.maf-harness/usage`) counted the three runs of this session after it was introduced: 3,128,180 of the 5,000,000-token daily cap after

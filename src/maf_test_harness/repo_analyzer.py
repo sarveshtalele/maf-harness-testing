@@ -593,6 +593,63 @@ def extract_target_sources(
     return "".join(chunks)
 
 
+_JAVA_SIGNATURE = re.compile(
+    r"^\s*(?:public|protected)\s+(?:static\s+|final\s+|abstract\s+|synchronized\s+)*[\w<>\[\], ?.]+?\s*\([^)]*\)?"
+)
+_JAVA_TYPE = re.compile(r"^\s*(?:public\s+)?(?:abstract\s+|final\s+)?(?:class|interface|enum)\s+\w+")
+
+
+def java_signatures(text: str, limit: int = 30) -> list[str]:
+    """Type declaration and public/protected constructor and method signatures (wrapped ones joined)."""
+    source_lines = text.splitlines()
+    signatures: list[str] = []
+    for index, line in enumerate(source_lines):
+        if not (_JAVA_TYPE.match(line) or _JAVA_SIGNATURE.match(line)):
+            continue
+        joined = line.strip()
+        for follow in source_lines[index + 1 : index + 6]:  # a signature may wrap over several lines
+            if ")" in joined or _JAVA_TYPE.match(line):
+                break
+            joined += " " + follow.strip()
+        signatures.append(joined.rstrip("{").strip())
+    return signatures[:limit]
+
+
+def collaborator_signatures(
+    root: Path, target_source: str, source_files: list[str], max_chars: int = 7_000
+) -> str:
+    """Public constructors/method signatures of the Java classes the targeted code mentions.
+
+    A generated test that instantiates a collaborator (``new ShoppingCartItem(...)``) guesses its constructor when only
+    the target's own source is supplied; one wrong call makes the whole module fail to compile. Signatures of every
+    same-repository class named in the target source remove the guess.
+    """
+    root = Path(root).resolve()
+    by_name: dict[str, list[str]] = {}
+    for rel in source_files:
+        if rel.endswith(".java"):
+            by_name.setdefault(Path(rel).stem, []).append(rel)
+    already = set(re.findall(r"--- SOURCE: (\S+) ::", target_source))
+    mentioned = [
+        name
+        for name in dict.fromkeys(re.findall(r"\b[A-Z][A-Za-z0-9_]+\b", target_source))
+        if len(by_name.get(name, [])) == 1 and by_name[name][0] not in already
+    ]
+    chunks: list[str] = []
+    used = 0
+    for name in mentioned:
+        rel = by_name[name][0]
+        lines = java_signatures(_safe_read(root / rel))
+        if not lines:
+            continue
+        block = f"\n--- SIGNATURES: {rel} ---\n" + "\n".join(lines) + "\n"
+        if used + len(block) > max_chars:
+            break
+        chunks.append(block)
+        used += len(block)
+    return "".join(chunks)
+
+
 _GRADLE_COORD = re.compile(r"""['"]([\w.\-]+):([\w.\-]+)(?::[^'"]*)?['"]""")
 
 

@@ -86,7 +86,10 @@ async def run(args) -> int:
     _say(f"run dir: {run_dir}\nmodel: {args.model or MODEL}  skill mode: {args.skill_mode}")
     retries: dict[str, int] = {}
     try:
-        view = await host.start(args.repo_url, args.app_url)
+        # An existing run directory resumes at its pending gate; a stopped or finished run is reported as it is.
+        view = (
+            host.view if host.view.get("status") != "new" else await host.start(args.repo_url, args.app_url)
+        )
         while view["status"] == "waiting":
             pending = view["pending"]
             response = _auto(pending, host.state, args, retries) if args.auto_approve else _prompt(pending)
