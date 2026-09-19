@@ -2,7 +2,7 @@
 
 This document explains how the harness is built, what every file does, and where each guarantee is enforced.
 Companion documents: [README](../README.md) (setup and usage), [IMPLEMENTATION_PLAN](IMPLEMENTATION_PLAN.md) (design decisions,
-roadmap), [audit/ERRORS.md](audit/ERRORS.md) (defect register), [audit/E2E_RESULTS.md](audit/E2E_RESULTS.md) (live runs).
+roadmap), [audit/ERRORS.md](audit/ERRORS.md) (defect register), [audit/E2E_RESULTS.md](audit/E2E_RESULTS.md) (live runs), [OBSERVABILITY.md](OBSERVABILITY.md) (tracing and the Observability tab).
 
 ## 1. What the system does
 
@@ -135,6 +135,7 @@ sequenceDiagram
 | Nothing is installed or run without approval; plan cannot change after approval | `workflow.ask` (tool gate) + `plan_hash` comparison in `run_environment` / `run_execution` |
 | Install is isolated | `runners.setup_steps` (venv, project `node_modules`, cache-dir repositories); system tools only reported (`environment.TOOLS` hints) |
 | Secrets never reach installed/test code | `execution._child_env` allow-list, fake `HOME` |
+| Every skill and tool invocation of a run can be inspected afterwards, and the trace is checked against the run's own accounting | `trace.jsonl` written from MAF middleware; `observability.build_report` integrity checks (skills loaded, no unexpected tools, trace tokens = ledger tokens) |
 | A green verdict means something | `runners.execute_plan` (fresh reports only), `qa_report.verdict_for` |
 | Every failure names the files/lines to change | `triage.build_updates` → `qa_report["updates"]` |
 
@@ -145,6 +146,7 @@ sequenceDiagram
 | `run.json` | view + full state (artifacts, approvals, provenance, budget, `routes`, `tooling` counters, `generation_rounds`) |
 | `checkpoints/` | MAF `FileCheckpointStorage` |
 | `audit.jsonl` | every request, response, tool start/finish, repair, heal, `autofix` and `build_gate` event |
+| `trace.jsonl` | MAF-middleware trace: `model_run`, `chat_call` (tokens, duration) and `tool_call` (category, summarised arguments, duration) events |
 | `repo/` | shallow clone (never modified) |
 | `workspace/` | repository copy + isolated env + generated tests (what actually ran) |
 | `environment/attempt-N/` | install step logs + `report.json` (immutable) |
@@ -186,14 +188,18 @@ sequenceDiagram
 | `triage.py` | Files/lines to update | `locations`, `classify`, `build_updates`, `REMEDIES` / `remedy_for` (concrete fix per failure pattern) | Test-defect vs application-first classification; remedies feed regeneration and the QA report |
 | `packaging.py` | Deliverable ZIP | `build_deliverable`, `run_instructions` | Repo + generated tests + `harness-report/` |
 | `artifact_presenter.py` | JSON → readable UI/Markdown | `json_to_markdown`, `render_json_ui`, `artifact_downloads`, `humanize` | Shared by UI and `scripts/json_to_markdown.py` |
+| `trace.py` | Run trace recorder | `TraceRecorder` (thread-safe JSON Lines), `read_trace`, `summarize_arguments` / `redact`, `tool_category` | Never stores prompts, responses or complete files |
+| `observability.py` | Observability and traceability report | `build_report` (from `trace.jsonl`, `audit.jsonl`, `run.json`, `qa_report.json`), `render_markdown` | Works for runs made before tracing existed (summary level); integrity checks |
+| `observability_ui.py` | Streamlit page for the report | `render_observability` (Overview, Skills, Tools, Timeline, Traceability, Integrity checks, Export) | Imported lazily by `app.py` |
+| `telemetry.py` | Optional OpenTelemetry export | `configure_telemetry` (`HARNESS_OTEL` = off, console or otlp; sensitive data always off) | See OBSERVABILITY.md §5 |
 | `usage.py` | Daily token ledger | `DailyUsageLedger` (`reserve`, `settle`, `snapshot`), `DailyLimitError` | File lock makes concurrent runs safe |
-| `cli.py` | Headless driver | `run` (resumes an existing `--run-dir` at its pending gate), `verify-run`, `lint-skills` | Exit codes 0 pass, 1 fail, 2 inconclusive/error |
+| `cli.py` | Headless driver | `run` (resumes an existing `--run-dir` at its pending gate), `verify-run`, `trace`, `lint-skills` | Exit codes 0 pass, 1 fail, 2 inconclusive/error |
 
 ### 6.2 Entry points and scripts
 
 | File | Responsibility |
 |---|---|
-| `app.py` | Streamlit UI: start form (URL, optional app URL), review/tool gates, QA tab with files to update, generated tests, audit/provenance, ZIP download, daily token meter |
+| `app.py` | Streamlit UI: start form (URL, optional app URL), review/tool gates, QA tab with files to update, generated tests, **Observability** tab, audit/provenance, ZIP download, daily token meter |
 | `scripts/json_to_markdown.py` | Convert any saved JSON artifact to Markdown with the same formatter as the UI |
 | `scripts/vendor_skills.py` | Vendor selected skills from the upstream repository: copy, audit (upstream `evaluator-skill`, offline), hash, write `skills/SKILLS.lock.json` incl. the reviewed-script allow-list |
 | `pyproject.toml` | Package metadata, pinned MAF versions, `maf-harness` script, ruff lint/format and pytest config |
@@ -243,6 +249,7 @@ its own artifacts. Everything else is refused, and every run is recorded in `sta
 | `test_stack_and_runners.py` | Stack detection, adapters, parsers, quarantine of uncompilable files, secrets not forwarded |
 | `test_execution.py` | `run_command`, JUnit reading, workspace copy, no overwrite, no stale bytecode |
 | `test_central_tools.py` | Import resolution, API/symbol tools, auto-fixers (Python and Java), build gate (real pytest; Maven diagnostics), MAF tool wrappers |
+| `test_observability.py` | Recorder, redaction, real-MAF middleware trace, report (full / older runs / integrity failures), traceability, `trace` CLI, telemetry |
 | `test_generation_gates.py` | sys.exit-mock lint, undefined names, patch targets, unused setup, route literals and extraction, collaborator signatures, nested requirements and documented packages, Arquillian gate, declaration feedback, forbidden libraries, `friendly_error` |
 | `test_triage.py` | Location parsing, classification, files-to-update report |
 | `test_skill_contracts.py`, `test_validation_regressions.py`, `test_urls_and_contracts.py` | Schema, IDs, traceability, generated-source validators, URL policy, import gates |
@@ -258,6 +265,7 @@ its own artifacts. Everything else is refused, and every run is recorded in `sta
 |---|---|
 | `docs/ARCHITECTURE.md` | This document |
 | `docs/IMPLEMENTATION_PLAN.md` | Decisions, MS Learn alignment, milestones, risks |
+| `docs/OBSERVABILITY.md` | Observability design (from the MAF guide), data model, tab, CLI, OpenTelemetry |
 | `docs/audit/ERRORS.md` | Defect register with fixes |
 | `docs/audit/E2E_RESULTS.md` | Live end-to-end results and analysis of the original failing runs |
 | `docs/audit/*-e2e.xml`, `screenshots/` | Test evidence for defects found in the target applications |

@@ -419,7 +419,13 @@ if view.get("status") == "complete":
             key="download-deliverable",
             type="primary",
         )
-    st.success(state.get("completed_reason") or "Workflow complete.")
+    verdict = ((state.get("artifacts", {}).get("test_execution") or {}).get("qa_report") or {}).get("verdict")
+    banner = {"FAIL": st.error, "INCONCLUSIVE": st.warning, "PASS_WITH_SKIPS": st.warning}.get(
+        verdict, st.success
+    )
+    banner(
+        state.get("completed_reason") or "Workflow complete."
+    )  # a failing verdict must not look like success
 elif view.get("status") == "stopped":
     st.warning("Workflow stopped. Approved artifacts remain available for download.")
 elif view.get("status") == "interrupted" or (pending and pending.get("id") in view.get("consumed", [])):
@@ -429,7 +435,9 @@ elif view.get("status") == "interrupted" or (pending and pending.get("id") in vi
         "new run if necessary."
     )
 
-review_tab, artifacts_tab, tests_tab, audit_tab = st.tabs(["Review", "Artifacts", "Generated Tests", "Audit"])
+review_tab, artifacts_tab, tests_tab, observability_tab, audit_tab = st.tabs(
+    ["Review", "Artifacts", "Generated Tests", "Observability", "Audit"]
+)
 
 with review_tab:
     if view.get("status") in {"complete", "stopped", "interrupted"}:
@@ -573,6 +581,17 @@ with tests_tab:
         key_prefix="generated",
         execution=state.get("artifacts", {}).get("test_execution"),
     )
+
+with observability_tab:
+    from maf_test_harness.observability import build_report  # pandas/altair load only once a run is open
+    from maf_test_harness.observability_ui import render_observability
+
+    try:
+        render_observability(build_report(harness.run_dir, ROOT / "skills"), key_prefix="obs")
+    except FileNotFoundError:
+        st.info("The observability report appears after the first approval is recorded for this run.")
+    except Exception as exc:  # a damaged trace must never take the rest of the page down
+        st.error(f"The observability report could not be built: {type(exc).__name__}: {exc}")
 
 with audit_tab:
     st.subheader("MAF and skill provenance")

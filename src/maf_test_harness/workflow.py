@@ -64,6 +64,8 @@ from .skill_contracts import (
 from .skill_reports import run_skill_checks
 from .skills_config import skills_for
 from .stack import detect_stack
+from .telemetry import configure_telemetry
+from .trace import TraceRecorder
 from .triage import remedy_for
 
 CORE_STAGES = ["repo_analysis", "requirements", "test_planning", "test_design", "test_generation"]
@@ -324,6 +326,8 @@ class Harness:
         self.runtime = runtime
         if AGENT_TOOLS and runtime is not None and getattr(runtime, "tool_provider", None) is None:
             runtime.tool_provider = HarnessToolbox(self._repo_context, self._build_files).tools_for
+        if runtime is not None and getattr(runtime, "recorder", None) is None:
+            runtime.recorder = TraceRecorder(self.run_dir / "trace.jsonl")
         self.view_path = self.run_dir / "run.json"
         self.view = (
             json.loads(self.view_path.read_text())
@@ -407,6 +411,7 @@ class Harness:
             "model_requests": {},
             "feedback": {},
             "approved": {},
+            "telemetry": configure_telemetry(),
             "budget": {
                 "charged": 0,
                 "calls": 0,

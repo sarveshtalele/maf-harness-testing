@@ -139,6 +139,16 @@ Driven through the browser pane against the reverse-engineering repository: star
 exposed two UI defects (raw exception shown twice; no hint that retrying is pointless), fixed as F38 and re-verified in the browser. A second pass, started
 without the raised cap, showed the harness's own daily-cap message correctly. A complete model-driven UI run needs gateway quota.
 
+## 4e. Observability tab on real data
+
+`maf-harness trace .harness_runs/final5-reverse` and the Observability tab (opened in a browser) reproduce the run's own numbers: 44 provider calls,
+1,154,828 tokens, 36 model runs, 6 skill loads (`repository-requirements`, `test-planning`, `test-design-generator` + `test-data-generator`,
+`generic-test-generator` + `test-data-generator`), 0 harness-tool calls, 16 human gates, 1 auto-fix / 25 build checks, 701 s wall time, and the
+requirement → case → file → result chain (25 passed / 9 failed, 22 requirements). This run predates `trace.jsonl`, so the tab reports *summary*
+detail. A full trace was checked on a scripted real-MAF run (skill load + harness tool call + four provider calls at 20 tokens each = 80 tokens = the
+accounted tokens); a partial trace merged into the real run's state correctly failed the *trace tokens match ledger* check (80 vs 1,154,828).
+The review also found the green FAIL banner (F41).
+
 ## 5. Token accounting
 
 * **Harness ledger** (`~/.maf-harness/usage`, default cap 50,000,000 per local day): 3,128,180 after `final3-reverse` (stopped, 712,805), `final3-petstore`

@@ -126,6 +126,14 @@ Import errors and build errors are facts, so the host answers them before asking
 **Measured:** on reverse the agents called none of the tools; the host layer did the work (25 build checks, 0 build failures, replayed gates flag 6 of 34
 generated files, each a real defect). Whether an agent-side call ever pays for its extra round trip is still open (`HARNESS_AGENT_TOOLS=off` allows A/B).
 
+### M10 — Observability and traceability ✅
+Per-run Observability tab and `maf-harness trace`, built on MAF middleware and the existing audit/state (design and guide: [OBSERVABILITY.md](OBSERVABILITY.md)):
+* `trace.jsonl` (model runs, provider calls with tokens and duration, tool calls with category, summarised arguments and duration);
+* report: stages, skills (origin, loads, scripts), tools (including never-used harness tools), timeline, requirement → case → file → result chain with the skills
+  that produced each link, integrity checks (assigned skills loaded, no unexpected tools, trace tokens = ledger tokens), Markdown/JSON export;
+* older runs render at summary level; optional OpenTelemetry export (`HARNESS_OTEL`), message content never captured.
+**Exit:** rendered from the real `final5-reverse` run and from a real-MAF scripted run in the browser; tests in `test_observability.py` and the UI browser suite.
+
 ### Next (⏭, in priority order)
 1. **Sandboxed execution** (container/VM adapter behind the existing `execute_plan` boundary) — required before any
    unattended or multi-tenant use. Local-process execution is explicitly *not* a sandbox.
@@ -159,6 +167,7 @@ generated files, each a real defect). Whether an agent-side call ever pays for i
 | Model repeats a rejected answer | High at temperature 0 | Wasted attempts (1.6M tokens in one session) | retry temperature schedule, forbidden-library list, actionable feedback |
 | Gateway credential exposure | Medium | Account abuse | env-only, never persisted, never forwarded to test commands; rotate the credential that was previously embedded |
 | MAF API drift (1.x) | Medium | Breakage | pinned versions, docs-gap assertion tests |
+| Trace and MAF spans diverge | Low | Misleading tab | the trace is written from MAF middleware; integrity check compares its tokens with the ledger; OpenTelemetry export is separate and optional |
 
 ## 8. Definition of done for "production-grade"
 

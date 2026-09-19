@@ -18,6 +18,7 @@ import uuid
 from pathlib import Path
 
 from .maf_runtime import MAFHarnessRuntime
+from .observability import build_report, render_markdown
 from .settings import API_KEY, BASE_URL, MODEL, SKILL_MODE, validate_gateway_settings
 from .skills_config import SKILL_NAMES
 from .skills_registry import lint_all, load_lock, tree_sha256, verify_lock
@@ -218,6 +219,14 @@ def main(argv: list[str] | None = None) -> int:
     verify = sub.add_parser("verify-run", help="Check a saved run's MAF harness and Agent Skills evidence")
     verify.add_argument("run_dir", type=Path)
     verify.add_argument("--skills-dir", type=Path, default=ROOT / "skills")
+    trace = sub.add_parser(
+        "trace",
+        help="Observability and traceability report for a saved run (skills, tools, cost, requirement chain)",
+    )
+    trace.add_argument("run_dir", type=Path)
+    trace.add_argument("--format", choices=["md", "json"], default="md")
+    trace.add_argument("--out", type=Path, help="Write the report to this file instead of stdout")
+    trace.add_argument("--skills-dir", type=Path, default=ROOT / "skills")
     lint = sub.add_parser(
         "lint-skills", help="Validate bundled skills against the Agent Skills specification"
     )
@@ -225,6 +234,19 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     if args.command == "verify-run":
         return verify_run(args.run_dir, args.skills_dir)
+    if args.command == "trace":
+        try:
+            report = build_report(args.run_dir, args.skills_dir)
+        except FileNotFoundError as exc:
+            _say(str(exc))
+            return 2
+        text = json.dumps(report, indent=2, default=str) if args.format == "json" else render_markdown(report)
+        if args.out:
+            args.out.write_text(text, encoding="utf-8")
+            _say(f"wrote {args.out}")
+        else:
+            sys.stdout.write(text)
+        return 0 if all(c["ok"] for c in report["checks"]) else 1
     if args.command == "lint-skills":
         reports = lint_all(args.skills_dir)
         for r in reports:

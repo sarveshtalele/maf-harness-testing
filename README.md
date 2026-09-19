@@ -15,7 +15,7 @@ Every model-authored artifact passes a human gate. Cloning, installing and runni
 Whatever the host can compute exactly (does this import resolve, what are this class's real constructors, which URL routes exist, does this file
 compile) is answered by deterministic **central tools** instead of a model retry — see [section 7](#7-central-tools-less-llm-guessing).
 Full design: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) · roadmap: [docs/IMPLEMENTATION_PLAN.md](docs/IMPLEMENTATION_PLAN.md) ·
-defect register: [docs/audit/ERRORS.md](docs/audit/ERRORS.md) · live runs: [docs/audit/E2E_RESULTS.md](docs/audit/E2E_RESULTS.md).
+defect register: [docs/audit/ERRORS.md](docs/audit/ERRORS.md) · live runs: [docs/audit/E2E_RESULTS.md](docs/audit/E2E_RESULTS.md) · observability: [docs/OBSERVABILITY.md](docs/OBSERVABILITY.md).
 
 ## 1. Prerequisites
 
@@ -57,6 +57,7 @@ Optional switches (defaults shown, all listed in `.env.example`):
 | `HARNESS_SKILL_MODE` | `progressive` | MAF `SkillsProvider`, or `preloaded` for models that cannot call tools |
 | `HARNESS_GENERATION_BATCH_SIZE`, `HARNESS_GENERATION_MAX_ATTEMPTS` | `3`, `3` | cases per model call, repair attempts per batch |
 | `HARNESS_EXECUTION_TIMEOUT` | `900` | seconds per install/test command |
+| `HARNESS_OTEL` | `off` | also export MAF's OpenTelemetry spans: `console` or `otlp` (needs `opentelemetry-sdk`); message content is never captured |
 
 ## 3. Run the application and open it in the browser
 
@@ -82,6 +83,7 @@ Walk-through:
 7. The **QA report** shows the verdict, per-case and per-requirement results, and **Files to update** (generated test files with line numbers, repository files
    with `file:line`, requirements still lacking a passing test). *Regenerate failing tests* sends only the failing cases back (≤3 rounds).
 8. On completion, download the **ZIP** (repository + generated tests + reports).
+9. Open the **Observability** tab of any run (also for saved runs) to see which skills and tools were invoked, what each stage cost, a timeline, and the requirement → case → file → result chain ([details](docs/OBSERVABILITY.md)).
 
 The sidebar shows the token meter: **a daily cap of 50,000,000 tokens (shared by all runs on this machine, resetting at local midnight) is the only harness limit** — no per-run, per-call or call-count limits. The ledger lives in `~/.maf-harness/usage` (override with `HARNESS_USAGE_DIR`); counting starts when it is first written.
 Your model gateway may enforce its own, separate quota; when it answers HTTP 429 the UI says so and retrying will not help until it resets (the harness never works around a provider limit).
@@ -93,6 +95,7 @@ uv run maf-harness run https://github.com/owner/repo                       # ans
 uv run maf-harness run https://github.com/owner/repo --auto-approve --auto-heal 2      # unattended; exit 0 pass / 1 fail / 2 inconclusive
 uv run maf-harness run https://github.com/owner/repo --app-url http://127.0.0.1:8080/app   # allow UI/E2E cases
 uv run maf-harness verify-run .harness_runs/<run>     # evidence that MAF harness + Agent Skills were really used
+uv run maf-harness trace .harness_runs/<run>          # skills, tools, cost and traceability report (--format json, --out FILE)
 uv run maf-harness run <repo> --run-dir .harness_runs/<run>   # an existing run directory resumes at its pending gate
 uv run maf-harness lint-skills                        # Agent Skills spec lint
 ```
@@ -110,7 +113,7 @@ uv run maf-harness lint-skills                        # Agent Skills spec lint
         harness-report/qa_report.md       the report
         harness-report/RUN_TESTS.md       exact install/run commands to reproduce
         harness-report/*.json             requirements, environment, plan, design, generation catalog, executions, audit.jsonl
-  workspace/  environment/  executions/  generation_attempts/  build_checks/  audit.jsonl  run.json
+  workspace/  environment/  executions/  generation_attempts/  build_checks/  trace.jsonl  audit.jsonl  run.json
 ```
 
 Verdicts: `PASS` (≥1 executed passing test, no failures) · `PASS_WITH_SKIPS` · `FAIL` · `INCONCLUSIVE` (setup failed, tools missing, or zero tests ran —

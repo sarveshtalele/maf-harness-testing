@@ -504,3 +504,25 @@ def test_missing_import_is_repaired_by_the_host_without_another_model_call(drive
     assert host.state["tooling"]["autofix"] == 1
     answer(decision="approve")
     assert host.state["artifacts"]["test_execution"]["qa_report"]["verdict"] == "PASS"
+
+
+def test_a_complete_workflow_run_yields_an_observability_report_with_the_full_traceability_chain(drive):
+    from maf_test_harness.observability import build_report
+
+    host, answer = drive(ScriptedStageRuntime())
+    to_execution_gate(host, answer)
+    answer(decision="approve")  # run the tests
+    report = build_report(host.run_dir, Path("skills"))
+    assert report["run"]["telemetry"]["mode"] == "off" and report["run"]["repo_url"].endswith("acme/demo")
+    assert report["totals"]["human_gates"] >= 8 and report["totals"]["stage_errors"] == 0
+    assert [s["stage"] for s in report["stages"]] == list(host.stages)
+    chain = report["traceability"]
+    assert chain["verdict"] == "PASS" and chain["case_status_counts"] == {"passed": 1}
+    only = chain["chain"][0]["cases"][0]
+    assert (
+        only["status"] == "passed"
+        and only["file"].startswith("tests/")
+        and only["title"] == "add returns sum"
+    )
+    lanes = {row["lane"] for row in report["timeline"]}
+    assert {"human", "host"} <= lanes
