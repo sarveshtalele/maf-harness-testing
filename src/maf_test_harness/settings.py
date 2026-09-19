@@ -3,6 +3,7 @@
 Credentials are never stored in source or the UI. Supply them through the launching
 environment (see ``.env.example``). Every tunable has a documented default.
 """
+
 from __future__ import annotations
 
 import os
@@ -17,10 +18,9 @@ MODEL = os.getenv("OPENAI_MODEL", "deepseek-v4-flash-global").strip()
 #                that cannot call tools; recorded in provenance as NOT using the MAF Agent Skills provider.
 SKILL_MODE = os.getenv("HARNESS_SKILL_MODE", "progressive").strip().lower()
 
-RUN_TOKEN_LIMIT = int(os.getenv("HARNESS_RUN_TOKEN_LIMIT", "1000000"))
-INPUT_TOKEN_LIMIT = int(os.getenv("HARNESS_INPUT_TOKEN_LIMIT", "200000"))
-CONTEXT_WINDOW_TOKENS = int(os.getenv("HARNESS_CONTEXT_WINDOW_TOKENS", "200000"))
-PROVIDER_CALL_LIMIT = int(os.getenv("HARNESS_PROVIDER_CALL_LIMIT", "300"))
+# The ONLY token limit: total tokens (input + output) one workflow run may spend across every model call.
+# There are deliberately no separate per-call input or provider-call-count limits.
+RUN_TOKEN_LIMIT = 2_000_000
 
 # Provider response cap, not the total workflow budget.
 MAX_OUTPUT_TOKENS = int(os.getenv("HARNESS_MAX_OUTPUT_TOKENS", "16384"))

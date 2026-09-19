@@ -40,7 +40,11 @@ target-version = "py311"
 extend-exclude = [".references", "skills"]
 
 [tool.ruff.lint]
-select = ["E4", "E7", "E9", "F", "I"]
+select = ["E", "W", "F", "I", "B", "UP", "SIM", "C4", "PIE", "RUF100"]
+ignore = ["E501", "B008", "SIM108", "SIM105", "C408"]
 
 [tool.ruff.lint.per-file-ignores]
-"src/maf_test_harness/workflow.py" = ["E402"]
+"tests/*" = ["B011", "SIM117"]
+
+[tool.ruff.format]
+quote-style = "double"

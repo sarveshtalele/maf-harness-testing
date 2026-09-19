@@ -16,19 +16,27 @@ def make(tmp_path, name, frontmatter, body="# T\n"):
 
 def test_all_bundled_skills_follow_the_agent_skills_spec():
     reports = lint_all(SKILLS)
-    assert len(reports) >= 8
+    assert [r.name for r in reports] == [
+        "generic-test-generator",
+        "repository-requirements",
+        "test-design-generator",
+        "test-planning",
+    ]
     assert [r.name for r in reports if not r.ok] == []
 
 
-@pytest.mark.parametrize(("frontmatter", "needle"), [
-    ("name: Bad_Name\ndescription: d", "name must be"),
-    ("name: a--b\ndescription: d", "name must be"),
-    ("name: other\ndescription: d", "must match directory"),
-    ("name: skill\ndescription: ''", "description is required"),
-    ("name: skill\ndescription: " + "x" * 1025, "1024"),
-    ("name: skill\ndescription: d\ncompatibility: " + "x" * 501, "compatibility"),
-    ("name: skill\ndescription: [unclosed", "valid YAML"),
-])
+@pytest.mark.parametrize(
+    ("frontmatter", "needle"),
+    [
+        ("name: Bad_Name\ndescription: d", "name must be"),
+        ("name: a--b\ndescription: d", "name must be"),
+        ("name: other\ndescription: d", "must match directory"),
+        ("name: skill\ndescription: ''", "description is required"),
+        ("name: skill\ndescription: " + "x" * 1025, "1024"),
+        ("name: skill\ndescription: d\ncompatibility: " + "x" * 501, "compatibility"),
+        ("name: skill\ndescription: [unclosed", "valid YAML"),
+    ],
+)
 def test_spec_violations_are_reported(tmp_path, frontmatter, needle):
     report = lint_skill(make(tmp_path, "skill", frontmatter))
     assert not report.ok and any(needle in e for e in report.errors)

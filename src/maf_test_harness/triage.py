@@ -1,0 +1,149 @@
+"""Failure triage: which files (and lines) to update, derived deterministically from execution evidence.
+
+Tracebacks and compiler output name files and lines. Each location is classified as a *generated test* location
+or a *repository source* location and every failing case is classified with simple, inspectable rules. The output
+is a work list, not a verdict about who is at fault: a failing assertion can mean an application defect or a wrong
+expectation, so the report says which of the two to check first.
+"""
+
+from __future__ import annotations
+
+import re
+from pathlib import PurePosixPath
+from typing import Any
+
+# path:line patterns emitted by pytest, javac/maven, jest/node, go, dotnet
+_LOCATION = re.compile(
+    r"""(?:File\s+"(?P<py>[^"]+)",\s+line\s+(?P<pyl>\d+))
+      |(?P<colon>[\w./\\$@-]+\.(?:py|java|kt|js|jsx|ts|tsx|mjs|go|cs|rb|php|rs)):\[?(?P<line>\d+)
+      |\((?P<jv>[\w$-]+\.(?:java|kt|cs)):(?P<jvl>\d+)\)""",
+    re.X,
+)
+
+_TEST_DEFECT = re.compile(
+    r"ImportError|ModuleNotFoundError|NameError|SyntaxError|IndentationError|fixture '.*' not found|collection failure|"
+    r"cannot find symbol|does not exist|has private access|cannot be applied|incompatible types|reached end of file|"
+    r"reading from stdin|No module named|package .* does not exist|is not abstract|unreported exception",
+    re.I,
+)
+_APP_SIGNAL = re.compile(
+    r"AssertionError|expected:|Expected|assert |toBe|toEqual|status (?:code )?(?:was|is) [45]\d\d", re.I
+)
+
+
+def locations(text: str) -> list[tuple[str, int]]:
+    found = []
+    for m in _LOCATION.finditer(text or ""):
+        path = m.group("py") or m.group("colon") or m.group("jv")
+        line = m.group("pyl") or m.group("line") or m.group("jvl")
+        if path and line:
+            found.append((path.replace("\\", "/"), int(line)))
+    return found
+
+
+def _match(path: str, candidates: list[str]) -> str | None:
+    """Map a reported path (absolute, workspace-relative or bare file name) to a known repository path."""
+    if any(
+        part in path
+        for part in ("site-packages", "node_modules", "/usr/lib", ".harness-venv", "/jdk", "/python3")
+    ):
+        return None
+    clean = path.split(".harness_runs/", 1)[-1]
+    for candidate in sorted(candidates, key=len, reverse=True):
+        if clean.endswith(candidate) or path.endswith(candidate):
+            return candidate
+    name = PurePosixPath(path).name
+    hits = [c for c in candidates if PurePosixPath(c).name == name]
+    return hits[0] if len(hits) == 1 else None
+
+
+def classify(message: str) -> str:
+    if _TEST_DEFECT.search(message):
+        return "test_defect"
+    return "check_application_then_expectation" if _APP_SIGNAL.search(message) else "needs_triage"
+
+
+ACTION = {
+    "test_defect": "Fix the generated test (wrong import/API/setup); use 'Regenerate failing tests' or edit the file.",
+    "check_application_then_expectation": (
+        "Check the application behavior at the source location first; if it is "
+        "intended, correct the expectation in the test, otherwise fix the source."
+    ),
+    "needs_triage": "Read the failure output and decide whether the test or the application is wrong.",
+}
+
+
+def build_updates(
+    cases: list[dict[str, Any]],
+    generated: list[dict[str, Any]],
+    source_files: list[str],
+    requirement_coverage: list[dict[str, Any]],
+    requirement_sources: dict[str, list[str]],
+    environment: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    test_paths = [f["path"] for f in generated]
+    tests, sources, gaps = [], [], []
+    for case in cases:
+        if case["status"] not in {"failed", "error", "not_executed"} or not case.get("message"):
+            continue
+        kind = classify(case["message"])
+        test_lines, source_lines = [], []
+        for path, line in locations(case["message"]):
+            if hit := _match(path, test_paths):
+                test_lines.append((hit, line))
+            elif hit := _match(path, source_files):
+                source_lines.append((hit, line))
+        # A test-defect always points at the generated test; the file is known even when no line was printed.
+        own = case.get("file")
+        if own and (kind == "test_defect" or not source_lines or test_lines):
+            lines = sorted({ln for p, ln in test_lines if p == own})
+            tests.append(
+                {
+                    "file": own,
+                    "lines": lines,
+                    "case_id": case["id"],
+                    "case": case["title"],
+                    "classification": kind,
+                    "detail": case["message"].strip().splitlines()[0][:240],
+                    "action": ACTION[kind],
+                }
+            )
+        for path, line in dict.fromkeys(source_lines):
+            sources.append(
+                {
+                    "file": path,
+                    "line": line,
+                    "case_id": case["id"],
+                    "case": case["title"],
+                    "classification": kind,
+                    "detail": case["message"].strip().splitlines()[0][:240],
+                    "action": ACTION["check_application_then_expectation"],
+                }
+            )
+    for req in requirement_coverage:
+        if req["state"] in {"untested", "not_executed"}:
+            gaps.append(
+                {
+                    "requirement_id": req["id"],
+                    "requirement": req["text"][:160],
+                    "state": req["state"],
+                    "source_files_to_cover": requirement_sources.get(req["id"], []),
+                    "action": (
+                        "Add a test case (and generated test file) for this requirement."
+                        if req["state"] == "untested"
+                        else "Run again after fixing the failing/uncompiled tests."
+                    ),
+                }
+            )
+    env = []
+    if environment and environment.get("missing_prerequisites"):
+        env = [
+            {"tool": t, "action": f"Install {t} on the host, then retry the environment stage."}
+            for t in environment["missing_prerequisites"]
+        ]
+    return {
+        "generated_test_files_to_update": tests,
+        "repository_files_to_review": sources,
+        "requirements_needing_tests": gaps,
+        "environment_actions": env,
+    }

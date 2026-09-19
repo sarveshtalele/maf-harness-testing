@@ -1,4 +1,5 @@
 """One event loop per UI session; every MAF client lives and closes on it."""
+
 from __future__ import annotations
 
 import asyncio
@@ -10,6 +11,7 @@ class RuntimeService:
     def __init__(self):
         self.loop = asyncio.new_event_loop()
         ready = Event()
+
         def run():
             asyncio.set_event_loop(self.loop)
             ready.set()
@@ -22,7 +24,8 @@ class RuntimeService:
             self.loop.run_until_complete(self.loop.shutdown_asyncgens())
             self.loop.run_until_complete(self.loop.shutdown_default_executor())
             self.loop.close()
-        self.thread = Thread(target=run, name='maf-runtime', daemon=True)
+
+        self.thread = Thread(target=run, name="maf-runtime", daemon=True)
         self.thread.start()
         ready.wait()
         self.active: Future | None = None
@@ -30,10 +33,10 @@ class RuntimeService:
     def submit(self, coroutine) -> Future:
         if self.loop.is_closed():
             coroutine.close()
-            raise RuntimeError('Runtime is closed. Resume the saved run with a new runtime.')
+            raise RuntimeError("Runtime is closed. Resume the saved run with a new runtime.")
         if self.active and not self.active.done():
             coroutine.close()
-            raise RuntimeError('An operation is already running.')
+            raise RuntimeError("An operation is already running.")
         self.active = asyncio.run_coroutine_threadsafe(coroutine, self.loop)
         return self.active
 

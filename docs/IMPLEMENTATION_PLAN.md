@@ -8,9 +8,10 @@ Status legend: ✅ delivered and verified in this repository · 🟡 delivered, 
 test suite for any technology stack, with an evidence-backed QA verdict.
 
 ```
-repo URL → clone/analyze → requirements → test plan → test design → test generation → run → QA report
-              (host)        (agent+skill)  (agent+skill)  (agent+skill)  (agent+skill)  (host)   (host)
-                └─ every arrow is a human gate; running code needs its own approval ─┘
+repo URL → clone/analyze → requirements → environment → test plan → test design → test generation → run → QA report + ZIP
+              (host)        (agent+skill)   (host, tool   (agent+skill)  (agent+skill)   (agent+skill)   (host,   (host)
+                                             approval)                                                     tool approval)
+                └─ every arrow is a human gate; installing and running code each need their own tool-call approval ─┘
 ```
 
 **Non-goals.** Replacing human judgement of requirements; proving program correctness; unattended execution of
@@ -27,6 +28,8 @@ untrusted code without a sandbox; supporting private repositories (needs credent
 | Skill fallback | `HARNESS_SKILL_MODE=preloaded` injects `SKILL.md` into instructions; recorded as `uses_maf_skills_provider: false` | Some models cannot call tools. The fallback is explicit, never silent. |
 | Determinism boundary | Host is deterministic (URLs, skill assignment + hashes, IDs, schemas, traceability, commands, verdict). Model output is not. `temperature=0` reduces variance, it does not create determinism. | Say what is and is not guaranteed. |
 | Test execution | Separate host step, adapters per ecosystem, argv-only commands, new immutable result dir per run, sanitized environment, timeout kills the process group | Untrusted code executes only after explicit approval; evidence cannot be overwritten. |
+| Isolation | Dependencies install into a venv / project `node_modules` / harness cache dirs after a tool-call approval; system tools are reported with install hints | Never mutate the host toolchain; approval before any network/installer side effect. |
+| Token budget | 2,000,000 tokens per run is the only limit | Predictable cost ceiling without throttling individual calls. |
 | Verdict | `PASS` needs fresh report evidence with ≥1 passing test and 0 failures; setup failure/blocked/zero tests → `INCONCLUSIVE`; skips → `PASS_WITH_SKIPS` | A green run must mean something. |
 
 ## 3. Architecture
@@ -65,7 +68,7 @@ Reproduce reported failures, inventory files, error table (`docs/audit/ERRORS.md
 `SkillsProvider`, two-phase priming (a tool-only turn loads the skill; the structured-output turn runs on the primed
 session — found necessary because some gateways skip tool calls when structured output is requested), three priming
 attempts, host-verified trace, provenance, explicit `preloaded` fallback, spec lint.
-**Exit:** 8 skills lint clean; live run shows `skill_loaded_via_maf: true` for every stage.
+**Exit:** the 4 assigned skills lint clean; live run shows `skill_loaded_via_maf: true` for every stage.
 
 ### M2 — Accurate test design for any stack and persona ✅
 Requirements now carry **actors**, categories, acceptance criteria, validation rules and explicit API contracts.
@@ -88,6 +91,18 @@ execution approval, app URL, provenance), GitHub Actions CI.
 ### M6 — Qualification against real targets 🟡
 Reverse-engineering-skill (Python CLI + generated HTML dashboard) and Petstore (Java EE 7) — see
 `docs/audit/E2E_RESULTS.md`. Needs a funded gateway key for repeatable nightly runs.
+
+### M7 — Isolation, design policy, deliverables ✅
+* **Environment stage:** requirements list *environment needs*; the host adds a deterministic plan (prerequisites with versions and install
+  hints, isolation strategy, exact commands). Dependencies are installed into a venv / project `node_modules` / cache-dir repositories only after a
+  tool-call approval; system tools are reported, never installed.
+* **Design policy:** unit-level cases required, every actor covered, every requirement covered or explained; generation cannot start before the design
+  is approved (asserted in `tests/test_policies.py`).
+* **Token policy:** one limit only — 2,000,000 tokens per workflow run.
+* **Compiled-language resilience:** uncompilable generated files are quarantined so the rest still run.
+* **Reports:** QA report lists the generated test files (with lines) and repository files (`file:line`) to update; ZIP of the complete repository with all
+  generated and executed tests plus evidence.
+* **Hygiene:** dead code/skills/scripts removed, strict ruff lint + format enforced in CI, full architecture documentation.
 
 ### Next (⏭, in priority order)
 1. **Sandboxed execution** (container/VM adapter behind the existing `execute_plan` boundary) — required before any
@@ -128,5 +143,6 @@ Reverse-engineering-skill (Python CLI + generated HTML dashboard) and Petstore (
 - [x] Tests are executed by the host with evidence-based verdicts; `INCONCLUSIVE` ≠ pass
 - [x] Credentials env-only; not forwarded; secrets scan clean
 - [x] CI: lint + unit + component + workflow e2e
+- [x] Isolated dependency install behind a tool-call approval; ZIP deliverable; files-to-update report
 - [ ] Sandbox adapter (blocks unattended/multi-tenant use)
 - [ ] Nightly live qualification with budget alarms

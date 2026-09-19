@@ -1,4 +1,5 @@
 """Streamlit UI for the autonomous, human-approved MAF test-engineering workflow."""
+
 from __future__ import annotations
 
 import json
@@ -21,7 +22,7 @@ RUNS = Path(os.getenv("HARNESS_RUNS_DIR") or ROOT / ".harness_runs")
 st.set_page_config(page_title="MAF Test Harness", page_icon="T", layout="wide")
 st.title("MAF Test Harness")
 st.caption(
-    "Repository analysis → requirements → test plan → test design → generated tests → host execution → QA report. "
+    "Repository analysis → requirements → isolated environment → test plan → test design → generated tests → host execution → QA report + ZIP. "
     "Every stage is reviewed by a human; running the tests needs its own explicit approval."
 )
 
@@ -29,6 +30,7 @@ st.caption(
 STAGE_LABELS = {
     "repo_analysis": "Repository Analysis",
     "requirements": "Requirements",
+    "environment_setup": "Environment Setup",
     "test_planning": "Test Planning",
     "test_design": "Test Design",
     "test_generation": "Test Generation",
@@ -110,20 +112,89 @@ def render_qa_report(artifact: dict, *, key_prefix: str) -> None:
     adapter_col.metric("Runner", qa.get("adapter") or "n/a")
     cases_col.metric("Cases", ", ".join(f"{k}: {v}" for k, v in qa["case_status_counts"].items()) or "0")
     if qa["verdict"] == "INCONCLUSIVE":
-        st.warning("Inconclusive is never a pass: tests did not run, setup failed, or no test evidence was produced.")
+        st.warning(
+            "Inconclusive is never a pass: tests did not run, setup failed, or no test evidence was produced."
+        )
     st.markdown("### Case results")
-    st.dataframe([{k: c[k] for k in ("title", "level", "actor", "priority", "status", "file")} for c in qa["cases"]],
-                 width="stretch", hide_index=True)
+    st.dataframe(
+        [{k: c[k] for k in ("title", "level", "actor", "priority", "status", "file")} for c in qa["cases"]],
+        width="stretch",
+        hide_index=True,
+    )
     st.markdown("### Requirement coverage")
-    st.dataframe([{k: r[k] for k in ("state", "category", "actor", "text")} for r in qa["requirement_coverage"]],
-                 width="stretch", hide_index=True)
+    st.dataframe(
+        [{k: r[k] for k in ("state", "category", "actor", "text")} for r in qa["requirement_coverage"]],
+        width="stretch",
+        hide_index=True,
+    )
     for failure in qa["failures"]:
         with st.expander(f"Failure: {failure['title']}"):
             st.code(failure["message"] or "(no message)", language="text")
-    st.download_button("Download QA report (Markdown)", artifact["markdown"], file_name="qa_report.md",
-                       mime="text/markdown", key=f"{key_prefix}-qa-md")
-    st.download_button("Download QA report (JSON)", json.dumps(qa, indent=2), file_name="qa_report.json",
-                       mime="application/json", key=f"{key_prefix}-qa-json")
+    updates = qa.get("updates", {})
+    st.markdown("### Files to update")
+    if not any(updates.values()):
+        st.success("Nothing to update.")
+    if updates.get("generated_test_files_to_update"):
+        st.caption("Generated test files")
+        st.dataframe(
+            [
+                {
+                    "file": u["file"],
+                    "lines": ", ".join(map(str, u["lines"])) or "whole file",
+                    "case": u["case"],
+                    "class": u["classification"],
+                    "what": u["detail"],
+                }
+                for u in updates["generated_test_files_to_update"]
+            ],
+            width="stretch",
+            hide_index=True,
+        )
+    if updates.get("repository_files_to_review"):
+        st.caption("Repository source files to review (file:line)")
+        st.dataframe(
+            [
+                {
+                    "file:line": f"{u['file']}:{u['line']}",
+                    "case": u["case"],
+                    "class": u["classification"],
+                    "evidence": u["detail"],
+                }
+                for u in updates["repository_files_to_review"]
+            ],
+            width="stretch",
+            hide_index=True,
+        )
+    if updates.get("requirements_needing_tests"):
+        st.caption("Requirements that still need a passing test")
+        st.dataframe(
+            [
+                {
+                    "requirement": u["requirement"],
+                    "state": u["state"],
+                    "cover": ", ".join(u["source_files_to_cover"][:4]),
+                }
+                for u in updates["requirements_needing_tests"]
+            ],
+            width="stretch",
+            hide_index=True,
+        )
+    for action in updates.get("environment_actions", []):
+        st.warning(action["action"])
+    st.download_button(
+        "Download QA report (Markdown)",
+        artifact["markdown"],
+        file_name="qa_report.md",
+        mime="text/markdown",
+        key=f"{key_prefix}-qa-md",
+    )
+    st.download_button(
+        "Download QA report (JSON)",
+        json.dumps(qa, indent=2),
+        file_name="qa_report.json",
+        mime="application/json",
+        key=f"{key_prefix}-qa-json",
+    )
 
 
 def render_generated_tests(artifact: dict, *, key_prefix: str, execution: dict | None = None) -> None:
@@ -196,7 +267,7 @@ with st.sidebar:
     st.caption(f"Model: {MODEL}")
     st.caption(f"Base URL: {BASE_URL or 'not configured'}")
     st.caption("API key: configured" if API_KEY else "API key: not configured")
-    st.caption(f"Workflow token budget: {RUN_TOKEN_LIMIT:,}")
+    st.caption(f"Token budget per workflow run: {RUN_TOKEN_LIMIT:,} (the only limit)")
 
     st.divider()
     st.subheader("Agent personas")
@@ -316,23 +387,27 @@ stage_col.metric("Current stage", stage_label(current_stage))
 calls_col.metric("Provider calls", state.get("budget", {}).get("calls", 0))
 
 if view.get("status") == "complete":
-    st.success(
-        state.get("completed_reason") or "Workflow complete."
-    )
+    zip_path = Path(state["deliverable_zip"]) if state.get("deliverable_zip") else None
+    if zip_path and zip_path.is_file():
+        st.download_button(
+            "Download repository + generated tests + reports (ZIP)",
+            zip_path.read_bytes(),
+            file_name=zip_path.name,
+            mime="application/zip",
+            key="download-deliverable",
+            type="primary",
+        )
+    st.success(state.get("completed_reason") or "Workflow complete.")
 elif view.get("status") == "stopped":
     st.warning("Workflow stopped. Approved artifacts remain available for download.")
-elif view.get("status") == "interrupted" or (
-    pending and pending.get("id") in view.get("consumed", [])
-):
+elif view.get("status") == "interrupted" or (pending and pending.get("id") in view.get("consumed", [])):
     st.error(
         "An operation was interrupted after approval. Automatic replay is blocked. "
         f"Recorded error: {view.get('error') or 'none'}. Inspect the audit and approved artifacts, then start a "
         "new run if necessary."
     )
 
-review_tab, artifacts_tab, tests_tab, audit_tab = st.tabs(
-    ["Review", "Artifacts", "Generated Tests", "Audit"]
-)
+review_tab, artifacts_tab, tests_tab, audit_tab = st.tabs(["Review", "Artifacts", "Generated Tests", "Audit"])
 
 with review_tab:
     if view.get("status") in {"complete", "stopped", "interrupted"}:
@@ -381,7 +456,10 @@ with review_tab:
             ):
                 respond({"decision": "approve"})
             if revise_col.button(
-                "Regenerate failing tests" if pending["stage"] == "test_execution" else "Revise this plan",
+                {
+                    "test_execution": "Regenerate failing tests",
+                    "environment_setup": "Re-check environment",
+                }.get(pending["stage"], "Revise this plan"),
                 key=request_id + "-revise",
                 width="stretch",
             ):
@@ -394,17 +472,43 @@ with review_tab:
                 respond({"decision": "stop"})
 
         elif kind == "tool":
-            if pending["stage"] == "test_execution":
+            if pending["stage"] in {"test_execution", "environment_setup"}:
                 st.warning(details.get("effects", ""))
-                st.code("\n".join(f"[{item['kind']}] {item['command']}" for item in details.get("steps", [])),
-                        language="bash")
-            render_json_ui({k: v for k, v in details.items() if k != "steps"}, key_prefix=f"tool-{request_id}")
+                if pending["stage"] == "environment_setup":
+                    st.markdown(f"**Isolation:** {details['isolation']}")
+                    st.dataframe(
+                        [
+                            {
+                                "tool": p["tool"],
+                                "installed": p["present"],
+                                "version": p["version"],
+                                "how to install": p["install_hint"],
+                            }
+                            for p in details.get("prerequisites", [])
+                        ],
+                        width="stretch",
+                        hide_index=True,
+                    )
+                st.code(
+                    "\n".join(f"[{item['kind']}] {item['command']}" for item in details.get("steps", [])),
+                    language="bash",
+                )
+            render_json_ui(
+                {k: v for k, v in details.items() if k not in {"steps", "prerequisites"}},
+                key_prefix=f"tool-{request_id}",
+            )
             approve_col, deny_col, skip_col, stop_col = st.columns(4)
-            if skip_col.button("Skip execution", key=request_id + "-skip", width="stretch",
-                               disabled=pending["stage"] != "test_execution"):
+            if skip_col.button(
+                "Skip",
+                key=request_id + "-skip",
+                width="stretch",
+                disabled=pending["stage"] not in {"test_execution", "environment_setup"},
+            ):
                 respond({"decision": "skip"})
             if approve_col.button(
-                "Run the tests here" if pending["stage"] == "test_execution" else "Approve repository inspection",
+                {"test_execution": "Run the tests here", "environment_setup": "Install in isolated env"}.get(
+                    pending["stage"], "Approve repository inspection"
+                ),
                 type="primary",
                 key=request_id + "-approve",
                 width="stretch",
@@ -441,13 +545,21 @@ with artifacts_tab:
                 )
 
 with tests_tab:
-    render_generated_tests(state.get("artifacts", {}).get("test_generation"), key_prefix="generated",
-                           execution=state.get("artifacts", {}).get("test_execution"))
+    render_generated_tests(
+        state.get("artifacts", {}).get("test_generation"),
+        key_prefix="generated",
+        execution=state.get("artifacts", {}).get("test_execution"),
+    )
 
 with audit_tab:
     st.subheader("MAF and skill provenance")
-    render_json_ui({"runtime": state.get("runtime_provenance", {}),
-                    "skills": state.get("skill_provenance", {}),
-                    "skill_tool_trace": state.get("skill_tool_trace", {}),
-                    "invocations": state.get("invocations", [])}, key_prefix="provenance")
+    render_json_ui(
+        {
+            "runtime": state.get("runtime_provenance", {}),
+            "skills": state.get("skill_provenance", {}),
+            "skill_tool_trace": state.get("skill_tool_trace", {}),
+            "invocations": state.get("invocations", []),
+        },
+        key_prefix="provenance",
+    )
     render_audit(harness)

@@ -1,4 +1,5 @@
 """Checkpointed autonomous MAF workflow with one human review gate per stage."""
+
 # NOTE: no `from __future__ import annotations` here; MAF inspects handler annotations at runtime.
 import asyncio
 import fcntl
@@ -6,9 +7,9 @@ import hashlib
 import json
 import os
 import re
+import shlex
 import traceback
 from pathlib import Path
-from threading import Event
 from typing import Any
 from uuid import uuid4
 
@@ -21,8 +22,10 @@ from agent_framework import (
     response_handler,
 )
 
-from .execution import export_tests
+from .environment import build_environment_plan, steps_from_plan
+from .execution import copy_repo, write_generated
 from .models import GeneratedFilesDraft, RequirementsDraft, TestDesignDraft, TestPlan
+from .packaging import build_deliverable
 from .personas import PERSONAS, persona_instructions
 from .qa_report import build_qa_report, design_cases, render_markdown
 from .repo_analyzer import (
@@ -31,13 +34,11 @@ from .repo_analyzer import (
     clone_repository,
     validate_github_url,
 )
-from .runners import RunPlan, Step, build_plan, execute_plan
+from .runners import RunPlan, Step, build_plan, execute_plan, execute_setup
 from .settings import (
     EXECUTION_TIMEOUT_SECONDS,
     GENERATION_BATCH_SIZE,
     GENERATION_MAX_ATTEMPTS,
-    INPUT_TOKEN_LIMIT,
-    PROVIDER_CALL_LIMIT,
     RUN_TOKEN_LIMIT,
 )
 from .skill_contracts import (
@@ -52,24 +53,24 @@ from .skill_contracts import (
 )
 from .stack import detect_stack
 
-MODEL_STAGES = ["repo_analysis", "requirements", "test_planning", "test_design", "test_generation"]
+CORE_STAGES = ["repo_analysis", "requirements", "test_planning", "test_design", "test_generation"]
+ENV_STAGE = "environment_setup"
 EXECUTION_STAGE = "test_execution"
-STAGES = MODEL_STAGES + [EXECUTION_STAGE]
-DEFAULT_RUN_TOKEN_LIMIT = RUN_TOKEN_LIMIT
-DEFAULT_INPUT_TOKEN_LIMIT = INPUT_TOKEN_LIMIT
+STAGES = [
+    "repo_analysis",
+    "requirements",
+    ENV_STAGE,
+    "test_planning",
+    "test_design",
+    "test_generation",
+    EXECUTION_STAGE,
+]
 TEST_GENERATION_BATCH_SIZE = GENERATION_BATCH_SIZE
 TEST_GENERATION_MAX_ATTEMPTS = GENERATION_MAX_ATTEMPTS
 MAX_HEAL_ROUNDS = 3
 MODEL_REPAIR_ATTEMPTS = 3  # host-validation repair loop for requirements/planning/design
 # Levels that need a running application; without one the design stage may only use in-process levels.
 LIVE_APP_LEVELS = {"ui", "e2e", "accessibility"}
-
-
-def required_inputs(stage: str, values: dict | None = None) -> dict:
-    """Compatibility shim: autonomous stages no longer require manual form inputs."""
-    if stage not in STAGES:
-        raise ValueError(f"Unknown workflow stage: {stage}")
-    return dict(values or {})
 
 
 def digest(value: Any) -> str:
@@ -86,10 +87,6 @@ def atomic_json(path: Path, data: dict):
 def _allowed_levels(state: dict[str, Any]) -> set[str]:
     base = {"unit", "integration", "api", "cli", "security", "performance"}
     return base | (LIVE_APP_LEVELS if state.get("app_url") else set())
-
-
-def approved_case_ids(design: dict[str, Any]) -> set[str]:
-    return {case["id"] for case in design_cases(design)}
 
 
 def _compact_requirements(source: dict[str, Any]) -> dict[str, Any]:
@@ -111,21 +108,23 @@ def _compact_design(design: dict[str, Any]) -> dict[str, Any]:
     cases: list[dict[str, Any]] = []
     for section in ("positive", "negative", "boundary", "validation", "contract"):
         for case in design.get(f"{section}_tests", []) or []:
-            cases.append({
-                "id": case.get("id"),
-                "type": section,
-                "title": case.get("title"),
-                "priority": case.get("priority"),
-                "level": case.get("level"),
-                "actor": case.get("actor"),
-                "target": case.get("target"),
-                "description": case.get("description", ""),
-                "preconditions": case.get("preconditions", []),
-                "data_notes": case.get("data_notes", ""),
-                "steps": case.get("steps", []),
-                "expected_result": case.get("expected_result"),
-                "traceability_links": case.get("traceability_links", []),
-            })
+            cases.append(
+                {
+                    "id": case.get("id"),
+                    "type": section,
+                    "title": case.get("title"),
+                    "priority": case.get("priority"),
+                    "level": case.get("level"),
+                    "actor": case.get("actor"),
+                    "target": case.get("target"),
+                    "description": case.get("description", ""),
+                    "preconditions": case.get("preconditions", []),
+                    "data_notes": case.get("data_notes", ""),
+                    "steps": case.get("steps", []),
+                    "expected_result": case.get("expected_result"),
+                    "traceability_links": case.get("traceability_links", []),
+                }
+            )
     return {"cases": cases, "gaps_report": design.get("gaps_report", {})}
 
 
@@ -142,9 +141,14 @@ def _generation_policy(repo: dict[str, Any], state: dict[str, Any] | None = None
         "existing_test_files": (repo.get("test_files") or [])[:30],
         "likely_test_directories": repo.get("likely_test_directories", []),
         "package_files": (repo.get("package_files") or [])[:30],
-        "stack": {k: stack.get(k) for k in ("primary", "test_runner", "web_ui", "http_service") if k in stack},
-        "live_app": {"available": bool(state.get("app_url")), "base_url_env_var": "BASE_URL",
-                     "rule": "UI/E2E tests must read the target from the BASE_URL environment variable; never hard-code a host."},
+        "stack": {
+            k: stack.get(k) for k in ("primary", "test_runner", "web_ui", "http_service") if k in stack
+        },
+        "live_app": {
+            "available": bool(state.get("app_url")),
+            "base_url_env_var": "BASE_URL",
+            "rule": "UI/E2E tests must read the target from the BASE_URL environment variable; never hard-code a host.",
+        },
         "level_rules": {
             "unit": "Isolated, no network; mock boundaries but never the behavior under test.",
             "integration": "Real collaborators in-process; temp dirs/in-memory DBs only.",
@@ -168,9 +172,17 @@ class StageExecutor(Executor):
         try:
             await self.host.enter(self.stage, state, ctx)
         except Exception as exc:
-            self.host.audit("stage_error", stage=self.stage, error=str(exc), trace=traceback.format_exc()[-1800:])
-            await self.host.ask(self.stage, "error", state, ctx,
-                                title="Stage failed; approved artifacts retained", error=str(exc))
+            self.host.audit(
+                "stage_error", stage=self.stage, error=str(exc), trace=traceback.format_exc()[-1800:]
+            )
+            await self.host.ask(
+                self.stage,
+                "error",
+                state,
+                ctx,
+                title="Stage failed; approved artifacts retained",
+                error=str(exc),
+            )
 
     @response_handler
     async def answer(self, original_request: dict, response: dict, ctx: WorkflowContext[dict, dict]):
@@ -180,71 +192,56 @@ class StageExecutor(Executor):
 class Harness:
     """Checkpointed autonomous MAF workflow with one human review gate per stage."""
 
-    @staticmethod
-    def run_dir_parent(run_dir: Path) -> Path:
-        return Path(run_dir).resolve().parent
-
-    def __init__(self, run_dir: Path, *, skills_root: Path, runtime=None, execute: bool = True,
-                 cache_dir: Path | None = None):
-        self.stages = list(STAGES if execute else MODEL_STAGES)
-        self.cache_dir = (cache_dir or self.run_dir_parent(run_dir) / ".harness_cache").resolve()
+    def __init__(
+        self,
+        run_dir: Path,
+        *,
+        skills_root: Path,
+        runtime=None,
+        execute: bool = True,
+        cache_dir: Path | None = None,
+    ):
+        self.stages = list(STAGES if execute else CORE_STAGES)
+        self.cache_dir = (cache_dir or Path(run_dir).resolve().parent / ".harness_cache").resolve()
         self.run_dir = run_dir.resolve()
         self.run_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
         self.skills_root = skills_root.resolve()
         self.runtime = runtime
-        self.cancel_event = Event()
         self.view_path = self.run_dir / "run.json"
-        self.view = json.loads(self.view_path.read_text()) if self.view_path.exists() else {
-            "version": 2,
-            "status": "new",
-            "pending": None,
-            "consumed": [],
-            "checkpoint_id": None,
-        }
-        if self.view.get("version") not in {1, 2}:
-            raise ValueError("Unsupported saved workflow version. Start a new run.")
-        if self.view.get("version") == 1 and self.view.get("status") != "new":
-            raise ValueError("This saved run uses the pre-autonomous workflow. Start a new run with the updated harness.")
+        self.view = (
+            json.loads(self.view_path.read_text())
+            if self.view_path.exists()
+            else {
+                "status": "new",
+                "pending": None,
+                "consumed": [],
+                "checkpoint_id": None,
+            }
+        )
         self.state = self.view.get("state", {})
-        migrated = self._upgrade_saved_state()
-        if migrated:
+        if self._sync_budget_limit():
             self.save()
         self.storage = FileCheckpointStorage(self.run_dir / "checkpoints")
         executors = [StageExecutor(stage, self) for stage in self.stages]
         builder = WorkflowBuilder(
             start_executor=executors[0], name="maf-test-harness", checkpoint_storage=self.storage
         )
-        for current, following in zip(executors, executors[1:]):
+        for current, following in zip(executors, executors[1:], strict=False):
             builder.add_edge(current, following)
         if EXECUTION_STAGE in self.stages:  # human-approved heal loop: failing tests go back to generation
             builder.add_edge(executors[-1], executors[self.stages.index("test_generation")])
         self.workflow = builder.build()
         self._restored = False
 
-    def _upgrade_saved_state(self) -> bool:
+    def _sync_budget_limit(self) -> bool:
+        """Saved runs adopt the current per-run token limit (the only limit)."""
         changed = False
-        if self.view.get("version") == 1 and self.view.get("status") == "new":
-            self.view["version"] = 2
-            changed = True
-        holders = [self.view.get("state")]
         pending = self.view.get("pending")
-        if isinstance(pending, dict):
-            holders.append(pending.get("state"))
-        for holder in holders:
-            if not isinstance(holder, dict):
-                continue
-            budget = holder.get("budget")
-            if not isinstance(budget, dict):
-                continue
-            expected = {
-                "limit": DEFAULT_RUN_TOKEN_LIMIT,
-                "input_limit": DEFAULT_INPUT_TOKEN_LIMIT,
-                "call_limit": PROVIDER_CALL_LIMIT,
-            }
-            for key, value in expected.items():
-                if int(budget.get(key, value)) != value:
-                    budget[key] = value
-                    changed = True
+        for holder in (self.view.get("state"), pending.get("state") if isinstance(pending, dict) else None):
+            budget = holder.get("budget") if isinstance(holder, dict) else None
+            if isinstance(budget, dict) and budget.get("limit") != RUN_TOKEN_LIMIT:
+                budget["limit"] = RUN_TOKEN_LIMIT
+                changed = True
         return changed
 
     def save(self):
@@ -253,11 +250,19 @@ class Harness:
 
     def audit(self, event: str, **details):
         with (self.run_dir / "audit.jsonl").open("a", encoding="utf-8") as stream:
-            stream.write(json.dumps({
-                "event": event,
-                "at": __import__("datetime").datetime.now(__import__("datetime").timezone.utc).isoformat(),
-                **details,
-            }, default=str) + "\n")
+            stream.write(
+                json.dumps(
+                    {
+                        "event": event,
+                        "at": __import__("datetime")
+                        .datetime.now(__import__("datetime").timezone.utc)
+                        .isoformat(),
+                        **details,
+                    },
+                    default=str,
+                )
+                + "\n"
+            )
 
     async def _collect(self, result):
         requests = result.get_request_info_events()
@@ -281,9 +286,12 @@ class Harness:
         if self.view["status"] != "new":
             raise ValueError("Run already started. Resume its pending request.")
         _, _, _, ref = validate_github_url(repo_url, with_ref=True)
-        if app_url is not None and not re.fullmatch(r"https?://(?:localhost|127\.0\.0\.1)(?::\d+)?(?:/\S*)?", app_url.strip()):
-            raise ValueError("app_url must be a local http(s) URL such as http://localhost:8080 (tests run on this host).")
-        self.view["version"] = 2
+        if app_url is not None and not re.fullmatch(
+            r"https?://(?:localhost|127\.0\.0\.1)(?::\d+)?(?:/\S*)?", app_url.strip()
+        ):
+            raise ValueError(
+                "app_url must be a local http(s) URL such as http://localhost:8080 (tests run on this host)."
+            )
         self.state = {
             "repo_url": repo_url.strip(),
             "repo_ref": ref,
@@ -296,12 +304,10 @@ class Harness:
             "feedback": {},
             "approved": {},
             "budget": {
-                "limit": DEFAULT_RUN_TOKEN_LIMIT,
+                "limit": RUN_TOKEN_LIMIT,
                 "charged": 0,
                 "calls": 0,
                 "reported_tokens": 0,
-                "input_limit": DEFAULT_INPUT_TOKEN_LIMIT,
-                "call_limit": PROVIDER_CALL_LIMIT,
             },
         }
         result = await self.workflow.run(self.state)
@@ -354,8 +360,12 @@ class Harness:
         request["hash"] = digest(request)
         await ctx.request_info(request, dict, request_id=request_id)
         self.audit(
-            "requested", request_id=request_id, stage=stage, kind=kind,
-            details=details, request_hash=request["hash"]
+            "requested",
+            request_id=request_id,
+            stage=stage,
+            kind=kind,
+            details=details,
+            request_hash=request["hash"],
         )
 
     async def enter(self, stage, state, ctx):
@@ -378,6 +388,9 @@ class Harness:
         state["active_stage"] = stage
         self.state = state
         self.save()
+        if stage == ENV_STAGE:
+            await self.plan_environment(state, ctx)
+            return
         if stage == EXECUTION_STAGE:
             await self.plan_execution(state, ctx)
             return
@@ -419,6 +432,10 @@ class Harness:
                 if decision == "revise" and stage == EXECUTION_STAGE:
                     await self.heal(state, str(response.get("feedback", "")).strip(), ctx)
                     return
+                if decision == "revise" and stage == ENV_STAGE:  # e.g. after installing a missing system tool
+                    state["artifacts"].pop(stage, None)
+                    await self.plan_environment(state, ctx)
+                    return
                 if decision == "revise":
                     feedback = str(response.get("feedback", "")).strip()
                     if not feedback:
@@ -427,7 +444,7 @@ class Harness:
                     if stage == "test_generation":
                         state.pop("accepted_generation_batches", None)
                         state.pop("heal", None)
-                    for downstream in self.stages[self.stages.index(stage) + 1:]:
+                    for downstream in self.stages[self.stages.index(stage) + 1 :]:
                         state["artifacts"].pop(downstream, None)
                         state.get("approved", {}).pop(downstream, None)
                         state["sessions"].pop(downstream, None)
@@ -454,7 +471,7 @@ class Harness:
                 )
                 if stage == self.stages[-1]:
                     state["completed_reason"] = self._completion_reason(state, stage)
-                    await ctx.yield_output(state)
+                    await self._finish(state, ctx)
                 else:
                     await ctx.send_message(state)
                 return
@@ -471,18 +488,32 @@ class Harness:
                 raise ValueError("Explicit tool approval is required.")
             if decision == "skip" and stage == EXECUTION_STAGE:
                 state["artifacts"][stage] = self._execution_artifact(state, None)
-                state["completed_reason"] = "Test execution was skipped by the reviewer; generated tests were not run."
+                state["completed_reason"] = (
+                    "Test execution was skipped by the reviewer; generated tests were not run."
+                )
                 self.audit("execution_skipped", request_id=request["id"])
-                await ctx.yield_output(state)
+                await self._finish(state, ctx)
+                return
+            if decision == "skip" and stage == ENV_STAGE:
+                self.audit("environment_skipped", request_id=request["id"])
+                await self.review(
+                    stage, self._environment_artifact(state, {"status": "skipped", "steps": []}), state, ctx
+                )
                 return
             if decision == "skip":
-                raise ValueError("Only test execution can be skipped.")
+                raise ValueError("Only environment setup and test execution can be skipped.")
+            if stage == ENV_STAGE and decision == "approve":
+                await self.run_environment(state, request, ctx)
+                return
             if stage == EXECUTION_STAGE and decision == "approve":
                 await self.run_execution(state, request, ctx)
                 return
             if decision == "deny":
                 await self.ask(
-                    stage, "error", state, ctx,
+                    stage,
+                    "error",
+                    state,
+                    ctx,
                     title="Action denied",
                     error="Nothing was accessed or executed. Retry to be asked again, or stop the workflow.",
                 )
@@ -495,8 +526,9 @@ class Harness:
             artifact = await asyncio.to_thread(
                 analyze_repository, self.run_dir / "repo", state["repo_url"], repo_name
             )
-            state["stack"] = (await asyncio.to_thread(
-                detect_stack, self.run_dir / "repo", artifact.languages)).to_dict()
+            state["stack"] = (
+                await asyncio.to_thread(detect_stack, self.run_dir / "repo", artifact.languages)
+            ).to_dict()
             state["evidence"] = build_repository_evidence(
                 self.run_dir / "repo", max_files=60, max_total_chars=120_000
             )
@@ -513,69 +545,218 @@ class Harness:
                 error=str(exc),
             )
 
+    async def _finish(self, state: dict, ctx) -> None:
+        """Package the repository with all generated tests plus the evidence, then end the workflow."""
+        if "test_generation" in state["artifacts"]:
+            state["deliverable_zip"] = str(await asyncio.to_thread(build_deliverable, self.run_dir, state))
+            self.audit("deliverable_created", path=state["deliverable_zip"])
+        await ctx.yield_output(state)
+
     def _completion_reason(self, state: dict, stage: str) -> str:
         if stage == EXECUTION_STAGE:
             qa = state["artifacts"][EXECUTION_STAGE]["qa_report"]
-            return (f"QA verdict {qa['verdict']} (execution {qa['execution_status']}). "
-                    "Report saved as qa_report.json / qa_report.md in the run directory.")
-        return ("Test source generated and statically validated against every approved design case. "
-                "This run was configured without the execution stage; tests were not run.")
+            return (
+                f"QA verdict {qa['verdict']} (execution {qa['execution_status']}). "
+                "Report saved as qa_report.json / qa_report.md in the run directory."
+            )
+        return (
+            "Test source generated and statically validated against every approved design case. "
+            "This run was configured without the execution stage; tests were not run."
+        )
 
     def _execution_artifact(self, state: dict, report: dict | None) -> dict:
         arts = state["artifacts"]
-        skill_checks = {stage: trace.get("skill_loaded_via_maf")
-                        for stage, trace in state.get("skill_tool_trace", {}).items()}
+        skill_checks = {
+            stage: trace.get("skill_loaded_via_maf")
+            for stage, trace in state.get("skill_tool_trace", {}).items()
+        }
         qa = build_qa_report(
-            repo=arts["repo_analysis"], requirements=arts["requirements"], design=arts["test_design"],
-            generation=arts["test_generation"], execution=report, stack=state.get("stack"),
-            provenance={"runtime": state.get("runtime_provenance"), "skills": state.get("skill_provenance"),
-                        "skill_loaded_via_maf_tool": skill_checks, "budget": state.get("budget")})
+            repo=arts["repo_analysis"],
+            requirements=arts["requirements"],
+            design=arts["test_design"],
+            generation=arts["test_generation"],
+            execution=report,
+            stack=state.get("stack"),
+            environment=state.get("environment", {}).get("plan"),
+            provenance={
+                "runtime": state.get("runtime_provenance"),
+                "skills": state.get("skill_provenance"),
+                "skill_loaded_via_maf_tool": skill_checks,
+                "budget": state.get("budget"),
+            },
+        )
         execution = dict(report or {"status": "not_run"})
+        environment = state.get("environment", {})
+        qa["environment"] = {
+            "status": environment.get("status", "not_planned"),
+            "ecosystem": environment.get("plan", {}).get("ecosystem"),
+        }
         return {"qa_report": qa, "execution": execution, "markdown": render_markdown(qa)}
+
+    @property
+    def workspace(self) -> Path:
+        return self.run_dir / "workspace"
+
+    async def _ensure_workspace(self) -> Path:
+        """One persistent workspace per run: repository copy + isolated environment + generated tests."""
+        if not self.workspace.exists():
+            await asyncio.to_thread(copy_repo, self.run_dir / "repo", self.workspace)
+        return self.workspace
+
+    def _environment_artifact(self, state: dict, report: dict) -> dict:
+        plan = state["environment"]["plan"]
+        return {
+            "status": report["status"],
+            "ecosystem": plan["ecosystem"],
+            "isolation": plan["isolation"],
+            "prerequisites": plan["prerequisites"],
+            "notes": plan["notes"],
+            "report": report,
+            "installed_steps": [s["name"] for s in report.get("steps", [])],
+        }
+
+    async def plan_environment(self, state: dict, ctx) -> None:
+        """Show what must be installed and how (isolated); nothing is installed before approval."""
+        await self._ensure_workspace()
+        stack = await asyncio.to_thread(detect_stack, self.workspace)
+        plan = await asyncio.to_thread(
+            build_environment_plan, stack, self.workspace, self.cache_dir, EXECUTION_TIMEOUT_SECONDS
+        )
+        state["environment"] = {"plan": plan, "hash": digest(plan), "status": "planned"}
+        if (
+            plan["missing_prerequisites"] or not plan["steps"]
+        ):  # nothing installable: report, let a human decide
+            report = {"status": "blocked" if plan["missing_prerequisites"] else "not_needed", "steps": []}
+            state["environment"]["status"] = report["status"]
+            await self.review(ENV_STAGE, self._environment_artifact(state, report), state, ctx)
+            return
+        await self.ask(
+            ENV_STAGE,
+            "tool",
+            state,
+            ctx,
+            title="Approve creating an isolated environment and installing dependencies",
+            details={
+                "tool": "install_dependencies",
+                "plan_hash": state["environment"]["hash"],
+                "ecosystem": plan["ecosystem"],
+                "isolation": plan["isolation"],
+                "workspace": str(self.workspace),
+                "prerequisites": plan["prerequisites"],
+                "steps": [
+                    {"name": st["name"], "kind": st["kind"], "command": shlex.join(st["argv"])}
+                    for st in plan["steps"]
+                ],
+                "effects": (
+                    "Downloads and installs the repository's dependencies into the isolated location above "
+                    "(network access; package installers run). System tools are never installed by the "
+                    "harness. Model credentials are not passed to these commands."
+                ),
+            },
+        )
+
+    async def run_environment(self, state: dict, request: dict, ctx) -> None:
+        info = state["environment"]
+        if request["details"].get("plan_hash") != info["hash"]:
+            raise ValueError("Environment plan changed after it was shown for approval.")
+        attempt = state["environment_attempts"] = state.get("environment_attempts", 0) + 1
+        self.audit("environment_started", request_id=request["id"], plan_hash=info["hash"])
+        report = await asyncio.to_thread(
+            execute_setup,
+            steps_from_plan(info["plan"]),
+            self.workspace,
+            self.run_dir / "environment" / f"attempt-{attempt}",
+        )
+        info["status"] = report["status"]
+        self.audit("environment_completed", status=report["status"], warnings=report.get("warnings"))
+        await self.review(ENV_STAGE, self._environment_artifact(state, report), state, ctx)
 
     async def plan_execution(self, state: dict, ctx) -> None:
         arts = state["artifacts"]
-        generated, design = arts["test_generation"], arts["test_design"]
+        generated = arts["test_generation"]
         attempt = state["execution_attempts"] = state.get("execution_attempts", 0) + 1
-        workspace = self.run_dir / "workspaces" / f"attempt-{attempt}"
-        await asyncio.to_thread(export_tests, self.run_dir / "repo", generated, approved_case_ids(design), workspace)
+        workspace = await self._ensure_workspace()
+        state["workspace_generated"] = await asyncio.to_thread(
+            write_generated,
+            workspace,
+            generated["files"],
+            self.run_dir / "repo",
+            state.get("workspace_generated"),
+        )
         stack = await asyncio.to_thread(detect_stack, workspace)
-        plan = build_plan(stack, workspace, generated["files"], cache_dir=self.cache_dir,
-                          timeout=EXECUTION_TIMEOUT_SECONDS)
+        env_ready = state.get("environment", {}).get("status") == "ready"
+        plan = build_plan(
+            stack,
+            workspace,
+            generated["files"],
+            cache_dir=self.cache_dir,
+            timeout=EXECUTION_TIMEOUT_SECONDS,
+            env_ready=env_ready,
+        )
         if state.get("app_url"):
             for step in plan.steps:
                 if step.kind == "test":
                     step.env["BASE_URL"] = state["app_url"]
         plan_dict = plan.to_dict()
-        state["execution_plan"] = {"workspace": str(workspace), "plan": plan_dict, "hash": digest(plan_dict),
-                                   "attempt": attempt}
+        state["execution_plan"] = {
+            "workspace": str(workspace),
+            "plan": plan_dict,
+            "hash": digest(plan_dict),
+            "attempt": attempt,
+        }
         if plan.blocked_reason:  # nothing to approve: record an honest inconclusive report
-            report = await asyncio.to_thread(execute_plan, plan, workspace,
-                                             self.run_dir / "executions" / f"attempt-{attempt}")
+            report = await asyncio.to_thread(
+                execute_plan, plan, workspace, self.run_dir / "executions" / f"attempt-{attempt}"
+            )
             await self.review(EXECUTION_STAGE, self._execution_artifact(state, report), state, ctx)
             return
-        import shlex
         await self.ask(
-            EXECUTION_STAGE, "tool", state, ctx, title="Approve running the generated tests on this machine",
+            EXECUTION_STAGE,
+            "tool",
+            state,
+            ctx,
+            title="Approve running the generated tests on this machine",
             details={
-                "tool": "run_generated_tests", "plan_hash": state["execution_plan"]["hash"],
-                "adapter": plan.adapter, "workspace": str(workspace), "app_url": state.get("app_url"),
-                "steps": [{"name": st.name, "kind": st.kind, "command": shlex.join(st.argv)} for st in plan.steps],
-                "effects": ("Installs dependencies and runs the generated tests as your user; repository code "
-                            "executes. Local process only, NOT a security sandbox. Model credentials are not "
-                            "passed to these commands."),
-            })
+                "tool": "run_generated_tests",
+                "plan_hash": state["execution_plan"]["hash"],
+                "adapter": plan.adapter,
+                "workspace": str(workspace),
+                "app_url": state.get("app_url"),
+                "environment": "ready (isolated, installed earlier)"
+                if env_ready
+                else "not prepared: setup steps included",
+                "steps": [
+                    {"name": st.name, "kind": st.kind, "command": shlex.join(st.argv)} for st in plan.steps
+                ],
+                "effects": (
+                    "Runs the generated tests as your user; repository code executes. Local process only, "
+                    "NOT a security sandbox. Model credentials are not passed to these commands."
+                ),
+            },
+        )
 
     async def run_execution(self, state: dict, request: dict, ctx) -> None:
         info = state["execution_plan"]
         if request["details"].get("plan_hash") != info["hash"]:
             raise ValueError("Execution plan changed after it was shown for approval.")
-        plan = RunPlan(adapter=info["plan"]["adapter"], steps=[Step(**st) for st in info["plan"]["steps"]],
-                       notes=info["plan"].get("notes", []))
+        plan = RunPlan(
+            adapter=info["plan"]["adapter"],
+            steps=[Step(**st) for st in info["plan"]["steps"]],
+            notes=info["plan"].get("notes", []),
+        )
         out_dir = self.run_dir / "executions" / f"attempt-{info['attempt']}"
-        self.audit("execution_started", request_id=request["id"], adapter=plan.adapter, plan_hash=info["hash"])
-        report = await asyncio.to_thread(execute_plan, plan, Path(info["workspace"]), out_dir)
-        self.audit("execution_completed", adapter=plan.adapter, status=report["status"], summary=report.get("summary"))
+        self.audit(
+            "execution_started", request_id=request["id"], adapter=plan.adapter, plan_hash=info["hash"]
+        )
+        report = await asyncio.to_thread(
+            execute_plan, plan, Path(info["workspace"]), out_dir, state.get("workspace_generated")
+        )
+        self.audit(
+            "execution_completed",
+            adapter=plan.adapter,
+            status=report["status"],
+            summary=report.get("summary"),
+        )
         await self.review(EXECUTION_STAGE, self._execution_artifact(state, report), state, ctx)
 
     async def heal(self, state: dict, feedback: str, ctx) -> None:
@@ -588,15 +769,20 @@ class Harness:
         if not failed:
             raise ValueError("No failing or unexecuted tests to regenerate; approve or stop instead.")
         state["heal_rounds"] = rounds + 1
-        evidence = "\n".join(f"- {c['id']} ({c['title']}): {c['status']} {c['message'][:500]}" for c in failed)
+        evidence = "\n".join(
+            f"- {c['id']} ({c['title']}): {c['status']} {c['message'][:500]}" for c in failed
+        )
         state.setdefault("feedback", {})["test_generation"] = (
             (feedback + "\n" if feedback else "")
             + "Fix ONLY these failing generated tests from the execution evidence. Never weaken or delete "
-              "assertions to make them pass; if the application is wrong, keep the assertion.\n" + evidence)
+            "assertions to make them pass; if the application is wrong, keep the assertion.\n" + evidence
+        )
         failed_ids = {c["id"] for c in failed}
         state["heal"] = {"failed_case_ids": sorted(failed_ids), "round": state["heal_rounds"]}
         batches = state.get("accepted_generation_batches", {}).get("batches", {})
-        for key in [k for k, b in batches.items() if failed_ids & {i for f in b["files"] for i in f["case_ids"]}]:
+        for key in [
+            k for k, b in batches.items() if failed_ids & {i for f in b["files"] for i in f["case_ids"]}
+        ]:
             batches.pop(key)
         for stage in ("test_generation", EXECUTION_STAGE):
             state["artifacts"].pop(stage, None)
@@ -607,7 +793,6 @@ class Harness:
     async def model(self, stage, state, ctx):
         if self.runtime is None:
             raise ValueError("Configure API key/model before running this stage, then retry.")
-
 
         if stage == "requirements":
             response_format = RequirementsDraft
@@ -652,8 +837,10 @@ class Harness:
                     "repository_evidence": state.get("evidence", ""),
                     "evidence_file_paths": evidence_paths if stage == "requirements" else None,
                     "stack_profile": state.get("stack", {}),
-                    "live_app": {"available": bool(state.get("app_url")),
-                                 "allowed_test_levels": sorted(_allowed_levels(state))},
+                    "live_app": {
+                        "available": bool(state.get("app_url")),
+                        "allowed_test_levels": sorted(_allowed_levels(state)),
+                    },
                     "revision_feedback": state.get("feedback", {}).get(stage),
                     "repair_feedback": repair or None,
                     "output_contract": schema,
@@ -691,8 +878,10 @@ class Harness:
                 self.audit("stage_repair", stage=stage, attempt=attempt, error=str(exc)[:600])
                 if attempt == MODEL_REPAIR_ATTEMPTS:
                     raise
-                repair = (f"Attempt {attempt} was rejected by host validation: {str(exc)[:900]}. Return a corrected "
-                          "complete JSON object that fixes exactly this problem and keeps everything else valid.")
+                repair = (
+                    f"Attempt {attempt} was rejected by host validation: {str(exc)[:900]}. Return a corrected "
+                    "complete JSON object that fixes exactly this problem and keeps everything else valid."
+                )
                 continue
             break
         await self.review(stage, artifact, state, ctx)
@@ -706,11 +895,17 @@ class Harness:
             raise ValueError("Approved test design contains no actionable case IDs.")
 
         self.state = state
-        signature = digest({"cases": cases, "repo": state["artifacts"]["repo_analysis"],
-                            "requirements": state["artifacts"].get("requirements"),
-                            "plan": state["artifacts"].get("test_planning"),
-                            "evidence": state.get("evidence"), "batch_size": TEST_GENERATION_BATCH_SIZE,
-                            "skill": (self.skills_root / SKILL_NAMES["test_generation"] / "SKILL.md").read_text()})
+        signature = digest(
+            {
+                "cases": cases,
+                "repo": state["artifacts"]["repo_analysis"],
+                "requirements": state["artifacts"].get("requirements"),
+                "plan": state["artifacts"].get("test_planning"),
+                "evidence": state.get("evidence"),
+                "batch_size": TEST_GENERATION_BATCH_SIZE,
+                "skill": (self.skills_root / SKILL_NAMES["test_generation"] / "SKILL.md").read_text(),
+            }
+        )
         cache = state.setdefault("accepted_generation_batches", {})
         if cache.get("signature") != signature:
             cache.clear()
@@ -727,14 +922,19 @@ class Harness:
 
         total_batches = (len(cases) + TEST_GENERATION_BATCH_SIZE - 1) // TEST_GENERATION_BATCH_SIZE
         for batch_index, start in enumerate(range(0, len(cases), TEST_GENERATION_BATCH_SIZE), 1):
-            batch = cases[start:start + TEST_GENERATION_BATCH_SIZE]
+            batch = cases[start : start + TEST_GENERATION_BATCH_SIZE]
             batch_ids = {str(case["id"]) for case in batch}
             requirements = state["artifacts"].get("requirements", {})
             linked_ids = {link["id"] for case in batch for link in case.get("traceability_links", [])}
-            preferred = [path for req in requirements.get("requirement_model", {}).get("requirements", [])
-                         if req.get("id") in linked_ids for path in req.get("source_files", [])]
-            evidence = build_repository_evidence(self.run_dir / "repo", max_files=16,
-                                                 max_total_chars=40_000, preferred_paths=preferred)
+            preferred = [
+                path
+                for req in requirements.get("requirement_model", {}).get("requirements", [])
+                if req.get("id") in linked_ids
+                for path in req.get("source_files", [])
+            ]
+            evidence = build_repository_evidence(
+                self.run_dir / "repo", max_files=16, max_total_chars=40_000, preferred_paths=preferred
+            )
             repair_feedback = ""
             accepted = cache["batches"].get(str(batch_index))
             if accepted is not None:
@@ -796,13 +996,20 @@ class Harness:
                     attempt_dir.mkdir(exist_ok=True)
                     attempt_path = attempt_dir / f"batch-{batch_index:02d}-attempt-{uuid4().hex}.json"
                     atomic_json(attempt_path, {"batch": batch_index, "attempt": attempt, "result": result})
-                    self.audit("generation_attempt_saved", batch=batch_index, attempt=attempt,
-                               artifact=str(attempt_path.relative_to(self.run_dir)))
-                    candidate = expand_generated_lines(GeneratedFilesDraft.model_validate(result["artifact"]).model_dump())
+                    self.audit(
+                        "generation_attempt_saved",
+                        batch=batch_index,
+                        attempt=attempt,
+                        artifact=str(attempt_path.relative_to(self.run_dir)),
+                    )
+                    candidate = expand_generated_lines(
+                        GeneratedFilesDraft.model_validate(result["artifact"]).model_dump()
+                    )
                     candidate = ensure_generated_case_markers(candidate)
                     raw_batches.append(json.dumps(candidate, separators=(",", ":"), default=str))
                     validation = validate_generated_files(candidate, batch_ids)
                     self._check_imports(candidate, state)
+                    self._check_paths_are_new(candidate)
                     if validation["uncovered_case_ids"]:
                         raise ValueError(
                             "Generated batch does not implement all approved case IDs: "
@@ -811,7 +1018,8 @@ class Harness:
                     collisions = accepted_paths & {item["path"] for item in candidate["files"]}
                     if collisions:
                         raise ValueError(
-                            "Generated batch reuses paths from an earlier batch: " + ", ".join(sorted(collisions))
+                            "Generated batch reuses paths from an earlier batch: "
+                            + ", ".join(sorted(collisions))
                         )
                     accepted = candidate
                     cache["batches"][str(batch_index)] = candidate
@@ -824,7 +1032,6 @@ class Harness:
                         "test declaration per file, and one matching case_ids entry. The host supplies CASE_ID comments. "
                         "Keep imports minimal and source complete. Python files must define a top-level def test_name(...): "
                         "with a meaningful assertion against the actual application. Imports alone are not a test."
-
                     )
                     self.audit(
                         "test_generation_repair",
@@ -839,7 +1046,9 @@ class Harness:
                         ) from exc
 
             if accepted is None:
-                raise ValueError(f"Test generation batch {batch_index}/{total_batches} produced no accepted output.")
+                raise ValueError(
+                    f"Test generation batch {batch_index}/{total_batches} produced no accepted output."
+                )
             accepted_files.extend(accepted["files"])
             accepted_paths.update(item["path"] for item in accepted["files"])
             covered.update(batch_ids)
@@ -891,23 +1100,60 @@ class Harness:
         }
 
     def _require_coverage_or_reason(self, design: dict, state: dict) -> None:
-        """Every requirement needs a test, or a stated reason (its ID cited in `gaps`).
+        """Design policy: unit cases exist, every actor has cases, every requirement is covered (or explained).
 
-        Enforced during the repair attempts; on the last attempt the design is accepted with the gap visible in
-        gaps_report.notes so a human decides, instead of blocking the run.
+        Each gap must be explained by citing the requirement ID / actor name in `gaps`. Violations are sent back to the
+        model during the repair attempts; on the last attempt the design is accepted with the problem recorded in
+        gaps_report.notes so a human decides at the review gate instead of the run being blocked.
         """
-        reqs = {r["id"]: r["text"] for r in state["artifacts"]["requirements"]["requirement_model"]["requirements"]}
-        cited = " ".join(str(g) for g in state.get("draft", {}).get("gaps", []))
-        missing = [rid for rid in design["gaps_report"]["uncovered_requirements"] if rid not in cited]
-        if not missing:
+        arts = state["artifacts"]
+        reqs = {r["id"]: r["text"] for r in arts["requirements"]["requirement_model"]["requirements"]}
+        cited = " ".join(str(g) for g in state.get("draft", {}).get("gaps", [])).lower()
+        cases = design_cases(design)
+        problems: list[str] = []
+        if arts["repo_analysis"].get("source_file_count") and not any(
+            c.get("level") == "unit" for c in cases
+        ):
+            problems.append(
+                "The design has no unit-level test case. Add unit cases for the core functions/classes, "
+                "or explain in `gaps` (mention 'unit') why none is possible."
+            )
+        idle = [
+            a["name"]
+            for a in arts["requirements"].get("actors", [])
+            if a["name"].lower() != "system"
+            and not any(c.get("actor") == a["name"] for c in cases)
+            and a["name"].lower() not in cited
+        ]
+        if idle:
+            problems.append(
+                f"Actor(s) without any test case: {', '.join(idle)}. Design cases per actor journey, or "
+                "mention the actor in `gaps` with the reason."
+            )
+        missing = [rid for rid in design["gaps_report"]["uncovered_requirements"] if rid.lower() not in cited]
+        if missing:
+            listing = "; ".join(f"{rid}: {reqs[rid][:110]}" for rid in missing[:12])
+            problems.append(
+                f"{len(missing)} requirement(s) have no test case. Add cases tracing to them, or cite each "
+                f"requirement ID in `gaps` with the reason. Uncovered: {listing}"
+            )
+        if not problems:
             return
         if state.get("design_attempt", 1) >= MODEL_REPAIR_ATTEMPTS:
-            design["gaps_report"]["notes"] += ("; " if design["gaps_report"]["notes"] else "") + (
-                f"{len(missing)} requirement(s) have no test and no stated reason: {', '.join(missing)}")
+            design["gaps_report"]["notes"] += ("; " if design["gaps_report"]["notes"] else "") + " | ".join(
+                problems
+            )
             return
-        listing = "; ".join(f"{rid}: {reqs[rid][:110]}" for rid in missing[:12])
-        raise ValueError(f"{len(missing)} requirement(s) have no test case. Add cases that trace to them, or cite each "
-                         f"requirement ID in `gaps` with the reason it cannot be tested. Uncovered: {listing}")
+        raise ValueError(" ".join(problems))
+
+    def _check_paths_are_new(self, candidate: dict) -> None:
+        """Generated tests must be new files: existing repository files (including existing tests) are never replaced."""
+        clash = [i["path"] for i in candidate["files"] if (self.run_dir / "repo" / i["path"]).exists()]
+        if clash:
+            raise ValueError(
+                f"Generated path(s) already exist in the repository: {', '.join(clash)}. Existing files are kept; "
+                "choose a NEW file name (for example add the case topic or batch number) in a new path."
+            )
 
     def _check_imports(self, candidate: dict, state: dict) -> None:
         """Static import-resolution gate for Python tests against the cloned repository."""
@@ -915,8 +1161,10 @@ class Harness:
         repo_files = list(analysis.get("source_files", []))
         dependency_text = "\n".join(
             (self.run_dir / "repo" / rel).read_text(encoding="utf-8", errors="replace")
-            for rel in analysis.get("package_files", []) if (self.run_dir / "repo" / rel).is_file())
-        all_files = list(repo_files) + [p for p in analysis.get("test_files", [])]
+            for rel in analysis.get("package_files", [])
+            if (self.run_dir / "repo" / rel).is_file()
+        )
+        all_files = [*repo_files, *analysis.get("test_files", [])]
         for item in candidate["files"]:
             if item["path"].endswith(".py") and repo_files:
                 check_python_imports(item["content"], repo_files, dependency_text, item["path"])
@@ -933,7 +1181,17 @@ class Harness:
                 unknown = set(requirement["source_files"]) - evidence_paths
                 if unknown:
                     raise ValueError(f"Requirement cites files not supplied as evidence: {sorted(unknown)}")
-            return finalize_discovered_requirements(validated, state["repo_url"])
+            requirements = finalize_discovered_requirements(validated, state["repo_url"])
+            if self.stages != CORE_STAGES:  # deterministic preview of the isolated-environment install plan
+                stack = await asyncio.to_thread(detect_stack, self.run_dir / "repo")
+                requirements["environment_plan"] = await asyncio.to_thread(
+                    build_environment_plan,
+                    stack,
+                    self.run_dir / "repo",
+                    self.cache_dir,
+                    EXECUTION_TIMEOUT_SECONDS,
+                )
+            return requirements
         if stage == "test_planning":
             plan = TestPlan.model_validate(draft)
             if not plan.areas or not plan.execution_order:
@@ -941,7 +1199,10 @@ class Harness:
             return plan.model_dump()
         if stage == "test_design":
             design = finalize_design(
-                draft, state["artifacts"]["requirements"], state["repo_url"], self.skills_root,
+                draft,
+                state["artifacts"]["requirements"],
+                state["repo_url"],
+                self.skills_root,
                 allowed_levels=_allowed_levels(state),
             )
             self._require_coverage_or_reason(design, state)

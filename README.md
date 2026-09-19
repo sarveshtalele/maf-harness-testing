@@ -1,114 +1,129 @@
 # MAF Test Harness
 
-A human-approved, evidence-driven **test-engineering harness** on [Microsoft Agent Framework](https://learn.microsoft.com/en-us/agent-framework/) (MAF).
-Give it a public GitHub repository; it analyzes the code, infers requirements (with actors/personas), plans and
-designs tests, generates them in the repository's native framework, **runs them**, and produces a QA report that
-traces every requirement to an approved case, a generated test, and an executed result.
+A human-approved, evidence-driven **test-engineering harness** built on [Microsoft Agent Framework](https://learn.microsoft.com/en-us/agent-framework/) (MAF)
+and Agent Skills. Give it a public GitHub repository. It analyzes the code, works out what must be installed (and installs it into an **isolated
+environment after your approval**), designs tests per user persona, generates them in the repository's native framework, **runs them**, and hands
+back a **ZIP with the complete repository, all generated and executed tests, and a QA report that lists the files and lines to update**.
 
 ```text
-repo URL ─► clone + analyze ─► requirements ─► test plan ─► test design ─► test generation ─► run ─► QA report
-             (host)            (agent+skill)   (agent+skill) (agent+skill)  (agent+skill)     (host)  (host)
-                  every arrow is a human gate · running code needs its own approval · failing tests can be regenerated
+repo URL ─► analyze ─► requirements ─► environment ─► test plan ─► test design ─► test generation ─► run ─► QA report + ZIP
+             (host)    (agent+skill)   (host, tool     (agent+     (agent+skill)   (agent+skill)     (host,  (host)
+                                        approval)       skill)                                       tool approval)
 ```
 
-* **Real MAF, verified.** Each model stage is a `create_harness_agent` with a **`SkillsProvider`** (MS Learn *Agent Skills*,
-  progressive disclosure). The host verifies from a `FunctionMiddleware` trace that the assigned skill was really loaded through
-  MAF's `load_skill` tool; otherwise the stage's output is rejected. Orchestration is a checkpointed MAF `WorkflowBuilder`.
-* **Any stack.** Deterministic stack profile + runner adapters for Python/pytest, Node (jest, vitest, Playwright), Java
-  (Maven, Gradle), Go, .NET. The model picks tests; the *host* picks and shows every command.
-* **Honest verdicts.** `PASS` needs fresh report evidence with ≥1 passing test and no failures. Setup failure, missing tools,
-  zero tests → `INCONCLUSIVE`. Skips → `PASS_WITH_SKIPS`.
+Every model-authored artifact passes a human gate. Cloning, installing and running each need their own tool-call approval.
+Full design: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) · roadmap: [docs/IMPLEMENTATION_PLAN.md](docs/IMPLEMENTATION_PLAN.md) ·
+defect register: [docs/audit/ERRORS.md](docs/audit/ERRORS.md) · live runs: [docs/audit/E2E_RESULTS.md](docs/audit/E2E_RESULTS.md).
 
-See [docs/IMPLEMENTATION_PLAN.md](docs/IMPLEMENTATION_PLAN.md) (design decisions, MS Learn alignment, roadmap, risks),
-[docs/audit/ERRORS.md](docs/audit/ERRORS.md) (defect table) and [docs/audit/E2E_RESULTS.md](docs/audit/E2E_RESULTS.md)
-(live end-to-end runs on real repositories).
+## 1. Prerequisites
 
-## Quick start
+| Need | Why | Check |
+|---|---|---|
+| Python 3.11+ and [`uv`](https://docs.astral.sh/uv/) | run the harness | `python3 --version`, `uv --version` |
+| `git` | clone the target | `git --version` |
+| An OpenAI-compatible chat gateway and key (tool-calling model) | the agents | your provider |
+| Toolchain of the repository you test | the harness reports what is missing and how to install it, but never installs system tools | shown at the environment step |
+
+Optional: Playwright browsers (`uv run playwright install chromium`) only if you run the UI browser tests.
+
+## 2. Setup
 
 ```bash
-uv sync --extra dev                      # add --extra e2e for Playwright UI tests
-export OPENAI_API_KEY=...                # never commit; see .env.example
-export OPENAI_BASE_URL=https://your-openai-compatible-gateway   # optional
-export OPENAI_MODEL=deepseek-v4-flash-global                    # any tool-capable chat model
-
-uv run streamlit run app.py              # UI
-uv run maf-harness run https://github.com/owner/repo            # terminal, answer each gate
-uv run maf-harness run https://github.com/owner/repo --auto-approve --auto-heal 2   # CI; exit 0/1/2
-uv run maf-harness lint-skills           # Agent Skills spec lint
+git clone https://github.com/sarveshtalele/maf-harness-testing.git
+cd maf-harness-testing
+uv sync --extra dev            # creates .venv and installs the pinned dependencies
 ```
 
-`--auto-approve` is your explicit consent to clone the repository and run its generated tests **on this machine as your
-user** (a local process, *not* a sandbox). Use a disposable environment for untrusted repositories.
+Set the model gateway in your shell (never commit it; see `.env.example`):
 
-### Repository URL policy
+```bash
+export OPENAI_API_KEY="<your key>"
+export OPENAI_BASE_URL="https://your-openai-compatible-gateway"   # omit for api.openai.com
+export OPENAI_MODEL="deepseek-v4-flash-global"                    # any tool-capable chat model
+```
 
-Both forms are accepted and normalized to one HTTPS clone URL: the **GitHub page URL** (`https://github.com/owner/repo`,
-optionally `/tree/<branch-or-tag>` to pin a ref) and the **clone URL** (`…/repo.git`). SSH, other hosts, credentials,
-query strings and non-repository pages are rejected. Clone never prompts for credentials (private repos fail fast).
+## 3. Run the application and open it in the browser
 
-### Testing UI/E2E for a running application
+```bash
+uv run streamlit run app.py
+```
 
-Pass `--app-url http://localhost:8080` (UI field "Running application URL"). Only then may the design contain
-`ui`/`e2e`/`accessibility` cases; generated tests read the target from the `BASE_URL` environment variable. Start the
-application yourself (an application lifecycle manager is on the roadmap).
+Open **<http://localhost:8501>**. (Headless server: `uv run streamlit run app.py --server.headless=true --server.address=127.0.0.1 --server.port=8501`.)
 
-## What each stage produces
+Walk-through:
 
-| Stage | Persona | Skill (loaded via MAF `load_skill`) | Output |
-|---|---|---|---|
-| Repository analysis | Repository Intelligence Analyst | host (deterministic) | languages, frameworks, tests, stack profile, evidence |
-| Requirements | Repository Requirements Analyst | `repository-requirements` | actors, requirements (+category/actor), acceptance criteria, validation rules, explicit API contracts, gaps |
-| Test planning | Principal Test Architect | `test-planning` | risk-based areas by level, frameworks, setup, order |
-| Test design | Senior Test Design Engineer | `test-design-generator` | cases with **level, actor, target, preconditions, data**, priority, traceability matrix, coverage, gaps |
-| Test generation | Polyglot Test Automation Engineer | `generic-test-generator` | one file per approved case, validated statically |
-| Test execution & QA | QA Execution Engineer (host, no model) | — | adapter plan → run → case/requirement results, verdict |
+1. Paste the repository URL — either the page URL (`https://github.com/owner/repo`, optionally `/tree/<branch-or-tag>`) or the clone URL (`.../repo.git`).
+   Optionally paste the **running application URL** (`http://localhost:8080`) to allow UI/E2E cases.
+2. **Approve clone** → review the analysis.
+3. **Requirements review** shows actors, requirements, acceptance criteria, API contracts, the model's *environment needs*, and the host's deterministic
+   **environment plan** (prerequisites with versions and install hints, isolation strategy, exact install commands).
+4. **Environment setup** is a tool-call approval: nothing is installed until you click *Install in isolated env* (or *Skip*). Libraries go into a venv,
+   the project's `node_modules`, or harness cache directories — never the system interpreter. Missing system tools (JDK, Node, Maven…) are reported with
+   install hints; install them and press *Re-check environment*.
+5. Review **test plan**, then **test design** (cases per actor, with level, target and preconditions; unit cases are required). **Test source is generated only after you approve the design.**
+6. Review the generated tests, then approve **Run the tests here** (you see every command first).
+7. The **QA report** shows the verdict, per-case and per-requirement results, and **Files to update** (generated test files with line numbers, repository files
+   with `file:line`, requirements still lacking a passing test). *Regenerate failing tests* sends only the failing cases back (≤3 rounds).
+8. On completion, download the **ZIP** (repository + generated tests + reports).
 
-Design rules enforced by the host: unknown actors/levels are rejected; UI/E2E/accessibility levels need a running app URL;
-contract tests only for explicit API contracts; every case links to requirement/criterion/rule/contract IDs; IDs are
-stable and human-readable (`TC-POS-CLI-HELP-EXITS-0-A1B2C3D4`).
+The sidebar shows the token meter: **2,000,000 tokens per workflow run is the only limit** (no per-call or call-count limits).
 
-## Determinism: what is and is not guaranteed
+## 4. Command line
 
-| Deterministic (host) | Not deterministic (model) |
+```bash
+uv run maf-harness run https://github.com/owner/repo                       # answer each gate in the terminal
+uv run maf-harness run https://github.com/owner/repo --auto-approve --auto-heal 2      # unattended; exit 0 pass / 1 fail / 2 inconclusive
+uv run maf-harness run https://github.com/owner/repo --app-url http://127.0.0.1:8080/app   # allow UI/E2E cases
+uv run maf-harness verify-run .harness_runs/<run>     # evidence that MAF harness + Agent Skills were really used
+uv run maf-harness lint-skills                        # Agent Skills spec lint
+```
+
+`--auto-approve` is your explicit consent to clone the repository, install its dependencies and run its generated tests **on this machine as your user**
+(local process, *not* a sandbox). Use a disposable machine/VM for untrusted repositories.
+
+## 5. What you get
+
+```
+.harness_runs/<run>/
+  qa_report.md / qa_report.json          verdict · per-case results · requirement coverage · files to update
+  deliverables/<repo>-with-tests-<run>.zip
+        <repo>/…                          complete repository at the analyzed commit + every generated test at its real path
+        harness-report/qa_report.md       the report
+        harness-report/RUN_TESTS.md       exact install/run commands to reproduce
+        harness-report/*.json             requirements, environment, plan, design, generation catalog, executions, audit.jsonl
+  workspace/  environment/  executions/  generation_attempts/  audit.jsonl  run.json
+```
+
+Verdicts: `PASS` (≥1 executed passing test, no failures) · `PASS_WITH_SKIPS` · `FAIL` · `INCONCLUSIVE` (setup failed, tools missing, or zero tests ran —
+never reported as pass).
+
+## 6. Design rules the harness enforces
+
+* **Unit tests are required** in the design when the repository has source code; every actor (persona) needs cases; every requirement needs a case or a stated reason.
+* Cases carry **level, actor, target, preconditions, data**; UI/E2E/accessibility cases only when a running application URL is supplied.
+* Source is generated **one file per approved case**, validated (syntax, no placeholders/skips, import resolution) before you see it.
+* Skills are loaded through MAF's `SkillsProvider` and verified from a tool trace; see `verify-run`.
+
+## 7. Development
+
+```bash
+uv run ruff check src tests app.py scripts && uv run ruff format --check src tests app.py scripts
+uv run pytest -q --ignore=tests/targets                    # unit + component (real MAF) + workflow e2e; no network, no model
+HARNESS_BROWSER=1 PLAYWRIGHT_BROWSERS_PATH=$PWD/.browser-cache uv run pytest tests/targets/test_harness_browser.py -q   # UI in a real browser
+```
+
+## 8. Troubleshooting
+
+| Symptom | Cause / fix |
 |---|---|
-| URL normalization, stage → skill assignment, skill package hashes, verification that `load_skill` ran, IDs, schema and traceability validation, generated-path safety, runner choice and commands, evidence-based verdict, audit log | requirement wording, test design content, generated source, gateway behavior, timing. `temperature=0` reduces variance; it does not remove it. |
+| "did not load the assigned Agent Skill" | the model skipped tool calls; retry, use a tool-capable model, or `HARNESS_SKILL_MODE=preloaded` (recorded as not using the provider) |
+| Environment step says a tool is missing | install it (hint shown), then *Re-check environment* |
+| `INCONCLUSIVE` with "not_executed" cases | build/collection failed; the report names the files and lines; use *Regenerate failing tests* |
+| "Workflow token budget of 2,000,000 tokens exhausted" | start a new run or reduce scope; this is the only limit |
+| UI tests need a live app | pass the running application URL; the harness does not start the system under test |
 
-Skill modes (`HARNESS_SKILL_MODE`): `progressive` (default; real MAF `SkillsProvider`, host-verified) or `preloaded`
-(skill text injected into instructions for models that cannot call tools — recorded as *not* using the provider).
+## 9. Security notes
 
-## Security model
-
-* Credentials are environment-only, never stored, and **never forwarded** to setup/test commands (allow-listed env, fake `HOME`).
-* Cloning and running tests are separate explicit approvals; the exact argv list and a plan hash are shown first.
-* Execution is argv-only (no shell), timeout kills the process group, every run writes a new immutable result directory.
-* Generated tests are copied with the repository into a **new workspace**; the clone is never modified.
-* Skills are treated as third-party code: spec-linted, hashed, scripts disabled, only read-only skill tools auto-approved.
-* Repository text is untrusted evidence; secrets files are excluded and inline secrets redacted before prompts.
-* **Not a sandbox.** Container/VM isolation is the top roadmap item and a release gate for unattended use.
-
-## Layout
-
-```
-src/maf_test_harness/  repo_analyzer stack maf_runtime skills_registry personas models skill_contracts
-                       workflow runners execution qa_report cli
-app.py                 Streamlit UI            skills/   bundled Agent Skills (8)
-tests/                 unit · component (real MAF) · workflow e2e · targets/ (opt-in live browsers/apps)
-docs/                  IMPLEMENTATION_PLAN · audit/ (ERRORS, E2E_RESULTS, evidence)   patches/  fixes for target-app defects
-```
-
-## Development
-
-```bash
-uv run ruff check src tests app.py scripts
-uv run pytest -q --ignore=tests/targets           # unit + component + workflow e2e (no network, no model)
-HARNESS_BROWSER=1 uv run pytest tests/targets/test_harness_browser.py -q   # Streamlit UI in a real browser
-REVERSE_ENGINEER_REPO=/path/to/checkout uv run pytest tests/targets/test_reverse_engineering.py -q
-```
-
-Live end-to-end (uses a real gateway; costs tokens): see [docs/audit/E2E_RESULTS.md](docs/audit/E2E_RESULTS.md) for the exact commands.
-
-## Known limitations
-
-Local-process execution only; no application lifecycle manager; static validation is deep for Python and best-effort for
-other languages (compile gates are on the roadmap); evidence is bounded excerpts, not full-repo retrieval; the model can
-still author wrong tests, which is why design and source are human-reviewed and a passing verdict never claims correctness.
+Credentials are environment-only and never forwarded to install/test commands; commands are argv-only with timeouts and a plan hash checked after approval;
+npm lifecycle scripts are disabled during install; generated files never touch the clone. Execution is a local process, not a sandbox — see
+[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md#4-guarantees-and-where-they-are-enforced).

@@ -18,7 +18,7 @@ Severity: **H** breaks the stated purpose or gives false confidence · **M** wro
 | A5 | M | `maf_runtime.py` | Whole MAF session (skill text + prompts + evidence) persisted into `run.json` and hashed into every approval request. | code review | sessions are not persisted; primed snapshot kept in memory |
 | A6 | L | `maf_runtime.py` | Dead approval-replay path (`decisions`, `tool_approval` status) with no caller. | code review | removed; approval requests are rejected explicitly |
 | A7 | M | MAF 1.18 | Docs: `run_skill_script` advertised only when scripts exist. Implementation: registered always. | probe + source | mitigated (needs approval, never auto-approved, script discovery disabled) and asserted so upgrades are noticed |
-| A8 | M | `skills/` | No validation of skills against the spec (name = directory, description ≤ 1024, body < 500 lines). | spec comparison | `skills_registry.py`, `maf-harness lint-skills`, `require_valid` before every stage (8/8 clean) |
+| A8 | M | `skills/` | No validation of skills against the spec (name = directory, description ≤ 1024, body < 500 lines). | spec comparison | `skills_registry.py`, `maf-harness lint-skills`, `require_valid` before every stage (4/4 clean; four unused vendored skills were removed) |
 
 ## B. Test quality: requirements, design, generation
 
@@ -68,6 +68,23 @@ Severity: **H** breaks the stated purpose or gives false confidence · **M** wro
 | D9 | L | `app.py` | Hard-coded "Not run", generic interruption text, no execution/QA UI, deprecated `use_container_width`. | UI review + browser test | QA tab, execution approval, app URL, error shown, `width="stretch"` |
 | D10 | L | repo | No CI, no secrets scan, machine paths in audit logs, `.claude/` local state. | repo review | GitHub Actions, secrets scan, ignore rules |
 | D11 | H | (original report) | "Generation failed after 3 attempts / Interrupted after approval". Root causes: README-starved evidence (fixed earlier), no retryable gate after downstream failure (fixed earlier), and now B7/B8 for the model-side causes. | run audit | see B7, B8, `tests/test_recovery.py` |
+
+## F. Second audit pass (environment, policy, deliverables, hygiene)
+
+| # | Sev | File | Defect | Found by | Fix |
+|---|---|---|---|---|---|
+| F1 | H | `workflow.py` | No environment/dependency step: nothing told the reviewer what to install or how, and installs (venv + pip) were buried inside the test-run approval. | requirements review | `environment_setup` stage: deterministic plan shown at requirements review, separate tool-call approval, isolated install, prerequisites with install hints |
+| F2 | H | design stage | Nothing forced unit-level cases or per-actor coverage; design could contain only integration/API cases. | policy review | host policy with repair loop (unit present, every actor covered, every requirement covered or explained) |
+| F3 | M | `settings.py`, `maf_runtime.py` | Three overlapping limits (run tokens, per-call input tokens, provider-call count) that could stop a healthy run; defaults unrealistic. | user requirement | single limit: 2,000,000 tokens per workflow run; UI shows it |
+| F4 | H | `execution.py` | **Stale bytecode:** a regenerated test with the same size/mtime second ran from the old `.pyc` and reported the old result. | heal-loop test | `PYTHONDONTWRITEBYTECODE=1`; regression test |
+| F5 | H | `runners.py` | One uncompilable generated Java file made every test "not executed" (INCONCLUSIVE). | live Petstore run 4 | compile-error quarantine + retry; quarantined cases are `error` with compiler lines |
+| F6 | M | `cli.py` | Auto-heal only triggered on `FAIL`, not on inconclusive builds that had per-case diagnostics. | live run | heal whenever the report has actionable failures |
+| F7 | M | `qa_report.py` | Reports said *what* failed but not *which files/lines to change*. | user requirement | `triage.py`: test-file lines, repository `file:line`, requirements needing tests, environment actions |
+| F8 | M | delivery | No single artifact with the repository plus the tests that were generated and executed. | user requirement | `packaging.py` ZIP (repository + tests + `harness-report/`) |
+| F9 | L | repo | Dead code: 4 unused skills, `scripts/audit_project.py`, `required_inputs`, `normalize_requirements`, `MAFUnavailableError`, `cancel_event`, v1 saved-run migration, `execution` CLI, `skills_registry` CLI, stale audit evidence and first-pass audit doc. | vulture + manual review | removed; `execution.export_tests` replaced by `copy_repo` + `write_generated` |
+| F10 | L | repo | Mixed quote styles/formatting, narrow lint rules. | review | `ruff format` + `E,W,F,I,B,UP,SIM,C4,PIE` enforced in CI |
+| F12 | H | live Petstore run 5 | **Live:** the model generated a test at a path that already exists in the repository (`CustomerEndpointIT.java`); the collision was only detected at execution time and stopped the run after a full generation. | live run | generation validation rejects existing paths during the repair loop (`_check_paths_are_new`); the Java import gate now suggests `java.net.http.HttpClient` instead of undeclared RestAssured |
+| F11 | L | docs | No file-by-file architecture document. | user requirement | `docs/ARCHITECTURE.md` |
 
 ## E. Findings in the systems under test (from qualification runs; upstream fixes as patches)
 

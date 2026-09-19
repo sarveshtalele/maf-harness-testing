@@ -3,22 +3,36 @@
 Only the model call is scripted. Export, stack detection, planning, subprocess execution, JUnit parsing,
 mapping to approved cases and the QA report are all real.
 """
+
 import sys
 from pathlib import Path
 
 import pytest
-from fakes import ScriptedStageRuntime, clone_fixture
+from fakes import ScriptedStageRuntime, clone_fixture, local_env_plan
 
 import maf_test_harness.workflow as wf
 from maf_test_harness.runners import RunPlan, Step
 from maf_test_harness.runtime_service import RuntimeService
 
 
-def local_pytest_plan(stack, workspace, files, *, cache_dir, timeout=900):
+def local_pytest_plan(stack, workspace, files, *, cache_dir, timeout=900, env_ready=False):
     """Same shape as the python adapter, minus venv/pip (no network in unit tests)."""
-    step = Step("pytest", [sys.executable, "-m", "pytest", "-p", "no:cacheprovider", "-q",
-                           "--junitxml=.harness-reports/junit.xml", *[f["path"] for f in files]],
-                env={"PYTHONPATH": str(workspace)}, parser="junit", report_glob=".harness-reports/junit.xml")
+    step = Step(
+        "pytest",
+        [
+            sys.executable,
+            "-m",
+            "pytest",
+            "-p",
+            "no:cacheprovider",
+            "-q",
+            "--junitxml=.harness-reports/junit.xml",
+            *[f["path"] for f in files],
+        ],
+        env={"PYTHONPATH": str(workspace)},
+        parser="junit",
+        report_glob=".harness-reports/junit.xml",
+    )
     return RunPlan("python-pytest", [step])
 
 
@@ -26,10 +40,13 @@ def local_pytest_plan(stack, workspace, files, *, cache_dir, timeout=900):
 def drive(tmp_path, monkeypatch):
     monkeypatch.setattr(wf, "clone_repository", clone_clone := clone_fixture)
     monkeypatch.setattr(wf, "build_plan", local_pytest_plan)
+    monkeypatch.setattr(wf, "build_environment_plan", local_env_plan)
     service = RuntimeService()
 
     def make(runtime):
-        host = wf.Harness(tmp_path / "run", skills_root=Path("skills"), runtime=runtime, cache_dir=tmp_path / "cache")
+        host = wf.Harness(
+            tmp_path / "run", skills_root=Path("skills"), runtime=runtime, cache_dir=tmp_path / "cache"
+        )
         service.submit(host.start("https://github.com/acme/demo")).result(15)
 
         def answer(**response):
@@ -43,7 +60,8 @@ def drive(tmp_path, monkeypatch):
 
 
 def to_execution_gate(host, answer):
-    for _ in range(6):  # clone, repo, requirements, plan, design, generation
+    # clone, repo, requirements, env install (tool), env review, plan, design, generation
+    for _ in range(8):
         answer(decision="approve")
     assert host.view["pending"]["stage"] == "test_execution" and host.view["pending"]["kind"] == "tool"
 
@@ -54,6 +72,7 @@ def test_execution_stage_runs_real_tests_and_builds_pass_verdict(drive):
     details = host.view["pending"]["details"]
     assert details["adapter"] == "python-pytest" and "pytest" in details["steps"][0]["command"]
     assert (Path(details["workspace"]) / "service.py").exists()  # repo copy, not the original checkout
+    assert "ready" in details["environment"]
     assert not (host.run_dir / "repo" / "tests").exists()  # generated files never touch the clone
     answer(decision="approve")  # run the tests
     assert host.view["pending"]["kind"] == "review"
@@ -63,7 +82,9 @@ def test_execution_stage_runs_real_tests_and_builds_pass_verdict(drive):
     assert qa["cases"][0]["level"] == "unit" and qa["cases"][0]["actor"] == "Developer"
     final = answer(decision="approve")
     assert final["status"] == "complete" and "PASS" in host.state["completed_reason"]
+    assert_deliverable(host)
     import json
+
     names = [json.loads(line)["event"] for line in (host.run_dir / "audit.jsonl").read_text().splitlines()]
     assert names.count("execution_started") == 1 and names.count("execution_completed") == 1
 
@@ -91,9 +112,18 @@ def test_failing_test_yields_fail_verdict_and_human_approved_heal_loop(drive):
 
 def test_passing_case_is_not_regenerated_during_heal(drive, monkeypatch):
     monkeypatch.setattr(wf, "TEST_GENERATION_BATCH_SIZE", 1)
-    bad_case = {"title": "add rejects wrong total", "priority": "P1", "level": "unit", "actor": "Developer",
-                "target": "service.add", "description": "Wrong expectation.", "preconditions": [],
-                "data_notes": "2 and 2", "expected_result": "add(2, 2) is not 5", "steps": ["Call add", "Compare"]}
+    bad_case = {
+        "title": "add rejects wrong total",
+        "priority": "P1",
+        "level": "unit",
+        "actor": "Developer",
+        "target": "service.add",
+        "description": "Wrong expectation.",
+        "preconditions": [],
+        "data_notes": "2 and 2",
+        "expected_result": "add(2, 2) is not 5",
+        "steps": ["Call add", "Compare"],
+    }
     runtime = ScriptedStageRuntime(extra_cases=[bad_case])
     host, answer = drive(runtime)
     to_execution_gate(host, answer)
@@ -107,6 +137,7 @@ def test_passing_case_is_not_regenerated_during_heal(drive, monkeypatch):
     async def spy(**kwargs):
         if kwargs["stage"] == "test_generation":
             import json
+
             seen.extend(c["id"] for c in json.loads(kwargs["prompt"])["approved_inputs"]["approved_cases"])
         return await original(**kwargs)
 
@@ -138,7 +169,9 @@ def test_app_url_must_be_local(tmp_path):
     host = wf.Harness(tmp_path / "r", skills_root=Path("skills"))
     try:
         with pytest.raises(ValueError, match="local http"):
-            service.submit(host.start("https://github.com/acme/demo", app_url="http://evil.example.com")).result(5)
+            service.submit(
+                host.start("https://github.com/acme/demo", app_url="http://evil.example.com")
+            ).result(5)
     finally:
         service.close()
 
@@ -169,7 +202,9 @@ def test_model_stage_is_repaired_with_the_host_error_instead_of_repeating_itself
     finally:
         service.close()
     assert host.view["pending"]["kind"] == "review" and host.view["pending"]["stage"] == "requirements"
-    assert len(prompts) == 2 and "ghost/Nope.java" in prompts[1] and "rejected by host validation" in prompts[1]
+    assert (
+        len(prompts) == 2 and "ghost/Nope.java" in prompts[1] and "rejected by host validation" in prompts[1]
+    )
     assert '"evidence_file_paths":["service.py"]' in prompts[0]
 
 
@@ -182,12 +217,17 @@ def test_design_must_cover_every_requirement_or_state_why(tmp_path, monkeypatch)
     async def two_requirements(**kwargs):
         result = await original(**kwargs)
         if kwargs["stage"] == "requirements":
-            extra = dict(result["artifact"]["requirements"][0], text="add rejects non-numbers",
-                         evidence="service.py: no type check")
+            extra = dict(
+                result["artifact"]["requirements"][0],
+                text="add rejects non-numbers",
+                evidence="service.py: no type check",
+            )
             result["artifact"]["requirements"].append(extra)
         if kwargs["stage"] == "test_design":
             prompts.append(kwargs["prompt"])
-            if len(prompts) == 2:  # the model reacts to the repair message by covering the missing requirement
+            if (
+                len(prompts) == 2
+            ):  # the model reacts to the repair message by covering the missing requirement
                 reqs = wf.json.loads(kwargs["prompt"])["approved_inputs"]["requirements"]["requirements"]
                 case = dict(result["artifact"]["positive_tests"][0], title="add rejects strings")
                 case["traceability_links"] = [{"type": "requirement", "id": reqs[1]["id"]}]
@@ -206,3 +246,88 @@ def test_design_must_cover_every_requirement_or_state_why(tmp_path, monkeypatch)
     assert host.view["pending"]["stage"] == "test_design" and host.view["pending"]["kind"] == "review"
     assert len(prompts) == 2 and "have no test case" in prompts[1] and "add rejects non-numbers" in prompts[1]
     assert host.state["artifacts"]["test_design"]["summary"]["coverage_percentage"] == 100.0
+
+
+def assert_deliverable(host):
+    import json
+    import zipfile
+
+    archive = zipfile.ZipFile(host.state["deliverable_zip"])
+    names = set(archive.namelist())
+    generated = [f["path"] for f in host.state["artifacts"]["test_generation"]["files"]]
+    assert "demo/service.py" in names  # the complete repository...
+    assert all(f"demo/{path}" in names for path in generated)  # ...with every generated test at its real path
+    assert {
+        "harness-report/qa_report.md",
+        "harness-report/qa_report.json",
+        "harness-report/RUN_TESTS.md",
+        "harness-report/requirements.json",
+        "harness-report/test_design.json",
+        "harness-report/audit.jsonl",
+        "harness-report/environment.json",
+    } <= names
+    assert not any(".git/" in n or ".harness-venv" in n or "node_modules" in n for n in names)
+    assert json.loads(archive.read("harness-report/qa_report.json"))["verdict"] == "PASS"
+    assert "## Files to update" in archive.read("harness-report/qa_report.md").decode()
+    assert "sk-" not in "".join(
+        archive.read(n).decode("utf-8", "ignore") for n in names if n.endswith((".md", ".json", ".jsonl"))
+    )
+
+
+def test_environment_is_planned_then_installed_only_after_tool_approval(drive):
+    host, answer = drive(ScriptedStageRuntime())
+    for _ in range(3):  # clone, repo, requirements
+        answer(decision="approve")
+    assert host.state["artifacts"]["requirements"]["environment_plan"][
+        "ecosystem"
+    ]  # shown at requirements review
+    pending = host.view["pending"]
+    assert pending["stage"] == "environment_setup" and pending["kind"] == "tool"
+    assert not (host.run_dir / "environment").exists()  # nothing installed before approval
+    assert pending["details"]["steps"][0]["name"] == "noop-install"
+    answer(decision="approve")
+    assert (host.run_dir / "environment" / "attempt-1" / "report.json").exists()
+    review = host.view["pending"]
+    assert review["kind"] == "review" and review["details"]["artifact"]["status"] == "ready"
+    answer(decision="approve")
+    assert host.view["pending"]["stage"] == "test_planning"
+
+
+def test_environment_install_can_be_skipped_and_plan_tampering_is_refused(drive):
+    host, answer = drive(ScriptedStageRuntime())
+    for _ in range(3):
+        answer(decision="approve")
+    host.view["pending"]["state"]["environment"]["hash"] = "tampered"
+    answer(decision="approve")
+    assert host.view["pending"]["kind"] == "error" and "plan changed" in host.view["pending"]["error"]
+    answer(decision="retry")
+    answer(decision="skip")
+    assert host.view["pending"]["details"]["artifact"]["status"] == "skipped"
+
+
+def test_missing_system_tools_are_reported_with_install_hints_not_installed(tmp_path, monkeypatch):
+    monkeypatch.setattr(wf, "clone_repository", clone_fixture)
+    fake = {
+        "ecosystem": "maven",
+        "isolation": "x",
+        "steps": [],
+        "notes": ["Install first: mvn"],
+        "prerequisites": [
+            {"tool": "mvn", "present": False, "version": "", "install_hint": "brew install maven"}
+        ],
+        "missing_prerequisites": ["mvn"],
+    }
+    monkeypatch.setattr(wf, "build_environment_plan", lambda *a, **k: fake)
+    service = RuntimeService()
+    host = wf.Harness(
+        tmp_path / "r", skills_root=Path("skills"), runtime=ScriptedStageRuntime(), cache_dir=tmp_path / "c"
+    )
+    try:
+        service.submit(host.start("https://github.com/acme/demo")).result(15)
+        for _ in range(3):
+            service.submit(host.respond(host.view["pending"]["id"], {"decision": "approve"})).result(30)
+    finally:
+        service.close()
+    pending = host.view["pending"]
+    assert pending["kind"] == "review" and pending["details"]["artifact"]["status"] == "blocked"
+    assert pending["details"]["artifact"]["prerequisites"][0]["install_hint"] == "brew install maven"

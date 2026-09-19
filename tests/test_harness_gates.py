@@ -5,7 +5,7 @@ import pytest
 from fakes import ScriptedStageRuntime, clone_fixture
 
 from maf_test_harness.runtime_service import RuntimeService
-from maf_test_harness.workflow import Harness, required_inputs
+from maf_test_harness.workflow import Harness
 
 
 def test_runtime_keeps_loop_open_across_calls():
@@ -19,11 +19,6 @@ def test_runtime_keeps_loop_open_across_calls():
     assert not first.is_closed()
     service.close()
     assert first.is_closed()
-
-
-def test_autonomous_workflow_requires_no_stage_forms():
-    for stage in ("requirements", "test_planning", "test_design", "test_generation"):
-        assert required_inputs(stage, {}) == {}
 
 
 def test_native_workflow_pauses_before_clone_and_rejects_stale_response(tmp_path: Path):

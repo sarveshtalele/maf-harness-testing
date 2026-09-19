@@ -3,6 +3,7 @@
 Everything here is derived from repository files on the host; no model is involved. The profile answers
 "which ecosystems are present, how are their tests conventionally run, and are the needed tools installed?".
 """
+
 from __future__ import annotations
 
 import json
@@ -29,7 +30,8 @@ class StackProfile:
     ecosystems: list[str] = field(default_factory=list)  # ordered by evidence weight
     primary: str = "unknown"
     build_files: list[str] = field(default_factory=list)
-    test_runner: str = ""  # pytest | jest | vitest | playwright | maven-surefire | gradle | go-test | dotnet-test
+    # pytest | jest | vitest | playwright | maven-surefire | gradle | go-test | dotnet-test
+    test_runner: str = ""
     web_ui: bool = False
     http_service: bool = False
     openapi_files: list[str] = field(default_factory=list)
@@ -46,7 +48,9 @@ _OPENAPI = re.compile(r"(^|/)(openapi|swagger)[^/]*\.(ya?ml|json)$", re.I)
 _WEB_UI_HINT = re.compile(r"\.(xhtml|html|jsx|tsx|vue|svelte|jsp|erb|ejs|hbs)$", re.I)
 _SERVICE_HINT = re.compile(
     r"(@RestController|@Path\(|@GetMapping|@RequestMapping|flask|fastapi|express\(|http\.HandleFunc|"
-    r"\[HttpGet|\[ApiController|@app\.route|APIRouter|createServer\()", re.I)
+    r"\[HttpGet|\[ApiController|@app\.route|APIRouter|createServer\()",
+    re.I,
+)
 
 
 def _node_runner(root: Path, package_files: list[str]) -> str:
@@ -91,7 +95,7 @@ def detect_stack(root: Path, languages: dict[str, int] | None = None) -> StackPr
             add("gradle", 6 * depth_bonus, r)
         elif n == "go.mod":
             add("go", 6 * depth_bonus, r)
-        elif n.endswith(".csproj") or n.endswith(".sln"):
+        elif n.endswith((".csproj", ".sln")):
             add("dotnet", 4 * depth_bonus, r)
         elif n == "cargo.toml":
             add("rust", 5 * depth_bonus, r)
@@ -101,13 +105,27 @@ def detect_stack(root: Path, languages: dict[str, int] | None = None) -> StackPr
             add("php", 5 * depth_bonus, r)
         if _OPENAPI.search(r):
             profile.openapi_files.append(r)
-        if r.startswith(".github/workflows/") or n in {".gitlab-ci.yml", "jenkinsfile", ".travis.yml", "azure-pipelines.yml"}:
+        if r.startswith(".github/workflows/") or n in {
+            ".gitlab-ci.yml",
+            "jenkinsfile",
+            ".travis.yml",
+            "azure-pipelines.yml",
+        }:
             profile.ci_files.append(r)
         if n in {"dockerfile", "docker-compose.yml", "docker-compose.yaml", "compose.yaml"}:
             profile.container_files.append(r)
     # Source-language votes break ties for repos with no manifest (single-file scripts).
-    suffix_eco = {".py": "python", ".js": "node", ".ts": "node", ".java": "maven", ".go": "go", ".cs": "dotnet",
-                  ".rs": "rust", ".rb": "ruby", ".php": "php"}
+    suffix_eco = {
+        ".py": "python",
+        ".js": "node",
+        ".ts": "node",
+        ".java": "maven",
+        ".go": "go",
+        ".cs": "dotnet",
+        ".rs": "rust",
+        ".rb": "ruby",
+        ".php": "php",
+    }
     for r in rel:
         eco = suffix_eco.get(Path(r).suffix.lower())
         if eco:
@@ -115,14 +133,24 @@ def detect_stack(root: Path, languages: dict[str, int] | None = None) -> StackPr
     profile.ecosystems = [e for e, _ in sorted(weights.items(), key=lambda kv: (-kv[1], kv[0]))]
     profile.primary = profile.ecosystems[0] if profile.ecosystems else "unknown"
     profile.web_ui = any(_WEB_UI_HINT.search(r) for r in rel)
-    sample = "\n".join(_safe_read(root / r)[:4000] for r in rel
-                       if Path(r).suffix.lower() in {".py", ".js", ".ts", ".java", ".go", ".cs"})[:400_000]
+    sample = "\n".join(
+        _safe_read(root / r)[:4000]
+        for r in rel
+        if Path(r).suffix.lower() in {".py", ".js", ".ts", ".java", ".go", ".cs"}
+    )[:400_000]
     profile.http_service = bool(_SERVICE_HINT.search(sample))
     if profile.primary == "node":
-        profile.test_runner = _node_runner(root, [b for b in profile.build_files if b.endswith("package.json")])
+        profile.test_runner = _node_runner(
+            root, [b for b in profile.build_files if b.endswith("package.json")]
+        )
     else:
-        profile.test_runner = {"python": "pytest", "maven": "maven-surefire", "gradle": "gradle",
-                               "go": "go-test", "dotnet": "dotnet-test"}.get(profile.primary, "")
+        profile.test_runner = {
+            "python": "pytest",
+            "maven": "maven-surefire",
+            "gradle": "gradle",
+            "go": "go-test",
+            "dotnet": "dotnet-test",
+        }.get(profile.primary, "")
     # If a Java repo has a pom AND python scripts etc., languages counter (analysis) is authoritative for notes.
     if languages and profile.primary == "unknown":
         profile.notes.append(f"No build manifest found; languages: {', '.join(languages)}")

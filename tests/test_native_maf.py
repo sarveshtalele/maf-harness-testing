@@ -3,6 +3,7 @@
 Only the network boundary (``_inner_get_response``) is replaced. The harness agent, SkillsProvider,
 function-invocation loop, middleware, session and budget accounting are the actual MAF code paths.
 """
+
 import asyncio
 import hashlib
 import json
@@ -45,32 +46,43 @@ class ScriptedClient(FunctionInvocationLayer, ChatMiddlewareLayer, BaseChatClien
         usage = {"input_token_count": 10, "output_token_count": 10, "total_token_count": 20}
         if self.load and not seen_tool_result:
             call = Content.from_function_call(
-                call_id="call-1", name="load_skill", arguments=json.dumps({"skill_name": self.load}))
+                call_id="call-1", name="load_skill", arguments=json.dumps({"skill_name": self.load})
+            )
             return ChatResponse(messages=[Message(role="assistant", contents=[call])], usage_details=usage)
         if self.extra_tool and not seen_tool_result:
             call = Content.from_function_call(call_id="call-x", name=self.extra_tool, arguments="{}")
             return ChatResponse(messages=[Message(role="assistant", contents=[call])], usage_details=usage)
         return ChatResponse(
             messages=[Message(role="assistant", contents=[Content.from_text('{"hello":"world"}')])],
-            usage_details=usage)
+            usage_details=usage,
+        )
 
 
 def fresh_state():
-    return {"budget": {"limit": 1_000_000, "charged": 0, "calls": 0, "reported_tokens": 0,
-                       "input_limit": 1_000_000, "call_limit": 200},
-            "sessions": {}, "model_requests": {}}
+    return {
+        "budget": {"limit": 2_000_000, "charged": 0, "calls": 0, "reported_tokens": 0},
+        "sessions": {},
+        "model_requests": {},
+    }
 
 
 def run_stage(monkeypatch, client, mode):
     monkeypatch.setattr(runtime_module, "OpenAIChatCompletionClient", lambda **kwargs: client)
-    runtime = MAFHarnessRuntime(api_key="test", model="test", skills_root=Path("skills"),
-                                base_url="http://test", skill_mode=mode)
+    runtime = MAFHarnessRuntime(
+        api_key="test", model="test", skills_root=Path("skills"), base_url="http://test", skill_mode=mode
+    )
     state = fresh_state()
     service = RuntimeService()
 
     async def go():
-        return await runtime.run_stage(stage="test_design", skill_name=SKILL, persona="PERSONA: test",
-                                       prompt="Return JSON.", state=state, persist=lambda: None)
+        return await runtime.run_stage(
+            stage="test_design",
+            skill_name=SKILL,
+            persona="PERSONA: test",
+            prompt="Return JSON.",
+            state=state,
+            persist=lambda: None,
+        )
 
     try:
         return service.submit(go()).result(20), state
@@ -146,13 +158,21 @@ def test_invalid_skill_mode_is_rejected():
 def test_skill_is_loaded_once_per_stage_and_reused_across_calls(monkeypatch):
     client = ScriptedClient(load=SKILL)
     monkeypatch.setattr(runtime_module, "OpenAIChatCompletionClient", lambda **kwargs: client)
-    runtime = MAFHarnessRuntime(api_key="test", model="test", skills_root=Path("skills"), base_url="http://test")
+    runtime = MAFHarnessRuntime(
+        api_key="test", model="test", skills_root=Path("skills"), base_url="http://test"
+    )
     state, service = fresh_state(), RuntimeService()
 
     async def two_calls():
         for _ in range(2):
-            await runtime.run_stage(stage="test_design", skill_name=SKILL, persona="P", prompt="Return JSON.",
-                                    state=state, persist=lambda: None)
+            await runtime.run_stage(
+                stage="test_design",
+                skill_name=SKILL,
+                persona="P",
+                prompt="Return JSON.",
+                state=state,
+                persist=lambda: None,
+            )
 
     try:
         service.submit(two_calls()).result(20)

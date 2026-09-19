@@ -13,21 +13,56 @@ from urllib.parse import urlparse
 from .models import RepoAnalysis
 
 IGNORED_DIRS = {
-    ".git", ".idea", ".vscode", ".venv", "venv", "__pycache__", "node_modules",
-    "vendor", "obj", "dist", "build", "target", ".next", "coverage", ".coverage",
+    ".git",
+    ".idea",
+    ".vscode",
+    ".venv",
+    "venv",
+    "__pycache__",
+    "node_modules",
+    "vendor",
+    "obj",
+    "dist",
+    "build",
+    "target",
+    ".next",
+    "coverage",
+    ".coverage",
 }
 
 LANGUAGES = {
-    ".py": "Python", ".js": "JavaScript", ".jsx": "JavaScript", ".ts": "TypeScript",
-    ".tsx": "TypeScript", ".java": "Java", ".cs": "C#", ".go": "Go", ".rb": "Ruby",
-    ".php": "PHP", ".rs": "Rust", ".kt": "Kotlin", ".swift": "Swift", ".cpp": "C++",
-    ".c": "C", ".vue": "Vue", ".svelte": "Svelte",
+    ".py": "Python",
+    ".js": "JavaScript",
+    ".jsx": "JavaScript",
+    ".ts": "TypeScript",
+    ".tsx": "TypeScript",
+    ".java": "Java",
+    ".cs": "C#",
+    ".go": "Go",
+    ".rb": "Ruby",
+    ".php": "PHP",
+    ".rs": "Rust",
+    ".kt": "Kotlin",
+    ".swift": "Swift",
+    ".cpp": "C++",
+    ".c": "C",
+    ".vue": "Vue",
+    ".svelte": "Svelte",
 }
 
 SOURCE_SUFFIXES = set(LANGUAGES)
 PACKAGE_FILES = {
-    "package.json", "pyproject.toml", "requirements.txt", "pom.xml", "build.gradle",
-    "build.gradle.kts", "go.mod", "Cargo.toml", "Gemfile", "composer.json", "Directory.Packages.props",
+    "package.json",
+    "pyproject.toml",
+    "requirements.txt",
+    "pom.xml",
+    "build.gradle",
+    "build.gradle.kts",
+    "go.mod",
+    "Cargo.toml",
+    "Gemfile",
+    "composer.json",
+    "Directory.Packages.props",
 }
 
 TEST_PATTERNS = [
@@ -77,12 +112,16 @@ def validate_github_url(raw_url: str, with_ref: bool = False):
     if parsed.scheme != "https" or parsed.hostname not in {"github.com", "www.github.com"}:
         raise RepoInputError("Use a public HTTPS GitHub URL such as https://github.com/owner/repo.")
     if parsed.netloc not in {"github.com", "www.github.com"} or parsed.query or parsed.fragment:
-        raise RepoInputError("Credentials, query strings, and fragments are not accepted in the repository URL.")
+        raise RepoInputError(
+            "Credentials, query strings, and fragments are not accepted in the repository URL."
+        )
     parts = [part for part in parsed.path.split("/") if part]
     ref: str | None = None
     if len(parts) > 2:
         if parts[2] != "tree" or len(parts) < 4:
-            raise RepoInputError("Repository URL must be https://github.com/owner/repo (optionally /tree/<ref>).")
+            raise RepoInputError(
+                "Repository URL must be https://github.com/owner/repo (optionally /tree/<ref>)."
+            )
         ref = "/".join(parts[3:])
         if not _REF.fullmatch(ref) or ".." in ref or ref.endswith(".lock") or "//" in ref:
             raise RepoInputError("Repository ref contains unsupported characters.")
@@ -93,7 +132,14 @@ def validate_github_url(raw_url: str, with_ref: bool = False):
     if repo.endswith(".git"):
         repo = repo[:-4]
     valid = re.compile(r"^[A-Za-z0-9_.-]+$")
-    if owner in {".", ".."} or repo in {".", ".."} or not owner or not repo or not valid.fullmatch(owner) or not valid.fullmatch(repo):
+    if (
+        owner in {".", ".."}
+        or repo in {".", ".."}
+        or not owner
+        or not repo
+        or not valid.fullmatch(owner)
+        or not valid.fullmatch(repo)
+    ):
         raise RepoInputError("GitHub owner or repository name contains unsupported characters.")
     clone_url = f"https://github.com/{owner}/{repo}.git"
     return (clone_url, owner, repo, ref) if with_ref else (clone_url, owner, repo)
@@ -108,10 +154,13 @@ def clone_repository(repo_url: str, destination: Path, timeout_seconds: int = 18
 
     cmd = [
         "git",
-        "-c", "protocol.file.allow=never",
-        "-c", "core.hooksPath=/dev/null",
+        "-c",
+        "protocol.file.allow=never",
+        "-c",
+        "core.hooksPath=/dev/null",
         "clone",
-        "--depth", "1",
+        "--depth",
+        "1",
         "--single-branch",
         "--no-tags",
         *(["--branch", ref] if ref else []),
@@ -121,7 +170,9 @@ def clone_repository(repo_url: str, destination: Path, timeout_seconds: int = 18
     # Never block on a credential prompt (private/nonexistent repos fail fast instead of hanging).
     env = {**os.environ, "GIT_TERMINAL_PROMPT": "0", "GIT_ASKPASS": "true"}
     try:
-        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout_seconds, check=False, env=env)
+        proc = subprocess.run(
+            cmd, capture_output=True, text=True, timeout=timeout_seconds, check=False, env=env
+        )
     except FileNotFoundError as exc:
         raise RepoCloneError("git is not installed or is not on PATH.") from exc
     except subprocess.TimeoutExpired as exc:
@@ -135,9 +186,12 @@ def clone_repository(repo_url: str, destination: Path, timeout_seconds: int = 18
 def _safe_source(root: Path, path: Path) -> bool:
     try:
         relative = path.relative_to(root)
-        return (not path.is_symlink() and path.resolve().is_relative_to(root.resolve())
-                and not any(part in IGNORED_DIRS for part in relative.parts)
-                and not SENSITIVE_PATH.search(relative.as_posix()))
+        return (
+            not path.is_symlink()
+            and path.resolve().is_relative_to(root.resolve())
+            and not any(part in IGNORED_DIRS for part in relative.parts)
+            and not SENSITIVE_PATH.search(relative.as_posix())
+        )
     except (OSError, ValueError):
         return False
 
@@ -189,8 +243,12 @@ def _detect_frameworks(root: Path, relative_files: list[str]) -> tuple[list[str]
             if isinstance(data.get(group), dict):
                 deps.update(data[group])
         mapping = {
-            "react": "React", "next": "Next.js", "vue": "Vue", "@angular/core": "Angular",
-            "express": "Express", "@nestjs/core": "NestJS",
+            "react": "React",
+            "next": "Next.js",
+            "vue": "Vue",
+            "@angular/core": "Angular",
+            "express": "Express",
+            "@nestjs/core": "NestJS",
         }
         tests = {"jest": "Jest", "vitest": "Vitest", "@playwright/test": "Playwright", "cypress": "Cypress"}
         for key, value in mapping.items():
@@ -205,8 +263,14 @@ def _detect_frameworks(root: Path, relative_files: list[str]) -> tuple[list[str]
         for p in relative_files
         if Path(p).name.lower() in {"pyproject.toml", "requirements.txt"}
     )
-    for needle, label in [("django", "Django"), ("fastapi", "FastAPI"), ("flask", "Flask"),
-                          ("streamlit", "Streamlit"), ("typer", "Typer"), ("click", "Click")]:
+    for needle, label in [
+        ("django", "Django"),
+        ("fastapi", "FastAPI"),
+        ("flask", "Flask"),
+        ("streamlit", "Streamlit"),
+        ("typer", "Typer"),
+        ("click", "Click"),
+    ]:
         if needle in python_text:
             frameworks.add(label)
     if "pytest" in python_text:
@@ -282,16 +346,24 @@ def analyze_repository(root: Path, repo_url: str, repo_name: str | None = None) 
             language_counts[LANGUAGES[suffix]] += 1
             source_count += 1
 
-    test_files = sorted({rel for rel in relative if Path(rel).suffix.lower() in SOURCE_SUFFIXES
-                         and any(p.search(rel) for p in TEST_PATTERNS)})
-    test_dirs = sorted({
-        part
-        for rel in test_files
-        for part in rel.split("/")[:-1]
-        if part.lower() in {"test", "tests", "__tests__", "spec", "specs", "e2e", "cypress", "playwright"}
-    })
+    test_files = sorted(
+        {
+            rel
+            for rel in relative
+            if Path(rel).suffix.lower() in SOURCE_SUFFIXES and any(p.search(rel) for p in TEST_PATTERNS)
+        }
+    )
+    test_dirs = sorted(
+        {
+            part
+            for rel in test_files
+            for part in rel.split("/")[:-1]
+            if part.lower() in {"test", "tests", "__tests__", "spec", "specs", "e2e", "cypress", "playwright"}
+        }
+    )
     package_files = sorted(
-        rel for rel in relative
+        rel
+        for rel in relative
         if Path(rel).name in PACKAGE_FILES or Path(rel).suffix.lower() in {".csproj", ".sln"}
     )
     frameworks, test_frameworks = _detect_frameworks(root, relative)
@@ -299,7 +371,9 @@ def analyze_repository(root: Path, repo_url: str, repo_name: str | None = None) 
     name = repo_name or root.name
     notes: list[str] = []
     if test_frameworks and not test_files:
-        notes.append("A test framework/configuration appears present, but no test source files were detected.")
+        notes.append(
+            "A test framework/configuration appears present, but no test source files were detected."
+        )
     if not source_count:
         notes.append("No supported source-code files were detected.")
 
@@ -324,7 +398,14 @@ def analyze_repository(root: Path, repo_url: str, repo_name: str | None = None) 
 def _priority(rel: str) -> tuple[int, int, str]:
     lower = rel.lower()
     score = 0
-    if Path(rel).name.lower() in {"readme.md", "package.json", "pyproject.toml", "requirements.txt", "pom.xml", "go.mod"}:
+    if Path(rel).name.lower() in {
+        "readme.md",
+        "package.json",
+        "pyproject.toml",
+        "requirements.txt",
+        "pom.xml",
+        "go.mod",
+    }:
         score += 100
     for word in ("controller", "route", "api", "service", "handler", "model", "domain", "repository", "auth"):
         if word in lower:
@@ -346,22 +427,35 @@ def _numbered_source(content: str, suffix: str) -> str:
     for node in ast.walk(tree):
         if isinstance(node, (ast.Module, ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)):
             body = node.body
-            if body and isinstance(body[0], ast.Expr) and isinstance(body[0].value, ast.Constant) and isinstance(body[0].value.value, str):
+            if (
+                body
+                and isinstance(body[0], ast.Expr)
+                and isinstance(body[0].value, ast.Constant)
+                and isinstance(body[0].value.value, str)
+            ):
                 omitted.update(range(body[0].lineno, body[0].end_lineno + 1))
         if isinstance(node, (ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)):
             outline.append((node.lineno, lines[node.lineno - 1].strip()))
-        if isinstance(node, ast.Assign) and any(isinstance(t, ast.Name) and t.id.isupper() for t in node.targets):
+        if isinstance(node, ast.Assign) and any(
+            isinstance(t, ast.Name) and t.id.isupper() for t in node.targets
+        ):
             outline.append((node.lineno, ast.unparse(node)[:240]))
     summary = "SYMBOLS / CONSTANTS (original line numbers):\n" + "\n".join(
-        f"{line}: {text}" for line, text in sorted(outline))
-    body = "\n".join(f"{i}: {line}" for i, line in enumerate(lines, 1)
-                     if i not in omitted and line.strip() and not line.lstrip().startswith('#'))
+        f"{line}: {text}" for line, text in sorted(outline)
+    )
+    body = "\n".join(
+        f"{i}: {line}"
+        for i, line in enumerate(lines, 1)
+        if i not in omitted and line.strip() and not line.lstrip().startswith("#")
+    )
     # Large modules must still expose some implementation, not just an outline.
     return summary[:2000] + "\nSOURCE (docstrings/comments omitted):\n" + body
 
 
 def build_repository_evidence(
-    root: Path, max_files: int = 36, max_total_chars: int = 70_000,
+    root: Path,
+    max_files: int = 36,
+    max_total_chars: int = 70_000,
     preferred_paths: list[str] | None = None,
 ) -> str:
     """Source-first, line-numbered evidence; documents cannot exhaust source budget.
@@ -378,8 +472,11 @@ def build_repository_evidence(
         if not path.is_file():
             continue
         rel = path.relative_to(root).as_posix()
-        if (path.suffix.lower() in SOURCE_SUFFIXES | {".xhtml", ".html", ".xml"}
-                or path.name in PACKAGE_FILES or path.name.lower() == "readme.md"):
+        if (
+            path.suffix.lower() in SOURCE_SUFFIXES | {".xhtml", ".html", ".xml"}
+            or path.name in PACKAGE_FILES
+            or path.name.lower() == "readme.md"
+        ):
             candidates.append(rel)
 
     def rank(rel):
@@ -400,7 +497,7 @@ def build_repository_evidence(
             continue
         content = SECRET_ASSIGNMENT.sub(lambda m: f"{m.group(1)}=<redacted>", content)
         numbered = _numbered_source(content, Path(rel).suffix.lower())
-        excerpt = numbered[:allowance - len(header) - 1]
+        excerpt = numbered[: allowance - len(header) - 1]
         chunk = header + excerpt + "\n"
         chunks.append(chunk)
         used += len(chunk)

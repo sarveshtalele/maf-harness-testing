@@ -5,11 +5,10 @@ Rules follow https://agentskills.io/specification and the Microsoft Agent Framew
 letters/digits/single hyphens; ``description`` is 1-1024 chars; ``compatibility`` <= 500;
 ``SKILL.md`` should stay under 500 lines.
 """
+
 from __future__ import annotations
 
-import argparse
 import hashlib
-import json
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -82,14 +81,20 @@ def lint_skill(skill_dir: Path) -> SkillReport:
             report.errors.append("metadata must be a mapping")
         elif any(not isinstance(v, (str, int, float, bool)) for v in metadata.values()):
             report.warnings.append("metadata values should be scalars; nested values are skipped by MAF")
-    body_lines = len(text[match.end():].splitlines())
+    body_lines = len(text[match.end() :].splitlines())
     if body_lines > 500:
-        report.warnings.append(f"SKILL.md body has {body_lines} lines; keep under 500 and move detail to references/")
+        report.warnings.append(
+            f"SKILL.md body has {body_lines} lines; keep under 500 and move detail to references/"
+        )
     return report
 
 
 def lint_all(skills_root: Path) -> list[SkillReport]:
-    return [lint_skill(p) for p in sorted(Path(skills_root).iterdir()) if p.is_dir() and not p.name.startswith(".")]
+    return [
+        lint_skill(p)
+        for p in sorted(Path(skills_root).iterdir())
+        if p.is_dir() and not p.name.startswith(".")
+    ]
 
 
 def require_valid(skills_root: Path, names: list[str]) -> dict[str, str]:
@@ -101,19 +106,8 @@ def require_valid(skills_root: Path, names: list[str]) -> dict[str, str]:
         if report is None:
             raise ValueError(f"Assigned Agent Skill not found: {name}")
         if not report.ok:
-            raise ValueError(f"Agent Skill {name} violates the Agent Skills specification: {'; '.join(report.errors)}")
+            raise ValueError(
+                f"Agent Skill {name} violates the Agent Skills specification: {'; '.join(report.errors)}"
+            )
         hashes[name] = report.sha256
     return hashes
-
-
-def main() -> int:
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("skills_root", nargs="?", default="skills", type=Path)
-    args = parser.parse_args()
-    reports = lint_all(args.skills_root)
-    print(json.dumps([r.__dict__ | {"ok": r.ok} for r in reports], indent=2))
-    return 0 if all(r.ok for r in reports) else 1
-
-
-if __name__ == "__main__":
-    raise SystemExit(main())

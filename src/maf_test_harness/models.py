@@ -22,17 +22,26 @@ class RepoAnalysis(BaseModel):
     notes: list[str] = Field(default_factory=list)
 
 
-
-
 RequirementCategory = Literal[
-    "functional", "validation", "security", "error_handling", "data", "integration", "ui", "cli",
-    "performance", "accessibility",
+    "functional",
+    "validation",
+    "security",
+    "error_handling",
+    "data",
+    "integration",
+    "ui",
+    "cli",
+    "performance",
+    "accessibility",
 ]
-TestLevel = Literal["unit", "integration", "api", "ui", "e2e", "cli", "security", "performance", "accessibility"]
+TestLevel = Literal[
+    "unit", "integration", "api", "ui", "e2e", "cli", "security", "performance", "accessibility"
+]
 
 
 class ActorDraft(BaseModel):
     """A user persona / calling party observed in the repository (e.g. anonymous visitor, admin, CLI user)."""
+
     model_config = ConfigDict(extra="forbid")
     name: str = Field(min_length=1, max_length=80)
     description: str = Field(min_length=1, max_length=300)
@@ -63,11 +72,26 @@ class ValidationRuleDraft(BaseModel):
 
 class ApiContractDraft(BaseModel):
     """Only explicit, documented HTTP contracts (route + method + status codes visible in source/spec)."""
+
     model_config = ConfigDict(extra="forbid")
     method: str = Field(min_length=3, max_length=7)
     path: str = Field(min_length=1, max_length=200)
     status_codes: list[str] = Field(min_length=1, max_length=8)
     source_files: list[str] = Field(min_length=1, max_length=4)
+
+
+class EnvironmentNeedDraft(BaseModel):
+    """Something a person must have to build/run/test the repository (read from README, manifests, CI files)."""
+
+    model_config = ConfigDict(extra="forbid")
+    name: str = Field(min_length=1, max_length=120)
+    kind: Literal["runtime", "dependency", "test_tool", "service", "configuration"]
+    how_to_install: str = Field(
+        min_length=1, max_length=400, description="Exact command or step, isolated env preferred."
+    )
+    evidence_file: str = Field(
+        max_length=200, description="File that states it; empty only when inferred from the stack."
+    )
 
 
 class RequirementsDraft(BaseModel):
@@ -79,6 +103,7 @@ class RequirementsDraft(BaseModel):
     acceptance_criteria: list[AcceptanceCriterionDraft] = Field(max_length=40)
     validation_rules: list[ValidationRuleDraft] = Field(max_length=20)
     api_contracts: list[ApiContractDraft] = Field(max_length=25)
+    environment_needs: list[EnvironmentNeedDraft] = Field(max_length=12)
     exclusions: list[str] = Field(max_length=12)
     assumptions: list[str] = Field(max_length=12)
     gaps: list[str] = Field(max_length=12)
@@ -89,8 +114,17 @@ class TestArea(BaseModel):
     name: str = Field(min_length=1, max_length=160)
     objective: str = Field(min_length=1, max_length=800)
     level: Literal[
-        "unit", "integration", "api", "ui", "contract", "e2e", "regression",
-        "performance", "security", "functional", "mixed"
+        "unit",
+        "integration",
+        "api",
+        "ui",
+        "contract",
+        "e2e",
+        "regression",
+        "performance",
+        "security",
+        "functional",
+        "mixed",
     ]
     risk: Literal["high", "medium", "low"]
     evidence_files: list[str] = Field(max_length=12)
@@ -129,7 +163,9 @@ class TestDesignCaseDraft(BaseModel):
     priority: Literal["P0", "P1", "P2"]
     level: TestLevel = Field(description="Automation level; decides the framework the generator uses.")
     actor: str = Field(min_length=1, max_length=80, description="Actor name from requirements, or 'system'.")
-    target: str = Field(min_length=1, max_length=200, description="Function/class, endpoint, page or command under test.")
+    target: str = Field(
+        min_length=1, max_length=200, description="Function/class, endpoint, page or command under test."
+    )
     description: str = Field(min_length=1, max_length=1000)
     preconditions: list[str] = Field(max_length=6)
     data_notes: str = Field(max_length=400, description="Concrete inputs/fixtures; empty when none.")
@@ -163,9 +199,12 @@ class GeneratedTestFileDraft(BaseModel):
     JSON string ("import sysimport pytest..."), which no validator can repair. Line arrays carry the line
     structure explicitly; the host joins them into ``content``.
     """
+
     model_config = ConfigDict(extra="forbid")
     path: str = Field(min_length=1, max_length=240)
-    lines: list[str] = Field(min_length=1, max_length=400, description="Source code, one array item per line.")
+    lines: list[str] = Field(
+        min_length=1, max_length=400, description="Source code, one array item per line."
+    )
     case_ids: list[str] = Field(min_length=1, max_length=1)
 
 

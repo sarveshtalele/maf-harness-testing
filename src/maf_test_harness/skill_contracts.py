@@ -10,7 +10,7 @@ import subprocess
 import tempfile
 import uuid
 from copy import deepcopy
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path, PurePosixPath
 from typing import Any
 
@@ -51,7 +51,7 @@ def _slug(text: str, max_length: int = 52) -> str:
     """Return a compact human-readable identifier fragment."""
     value = re.sub(r"[^A-Za-z0-9]+", "-", str(text).strip()).strip("-").upper()
     value = re.sub(r"-+", "-", value)
-    return (value[:max_length].rstrip("-") or "ITEM")
+    return value[:max_length].rstrip("-") or "ITEM"
 
 
 def _stable_suffix(seed: str, length: int = 8) -> str:
@@ -80,32 +80,6 @@ def design_schema(skills_root: Path) -> dict[str, Any]:
     return schema
 
 
-def normalize_requirements(app_name: str, requirements: str) -> dict[str, Any]:
-    """Convert nonempty free-text lines into evidence-preserving requirements."""
-    if not isinstance(app_name, str) or not app_name.strip():
-        raise ValueError("app_name must be nonempty")
-    if not isinstance(requirements, str):
-        raise TypeError("requirements must be text")
-    items = []
-    for line in requirements.splitlines():
-        text = line.strip()
-        if not text:
-            continue
-        stable_id = _descriptive_id("REQ", text, f"requirement:{app_name.strip()}:{text}")
-        items.append({"id": stable_id, "text": text, "evidence": text})
-    if not items:
-        raise ValueError("requirements must contain at least one nonempty line")
-    return {
-        "app_name": app_name.strip(),
-        "requirement_model": {
-            "requirements": items,
-            "validation_rules": [],
-            "acceptance_criteria": [],
-        },
-        "api_contracts": [],
-    }
-
-
 def _clean_paths(paths: Any, what: str) -> list[str]:
     if not isinstance(paths, list) or not paths or not all(isinstance(p, str) and p.strip() for p in paths):
         raise ValueError(f"each {what} needs at least one source file")
@@ -132,8 +106,13 @@ def finalize_discovered_requirements(document: dict[str, Any], repo_url: str) ->
     for actor in document.get("actors") or []:
         name = str(actor.get("name", "")).strip()
         if name and name.lower() not in {a["name"].lower() for a in actors}:
-            actors.append({"name": name, "description": str(actor.get("description", "")).strip(),
-                           "source_files": _clean_paths(actor.get("source_files"), "actor")})
+            actors.append(
+                {
+                    "name": name,
+                    "description": str(actor.get("description", "")).strip(),
+                    "source_files": _clean_paths(actor.get("source_files"), "actor"),
+                }
+            )
     actor_names = {a["name"].lower() for a in actors} | {"system"}
     requirements: list[dict[str, Any]] = []
     ref_to_id: dict[int, str] = {}
@@ -153,43 +132,77 @@ def finalize_discovered_requirements(document: dict[str, Any], repo_url: str) ->
         seen_text.add(text)
         stable_id = _descriptive_id("REQ", text, f"requirement:{repo}:{text}")
         ref_to_id[position] = stable_id
-        requirements.append({"id": stable_id, "text": text, "evidence": evidence,
-                             "source_files": _clean_paths(item.get("source_files"), "inferred requirement"),
-                             "category": item.get("category", "functional"), "actor": actor})
+        requirements.append(
+            {
+                "id": stable_id,
+                "text": text,
+                "evidence": evidence,
+                "source_files": _clean_paths(item.get("source_files"), "inferred requirement"),
+                "category": item.get("category", "functional"),
+                "actor": actor,
+            }
+        )
     criteria = []
     for item in document.get("acceptance_criteria") or []:
         parent = ref_to_id.get(item.get("requirement_ref"))
         text = str(item.get("text", "")).strip()
         if parent is None:
-            raise ValueError(f"acceptance criterion references unknown requirement_ref {item.get('requirement_ref')!r}")
+            raise ValueError(
+                f"acceptance criterion references unknown requirement_ref {item.get('requirement_ref')!r}"
+            )
         if text:
-            criteria.append({"id": _descriptive_id("AC", text, f"criterion:{repo}:{parent}:{text}"), "text": text,
-                             "requirement_id": parent, "evidence": text,
-                             "source_files": _clean_paths(item.get("source_files"), "acceptance criterion")})
-    rules = [{"id": _descriptive_id("VAL", str(r["text"]).strip(), f"validation:{repo}:{r['text']}"),
-              "text": str(r["text"]).strip(), "source_files": _clean_paths(r.get("source_files"), "validation rule")}
-             for r in document.get("validation_rules") or [] if str(r.get("text", "")).strip()]
+            criteria.append(
+                {
+                    "id": _descriptive_id("AC", text, f"criterion:{repo}:{parent}:{text}"),
+                    "text": text,
+                    "requirement_id": parent,
+                    "evidence": text,
+                    "source_files": _clean_paths(item.get("source_files"), "acceptance criterion"),
+                }
+            )
+    rules = [
+        {
+            "id": _descriptive_id("VAL", str(r["text"]).strip(), f"validation:{repo}:{r['text']}"),
+            "text": str(r["text"]).strip(),
+            "source_files": _clean_paths(r.get("source_files"), "validation rule"),
+        }
+        for r in document.get("validation_rules") or []
+        if str(r.get("text", "")).strip()
+    ]
     contracts = []
     for c in document.get("api_contracts") or []:
         method, path = str(c.get("method", "")).upper().strip(), str(c.get("path", "")).strip()
         codes = [str(code) for code in c.get("status_codes") or []]
         if not (method and path and codes):
             continue
-        contracts.append({"id": _descriptive_id("API", f"{method} {path}", f"api:{repo}:{method}:{path}"),
-                          "method": method, "path": path, "status_codes": codes,
-                          "source_files": _clean_paths(c.get("source_files"), "api contract")})
+        contracts.append(
+            {
+                "id": _descriptive_id("API", f"{method} {path}", f"api:{repo}:{method}:{path}"),
+                "method": method,
+                "path": path,
+                "status_codes": codes,
+                "source_files": _clean_paths(c.get("source_files"), "api contract"),
+            }
+        )
     return {
         "app_name": app_name,
         "summary": str(document.get("summary", "")).strip(),
         "actors": actors,
-        "requirement_model": {"requirements": requirements, "validation_rules": rules,
-                              "acceptance_criteria": criteria},
+        "requirement_model": {
+            "requirements": requirements,
+            "validation_rules": rules,
+            "acceptance_criteria": criteria,
+        },
         "api_contracts": contracts,
+        "environment_needs": [dict(n) for n in document.get("environment_needs") or []],
         "exclusions": list(document.get("exclusions") or []),
         "assumptions": list(document.get("assumptions") or []),
         "gaps": list(document.get("gaps") or []),
-        "metadata": {"generator": "repository-requirements", "repository_url": repo,
-                     "generated_at": datetime.now(timezone.utc).isoformat()},
+        "metadata": {
+            "generator": "repository-requirements",
+            "repository_url": repo,
+            "generated_at": datetime.now(UTC).isoformat(),
+        },
     }
 
 
@@ -234,7 +247,9 @@ def _source_index(source: dict[str, Any]) -> tuple[dict[str, dict[str, Any]], di
         raise ValueError("source must contain at least one requirement")
     for criterion in collections["acceptance_criteria"]:
         if criterion["requirement_id"] not in requirement_ids:
-            raise ValueError(f"acceptance criterion references unknown requirement: {criterion['requirement_id']}")
+            raise ValueError(
+                f"acceptance criterion references unknown requirement: {criterion['requirement_id']}"
+            )
     return by_id, ids
 
 
@@ -266,7 +281,10 @@ def _validate_design_schema(result: dict[str, Any], schema: dict[str, Any]) -> N
 
 
 def finalize_design(
-    document: dict[str, Any], source: dict[str, Any], repo_url: str, skills_root: Path,
+    document: dict[str, Any],
+    source: dict[str, Any],
+    repo_url: str,
+    skills_root: Path,
     allowed_levels: set[str] | None = None,
 ) -> dict[str, Any]:
     """Validate evidence links, assign IDs, and rebuild all derived design sections."""
@@ -299,11 +317,15 @@ def finalize_design(
                 retained_contracts.append(case)
                 continue
             links = case.get("traceability_links")
-            linked_api_ids = {
-                str(link.get("id"))
-                for link in links
-                if isinstance(link, dict) and link.get("type") == "api_contract"
-            } if isinstance(links, list) else set()
+            linked_api_ids = (
+                {
+                    str(link.get("id"))
+                    for link in links
+                    if isinstance(link, dict) and link.get("type") == "api_contract"
+                }
+                if isinstance(links, list)
+                else set()
+            )
             if api_contract_ids and linked_api_ids & api_contract_ids:
                 retained_contracts.append(case)
             else:
@@ -321,7 +343,7 @@ def finalize_design(
     # metadata on the host so the LLM does not waste output tokens reproducing
     # derived fields.
     result["metadata"] = {
-        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "generated_at": datetime.now(UTC).isoformat(),
         "generator_version": "maf-host-finalizer-1",
         "input_sources": ["approved_requirements", normalized_repo_url],
         "tool": "test-design-generator",
@@ -342,7 +364,8 @@ def finalize_design(
             if allowed_levels is not None and case.get("level") not in allowed_levels:
                 raise ValueError(
                     f"test '{case.get('title')}' uses level {case.get('level')!r}, which is unavailable "
-                    f"(allowed: {sorted(allowed_levels)}). UI/E2E/accessibility levels need a running application.")
+                    f"(allowed: {sorted(allowed_levels)}). UI/E2E/accessibility levels need a running application."
+                )
             known_actors = {a["name"].lower() for a in source.get("actors", [])} | {"system"}
             if source.get("actors") and str(case.get("actor", "")).lower() not in known_actors:
                 raise ValueError(f"test '{case.get('title')}' cites unknown actor {case.get('actor')!r}")
@@ -459,8 +482,12 @@ def _python_tests(content: str) -> list:
             continue
         unittest_class = any(ast.unparse(base).endswith("TestCase") for base in node.bases)
         if node.name.startswith("Test") or unittest_class:
-            tests.extend(child for child in node.body if isinstance(child, function_types)
-                         and child.name.startswith("test" if unittest_class else "test_"))
+            tests.extend(
+                child
+                for child in node.body
+                if isinstance(child, function_types)
+                and child.name.startswith("test" if unittest_class else "test_")
+            )
     return tests
 
 
@@ -470,11 +497,18 @@ _JS_DECL = r"(?m)^[ \t]*(?:it|test)(?:\.(?:only|each\([^)]*\)))?\s*\("
 
 _JAVA_SYNTAX_ERROR = re.compile(
     r"reached end of file|illegal start|unclosed|not a statement|class, interface|invalid method declaration|"
-    r"orphaned|malformed|<identifier> expected|'[^']{1,3}' expected|expected$", re.I)
+    r"orphaned|malformed|<identifier> expected|'[^']{1,3}' expected|expected$",
+    re.I,
+)
 
 
 def _strip_strings_and_comments(text: str) -> str:
-    return re.sub(r"//[^\n]*|/\*.*?\*/|\"(?:\\.|[^\"\\\n])*\"|'(?:\\.|[^'\\\n])*'|`(?:\\.|[^`\\])*`", "", text, flags=re.S)
+    return re.sub(
+        r"//[^\n]*|/\*.*?\*/|\"(?:\\.|[^\"\\\n])*\"|'(?:\\.|[^'\\\n])*'|`(?:\\.|[^`\\])*`",
+        "",
+        text,
+        flags=re.S,
+    )
 
 
 def _unbalanced_delimiters(content: str) -> str | None:
@@ -483,17 +517,20 @@ def _unbalanced_delimiters(content: str) -> str | None:
     for ch in _strip_strings_and_comments(content):
         if ch in "([{":
             stack.append(ch)
-        elif ch in pairs:
-            if not stack or stack.pop() != pairs[ch]:
-                return f"unexpected '{ch}'"
+        elif ch in pairs and (not stack or stack.pop() != pairs[ch]):
+            return f"unexpected '{ch}'"
     return f"unclosed '{stack[-1]}' (file looks truncated)" if stack else None
 
 
 def _native_syntax_check(path: str, content: str) -> str | None:
     """Syntax check with a host tool when installed (node, gofmt, javac parse errors); brace balance otherwise."""
     suffix = PurePosixPath(path).suffix.lower()
-    tool = {".js": ["node", "--check"], ".mjs": ["node", "--check"], ".go": ["gofmt", "-e"],
-            ".java": ["javac", "-proc:none", "-d"]}.get(suffix)
+    tool = {
+        ".js": ["node", "--check"],
+        ".mjs": ["node", "--check"],
+        ".go": ["gofmt", "-e"],
+        ".java": ["javac", "-proc:none", "-d"],
+    }.get(suffix)
     if tool and shutil.which(tool[0]):
         with tempfile.TemporaryDirectory() as tmp:
             target = Path(tmp) / (PurePosixPath(path).name if suffix == ".java" else f"candidate{suffix}")
@@ -504,14 +541,30 @@ def _native_syntax_check(path: str, content: str) -> str | None:
             except (OSError, subprocess.TimeoutExpired):
                 proc = None
         if proc is not None and proc.returncode:
-            lines = [ln for ln in (proc.stderr or proc.stdout).splitlines() if "error:" in ln or suffix != ".java"]
+            lines = [
+                ln for ln in (proc.stderr or proc.stdout).splitlines() if "error:" in ln or suffix != ".java"
+            ]
             if suffix != ".java":
                 return (lines or ["syntax error"])[0].strip()
             # javac also reports unresolved symbols (dependencies are not on this path); only syntax errors count.
             syntax = [ln for ln in lines if _JAVA_SYNTAX_ERROR.search(ln)]
             if syntax:
                 return syntax[0].strip()
-    if suffix in {".java", ".kt", ".cs", ".ts", ".tsx", ".js", ".jsx", ".mjs", ".go", ".rs", ".php", ".c", ".cpp"}:
+    if suffix in {
+        ".java",
+        ".kt",
+        ".cs",
+        ".ts",
+        ".tsx",
+        ".js",
+        ".jsx",
+        ".mjs",
+        ".go",
+        ".rs",
+        ".php",
+        ".c",
+        ".cpp",
+    }:
         return _unbalanced_delimiters(content)
     return None
 
@@ -523,7 +576,11 @@ def _test_declaration_count(path: str, content: str) -> int:
         return len(_python_tests(content))
     patterns = {
         ".py": r"(?m)^\s*(?:async\s+)?def\s+test_[A-Za-z0-9_]+\s*\(",
-        ".js": _JS_DECL, ".jsx": _JS_DECL, ".ts": _JS_DECL, ".tsx": _JS_DECL, ".mjs": _JS_DECL,
+        ".js": _JS_DECL,
+        ".jsx": _JS_DECL,
+        ".ts": _JS_DECL,
+        ".tsx": _JS_DECL,
+        ".mjs": _JS_DECL,
         ".java": r"@(?:[\w.]+\.)?(?:Test|ParameterizedTest|RepeatedTest)\b",
         ".kt": r"@(?:[\w.]+\.)?(?:Test|ParameterizedTest)\b",
         ".cs": r"\[(?:Fact|Theory|Test|TestMethod)\b",
@@ -573,7 +630,12 @@ def ensure_generated_case_markers(payload: dict[str, Any]) -> dict[str, Any]:
         linked = item.get("case_ids")
         path = item.get("path")
         content = item.get("content")
-        if not (isinstance(linked, list) and len(linked) == 1 and isinstance(path, str) and isinstance(content, str)):
+        if not (
+            isinstance(linked, list)
+            and len(linked) == 1
+            and isinstance(path, str)
+            and isinstance(content, str)
+        ):
             continue
         case_id = linked[0]
         marker = f"CASE_ID: {case_id}"
@@ -619,25 +681,36 @@ def validate_generated_files(payload: dict[str, Any], case_ids: set[str]) -> dic
                 tree = ast.parse(content, filename=path)
             except SyntaxError as exc:
                 raise ValueError(f"generated Python source is invalid in {path}: {exc}") from exc
-            imports = [
-                node for node in ast.walk(tree)
-                if isinstance(node, (ast.Import, ast.ImportFrom))
-            ]
+            imports = [node for node in ast.walk(tree) if isinstance(node, (ast.Import, ast.ImportFrom))]
             if sum(len(node.names) for node in imports) > 20:
                 raise ValueError(f"generated file contains excessive imports: {path}")
             for test in _python_tests(content):
-                body = [node for node in test.body if not (isinstance(node, ast.Expr)
-                        and isinstance(node.value, ast.Constant) and isinstance(node.value.value, str))]
-                if not body or all(isinstance(node, ast.Pass) or
-                                   (isinstance(node, ast.Expr) and isinstance(node.value, ast.Constant))
-                                   for node in body):
+                body = [
+                    node
+                    for node in test.body
+                    if not (
+                        isinstance(node, ast.Expr)
+                        and isinstance(node.value, ast.Constant)
+                        and isinstance(node.value.value, str)
+                    )
+                ]
+                if not body or all(
+                    isinstance(node, ast.Pass)
+                    or (isinstance(node, ast.Expr) and isinstance(node.value, ast.Constant))
+                    for node in body
+                ):
                     raise ValueError(f"generated file contains a placeholder test body: {path}")
-                if any(isinstance(node, ast.Assert) and isinstance(node.test, ast.Constant)
-                       and node.test.value is True for node in ast.walk(test)):
+                if any(
+                    isinstance(node, ast.Assert)
+                    and isinstance(node.test, ast.Constant)
+                    and node.test.value is True
+                    for node in ast.walk(test)
+                ):
                     raise ValueError(f"generated file contains a trivial placeholder assertion: {path}")
                 for node in ast.walk(test):
                     if isinstance(node, ast.Assert) and not any(
-                        isinstance(child, (ast.Name, ast.Call, ast.Attribute)) for child in ast.walk(node.test)
+                        isinstance(child, (ast.Name, ast.Call, ast.Attribute))
+                        for child in ast.walk(node.test)
                     ):
                         raise ValueError(f"generated test contains a constant assertion: {path}")
         if _PLACEHOLDER.search(content):
@@ -647,9 +720,16 @@ def validate_generated_files(payload: dict[str, Any], case_ids: set[str]) -> dic
         syntax_error = _native_syntax_check(path, content)
         if syntax_error:
             raise ValueError(f"generated source has a syntax error in {path}: {syntax_error}")
-        if re.search(r"(?im)^\s*(?:assert\s+True|pass)\s*$", content) and len(content.strip().splitlines()) <= 12:
+        if (
+            re.search(r"(?im)^\s*(?:assert\s+True|pass)\s*$", content)
+            and len(content.strip().splitlines()) <= 12
+        ):
             raise ValueError(f"generated file contains a trivial placeholder test: {path}")
-        if not isinstance(linked, list) or not linked or not all(isinstance(value, str) and value for value in linked):
+        if (
+            not isinstance(linked, list)
+            or not linked
+            or not all(isinstance(value, str) and value for value in linked)
+        ):
             raise ValueError(f"generated file needs case_ids: {path}")
         if len(linked) != len(set(linked)):
             raise ValueError(f"generated file repeats case_ids: {path}")
@@ -664,7 +744,9 @@ def validate_generated_files(payload: dict[str, Any], case_ids: set[str]) -> dic
             raise ValueError(f"generated file references unknown case IDs: {sorted(unknown)}")
         missing_markers = [case_id for case_id in linked if f"CASE_ID: {case_id}" not in content]
         if missing_markers:
-            raise ValueError(f"generated source is missing CASE_ID markers in {path}: {', '.join(missing_markers)}")
+            raise ValueError(
+                f"generated source is missing CASE_ID markers in {path}: {', '.join(missing_markers)}"
+            )
         declarations = _test_declaration_count(path, content)
         if not declarations:
             raise ValueError(f"generated file has no recognized concrete test declarations: {path}")
@@ -683,9 +765,18 @@ def validate_generated_files(payload: dict[str, Any], case_ids: set[str]) -> dic
     }
 
 
-
-_COMMON_TEST_MODULES = {"pytest", "unittest", "mock", "pytest_mock", "pytest_asyncio", "requests_mock", "responses",
-                        "freezegun", "hypothesis", "_pytest"}
+_COMMON_TEST_MODULES = {
+    "pytest",
+    "unittest",
+    "mock",
+    "pytest_mock",
+    "pytest_asyncio",
+    "requests_mock",
+    "responses",
+    "freezegun",
+    "hypothesis",
+    "_pytest",
+}
 
 
 def check_python_imports(content: str, repo_files: list[str], dependency_text: str, path: str = "") -> None:
@@ -700,7 +791,7 @@ def check_python_imports(content: str, repo_files: list[str], dependency_text: s
     stdlib = getattr(__import__("sys"), "stdlib_module_names", frozenset())
     # The runner puts the workspace root and src/ (and lib/) on PYTHONPATH, so all three layouts resolve.
     py_files = [f for f in repo_files if f.endswith(".py")]
-    rooted = {f[len(root):] for f in py_files for root in ("", "src/", "lib/") if f.startswith(root)}
+    rooted = {f[len(root) :] for f in py_files for root in ("", "src/", "lib/") if f.startswith(root)}
     modules_in_repo = {PurePosixPath(f).with_suffix("").as_posix() for f in rooted}
     packages = {PurePosixPath(f).parent.as_posix() for f in rooted}
     dependencies = dependency_text.lower().replace("_", "-")
@@ -708,19 +799,33 @@ def check_python_imports(content: str, repo_files: list[str], dependency_text: s
     # A test that puts a directory on sys.path (or loads a file by path) may import its modules by bare name.
     path_aware = "sys.path" in content or "spec_from_file_location" in content
     for node in ast.walk(tree):
-        names = ([alias.name for alias in node.names] if isinstance(node, ast.Import)
-                 else [node.module] if isinstance(node, ast.ImportFrom) and node.level == 0 and node.module else [])
+        names = (
+            [alias.name for alias in node.names]
+            if isinstance(node, ast.Import)
+            else [node.module]
+            if isinstance(node, ast.ImportFrom) and node.level == 0 and node.module
+            else []
+        )
         for name in names:
             top = name.split(".")[0]
             if top in stdlib or top in _COMMON_TEST_MODULES:
                 continue
             dotted = name.replace(".", "/")
-            if dotted in modules_in_repo or dotted in packages or top in {m.split("/")[0] for m in modules_in_repo}:
-                if dotted in modules_in_repo or dotted in packages or any(
-                        m.startswith(dotted + "/") for m in modules_in_repo):
+            if (
+                dotted in modules_in_repo
+                or dotted in packages
+                or top in {m.split("/")[0] for m in modules_in_repo}
+            ):
+                if (
+                    dotted in modules_in_repo
+                    or dotted in packages
+                    or any(m.startswith(dotted + "/") for m in modules_in_repo)
+                ):
                     continue
-                raise ValueError(f"import '{name}' in {path or 'generated test'} does not match any repository path "
-                                 f"(top-level '{top}' exists; check the sub-module against source_files)")
+                raise ValueError(
+                    f"import '{name}' in {path or 'generated test'} does not match any repository path "
+                    f"(top-level '{top}' exists; check the sub-module against source_files)"
+                )
             if top.lower().replace("_", "-") in dependencies:
                 continue
             leaf = name.split(".")[-1]
@@ -733,11 +838,17 @@ def check_python_imports(content: str, repo_files: list[str], dependency_text: s
                     f"import '{name}' in {path or 'generated test'} cannot work: the module lives at {shown}, whose path "
                     "is not an importable package (hyphen or leading digit). The tests run with the repository root as the "
                     "working directory: add that directory to sys.path (e.g. sys.path.insert(0, str(Path.cwd() / "
-                    "'<dir>'))) or load the file with importlib.util.spec_from_file_location, then import it.")
-            hint = (f" Did you mean the repository module {', '.join(h.replace('/', '.') for h in hints)}?"
-                    if hints else "")
-            raise ValueError(f"import '{name}' in {path or 'generated test'} is not stdlib, not a repository module "
-                             f"and not a declared dependency.{hint} Derive import paths from source_files.")
+                    "'<dir>'))) or load the file with importlib.util.spec_from_file_location, then import it."
+                )
+            hint = (
+                f" Did you mean the repository module {', '.join(h.replace('/', '.') for h in hints)}?"
+                if hints
+                else ""
+            )
+            raise ValueError(
+                f"import '{name}' in {path or 'generated test'} is not stdlib, not a repository module "
+                f"and not a declared dependency.{hint} Derive import paths from source_files."
+            )
 
 
 _JAVA_IMPORT = re.compile(r"(?m)^\s*import\s+(?:static\s+)?([A-Za-z_][\w.]*)\s*(?:\.\*)?;")
@@ -756,13 +867,17 @@ def check_java_imports(content: str, repo_files: list[str], dependency_text: str
             parts = PurePosixPath(f).parts
             for marker in ("java", "kotlin"):
                 if marker in parts:
-                    repo_packages.add(".".join(parts[parts.index(marker) + 1:-1]))
+                    repo_packages.add(".".join(parts[parts.index(marker) + 1 : -1]))
                     break
     normalized = re.sub(r"[^a-z0-9]", "", dependency_text.lower())
     for name in _JAVA_IMPORT.findall(content):
         if name.startswith(_JAVA_PLATFORM):
             continue
-        if any(name == pkg or name.startswith(pkg + ".") or pkg.startswith(name + ".") for pkg in repo_packages if pkg):
+        if any(
+            name == pkg or name.startswith(pkg + ".") or pkg.startswith(name + ".")
+            for pkg in repo_packages
+            if pkg
+        ):
             continue
         segments = name.split(".")
         token = re.sub(r"[^a-z0-9]", "", (segments[1] if len(segments) > 2 else segments[0]).lower())
@@ -772,4 +887,6 @@ def check_java_imports(content: str, repo_files: list[str], dependency_text: str
             f"import '{name}' in {path or 'generated test'} needs a library that is not declared in the build files "
             f"(looked for '{token}' in pom.xml/build.gradle) and is not repository code. Use only JDK classes, "
             "repository classes and the dependencies already declared; do not assume RestAssured, AssertJ or Mockito "
-            "unless the build file declares them.")
+            "unless the build file declares them. For HTTP calls use java.net.http.HttpClient (JDK 11+) or "
+            'java.net.HttpURLConnection, reading the base URL from System.getenv("BASE_URL").'
+        )

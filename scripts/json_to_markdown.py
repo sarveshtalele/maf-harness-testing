@@ -5,6 +5,7 @@ Usage:
     uv run python scripts/json_to_markdown.py artifact.json
     uv run python scripts/json_to_markdown.py artifact.json --output artifact.md --title "Test Design"
 """
+
 from __future__ import annotations
 
 import argparse

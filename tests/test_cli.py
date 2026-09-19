@@ -8,12 +8,23 @@ SKILLS = Path("skills")
 
 
 def write_run(tmp_path, loaded=True, mode_ok=True, stale_hash=False):
-    state = {"runtime_provenance": {"factory": "agent_framework.create_harness_agent", "agent_framework_core": "1",
-                                    "agent_framework_openai": "1", "model": "m", "skill_mode": "progressive"},
-             "skill_provenance": {}, "skill_tool_trace": {}, "invocations": [{"status": "returned"}]}
+    state = {
+        "runtime_provenance": {
+            "factory": "agent_framework.create_harness_agent",
+            "agent_framework_core": "1",
+            "agent_framework_openai": "1",
+            "model": "m",
+            "skill_mode": "progressive",
+        },
+        "skill_provenance": {},
+        "skill_tool_trace": {},
+        "invocations": [{"status": "returned"}],
+    }
     for stage, skill in cli.SKILL_NAMES.items():
-        state["skill_provenance"][stage] = {"uses_maf_skills_provider": mode_ok,
-                                            "package_sha256": "0" * 64 if stale_hash else tree_sha256(SKILLS / skill)}
+        state["skill_provenance"][stage] = {
+            "uses_maf_skills_provider": mode_ok,
+            "package_sha256": "0" * 64 if stale_hash else tree_sha256(SKILLS / skill),
+        }
         state["skill_tool_trace"][stage] = {"skill_loaded_via_maf": loaded}
     (tmp_path / "run.json").write_text(json.dumps({"state": state}))
     return tmp_path

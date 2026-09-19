@@ -4,6 +4,7 @@ The workflow stores structured JSON artifacts. This module converts them into
 human-readable Markdown and can render the same structure in Streamlit without
 losing access to the raw JSON.
 """
+
 from __future__ import annotations
 
 import json
@@ -54,10 +55,7 @@ def _markdown_table(items: list[dict[str, Any]]) -> str:
                 keys.append(key)
     header = "| " + " | ".join(humanize(key) for key in keys) + " |"
     rule = "| " + " | ".join("---" for _ in keys) + " |"
-    rows = [
-        "| " + " | ".join(_escape_cell(item.get(key)) for key in keys) + " |"
-        for item in items
-    ]
+    rows = ["| " + " | ".join(_escape_cell(item.get(key)) for key in keys) + " |" for item in items]
     return "\n".join([header, rule, *rows])
 
 
@@ -138,7 +136,11 @@ def json_to_markdown(data: Any, title: str | None = None) -> str:
                 if isinstance(item, dict):
                     item_title = item.get("title") or item.get("name") or item.get("id") or f"Item {index}"
                     lines.extend([f"{'#' * min(heading_level + 1, 6)} {item_title}", ""])
-                    emit(item, level + 2, path_hint=item.get("path") if isinstance(item.get("path"), str) else path_hint)
+                    emit(
+                        item,
+                        level + 2,
+                        path_hint=item.get("path") if isinstance(item.get("path"), str) else path_hint,
+                    )
                 else:
                     emit(item, level + 1, f"Item {index}", path_hint)
             return
@@ -179,10 +181,7 @@ def render_json_ui(data: Any, *, key_prefix: str = "artifact", heading_level: in
                     st.markdown(f"**{label}:** `{child_value}`")
                     path_hint = child_value
                     continue
-                if isinstance(child_value, dict):
-                    st.markdown(f"{'#' * min(level, 6)} {label}")
-                    render(child_value, f"{prefix}-{child_key}", level + 1, path_hint)
-                elif isinstance(child_value, list):
+                if isinstance(child_value, (dict, list)):
                     st.markdown(f"{'#' * min(level, 6)} {label}")
                     render(child_value, f"{prefix}-{child_key}", level + 1, path_hint)
                 else:
@@ -209,8 +208,10 @@ def render_json_ui(data: Any, *, key_prefix: str = "artifact", heading_level: in
                 st.dataframe(rows, width="stretch", hide_index=True)
                 with st.expander("Full row details", expanded=False):
                     for index, item in enumerate(value, 1):
-                        st.markdown(f"**{index}. {item.get('title') or item.get('name') or item.get('id') or 'Details'}**")
-                        render(item, f"{prefix}-detail-{index}", level + 1, item.get('path'))
+                        st.markdown(
+                            f"**{index}. {item.get('title') or item.get('name') or item.get('id') or 'Details'}**"
+                        )
+                        render(item, f"{prefix}-detail-{index}", level + 1, item.get("path"))
                 return
             if all(not isinstance(item, (dict, list)) for item in value):
                 st.markdown("\n".join(f"- {_scalar(item)}" for item in value))

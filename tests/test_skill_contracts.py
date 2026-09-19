@@ -12,7 +12,6 @@ from maf_test_harness.skill_contracts import (
     ensure_generated_case_markers,
     finalize_design,
     finalize_discovered_requirements,
-    normalize_requirements,
     validate_generated_files,
 )
 
@@ -24,13 +23,9 @@ def _source():
         "requirement_model": {
             "requirements": [{"id": "REQ-1", "text": "User can sign in", "evidence": "Story line 1"}],
             "validation_rules": [{"id": "VAL-1", "text": "Email is required", "evidence": "Rule 1"}],
-            "acceptance_criteria": [
-                {"id": "AC-1", "text": "Dashboard appears", "requirement_id": "REQ-1"}
-            ],
+            "acceptance_criteria": [{"id": "AC-1", "text": "Dashboard appears", "requirement_id": "REQ-1"}],
         },
-        "api_contracts": [
-            {"id": "API-1", "path": "/login", "method": "POST", "status_codes": ["200"]}
-        ],
+        "api_contracts": [{"id": "API-1", "path": "/login", "method": "POST", "status_codes": ["200"]}],
     }
 
 
@@ -68,15 +63,15 @@ def _document():
         "boundary_tests": [],
         "validation_tests": [case("Missing email rejected", "validation", "validation", "VAL-1")],
         "contract_tests": [case("Login success", "contract", "api_contract", "API-1")],
-        "traceability_matrix": {
-            "requirement_to_tests": {}, "validation_to_tests": {}, "api_to_tests": {}
-        },
-        "coverage_analysis": {
-            "requirement_coverage": {}, "validation_coverage": {}, "api_coverage": {}
-        },
+        "traceability_matrix": {"requirement_to_tests": {}, "validation_to_tests": {}, "api_to_tests": {}},
+        "coverage_analysis": {"requirement_coverage": {}, "validation_coverage": {}, "api_coverage": {}},
         "gaps_report": {
-            "missing_validations": [], "incomplete_requirements": [], "coverage_gaps": [],
-            "uncovered_requirements": [], "uncovered_validations": [], "notes": "",
+            "missing_validations": [],
+            "incomplete_requirements": [],
+            "coverage_gaps": [],
+            "uncovered_requirements": [],
+            "uncovered_validations": [],
+            "notes": "",
         },
     }
 
@@ -91,30 +86,16 @@ def test_marketplace_mapping_and_schema_load():
     assert design_schema(SKILLS)["required"][:2] == ["metadata", "summary"]
 
 
-def test_normalize_requirements_uses_stable_ids_without_inventing_rules():
-    first = normalize_requirements("Shop", " Buy item \n\nPay securely\n")
-    second = normalize_requirements("Shop", "Pay securely\nBuy item")
-    assert first["app_name"] == "Shop"
-    assert first["requirement_model"]["validation_rules"] == []
-    assert first["requirement_model"]["acceptance_criteria"] == []
-    assert set(first["requirement_model"]) == {
-        "requirements", "validation_rules", "acceptance_criteria"
-    }
-    by_text = {item["text"]: item["id"] for item in first["requirement_model"]["requirements"]}
-    assert by_text == {
-        item["text"]: item["id"] for item in second["requirement_model"]["requirements"]
-    }
-    assert all(item["evidence"] == item["text"] for item in first["requirement_model"]["requirements"])
-    assert all(item["id"].startswith("REQ-") for item in first["requirement_model"]["requirements"])
-    assert any("BUY-ITEM" in item["id"] for item in first["requirement_model"]["requirements"])
-
-
 def test_finalize_discovered_requirements_assigns_stable_ids_and_preserves_evidence():
     draft = {
         "app_name": "Demo",
         "summary": "Static repository behavior",
         "requirements": [
-            {"text": "Parser reads Python files", "evidence": "parsers.py handles .py", "source_files": ["engine/parsers.py"]}
+            {
+                "text": "Parser reads Python files",
+                "evidence": "parsers.py handles .py",
+                "source_files": ["engine/parsers.py"],
+            }
         ],
         "exclusions": ["third-party code"],
         "assumptions": [],
@@ -122,7 +103,10 @@ def test_finalize_discovered_requirements_assigns_stable_ids_and_preserves_evide
     }
     first = finalize_discovered_requirements(draft, "https://github.com/acme/demo")
     second = finalize_discovered_requirements(draft, "https://github.com/acme/demo")
-    assert first["requirement_model"]["requirements"][0]["id"] == second["requirement_model"]["requirements"][0]["id"]
+    assert (
+        first["requirement_model"]["requirements"][0]["id"]
+        == second["requirement_model"]["requirements"][0]["id"]
+    )
     assert first["requirement_model"]["requirements"][0]["source_files"] == ["engine/parsers.py"]
     assert first["requirement_model"]["requirements"][0]["id"].startswith("REQ-PARSER-READS-PYTHON-FILES-")
 
@@ -136,7 +120,11 @@ def test_finalize_design_assigns_order_independent_ids_and_rebuilds_derived_data
     assert result["positive_tests"][0]["id"] == second["positive_tests"][0]["id"]
     assert result["summary"]["total_tests_generated"] == 3
     assert result["summary"]["test_distribution"] == {
-        "boundary": 0, "contract": 1, "negative": 0, "positive": 1, "validation": 1
+        "boundary": 0,
+        "contract": 1,
+        "negative": 0,
+        "positive": 1,
+        "validation": 1,
     }
     positive_id = result["positive_tests"][0]["id"]
     assert positive_id.startswith("TC-POS-")
@@ -206,7 +194,15 @@ def test_finalize_design_rejects_empty_requirements_or_empty_design():
 
 def test_validate_generated_files_accepts_safe_complete_artifacts():
     result = validate_generated_files(
-        {"files": [{"path": "tests/login.spec.ts", "content": "// CASE_ID: TC-1\ntest('login', async () => { expect(1).toBe(1); });", "case_ids": ["TC-1"]}]},
+        {
+            "files": [
+                {
+                    "path": "tests/login.spec.ts",
+                    "content": "// CASE_ID: TC-1\ntest('login', async () => { expect(1).toBe(1); });",
+                    "case_ids": ["TC-1"],
+                }
+            ]
+        },
         {"TC-1"},
     )
     assert result == {
@@ -249,7 +245,11 @@ def test_validate_design_helper_emits_finalized_json_without_writes(tmp_path):
         {"path": ".env", "content": "TOKEN=x", "case_ids": ["TC-1"]},
         {"path": ".git/hooks/x", "content": "echo x", "case_ids": ["TC-1"]},
         {"path": "tests/x.py", "content": "# TODO implement test", "case_ids": ["TC-1"]},
-        {"path": "tests/x.py", "content": "# CASE_ID: TC-404\ndef test_x():\n    assert actual_value() == 1\n", "case_ids": ["TC-404"]},
+        {
+            "path": "tests/x.py",
+            "content": "# CASE_ID: TC-404\ndef test_x():\n    assert actual_value() == 1\n",
+            "case_ids": ["TC-404"],
+        },
     ],
 )
 def test_validate_generated_files_rejects_unsafe_placeholder_or_unknown_cases(file):
@@ -259,11 +259,13 @@ def test_validate_generated_files_rejects_unsafe_placeholder_or_unknown_cases(fi
 
 def test_generated_case_ids_must_be_implemented_in_source_not_only_metadata():
     payload = {
-        "files": [{
-            "path": "tests/test_claim.py",
-            "content": "def test_test_harness_fixture():\n    assert True\n",
-            "case_ids": ["TC-1", "TC-2"],
-        }]
+        "files": [
+            {
+                "path": "tests/test_claim.py",
+                "content": "def test_test_harness_fixture():\n    assert True\n",
+                "case_ids": ["TC-1", "TC-2"],
+            }
+        ]
     }
     with pytest.raises(ValueError):
         validate_generated_files(payload, {"TC-1", "TC-2"})
@@ -271,11 +273,13 @@ def test_generated_case_ids_must_be_implemented_in_source_not_only_metadata():
 
 def test_host_injects_case_marker_for_one_case_per_file():
     payload = {
-        "files": [{
-            "path": "tests/test_clone.py",
-            "content": "def test_clone():\n    assert actual_value() == 1\n",
-            "case_ids": ["TC-POS-CLONE-ABC12345"],
-        }]
+        "files": [
+            {
+                "path": "tests/test_clone.py",
+                "content": "def test_clone():\n    assert actual_value() == 1\n",
+                "case_ids": ["TC-POS-CLONE-ABC12345"],
+            }
+        ]
     }
     normalized = ensure_generated_case_markers(payload)
     assert "# CASE_ID: TC-POS-CLONE-ABC12345" in normalized["files"][0]["content"]
@@ -285,11 +289,13 @@ def test_host_injects_case_marker_for_one_case_per_file():
 
 def test_validate_generated_files_rejects_multiple_cases_claimed_by_one_file():
     payload = {
-        "files": [{
-            "path": "tests/test_claim.py",
-            "content": "# CASE_ID: TC-1\n# CASE_ID: TC-2\ndef test_claim():\n    assert actual_value() == 1\n",
-            "case_ids": ["TC-1", "TC-2"],
-        }]
+        "files": [
+            {
+                "path": "tests/test_claim.py",
+                "content": "# CASE_ID: TC-1\n# CASE_ID: TC-2\ndef test_claim():\n    assert actual_value() == 1\n",
+                "case_ids": ["TC-1", "TC-2"],
+            }
+        ]
     }
     with pytest.raises(ValueError, match="exactly one approved case ID"):
         validate_generated_files(payload, {"TC-1", "TC-2"})
@@ -297,11 +303,13 @@ def test_validate_generated_files_rejects_multiple_cases_claimed_by_one_file():
 
 def test_validate_generated_files_rejects_missing_case_marker():
     payload = {
-        "files": [{
-            "path": "tests/test_clone.py",
-            "content": "def test_clone():\n    assert actual_value() == 1\n",
-            "case_ids": ["TC-CLONE"],
-        }]
+        "files": [
+            {
+                "path": "tests/test_clone.py",
+                "content": "def test_clone():\n    assert actual_value() == 1\n",
+                "case_ids": ["TC-CLONE"],
+            }
+        ]
     }
     with pytest.raises(ValueError, match="missing CASE_ID markers"):
         validate_generated_files(payload, {"TC-CLONE"})
@@ -309,11 +317,13 @@ def test_validate_generated_files_rejects_missing_case_marker():
 
 def test_validate_generated_files_rejects_invalid_python_source():
     payload = {
-        "files": [{
-            "path": "tests/test_invalid.py",
-            "content": "# CASE_ID: TC-1\ndef test_bad(:\n    assert actual_value() == 1\n",
-            "case_ids": ["TC-1"],
-        }]
+        "files": [
+            {
+                "path": "tests/test_invalid.py",
+                "content": "# CASE_ID: TC-1\ndef test_bad(:\n    assert actual_value() == 1\n",
+                "case_ids": ["TC-1"],
+            }
+        ]
     }
     with pytest.raises(ValueError, match="Python source is invalid"):
         validate_generated_files(payload, {"TC-1"})
@@ -322,11 +332,13 @@ def test_validate_generated_files_rejects_invalid_python_source():
 def test_validate_generated_files_rejects_excessive_python_imports():
     imports = "".join(f"import module_{i}\n" for i in range(21))
     payload = {
-        "files": [{
-            "path": "tests/test_imports.py",
-            "content": imports + "# CASE_ID: TC-1\ndef test_imports():\n    assert actual_value() == 1\n",
-            "case_ids": ["TC-1"],
-        }]
+        "files": [
+            {
+                "path": "tests/test_imports.py",
+                "content": imports + "# CASE_ID: TC-1\ndef test_imports():\n    assert actual_value() == 1\n",
+                "case_ids": ["TC-1"],
+            }
+        ]
     }
     with pytest.raises(ValueError, match="excessive imports"):
         validate_generated_files(payload, {"TC-1"})
@@ -339,7 +351,12 @@ def test_contract_cases_without_api_contracts_are_reclassified_to_validation(tmp
         "app_name": "demo",
         "requirement_model": {
             "requirements": [
-                {"id": "REQ-CLI", "text": "Expose CLI behavior", "evidence": "README", "source_files": ["README.md"]}
+                {
+                    "id": "REQ-CLI",
+                    "text": "Expose CLI behavior",
+                    "evidence": "README",
+                    "source_files": ["README.md"],
+                }
             ],
             "validation_rules": [],
             "acceptance_criteria": [],
@@ -383,14 +400,17 @@ def test_contract_case_with_explicit_api_contract_remains_contract():
         "app_name": "demo",
         "requirement_model": {
             "requirements": [
-                {"id": "REQ-API", "text": "Expose health API", "evidence": "OpenAPI", "source_files": ["openapi.yaml"]}
+                {
+                    "id": "REQ-API",
+                    "text": "Expose health API",
+                    "evidence": "OpenAPI",
+                    "source_files": ["openapi.yaml"],
+                }
             ],
             "validation_rules": [],
             "acceptance_criteria": [],
         },
-        "api_contracts": [
-            {"id": "API-HEALTH", "path": "/health", "method": "GET", "status_codes": [200]}
-        ],
+        "api_contracts": [{"id": "API-HEALTH", "path": "/health", "method": "GET", "status_codes": [200]}],
     }
     design = {
         "positive_tests": [],
