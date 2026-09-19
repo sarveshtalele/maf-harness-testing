@@ -29,7 +29,7 @@ untrusted code without a sandbox; supporting private repositories (needs credent
 | Determinism boundary | Host is deterministic (URLs, skill assignment + hashes, IDs, schemas, traceability, commands, verdict). Model output is not. `temperature=0` reduces variance, it does not create determinism. | Say what is and is not guaranteed. |
 | Test execution | Separate host step, adapters per ecosystem, argv-only commands, new immutable result dir per run, sanitized environment, timeout kills the process group | Untrusted code executes only after explicit approval; evidence cannot be overwritten. |
 | Isolation | Dependencies install into a venv / project `node_modules` / harness cache dirs after a tool-call approval; system tools are reported with install hints | Never mutate the host toolchain; approval before any network/installer side effect. |
-| Token budget | **5,000,000 tokens per local day across all runs** is the only limit (file ledger with exclusive lock; reserve-before-call, settle to reported usage; failed calls refunded) | A predictable daily spend ceiling without throttling any single run, and safe under concurrent runs. |
+| Token budget | **50,000,000 tokens per local day across all runs** is the only limit (file ledger with exclusive lock; reserve-before-call, settle to reported usage; failed calls refunded) | A predictable daily spend ceiling without throttling any single run, and safe under concurrent runs. |
 | Verdict | `PASS` needs fresh report evidence with ≥1 passing test and 0 failures; setup failure/blocked/zero tests → `INCONCLUSIVE`; skips → `PASS_WITH_SKIPS` | A green run must mean something. |
 
 ## 3. Architecture
@@ -98,7 +98,7 @@ Reverse-engineering-skill (Python CLI + generated HTML dashboard) and Petstore (
   tool-call approval; system tools are reported, never installed.
 * **Design policy:** unit-level cases required, every actor covered, every requirement covered or explained; generation cannot start before the design
   is approved (asserted in `tests/test_policies.py`).
-* **Token policy:** one limit only — a 5,000,000-token daily cap shared by all runs (`usage.py`); the earlier per-run cap was removed.
+* **Token policy:** one limit only — a 50,000,000-token daily cap shared by all runs (`usage.py`); the earlier per-run cap was removed.
 * **Compiled-language resilience:** uncompilable generated files are quarantined so the rest still run.
 * **Reports:** QA report lists the generated test files (with lines) and repository files (`file:line`) to update; ZIP of the complete repository with all
   generated and executed tests plus evidence.

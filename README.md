@@ -66,7 +66,7 @@ Walk-through:
    with `file:line`, requirements still lacking a passing test). *Regenerate failing tests* sends only the failing cases back (≤3 rounds).
 8. On completion, download the **ZIP** (repository + generated tests + reports).
 
-The sidebar shows the token meter: **a daily cap of 5,000,000 tokens (shared by all runs on this machine, resetting at local midnight) is the only limit** — no per-run, per-call or call-count limits. The ledger lives in `~/.maf-harness/usage` (override with `HARNESS_USAGE_DIR`); counting starts when it is first written.
+The sidebar shows the token meter: **a daily cap of 50,000,000 tokens (shared by all runs on this machine, resetting at local midnight) is the only limit** — no per-run, per-call or call-count limits. The ledger lives in `~/.maf-harness/usage` (override with `HARNESS_USAGE_DIR`); counting starts when it is first written.
 
 ## 4. Command line
 
@@ -154,7 +154,7 @@ HARNESS_BROWSER=1 PLAYWRIGHT_BROWSERS_PATH=$PWD/.browser-cache uv run pytest tes
 | "did not load the assigned Agent Skill" | the model skipped tool calls; retry, use a tool-capable model, or `HARNESS_SKILL_MODE=preloaded` (recorded as not using the provider) |
 | Environment step says a tool is missing | install it (hint shown), then *Re-check environment* |
 | `INCONCLUSIVE` with "not_executed" cases | build/collection failed; the report names the files and lines; use *Regenerate failing tests* |
-| "Daily token cap of 5,000,000 reached" | wait for local midnight; all runs on this machine share the cap (`maf-harness run` prints today's usage) |
+| "Daily token cap of 50,000,000 reached" | wait for local midnight; all runs on this machine share the cap (`maf-harness run` prints today's usage) |
 | UI tests need a live app | pass the running application URL; the harness does not start the system under test |
 
 ## 11. Security notes

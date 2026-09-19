@@ -96,7 +96,7 @@ sequenceDiagram
 | The assigned Agent Skill was loaded through MAF's `load_skill` | `maf_runtime.ToolTraceMiddleware` + `_verify_skill_loaded`; audited by `maf-harness verify-run` |
 | Skills follow the Agent Skills spec and vendored upstream skills are unmodified | `skills_registry.lint_skill`, `verify_lock` against `skills/SKILLS.lock.json` (per-file SHA-256), both inside `require_valid` before each stage |
 | Skill scripts run only if reviewed and unchanged | `skill_scripts.HarnessScriptRunner` (allow-list + SHA-256 per run, argv-only, temp dir, sanitized env, timeout); MAF `run_skill_script` is auto-approved only for model-tier scripts (`script_approval_rule`) |
-| Only a daily cap of 5,000,000 tokens (all runs on the machine); no per-run, per-call or call-count limits | `usage.DailyUsageLedger` (locked JSON file per local day), `maf_runtime.BudgetGuard` (reserve → call → settle), `settings.DAILY_TOKEN_LIMIT` |
+| Only a daily cap of 50,000,000 tokens (all runs on the machine); no per-run, per-call or call-count limits | `usage.DailyUsageLedger` (locked JSON file per local day), `maf_runtime.BudgetGuard` (reserve → call → settle), `settings.DAILY_TOKEN_LIMIT` |
 | Design cases exist at unit level, per actor, and per requirement (or the gap is explained) | `workflow._require_coverage_or_reason` (repair loop, last attempt reaches the human with the gap recorded) |
 | Test source only after the design is approved | graph edge `test_design → test_generation` only fires on approve; `state.approved` hash checked; `tests/test_policies.py` |
 | Generated source is structurally sound | `skill_contracts.validate_generated_files`: paths, markers, one declaration per file, no placeholders/skips, syntax (Python AST; javac/node/gofmt or brace balance), import resolution (Python, Java) |
@@ -128,7 +128,7 @@ sequenceDiagram
 | File | Responsibility | Key contents | Notes |
 |---|---|---|---|
 | `__init__.py` | Package marker | exports `RepoAnalysis`, `TestPlan` | — |
-| `settings.py` | Single source of configuration | gateway env vars, `DAILY_TOKEN_LIMIT = 5_000_000`, batch/attempt sizes, timeouts, `SKILL_MODE` | Credentials are read from the environment only |
+| `settings.py` | Single source of configuration | gateway env vars, `DAILY_TOKEN_LIMIT = 50_000_000` (env `HARNESS_DAILY_TOKEN_LIMIT`), batch/attempt sizes, timeouts, `SKILL_MODE` | Credentials are read from the environment only |
 | `models.py` | Pydantic contracts for model output | `RequirementsDraft` (actors, requirements, criteria, rules, contracts, environment needs), `TestPlan`, `TestDesignDraft`/`TestDesignCaseDraft` (level/actor/target), `GeneratedFilesDraft` (source as `lines[]`), `RepoAnalysis` | `extra="forbid"` + bounded lists so structured output is enforceable and cannot run away |
 | `personas.py` | Role, goal and rules per stage | `PERSONAS` for the 5 agent stages + 2 host stages, `persona_instructions()` | Host stages appear so the UI/audit list every stage uniformly |
 | `repo_analyzer.py` | Repository intake (incl. `declared_dependencies`, `extract_target_sources`, `collaborator_signatures`) | `validate_github_url` (page or clone URL, optional `/tree/<ref>`), `clone_repository` (no prompts, no hooks), `analyze_repository`, `_detect_frameworks`, `build_repository_evidence` (source-first, line-numbered, bounded, secrets redacted) | Only tracked files are analyzed |
@@ -255,7 +255,7 @@ its own artifacts. Everything else is refused, and every run is recorded in `sta
 | Setting | Source | Default | Purpose |
 |---|---|---|---|
 | `OPENAI_API_KEY`, `OPENAI_BASE_URL`, `OPENAI_MODEL` | env | — / — / `deepseek-v4-flash-global` | model gateway |
-| `HARNESS_DAILY_TOKEN_LIMIT` | env | 5,000,000 | the only token limit, per local day across all runs (the machine's owner may raise it for a day) |
+| `HARNESS_DAILY_TOKEN_LIMIT` | env | 50,000,000 | the only token limit, per local day across all runs (the machine's owner may raise it for a day) |
 | `HARNESS_AGENT_TOOLS` / `HARNESS_AUTOFIX` / `HARNESS_BUILD_GATE` | env | `on` | central agent tools / mechanical repairs / compile-collect gate (each can be switched off for A/B comparison) |
 | `HARNESS_USAGE_DIR` | env | `~/.maf-harness/usage` | where the daily ledger is stored |
 | `HARNESS_SKILL_MODE` | env | `progressive` | MAF SkillsProvider vs preloaded fallback |

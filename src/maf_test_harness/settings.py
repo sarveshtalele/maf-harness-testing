@@ -20,8 +20,8 @@ SKILL_MODE = os.getenv("HARNESS_SKILL_MODE", "progressive").strip().lower()
 
 # The ONLY spending limit: tokens (input + output) across ALL runs on this machine per local calendar day.
 # There are deliberately no per-run, per-call, or call-count limits. See usage.py.
-# The owner of the machine may raise it for a day with HARNESS_DAILY_TOKEN_LIMIT; the default stays 5,000,000.
-DAILY_TOKEN_LIMIT = int(os.getenv("HARNESS_DAILY_TOKEN_LIMIT", "5000000"))
+# The owner of the machine may raise it for a day with HARNESS_DAILY_TOKEN_LIMIT; the default is 50,000,000.
+DAILY_TOKEN_LIMIT = int(os.getenv("HARNESS_DAILY_TOKEN_LIMIT", "50000000"))
 
 # Central deterministic tools (code_intel/autofix/build_gate). Each can be switched off for A/B comparison.
 AGENT_TOOLS = os.getenv("HARNESS_AGENT_TOOLS", "on").strip().lower() != "off"  # tools agents may call

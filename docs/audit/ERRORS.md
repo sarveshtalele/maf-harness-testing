@@ -110,6 +110,7 @@ Severity: **H** breaks the stated purpose or gives false confidence · **M** wro
 | F36 | I | live final7 Petstore | Gateway returned 429 `daily token limit exceeded (25,003,793/25,000,000)` — the provider's cap, not the harness's. | run log | none in code (a provider limit must not be worked around); the run stops with the provider's message |
 | F37 | L | cli | An existing run directory could not be resumed from the CLI. | usage | `maf-harness run` resumes at the pending gate of an existing run directory |
 | F38 | L | UI review (browser) | A provider failure showed the raw exception repr twice (two identical red boxes) with no hint that retrying is pointless. | browser run | `friendly_error` (HTTP 429 → "provider's limit, not the harness's cap; retrying will not help until it resets"), single error box |
+| F39 | L | policy | Owner raised the daily cap from 5M to 50M. Note: the model gateway enforces its own separate daily cap (25M observed), so this does not lift a provider 429. | user request | default `HARNESS_DAILY_TOKEN_LIMIT` = 50,000,000 (`settings.py`); docs and test updated |
 | F11 | L | docs | No file-by-file architecture document. | user requirement | `docs/ARCHITECTURE.md` |
 
 ## E. Findings in the systems under test (from qualification runs; upstream fixes as patches)

@@ -40,7 +40,7 @@ def make_guard(tmp_path, limit=DAILY_TOKEN_LIMIT, today=None):
 
 
 def test_the_only_limit_is_a_daily_cap_of_five_million_tokens():
-    assert DAILY_TOKEN_LIMIT == 5_000_000
+    assert DAILY_TOKEN_LIMIT == 50_000_000
     import maf_test_harness.settings as settings
 
     assert not hasattr(settings, "RUN_TOKEN_LIMIT")  # the old per-run cap is gone
