@@ -36,17 +36,57 @@ cd maf-harness-testing
 uv sync --extra dev            # creates .venv and installs the pinned dependencies
 ```
 
-Set the model gateway with **either** of these (never commit a key; `.env` is git-ignored):
+### Configure the model gateway (API key, base URL, model)
 
-1. a **`.env` file in the project root** — `cp .env.example .env`, then edit `OPENAI_API_KEY`, `OPENAI_BASE_URL` and `OPENAI_MODEL` in it; it is read automatically
-   (the shell wins if a variable is set in both places; only `OPENAI_*`, `LLM_MODEL` and `HARNESS_*` are read); or
-2. environment variables in the shell that starts the app:
+The harness talks to any **OpenAI-compatible chat endpoint** whose model can call tools (OpenAI itself, or a gateway such as LiteLLM or vLLM).
+Three settings tell it where and how:
+
+| Setting | Required | What to put there | Example |
+|---|---|---|---|
+| `OPENAI_API_KEY` | yes | the key your gateway issued | `sk-…` (never commit it) |
+| `OPENAI_BASE_URL` | for a gateway; omit for OpenAI itself | the root URL the OpenAI SDK appends `/chat/completions` to. With a base URL the harness uses the *chat completions* API; without one it uses OpenAI's *Responses* API | `https://my-gateway.example.com` (some gateways need a `/v1` suffix: use exactly what your provider documents) |
+| `OPENAI_MODEL` | yes (has a default) | the model name **as your gateway knows it**; `LLM_MODEL` is accepted as an alias | `deepseek-v4-flash-global` |
+
+**Where to put them — a `.env` file in the project root (recommended).** From the project folder:
+
+```bash
+cp .env.example .env          # .env is git-ignored, so the key is never committed
+```
+
+then open `.env` and fill in the three values:
+
+```bash
+OPENAI_API_KEY=your-key-here
+OPENAI_BASE_URL=https://your-openai-compatible-gateway
+OPENAI_MODEL=deepseek-v4-flash-global
+```
+
+The CLI and the Streamlit app read it automatically at start-up (working directory first, then the project root). **Restart the app after editing it.**
+Only `OPENAI_*`, `LLM_MODEL` and `HARNESS_*` are read from the file, and a variable that is already set in your shell **wins** over the file.
+
+**Alternative — environment variables** in the shell that starts the app (useful in CI or for a one-off run):
 
 ```bash
 export OPENAI_API_KEY="<your key>"
-export OPENAI_BASE_URL="https://your-openai-compatible-gateway"   # omit for api.openai.com
-export OPENAI_MODEL="deepseek-v4-flash-global"                    # any tool-capable chat model (LLM_MODEL is accepted as an alias)
+export OPENAI_BASE_URL="https://your-openai-compatible-gateway"
+export OPENAI_MODEL="deepseek-v4-flash-global"
+uv run streamlit run app.py
 ```
+
+One run can also use a different model without touching the configuration: `uv run maf-harness run <repo> --model <name>`.
+
+**Check that it works.** In the app, the sidebar section *Model gateway* shows the model, the base URL and `API key: configured`. To test the gateway itself
+(a `200` means the key, URL and model are accepted; `401` a wrong key; `404` a wrong URL or model name; `429` the provider's quota):
+
+```bash
+set -a; source .env; set +a
+curl -s -o /dev/null -w "%{http_code}\n" "$OPENAI_BASE_URL/v1/chat/completions" \
+  -H "Authorization: Bearer $OPENAI_API_KEY" -H "Content-Type: application/json" \
+  -d "{\"model\":\"$OPENAI_MODEL\",\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}],\"max_tokens\":1}"
+```
+
+(If your gateway's base URL already ends in `/v1`, drop the `/v1` from that command.) The key is used only for these model calls: it is never written into a run
+directory and never forwarded to the install or test commands the harness executes.
 
 Optional switches (defaults shown, all listed in `.env.example`):
 
@@ -181,6 +221,9 @@ HARNESS_BROWSER=1 PLAYWRIGHT_BROWSERS_PATH=$PWD/.browser-cache uv run pytest tes
 | "did not load the assigned Agent Skill" | the model skipped tool calls; retry, use a tool-capable model, or `HARNESS_SKILL_MODE=preloaded` (recorded as not using the provider) |
 | Environment step says a tool is missing | install it (hint shown), then *Re-check environment* |
 | `INCONCLUSIVE` with "not_executed" cases | build/collection failed; the report names the files and lines; use *Regenerate failing tests* |
+| "Set OPENAI_API_KEY before starting the workflow" | no key was found: create `.env` from `.env.example` (see *Configure the model gateway*) or export the variable, then restart the app |
+| The app still shows the old model or URL after editing `.env` | restart it: settings are read once at start-up; a variable exported in your shell overrides `.env` |
+| HTTP 401 / 404 from the gateway | 401: wrong key. 404: wrong base URL (try adding or removing `/v1`) or a model name your gateway does not serve |
 | "Daily token cap of 50,000,000 reached" | wait for local midnight or raise `HARNESS_DAILY_TOKEN_LIMIT`; all runs on this machine share the cap (`maf-harness run` prints today's usage) |
 | "The model gateway refused the request (HTTP 429)" | the provider's own quota is exhausted; nothing in the harness can lift it. Choose *Retry* at the error gate after it resets (a *Stop* cannot be resumed) |
 | A batch keeps failing generation | the audit log (`audit.jsonl`, `generation_attempts/`) names the gate; retries vary the temperature, and the error text says what to fix |
