@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?><testsuites name="pytest tests"><testsuite name="pytest" errors="0" failures="1" skipped="0" tests="6" time="2.962" timestamp="2026-09-19T13:16:19.273320+05:30" hostname="Sarveshs-MacBook-Air.local"><testcase classname="tests.targets.test_reverse_engineering" name="test_cli_help_and_missing_arguments[args0-0-Usage:]" time="0.031" /><testcase classname="tests.targets.test_reverse_engineering" name="test_cli_help_and_missing_arguments[args1-1-Usage:]" time="0.028" /><testcase classname="tests.targets.test_reverse_engineering" name="test_cli_help_and_missing_arguments[args2-1-No GitHub URL provided]" time="0.028" /><testcase classname="tests.targets.test_reverse_engineering" name="test_cli_modes_and_interactive_fallback" time="0.029" /><testcase classname="tests.targets.test_reverse_engineering" name="test_full_pipeline_generates_seven_nonempty_artifacts" time="0.084" /><testcase classname="tests.targets.test_reverse_engineering" name="test_dashboard_navigation_in_real_browser[chromium]" time="2.739"><failure message="AssertionError: [&quot;Unexpected token 'export'&quot;]&#10;assert not [&quot;Unexpected token 'export'&quot;]">generated_output = PosixPath('/private/var/folders/jp/k7flm_n12491snpy3jy6cr880000gn/T/pytest-of-user/pytest-8/target-pipeline0/outputs/fixture')
+page = &lt;Page url='file:///private/var/folders/jp/k7flm_n12491snpy3jy6cr880000gn/T/pytest-of-user/pytest-8/target-pipeline0/outputs/fixture/fixture_dashboard.html'&gt;
+
+    def test_dashboard_navigation_in_real_browser(generated_output, page):
+        from playwright.sync_api import expect
+        errors = []
+        page.on('pageerror', lambda error: errors.append(str(error)))
+        page.goto((generated_output/'fixture_dashboard.html').as_uri())
+        expect(page.locator('.nav-item')).to_have_count(6)
+        for section in ('architecture', 'api', 'deadcode', 'howitworks', 'dataarch', 'overview'):
+            page.locator(f'.nav-item[onclick*="{section}"]').click()
+            expect(page.locator(f'#section-{section}')).to_be_visible()
+&gt;       assert not errors, errors
+E       AssertionError: ["Unexpected token 'export'"]
+E       assert not ["Unexpected token 'export'"]
+
+tests/targets/test_reverse_engineering.py:86: AssertionError</failure></testcase></testsuite></testsuites>

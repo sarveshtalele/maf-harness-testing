@@ -1,0 +1,84 @@
+display_name: Test Design Generator
+category: Test Design & Traceability
+description: >-
+  Transforms structured requirements, user stories, acceptance criteria, validation rules, and
+  optional API contracts into comprehensive, traceable test designs with positive, negative,
+  boundary, validation, and contract test coverage.
+status: verified
+license: Proprietary (contact maintainers)
+author: Tata Consultancy Services
+tags:
+  - test-design
+  - equivalence-partitioning
+origin:
+  BG: BFSI
+  ISU: APAC
+  Account: NAB, CBA
+maintainers:
+  - name: Shruti Talukder
+    contact: shruti.talukder@tcs.com
+  - name: Tejus Ajit Manjrekar
+    contact: tejus.manjrekar@tcs.com
+  - name: Shivprakash Swami
+    contact: shivprakash.swami@tcs.com
+technology:
+  - Python
+  - Pydantic
+  - JSON Schema
+  - UUID
+  - OpenAPI
+  - Requirements Analysis
+  - Test Design
+specialization:
+  primary: test_design_generation
+  domain_specific:
+    - Requirement Traceability
+    - Positive and Negative Test Design
+    - Boundary Test Coverage
+    - Contract Testing
+tasks:
+  - name: Interpret requirements into testable units
+    description: >-
+      Reads user stories, acceptance criteria, validation rules, and optional API contracts to
+      identify testable behaviors and constraints.
+    input_schema: Requirement model, validation rules, optional API contract specification.
+    output_schema: Structured requirement-to-test decomposition with coverage guidance.
+    async: true
+  - name: Generate test case categories
+    description: >-
+      Produces positive, negative, boundary, validation, and contract tests with deterministic
+      identifiers and explicit traceability links.
+    input_schema: Derived requirement and validation artifacts.
+    output_schema: Structured test case set including traceability links and coverage metadata.
+    async: true
+  - name: Report incomplete or invalid input
+    description: >-
+      Identifies missing business rules, incomplete validation details, or malformed specifications
+      and returns a structured error object rather than guessing.
+    input_schema: Input model and validation state.
+    output_schema: Structured error object or gaps report describing missing coverage or invalid input.
+    async: true
+documentation:
+  readme: README.md
+  howto: QuickStart.md
+  changelog: >-
+    Initial verified release based on the test design generator skill documentation, metadata, and
+    execution contract details.
+supported_harness:
+  - GitHub Copilot
+  - Claude Code
+  - Cursor
+  - Antigravity
+  - AMPCode
+  - OpenCode
+  - Kiro
+  - Codex
+  - Cline
+  - Windsurf
+  - Roo Code
+  - Aider
+tested_harness:
+  - GitHub Copilot
+  - Claude Code
+  - Cursor
+  - Antigravity

@@ -1,0 +1,24 @@
+.venv/
+__pycache__/
+.pytest_cache/
+.ruff_cache/
+*.py[cod]
+.env
+.DS_Store
+
+# local run data, caches and target checkouts
+.harness_runs/
+.harness_cache/
+agent-file-memory/
+.references/
+.targets/
+.m2/
+.executions/
+.browser-cache/
+test-results/
+.claude/
+.serena/
+
+# bulky/host-specific audit logs (summaries and XML/JSON evidence are kept)
+docs/audit/*.log
+docs/audit/execution-targets/

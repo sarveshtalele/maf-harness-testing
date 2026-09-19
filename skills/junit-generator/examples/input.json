@@ -1,0 +1,53 @@
+{
+  "test_cases": [
+    {
+      "id": "TC-001",
+      "title": "User can log in with valid credentials",
+      "type": "positive",
+      "steps": [
+        "Navigate to the login page",
+        "Enter a valid username",
+        "Enter a valid password",
+        "Click the login button"
+      ],
+      "expected_result": "User is redirected to the dashboard",
+      "fixture_id": "FX-001",
+      "traceability_links": [
+        {"type": "requirement", "id": "REQ-001"}
+      ]
+    },
+    {
+      "id": "TC-002",
+      "title": "Payment processing succeeds with valid card",
+      "type": "positive",
+      "steps": [
+        "Navigate to payment page",
+        "Enter card details",
+        "Click process payment"
+      ],
+      "expected_result": "Payment confirmed with transaction ID",
+      "fixture_id": "FX-002",
+      "traceability_links": [
+        {"type": "requirement", "id": "REQ-002"}
+      ]
+    }
+  ],
+  "fixtures": [
+    {
+      "id": "FX-001",
+      "data": {
+        "username": "test_user",
+        "password": "secure_password_123"
+      }
+    },
+    {
+      "id": "FX-002",
+      "data": {
+        "cardNumber": "4111111111111111",
+        "expiryDate": "12/25",
+        "cvv": "123",
+        "amount": 99.99
+      }
+    }
+  ]
+}

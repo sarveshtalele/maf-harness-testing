@@ -1,0 +1,81 @@
+{
+  "skill_card": {
+    "starterkit_id": "requirement-analysis",
+    "name": "Requirement Analysis Skill",
+    "description": "A polyglot, deterministic pre-development planning skill that analyzes natural language requirements against a codebase to identify candidate files to touch, exact code insertion points, design patterns to follow, and applicable security, compliance, and formatting rules.",
+    "origin": {
+      "BG": "BFSI",
+      "ISU": "APAC",
+      "Account": "CFS, CBA"
+    },
+    "maintainers": [
+      {
+        "name": "Sarvesh Talele",
+        "contact": "sarvesh.talele@tcs.com"
+      },
+      {
+        "name": "Tejus Ajit Manjrekar",
+        "contact": "tejus.manjrekar@tcs.com"
+      },
+      {
+        "name": "Shivprakash Swami",
+        "contact": "shivprakash.swami@tcs.com"
+      }
+    ],
+    "version": "1.0.0",
+    "status": "verified",
+    "technology": [
+      "Python",
+      "JavaScript",
+      "TypeScript",
+      "Java",
+      "C#",
+      "Go",
+      "Git"
+    ],
+    "specialization": {
+      "primary": "pre_development_requirement_planning",
+      "domain_specific": [
+        "Feature Specification",
+        "Symbol & File Matcher",
+        "Pattern Extraction",
+        "Security & Compliance Checklist",
+        "Codebase Indexing"
+      ]
+    },
+    "tasks": [
+      {
+        "name": "Execute requirement-analysis",
+        "description": "Automates procedural execution for requirement-analysis deterministically.",
+        "input_schema": "Task prompt and repository context.",
+        "output_schema": "Formatted artifacts and structured reports.",
+        "async": true
+      }
+    ],
+    "documentation": {
+      "readme": "README.md",
+      "howto": "QuickStart.md",
+      "changelog": "Initial verified release."
+    },
+    "supported_harness": [
+      "GitHub Copilot",
+      "Claude Code",
+      "Cursor",
+      "Antigravity",
+      "AMPCode",
+      "OpenCode",
+      "Kiro",
+      "Codex",
+      "Cline",
+      "Windsurf",
+      "Roo Code",
+      "Aider"
+    ],
+    "tested_harness": [
+      "GitHub Copilot",
+      "Claude Code",
+      "Cursor",
+      "Antigravity"
+    ]
+  }
+}

@@ -1,0 +1,84 @@
+display_name: Playwright Test Generator
+category: Test Automation & Data
+description: >-
+  Converts plain-English user journeys, acceptance criteria, and manual test steps into resilient
+  Playwright automation scripts with robust selectors, web-first assertions, and validation-focused
+  structure.
+status: verified
+license: Proprietary (contact maintainers)
+author: Tata Consultancy Services
+tags:
+  - playwright
+  - e2e
+  - browser-automation
+origin:
+  BG: BFSI
+  ISU: APAC
+  Account: NAB, CBA
+maintainers:
+  - name: Shruti Talukder
+    contact: shruti.talukder@tcs.com
+  - name: Tejus Ajit Manjrekar
+    contact: tejus.manjrekar@tcs.com
+  - name: Shivprakash Swami
+    contact: shivprakash.swami@tcs.com
+technology:
+  - Playwright
+  - TypeScript
+  - Node.js
+  - JavaScript
+  - data-test Selectors
+  - Browser Automation
+specialization:
+  primary: test_generation
+  domain_specific:
+    - UI Automation
+    - Selector Strategy
+    - Web-First Assertions
+    - Robust Test Authoring
+tasks:
+  - name: Plan the user journey
+    description: >-
+      Identifies the target page and confirms the intended user flow before producing a Playwright
+      script.
+    input_schema: Test intent, user journey description, or acceptance criteria.
+    output_schema: Planned test flow and context for implementation.
+    async: true
+  - name: Generate Playwright test script
+    description: >-
+      Transforms the user story into resilient Playwright code by following selector hierarchy,
+      web-first assertions, and anti-flaky test patterns.
+    input_schema: Plain English test steps and page context.
+    output_schema: Generated `.spec.ts` Playwright script saved in the expected output location.
+    async: true
+  - name: Validate implementation quality
+    description: >-
+      Checks that the generated code uses stable locators, avoids timeout-based waiting, and handles
+      ambiguity and strict mode conditions appropriately.
+    input_schema: Generated Playwright script and validation checklist.
+    output_schema: Validation notes confirming selector robustness and script completeness.
+    async: true
+documentation:
+  readme: README.md
+  howto: QuickStart.md
+  changelog: >-
+    Initial verified release based on the Playwright generator skill description, usage guidance,
+    and skill metadata.
+supported_harness:
+  - GitHub Copilot
+  - Claude Code
+  - Cursor
+  - Antigravity
+  - AMPCode
+  - OpenCode
+  - Kiro
+  - Codex
+  - Cline
+  - Windsurf
+  - Roo Code
+  - Aider
+tested_harness:
+  - GitHub Copilot
+  - Claude Code
+  - Cursor
+  - Antigravity

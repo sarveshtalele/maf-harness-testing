@@ -1,0 +1,111 @@
+# Authoritative output contract for test-design-generator.
+# The notation follows JSON Schema conventions and is intentionally declarative.
+output_contract:
+  type: object
+  required:
+    - metadata
+    - summary
+    - positive_tests
+    - negative_tests
+    - boundary_tests
+    - validation_tests
+    - contract_tests
+    - traceability_matrix
+    - coverage_analysis
+    - gaps_report
+  properties:
+    metadata:
+      type: object
+      required: [generated_at, generator_version, input_sources, tool]
+      properties:
+        generated_at: {type: string, format: date-time}
+        generator_version: {type: string}
+        input_sources: {type: array, items: {type: string}}
+        tool: {type: string, const: test-design-generator}
+    summary:
+      type: object
+      required: [total_tests_generated, positive_tests_count, negative_tests_count, boundary_tests_count, validation_tests_count, contract_tests_count, coverage_percentage, requirements_covered, total_requirements, test_distribution]
+      properties:
+        total_tests_generated: {type: integer, minimum: 0}
+        positive_tests_count: {type: integer, minimum: 0}
+        negative_tests_count: {type: integer, minimum: 0}
+        boundary_tests_count: {type: integer, minimum: 0}
+        validation_tests_count: {type: integer, minimum: 0}
+        contract_tests_count: {type: integer, minimum: 0}
+        coverage_percentage: {type: number, minimum: 0, maximum: 100}
+        requirements_covered: {type: integer, minimum: 0}
+        total_requirements: {type: integer, minimum: 0}
+        test_distribution: {type: object}
+    positive_tests: {$ref: '#/$defs/test_cases'}
+    negative_tests: {$ref: '#/$defs/test_cases'}
+    boundary_tests: {$ref: '#/$defs/test_cases'}
+    validation_tests: {$ref: '#/$defs/test_cases'}
+    contract_tests: {$ref: '#/$defs/test_cases'}
+    traceability_matrix:
+      type: object
+      required: [requirement_to_tests, validation_to_tests, api_to_tests]
+      properties:
+        requirement_to_tests: {$ref: '#/$defs/source_to_tests'}
+        validation_to_tests: {$ref: '#/$defs/source_to_tests'}
+        api_to_tests: {$ref: '#/$defs/source_to_tests'}
+    coverage_analysis:
+      type: object
+      required: [requirement_coverage, validation_coverage, api_coverage]
+      properties:
+        requirement_coverage: {$ref: '#/$defs/coverage_map'}
+        validation_coverage: {$ref: '#/$defs/coverage_map'}
+        api_coverage: {$ref: '#/$defs/coverage_map'}
+    gaps_report:
+      type: object
+      required: [missing_validations, incomplete_requirements, coverage_gaps, uncovered_requirements, uncovered_validations, notes]
+      properties:
+        missing_validations: {type: array, items: {type: string}}
+        incomplete_requirements: {type: array, items: {type: string}}
+        coverage_gaps: {type: array, items: {type: string}}
+        uncovered_requirements: {type: array, items: {type: string}}
+        uncovered_validations: {type: array, items: {type: string}}
+        notes: {type: string}
+  $defs:
+    test_cases:
+      type: array
+      items:
+        type: object
+        required: [id, title, type, priority, expected_result, traceability_links]
+        properties:
+          id: {type: string, minLength: 1}
+          title: {type: string, minLength: 1}
+          type: {type: string, enum: [positive, negative, boundary, validation, contract]}
+          priority: {type: string, enum: [P0, P1, P2]}
+          description: {type: string}
+          expected_result: {type: string, minLength: 1}
+          steps: {type: array, items: {type: string}}
+          test_data: {type: object}
+          boundary_condition: {type: string}
+          validation_target: {type: string}
+          test_scenarios: {type: array, items: {type: object}}
+          endpoint: {type: string}
+          method: {type: string}
+          expected_status_codes: {type: array, items: {type: string}}
+          traceability_links:
+            type: array
+            minItems: 1
+            items:
+              type: object
+              required: [type, id]
+              properties:
+                type: {type: string, enum: [requirement, acceptance_criterion, validation, api_contract]}
+                id: {type: string, minLength: 1}
+    source_to_tests:
+      type: object
+      additionalProperties:
+        type: array
+        items: {type: string}
+    coverage_map:
+      type: object
+      additionalProperties:
+        type: object
+        required: [covered, test_count, test_ids]
+        properties:
+          covered: {type: boolean}
+          test_count: {type: integer, minimum: 0}
+          test_ids: {type: array, items: {type: string}}

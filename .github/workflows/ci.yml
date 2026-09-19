@@ -1,0 +1,44 @@
+name: ci
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python: ["3.11", "3.12"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+      - name: Install
+        run: uv sync --extra dev --python ${{ matrix.python }}
+      - name: Lint
+        run: uv run ruff check src tests app.py scripts
+      - name: Agent Skills spec lint
+        run: uv run maf-harness lint-skills
+      - name: Unit, component (real MAF, scripted transport) and workflow e2e tests
+        run: uv run pytest -q --ignore=tests/targets
+
+  ui-e2e:
+    runs-on: ubuntu-latest
+    needs: test
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+      - run: uv sync --extra dev --extra e2e
+      - run: uv run playwright install --with-deps chromium
+      - name: Streamlit UI browser checks
+        run: HARNESS_BROWSER=1 uv run pytest tests/targets/test_harness_browser.py -q
+
+  secrets-scan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Fail on credential-shaped strings
+        run: |
+          if grep -rIE "sk-[A-Za-z0-9_-]{16,}|gh[pousr]_[A-Za-z0-9]{20,}" --exclude-dir=.git --exclude=uv.lock . ; then
+            echo "credential-shaped string found"; exit 1
+          fi

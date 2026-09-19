@@ -1,0 +1,219 @@
+{
+  "metadata": {
+    "generated_at": "2026-06-26T10:30:00Z",
+    "generator_version": "1.1",
+    "input_sources": ["requirements.json", "validation_rules.json", "api_spec.yaml"],
+    "tool": "test-design-generator"
+  },
+  "summary": {
+    "total_tests_generated": 12,
+    "positive_tests_count": 3,
+    "negative_tests_count": 4,
+    "boundary_tests_count": 2,
+    "validation_tests_count": 1,
+    "contract_tests_count": 2,
+    "coverage_percentage": 100,
+    "requirements_covered": 3,
+    "total_requirements": 3,
+    "test_distribution": {
+      "positive": "25%",
+      "negative": "33.33%",
+      "boundary": "16.67%",
+      "validation": "8.33%",
+      "contract": "16.67%"
+    }
+  },
+  "positive_tests": [
+    {
+      "id": "TC-001",
+      "title": "Save payment card successfully",
+      "description": "Verify that a registered shopper can save a valid payment card and it is stored securely.",
+      "traceability_links": [
+        {"type": "requirement", "id": "REQ-001"}
+      ],
+      "type": "positive",
+      "priority": "P0",
+      "expected_result": "Payment card is saved successfully with status 201"
+    },
+    {
+      "id": "TC-011",
+      "title": "View saved payment cards",
+      "description": "Verify that a shopper can view all previously saved payment cards.",
+      "traceability_links": [
+        {"type": "requirement", "id": "REQ-002"}
+      ],
+      "type": "positive",
+      "priority": "P1",
+      "expected_result": "List of payment cards is returned with status 200"
+    },
+    {
+      "id": "TC-012",
+      "title": "Delete payment card successfully",
+      "description": "Verify that a shopper can delete a previously saved payment card.",
+      "traceability_links": [
+        {"type": "requirement", "id": "REQ-003"}
+      ],
+      "type": "positive",
+      "priority": "P1",
+      "expected_result": "Payment card is deleted successfully with status 204"
+    }
+  ],
+  "negative_tests": [
+    {
+      "id": "TC-002",
+      "title": "Reject invalid payment card data",
+      "type": "negative",
+      "priority": "P1",
+      "description": "Verify that invalid payment card data is rejected and appropriate validation errors are returned.",
+      "traceability_links": [
+        {"type": "validation", "id": "VAL-001"}
+      ],
+      "expected_result": "Validation error is returned for invalid card data with status 400"
+    },
+    {
+      "id": "TC-003",
+      "title": "Reject expired payment card",
+      "type": "negative",
+      "priority": "P1",
+      "description": "Verify that an expired payment card is rejected during save.",
+      "traceability_links": [
+        {"type": "validation", "id": "VAL-002"}
+      ],
+      "expected_result": "Error: Card has expired"
+    },
+    {
+      "id": "TC-013",
+      "title": "Prevent unauthorized card access",
+      "type": "negative",
+      "priority": "P0",
+      "description": "Verify that a shopper cannot access payment cards belonging to another user.",
+      "traceability_links": [
+        {"type": "requirement", "id": "REQ-002"}
+      ],
+      "expected_result": "403 Forbidden error is returned"
+    },
+    {
+      "id": "TC-014",
+      "title": "Reject delete for non-existent card",
+      "type": "negative",
+      "priority": "P1",
+      "description": "Verify that deleting a non-existent payment card returns appropriate error.",
+      "traceability_links": [
+        {"type": "requirement", "id": "REQ-003"}
+      ],
+      "expected_result": "404 Not Found error is returned"
+    }
+  ],
+  "boundary_tests": [
+    {
+      "id": "TC-004",
+      "title": "Verify payment card expiration boundary",
+      "type": "boundary",
+      "priority": "P1",
+      "boundary_condition": "Card expires after exactly 3 years from issue date.",
+      "traceability_links": [
+        {"type": "validation", "id": "VAL-002"}
+      ],
+      "test_data": {"issue_date": "2023-06-26", "expiry_date": "2026-06-26"},
+      "expected_result": "A card at the documented expiration boundary is handled according to VAL-002."
+    },
+    {
+      "id": "TC-005",
+      "title": "Maximum card number length boundary",
+      "type": "boundary",
+      "priority": "P1",
+      "boundary_condition": "Card number length = 19 (maximum allowed).",
+      "traceability_links": [
+        {"type": "validation", "id": "VAL-001"}
+      ],
+      "test_data": {"card_number": "4532123456789012345"},
+      "expected_result": "A 19-digit card number is accepted when all other validation rules pass."
+    }
+  ],
+  "validation_tests": [
+    {
+      "id": "TC-006",
+      "title": "Validate required request fields",
+      "type": "validation",
+      "priority": "P1",
+      "validation_target": "Request payload requires cardNumber, expiryDate, and cvv.",
+      "traceability_links": [
+        {"type": "validation", "id": "VAL-003"}
+      ],
+      "test_scenarios": [
+        {"missing_field": "cardNumber", "expected_error": "cardNumber is required"},
+        {"missing_field": "expiryDate", "expected_error": "expiryDate is required"},
+        {"missing_field": "cvv", "expected_error": "cvv is required"}
+      ],
+      "expected_result": "Each omitted required field produces its documented validation error."
+    }
+  ],
+  "contract_tests": [
+    {
+      "id": "TC-007",
+      "title": "Save payment card contract test",
+      "type": "contract",
+      "priority": "P0",
+      "endpoint": "/payments/cards",
+      "method": "post",
+      "traceability_links": [
+        {"type": "api_contract", "id": "API-001"}
+      ],
+      "expected_status_codes": ["201", "400", "401"],
+      "expected_result": "Responses conform to the documented API-001 status codes and schema."
+    },
+    {
+      "id": "TC-008",
+      "title": "List payment cards contract test",
+      "type": "contract",
+      "priority": "P1",
+      "endpoint": "/payments/cards",
+      "method": "get",
+      "traceability_links": [
+        {"type": "api_contract", "id": "API-002"}
+      ],
+      "expected_status_codes": ["200", "401"],
+      "expected_result": "Responses conform to the documented API-002 status codes and schema."
+    }
+  ],
+  "traceability_matrix": {
+    "requirement_to_tests": {
+      "REQ-001": ["TC-001"],
+      "REQ-002": ["TC-011", "TC-013"],
+      "REQ-003": ["TC-012", "TC-014"]
+    },
+    "validation_to_tests": {
+      "VAL-001": ["TC-002", "TC-005"],
+      "VAL-002": ["TC-003", "TC-004"],
+      "VAL-003": ["TC-006"]
+    },
+    "api_to_tests": {
+      "API-001": ["TC-007"],
+      "API-002": ["TC-008"]
+    }
+  },
+  "coverage_analysis": {
+    "requirement_coverage": {
+      "REQ-001": {"covered": true, "test_count": 1, "test_ids": ["TC-001"]},
+      "REQ-002": {"covered": true, "test_count": 2, "test_ids": ["TC-011", "TC-013"]},
+      "REQ-003": {"covered": true, "test_count": 2, "test_ids": ["TC-012", "TC-014"]}
+    },
+    "validation_coverage": {
+      "VAL-001": {"covered": true, "test_count": 2, "test_ids": ["TC-002", "TC-005"]},
+      "VAL-002": {"covered": true, "test_count": 2, "test_ids": ["TC-003", "TC-004"]},
+      "VAL-003": {"covered": true, "test_count": 1, "test_ids": ["TC-006"]}
+    },
+    "api_coverage": {
+      "API-001": {"covered": true, "test_count": 1, "test_ids": ["TC-007"]},
+      "API-002": {"covered": true, "test_count": 1, "test_ids": ["TC-008"]}
+    }
+  },
+  "gaps_report": {
+    "missing_validations": [],
+    "incomplete_requirements": [],
+    "coverage_gaps": [],
+    "uncovered_requirements": [],
+    "uncovered_validations": [],
+    "notes": "All requirements and validation rules have complete test coverage. API contracts are fully tested."
+  }
+}

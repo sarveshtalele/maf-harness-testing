@@ -1,0 +1,73 @@
+<?xml version="1.0" encoding="utf-8"?><testsuites name="pytest tests"><testsuite name="pytest" errors="0" failures="1" skipped="0" tests="8" time="6.388" timestamp="2026-09-19T13:19:53.674676+05:30" hostname="Sarveshs-MacBook-Air.local"><testcase classname="tests.targets.test_petstore_browser" name="test_seed_catalog_api[categories]" time="0.150" /><testcase classname="tests.targets.test_petstore_browser" name="test_seed_catalog_api[products]" time="0.008" /><testcase classname="tests.targets.test_petstore_browser" name="test_seed_catalog_api[items]" time="0.008" /><testcase classname="tests.targets.test_petstore_browser" name="test_seed_catalog_api[countries]" time="0.011" /><testcase classname="tests.targets.test_petstore_browser" name="test_category_to_product_to_item_anonymous[chromium]" time="0.328" /><testcase classname="tests.targets.test_petstore_browser" name="test_invalid_login_does_not_authenticate[chromium]" time="0.189" /><testcase classname="tests.targets.test_petstore_browser" name="test_login_add_and_remove_cart_item[chromium]" time="0.470" /><testcase classname="tests.targets.test_petstore_browser" name="test_known_user_wrong_password_is_rejected[chromium]" time="5.185"><failure message="AssertionError: Locator expected to be visible&#10;Actual value: None&#10;Error: element(s) not found &#10;Call log:&#10;  - Expect &quot;to_be_visible&quot; locator(&quot;a[href*=\&quot;signon.xhtml\&quot;]&quot;).first with timeout 5000ms&#10;  - waiting for locator(&quot;a[href*=\&quot;signon.xhtml\&quot;]&quot;).first&#10;&#10;Aria snapshot:&#10;- navigation:&#10;  - link &quot;Yaps Petstore EE 7&quot;:&#10;    - /url: /applicationPetstore/shopping/main.xhtml&#10;  - list:&#10;    - listitem:&#10;      - link &quot;Admin&quot;:&#10;        - /url: /applicationPetstore/admin/category/search.xhtml&#10;    - listitem:&#10;      - link &quot;Languages&quot;:&#10;        - /url: &quot;#&quot;&#10;  - list:&#10;    - listitem:&#10;      - link &quot;Welcome User&quot;:&#10;        - /url: /applicationPetstore/shopping/showaccount.xhtml&#10;    - listitem:&#10;      - link &quot;Log out&quot;:&#10;        - /url: &quot;#&quot;&#10;    - listitem&#10;    - listitem&#10;    - listitem:&#10;      - search:&#10;        - textbox&#10;        - button &quot;Search&quot;&#10;- list:&#10;  - listitem:&#10;    - heading &quot;Fish&quot; [level=3]:&#10;      - link &quot;Fish&quot;:&#10;        - /url: /applicationPetstore/shopping/showproducts.xhtml?categoryName=Fish&#10;  - listitem:&#10;    - heading &quot;Dogs&quot; [level=3]:&#10;      - link &quot;Dogs&quot;:&#10;        - /url: /applicationPetstore/shopping/showproducts.xhtml?categoryName=Dogs&#10;  - listitem:&#10;    - heading &quot;Reptiles&quot; [level=3]:&#10;      - link &quot;Reptiles&quot;:&#10;        - /url: /applicationPetstore/shopping/showproducts.xhtml?categoryName=Reptiles&#10;  - listitem:&#10;    - heading &quot;Cats&quot; [level=3]:&#10;      - link &quot;Cats&quot;:&#10;        - /url: /applicationPetstore/shopping/showproducts.xhtml?categoryName=Cats&#10;  - listitem:&#10;    - heading &quot;Birds&quot; [level=3]:&#10;      - link &quot;Birds&quot;:&#10;        - /url: /applicationPetstore/shopping/showproducts.xhtml?categoryName=Birds&#10;- heading [level=2]&#10;- heading [level=3]&#10;- img &quot;Welcome to YAPS PetStore&quot;&#10;- link &quot;Source code on GitHub&quot;:&#10;  - /url: https://github.com/agoncal/agoncal-application-petstore-ee7&#10;- link &quot;Antonio Goncalves&quot;:&#10;  - /url: http://www.antoniogoncalves.org&#10;- link &quot;Swagger Contract&quot;:&#10;  - /url: /applicationPetstore/swagger.json&#10;- text: Conversation []">page = &lt;Page url='http://127.0.0.1:18080/applicationPetstore/shopping/signon.xhtml;jsessionid=wo22wCvt2Xj8jT9CFT-YRKK5tMWwV4xpJk8sHY62.sarveshs-macbook-air'&gt;
+
+    def test_known_user_wrong_password_is_rejected(page):
+        page.goto(f'{BASE}/shopping/signon.xhtml')
+        page.locator('input[id$=":login"]').fill('user')
+        page.locator('input[id$=":password"]').fill('wrongpass')
+        page.locator('form').filter(has=page.locator('input[id$=":login"]')).locator('input[type="submit"]').click()
+        expect(page.locator('a[href*="showaccount.xhtml"]')).to_have_count(0)
+&gt;       expect(page.locator('a[href*="signon.xhtml"]').first).to_be_visible()
+E       AssertionError: Locator expected to be visible
+E       Actual value: None
+E       Error: element(s) not found 
+E       Call log:
+E         - Expect "to_be_visible" locator("a[href*=\"signon.xhtml\"]").first with timeout 5000ms
+E         - waiting for locator("a[href*=\"signon.xhtml\"]").first
+E       
+E       Aria snapshot:
+E       - navigation:
+E         - link "Yaps Petstore EE 7":
+E           - /url: /applicationPetstore/shopping/main.xhtml
+E         - list:
+E           - listitem:
+E             - link "Admin":
+E               - /url: /applicationPetstore/admin/category/search.xhtml
+E           - listitem:
+E             - link "Languages":
+E               - /url: "#"
+E         - list:
+E           - listitem:
+E             - link "Welcome User":
+E               - /url: /applicationPetstore/shopping/showaccount.xhtml
+E           - listitem:
+E             - link "Log out":
+E               - /url: "#"
+E           - listitem
+E           - listitem
+E           - listitem:
+E             - search:
+E               - textbox
+E               - button "Search"
+E       - list:
+E         - listitem:
+E           - heading "Fish" [level=3]:
+E             - link "Fish":
+E               - /url: /applicationPetstore/shopping/showproducts.xhtml?categoryName=Fish
+E         - listitem:
+E           - heading "Dogs" [level=3]:
+E             - link "Dogs":
+E               - /url: /applicationPetstore/shopping/showproducts.xhtml?categoryName=Dogs
+E         - listitem:
+E           - heading "Reptiles" [level=3]:
+E             - link "Reptiles":
+E               - /url: /applicationPetstore/shopping/showproducts.xhtml?categoryName=Reptiles
+E         - listitem:
+E           - heading "Cats" [level=3]:
+E             - link "Cats":
+E               - /url: /applicationPetstore/shopping/showproducts.xhtml?categoryName=Cats
+E         - listitem:
+E           - heading "Birds" [level=3]:
+E             - link "Birds":
+E               - /url: /applicationPetstore/shopping/showproducts.xhtml?categoryName=Birds
+E       - heading [level=2]
+E       - heading [level=3]
+E       - img "Welcome to YAPS PetStore"
+E       - link "Source code on GitHub":
+E         - /url: https://github.com/agoncal/agoncal-application-petstore-ee7
+E       - link "Antonio Goncalves":
+E         - /url: http://www.antoniogoncalves.org
+E       - link "Swagger Contract":
+E         - /url: /applicationPetstore/swagger.json
+E       - text: Conversation []
+
+tests/targets/test_petstore_browser.py:77: AssertionError</failure></testcase></testsuite></testsuites>

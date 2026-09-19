@@ -1,0 +1,95 @@
+{
+  "summary_template": {
+    "description": "Template for test design summary section with all metrics and statistics",
+    "metadata": {
+      "generated_at": "timestamp in ISO 8601 format",
+      "generator_version": "version of the test design generator",
+      "input_sources": ["list of input files used for generation"],
+      "tool": "test-design-generator"
+    },
+    "summary": {
+      "total_tests_generated": "total count of all tests across all types",
+      "positive_tests_count": "count of positive/happy-path tests",
+      "negative_tests_count": "count of negative/error-path tests",
+      "boundary_tests_count": "count of boundary value analysis tests",
+      "validation_tests_count": "count of data validation tests",
+      "contract_tests_count": "count of API contract compliance tests",
+      "coverage_percentage": "percentage of requirements with at least one test (0-100)",
+      "requirements_covered": "count of requirements that have at least one test",
+      "total_requirements": "total count of input requirements",
+      "test_distribution": {
+        "positive": "percentage of total tests",
+        "negative": "percentage of total tests",
+        "boundary": "percentage of total tests",
+        "validation": "percentage of total tests",
+        "contract": "percentage of total tests"
+      }
+    },
+    "traceability_matrix": {
+      "description": "Bidirectional mapping between tests and source artifacts",
+      "requirement_to_tests": {
+        "REQ-XXX": ["list of test IDs validating this requirement"]
+      },
+      "validation_to_tests": {
+        "VAL-XXX": ["list of test IDs exercising this validation rule"]
+      },
+      "api_to_tests": {
+        "API-XXX": ["list of test IDs validating this API contract"]
+      }
+    },
+    "coverage_analysis": {
+      "description": "Per-artifact coverage details",
+      "requirement_coverage": {
+        "REQ-XXX": {
+          "covered": "boolean indicating coverage status",
+          "test_count": "number of tests covering this requirement",
+          "test_ids": ["list of test IDs"]
+        }
+      },
+      "validation_coverage": {
+        "VAL-XXX": {
+          "covered": "boolean indicating coverage status",
+          "test_count": "number of tests covering this validation",
+          "test_ids": ["list of test IDs"]
+        }
+      },
+      "api_coverage": {
+        "API-XXX": {
+          "covered": "boolean indicating coverage status",
+          "test_count": "number of tests covering this API",
+          "test_ids": ["list of test IDs"]
+        }
+      }
+    },
+    "gaps_report": {
+      "description": "Identifies coverage gaps and incomplete items",
+      "missing_validations": ["list of validation rules without test coverage"],
+      "incomplete_requirements": ["list of requirements with no tests or partial coverage"],
+      "coverage_gaps": ["description of identified gaps"],
+      "uncovered_requirements": ["list of requirements with 0 test coverage"],
+      "uncovered_validations": ["list of validations with 0 test coverage"],
+      "notes": "summary notes about overall coverage health and recommendations"
+    }
+  },
+  "recommendations": {
+    "for_100_percent_coverage": [
+      "Ensure each requirement has at least 1 positive test and 1 negative test",
+      "Ensure each validation rule has at least 1 validation test or boundary test",
+      "Ensure each API endpoint has at least 1 contract test",
+      "Include boundary value tests for all numeric and date constraints"
+    ],
+    "metrics_interpretation": {
+      "coverage_percentage": "Target 100%. Lower values indicate incomplete requirement coverage.",
+      "positive_to_negative_ratio": "Typically 1:1 or 1:2. More negative tests improve error path coverage.",
+      "boundary_test_presence": "Critical for numeric, date, and string length constraints.",
+      "contract_test_presence": "Essential when API specifications are provided."
+    },
+    "quality_indicators": [
+      "All requirements referenced in tests (bidirectional traceability)",
+      "No orphaned tests (every test traces back to a requirement or validation)",
+      "Coverage percentage equals 100%",
+      "Test distribution includes positive, negative, and boundary tests",
+      "Gaps report is empty or notes are constructive"
+    ]
+  }
+}

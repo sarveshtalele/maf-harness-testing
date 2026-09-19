@@ -1,0 +1,147 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1920 1080" width="1920" height="1080" font-family="'Segoe UI', 'Inter', 'Helvetica Neue', Arial, sans-serif">
+  <defs>
+    <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#0f172a"/>
+      <stop offset="100%" style="stop-color:#1e293b"/>
+    </linearGradient>
+    <linearGradient id="headerGrad" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" style="stop-color:#7c3aed"/>
+      <stop offset="50%" style="stop-color:#4f46e5"/>
+      <stop offset="100%" style="stop-color:#1e40af"/>
+    </linearGradient>
+    <linearGradient id="inputGrad" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" style="stop-color:#f59e0b;stop-opacity:0.18"/>
+      <stop offset="100%" style="stop-color:#d97706;stop-opacity:0.08"/>
+    </linearGradient>
+    <linearGradient id="engineGrad" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" style="stop-color:#3b82f6;stop-opacity:0.20"/>
+      <stop offset="100%" style="stop-color:#1d4ed8;stop-opacity:0.08"/>
+    </linearGradient>
+    <linearGradient id="outputGrad" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" style="stop-color:#10b981;stop-opacity:0.20"/>
+      <stop offset="100%" style="stop-color:#059669;stop-opacity:0.08"/>
+    </linearGradient>
+    <filter id="shadow" x="-5%" y="-5%" width="115%" height="115%">
+      <feDropShadow dx="0" dy="3" stdDeviation="6" flood-color="#000000" flood-opacity="0.4"/>
+    </filter>
+    <marker id="arrow-amber" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+      <polygon points="0 0, 10 3.5, 0 7" fill="#f59e0b"/>
+    </marker>
+    <marker id="arrow-blue" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+      <polygon points="0 0, 10 3.5, 0 7" fill="#60a5fa"/>
+    </marker>
+    <marker id="arrow-green" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+      <polygon points="0 0, 10 3.5, 0 7" fill="#34d399"/>
+    </marker>
+  </defs>
+
+  <!-- Background -->
+  <rect width="1920" height="1080" fill="url(#bg)"/>
+
+  <!-- Title bar -->
+  <rect x="0" y="0" width="1920" height="120" fill="url(#headerGrad)" filter="url(#shadow)"/>
+  <text x="960" y="55" fill="#ffffff" font-size="42" font-weight="700" text-anchor="middle">Requirement Analysis Skill — Architecture</text>
+  <text x="960" y="92" fill="#dbeafe" font-size="20" text-anchor="middle">Free-text requirement &#8594; deterministic implementation plan (no LLM in the engine)</text>
+
+  <!-- INPUT box -->
+  <rect x="60" y="170" width="380" height="160" rx="14" fill="url(#inputGrad)" stroke="#f59e0b" stroke-width="2" filter="url(#shadow)"/>
+  <text x="250" y="210" fill="#fbbf24" font-size="24" font-weight="700" text-anchor="middle">INPUT</text>
+  <text x="250" y="250" fill="#fde68a" font-size="20" text-anchor="middle">Free-text requirement</text>
+  <text x="250" y="280" fill="#fcd34d" font-size="16" text-anchor="middle" font-style="italic">"Add a discount_code field</text>
+  <text x="250" y="305" fill="#fcd34d" font-size="16" text-anchor="middle" font-style="italic">to the Order model and</text>
+  <text x="250" y="325" fill="#fcd34d" font-size="16" text-anchor="middle" font-style="italic">expose it on the orders API"</text>
+
+  <!-- Repository box -->
+  <rect x="60" y="360" width="380" height="120" rx="14" fill="url(#inputGrad)" stroke="#f59e0b" stroke-width="2" filter="url(#shadow)"/>
+  <text x="250" y="400" fill="#fbbf24" font-size="22" font-weight="700" text-anchor="middle">REPOSITORY</text>
+  <text x="250" y="435" fill="#fde68a" font-size="18" text-anchor="middle">Source tree on disk</text>
+  <text x="250" y="460" fill="#fcd34d" font-size="15" text-anchor="middle">(Python / JS / TS / Java / C# / Go)</text>
+
+  <!-- ENGINE container -->
+  <rect x="500" y="170" width="940" height="800" rx="18" fill="url(#engineGrad)" stroke="#3b82f6" stroke-width="2" filter="url(#shadow)"/>
+  <text x="970" y="215" fill="#93c5fd" font-size="26" font-weight="700" text-anchor="middle">DETERMINISTIC ENGINE (pure Python stdlib)</text>
+
+  <!-- Stage 1 -->
+  <rect x="540" y="250" width="860" height="90" rx="10" fill="#0f172a" stroke="#60a5fa" stroke-width="1.5"/>
+  <text x="570" y="285" fill="#60a5fa" font-size="20" font-weight="700">1</text>
+  <text x="610" y="285" fill="#e0f2fe" font-size="22" font-weight="600">RequirementParser</text>
+  <text x="610" y="315" fill="#bae6fd" font-size="16">Free text &#8594; action (add/modify/remove/fix) + target_types + entities + domain_tags</text>
+
+  <line x1="970" y1="340" x2="970" y2="368" stroke="#60a5fa" stroke-width="3" marker-end="url(#arrow-blue)"/>
+
+  <!-- Stage 2 -->
+  <rect x="540" y="370" width="860" height="90" rx="10" fill="#0f172a" stroke="#60a5fa" stroke-width="1.5"/>
+  <text x="570" y="405" fill="#60a5fa" font-size="20" font-weight="700">2</text>
+  <text x="610" y="405" fill="#e0f2fe" font-size="22" font-weight="600">CodebaseIndexer</text>
+  <text x="610" y="435" fill="#bae6fd" font-size="16">Walks repo &#8594; per-file language, module_type, AST/regex symbols, path tokens</text>
+
+  <line x1="970" y1="460" x2="970" y2="488" stroke="#60a5fa" stroke-width="3" marker-end="url(#arrow-blue)"/>
+
+  <!-- Stage 3 -->
+  <rect x="540" y="490" width="860" height="110" rx="10" fill="#0f172a" stroke="#60a5fa" stroke-width="1.5"/>
+  <text x="570" y="525" fill="#60a5fa" font-size="20" font-weight="700">3</text>
+  <text x="610" y="525" fill="#e0f2fe" font-size="22" font-weight="600">LocationResolver</text>
+  <text x="610" y="555" fill="#bae6fd" font-size="16">Scores every file (path/symbol/type/domain/content match) &#8594; ranked candidates</text>
+  <text x="610" y="580" fill="#bae6fd" font-size="16">+ new-file suggestion if best score &lt; 6</text>
+
+  <line x1="970" y1="600" x2="970" y2="628" stroke="#60a5fa" stroke-width="3" marker-end="url(#arrow-blue)"/>
+
+  <!-- Stage 4 -->
+  <rect x="540" y="630" width="860" height="90" rx="10" fill="#0f172a" stroke="#60a5fa" stroke-width="1.5"/>
+  <text x="570" y="665" fill="#60a5fa" font-size="20" font-weight="700">4</text>
+  <text x="610" y="665" fill="#e0f2fe" font-size="22" font-weight="600">PatternFinder</text>
+  <text x="610" y="695" fill="#bae6fd" font-size="16">For "add" requirements: finds an existing route/class/function as a structural template</text>
+
+  <line x1="970" y1="720" x2="970" y2="748" stroke="#60a5fa" stroke-width="3" marker-end="url(#arrow-blue)"/>
+
+  <!-- Stage 5 -->
+  <rect x="540" y="750" width="860" height="90" rx="10" fill="#0f172a" stroke="#60a5fa" stroke-width="1.5"/>
+  <text x="570" y="785" fill="#60a5fa" font-size="20" font-weight="700">5</text>
+  <text x="610" y="785" fill="#e0f2fe" font-size="22" font-weight="600">SecurityComplianceChecker</text>
+  <text x="610" y="815" fill="#bae6fd" font-size="16">Rule-table lookup by target_type + domain_tags + action &#8594; deduped checklist</text>
+
+  <line x1="970" y1="840" x2="970" y2="868" stroke="#60a5fa" stroke-width="3" marker-end="url(#arrow-blue)"/>
+
+  <!-- Stage 6 -->
+  <rect x="540" y="870" width="860" height="90" rx="10" fill="#0f172a" stroke="#60a5fa" stroke-width="1.5"/>
+  <text x="570" y="905" fill="#60a5fa" font-size="20" font-weight="700">6</text>
+  <text x="610" y="905" fill="#e0f2fe" font-size="22" font-weight="600">FormattingAnalyzer</text>
+  <text x="610" y="935" fill="#bae6fd" font-size="16">Detects formatter/linter configs + samples indent/quote/line-ending style of candidates</text>
+
+  <!-- Arrows: input to engine -->
+  <line x1="440" y1="250" x2="500" y2="290" stroke="#f59e0b" stroke-width="3" marker-end="url(#arrow-amber)"/>
+  <line x1="440" y1="420" x2="500" y2="410" stroke="#f59e0b" stroke-width="3" marker-end="url(#arrow-amber)"/>
+
+  <!-- Arrow engine to output -->
+  <line x1="1440" y1="700" x2="1500" y2="700" stroke="#34d399" stroke-width="4" marker-end="url(#arrow-green)"/>
+
+  <!-- OUTPUT box -->
+  <rect x="1520" y="170" width="340" height="800" rx="18" fill="url(#outputGrad)" stroke="#34d399" stroke-width="2" filter="url(#shadow)"/>
+  <text x="1690" y="215" fill="#6ee7b7" font-size="26" font-weight="700" text-anchor="middle">OUTPUT</text>
+
+  <rect x="1550" y="250" width="280" height="160" rx="10" fill="#0f172a" stroke="#34d399" stroke-width="1.5"/>
+  <text x="1690" y="285" fill="#a7f3d0" font-size="20" font-weight="600" text-anchor="middle">implementation_plan.md</text>
+  <text x="1575" y="320" fill="#d1fae5" font-size="15">- Files to update + exact</text>
+  <text x="1575" y="345" fill="#d1fae5" font-size="15">  symbol/line locations</text>
+  <text x="1575" y="370" fill="#d1fae5" font-size="15">- Pattern to follow</text>
+  <text x="1575" y="395" fill="#d1fae5" font-size="15">- Checklists + formatting</text>
+
+  <rect x="1550" y="430" width="280" height="120" rx="10" fill="#0f172a" stroke="#34d399" stroke-width="1.5"/>
+  <text x="1690" y="465" fill="#a7f3d0" font-size="20" font-weight="600" text-anchor="middle">requirement_analysis.json</text>
+  <text x="1575" y="500" fill="#d1fae5" font-size="15">Machine-readable result</text>
+  <text x="1575" y="525" fill="#d1fae5" font-size="15">(intent, location, pattern,</text>
+
+  <rect x="1550" y="570" width="280" height="160" rx="10" fill="#0f172a" stroke="#34d399" stroke-width="1.5"/>
+  <text x="1690" y="605" fill="#a7f3d0" font-size="20" font-weight="600" text-anchor="middle">AI Agent Narrative</text>
+  <text x="1575" y="640" fill="#d1fae5" font-size="15">Claude / Copilot / Cursor reads</text>
+  <text x="1575" y="665" fill="#d1fae5" font-size="15">the JSON + Markdown and adds</text>
+  <text x="1575" y="690" fill="#d1fae5" font-size="15">explanation, caveats, and</text>
+  <text x="1575" y="715" fill="#d1fae5" font-size="15">clarifying questions</text>
+
+  <rect x="1550" y="750" width="280" height="100" rx="10" fill="#0f172a" stroke="#34d399" stroke-width="1.5"/>
+  <text x="1690" y="785" fill="#a7f3d0" font-size="18" font-weight="600" text-anchor="middle">Next: implement, then run</text>
+  <text x="1690" y="815" fill="#a7f3d0" font-size="18" font-weight="600" text-anchor="middle">change-impact-analysis-skill</text>
+
+  <!-- Footer -->
+  <text x="960" y="1040" fill="#94a3b8" font-size="16" text-anchor="middle">No API key required &#8226; No third-party dependencies &#8226; Same input + same repo state = same output</text>
+</svg>

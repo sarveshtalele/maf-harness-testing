@@ -1,0 +1,26 @@
+name: requirement-analysis
+display_name: Requirement Analysis Skill
+version: 1.0.0
+description: A polyglot, deterministic pre-development planning skill that analyzes
+  natural language requirements against a codebase to identify candidate files to
+  touch, exact code insertion points, design patterns to follow, and applicable security,
+  compliance, and formatting rules.
+author: Sarvesh Talele
+license: MIT
+category: code-analysis
+tags:
+- requirement-analysis
+- sdlc
+- agent-skills
+runtime:
+  engine: python
+  min_version: '3.8'
+  entry_point: scripts/requirement_analysis_skill.py
+  dependencies: []
+tools:
+- run_in_terminal
+- read_file
+- file_search
+- grep_search
+entry_files:
+  skill_definition: SKILL.md

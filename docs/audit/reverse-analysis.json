@@ -1,0 +1,39 @@
+{
+  "repo_url": "https://github.com/sarveshtalele/reverse-engineering-skill",
+  "repo_name": "repo",
+  "commit_sha": "e6139c314e3c89d2e84efe690a8bdfbce3dc17d2",
+  "file_count": 71,
+  "source_file_count": 15,
+  "source_files": [
+    "engine/__init__.py",
+    "engine/ai_analysis.py",
+    "engine/analyzer.py",
+    "engine/evaluator.py",
+    "engine/generators/__init__.py",
+    "engine/generators/dashboard.py",
+    "engine/generators/report.py",
+    "engine/generators/sdd.py",
+    "engine/loaders.py",
+    "engine/output_manager.py",
+    "engine/parsers.py",
+    "engine/pipeline.py",
+    "reverse_engineer_skill.py",
+    "skill-packages/03-agent-sdk-skill/reverse_engineer_agent.py",
+    "skill-packages/build_packages.py"
+  ],
+  "languages": {
+    "Python": 15
+  },
+  "frameworks": [],
+  "package_files": [
+    "requirements.txt",
+    "skill-packages/01-claude-code-skill/requirements.txt",
+    "skill-packages/02-github-copilot-skill/requirements.txt",
+    "skill-packages/03-agent-sdk-skill/requirements.txt"
+  ],
+  "test_files": [],
+  "test_frameworks": [],
+  "likely_test_directories": [],
+  "has_tests": false,
+  "notes": []
+}

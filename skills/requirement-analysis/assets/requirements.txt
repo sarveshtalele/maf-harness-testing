@@ -1,0 +1,9 @@
+# Requirement Analysis Skill — Python dependencies
+#
+# The engine is pure Python standard library (argparse, ast, json, re,
+# pathlib, dataclasses, collections, datetime, os). No third-party
+# packages are required.
+#
+# This file is kept for parity with change-impact-analysis-skill's
+# assets/requirements.txt and as a placeholder if optional tooling is
+# added in the future.

@@ -1,0 +1,40 @@
+{
+  "requirement_model": {
+    "actors": ["registered shopper"],
+    "requirements": [
+      {
+        "id": "REQ-001",
+        "text": "Given I am logged in, when I enter a valid card and save it, then the card is stored securely.",
+        "type": "acceptance_criteria"
+      }
+    ],
+    "validation_rules": [
+      "Payment card data must be encrypted at rest.",
+      "Card expiration validation is required."
+    ]
+  },
+  "api_contracts": [
+    {
+      "path": "/payments",
+      "method": "post",
+      "request_schema": {
+        "type": "object",
+        "required": ["amount", "currency"],
+        "properties": {
+          "amount": {"type": "number"},
+          "currency": {"type": "string"}
+        }
+      },
+      "response_schemas": {
+        "201": {
+          "type": "object",
+          "properties": {
+            "id": {"type": "string"},
+            "status": {"type": "string"}
+          }
+        }
+      },
+      "status_codes": ["201"]
+    }
+  ]
+}

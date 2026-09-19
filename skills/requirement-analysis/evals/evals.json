@@ -1,0 +1,16 @@
+{
+  "skill_name": "requirement-analysis",
+  "evals": [
+    {
+      "id": "req-001-plan-feature",
+      "prompt": "I want to add email notifications on order completion. Plan which files need to be created or modified and outline security rules.",
+      "expected_output": "The skill identifies candidate files to create or modify, specifies target functions and classes, and includes security and compliance requirements.",
+      "files": [],
+      "assertions": [
+        "Identifies candidate files to create or modify",
+        "Specifies target functions and classes",
+        "Includes security and compliance requirements"
+      ]
+    }
+  ]
+}

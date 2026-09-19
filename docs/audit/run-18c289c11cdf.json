@@ -1,0 +1,79 @@
+{
+  "run": "18c289c11cdf",
+  "status": "interrupted",
+  "error": "(\"<class 'agent_framework_openai._chat_completion_client.OpenAIChatCompletionClient'> service failed to complete the prompt: Connection error.\", APIConnectionError('Connection error.'))",
+  "budget": {
+    "limit": 1000000,
+    "charged": 25571,
+    "calls": 1,
+    "reported_tokens": 0,
+    "input_limit": 1000000,
+    "call_limit": 200
+  },
+  "events": [
+    {
+      "event": "requested",
+      "at": "2026-09-19T07:02:54.175002+00:00",
+      "request_id": "0c2052768acd4c0495ca6ee64e205218",
+      "stage": "repo_analysis",
+      "kind": "tool",
+      "request_hash": "e3283a114e26e1ef7dcc22d2d883f23ef14f9401ddc8d5e5eec316e194352517"
+    },
+    {
+      "event": "human_response",
+      "at": "2026-09-19T07:03:01.942237+00:00",
+      "request_id": "0c2052768acd4c0495ca6ee64e205218",
+      "stage": "repo_analysis",
+      "decision": "approve",
+      "request_hash": "e3283a114e26e1ef7dcc22d2d883f23ef14f9401ddc8d5e5eec316e194352517"
+    },
+    {
+      "event": "tool_started",
+      "at": "2026-09-19T07:03:01.943785+00:00",
+      "tool": "clone_repository",
+      "request_id": "0c2052768acd4c0495ca6ee64e205218"
+    },
+    {
+      "event": "requested",
+      "at": "2026-09-19T07:03:03.332218+00:00",
+      "request_id": "d7107c360f9d4d2cac59f4b4b99ef86e",
+      "stage": "repo_analysis",
+      "kind": "review",
+      "request_hash": "735e066b67bd435560daa62a0a2d6f83c859573d5dbb69657f9f72f4b3a87c73"
+    },
+    {
+      "event": "tool_completed",
+      "at": "2026-09-19T07:03:03.332289+00:00",
+      "tool": "clone_repository",
+      "request_id": "0c2052768acd4c0495ca6ee64e205218"
+    },
+    {
+      "event": "human_response",
+      "at": "2026-09-19T07:03:12.879187+00:00",
+      "request_id": "d7107c360f9d4d2cac59f4b4b99ef86e",
+      "stage": "repo_analysis",
+      "decision": "approve",
+      "request_hash": "735e066b67bd435560daa62a0a2d6f83c859573d5dbb69657f9f72f4b3a87c73"
+    },
+    {
+      "event": "artifact_approved",
+      "at": "2026-09-19T07:03:12.880802+00:00",
+      "stage": "repo_analysis",
+      "revision": 1,
+      "artifact_hash": "29f89bf322384c06e3722f46d82fd3fe50400407d427fc0f42eadeffaeed734d"
+    }
+  ],
+  "evidence_files": [
+    "README.md",
+    "requirements.txt",
+    "skill-packages/README.md",
+    "skill-packages/01-claude-code-skill/README.md",
+    "skill-packages/01-claude-code-skill/requirements.txt"
+  ],
+  "loaded_skills": {
+    "requirements": "repository-requirements"
+  },
+  "approved": {
+    "repo_analysis": "29f89bf322384c06e3722f46d82fd3fe50400407d427fc0f42eadeffaeed734d"
+  }
+}

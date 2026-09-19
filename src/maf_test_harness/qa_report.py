@@ -1,0 +1,100 @@
+"""Deterministic QA report: requirement -> approved case -> generated test -> executed result.
+
+No model is involved. A requirement is only "verified" when every linked case was executed and passed.
+"""
+from __future__ import annotations
+
+from datetime import datetime, timezone
+from typing import Any
+
+from .runners import map_results_to_cases
+
+SECTIONS = ("positive", "negative", "boundary", "validation", "contract")
+
+
+def design_cases(design: dict[str, Any]) -> list[dict[str, Any]]:
+    return [case for section in SECTIONS for case in design.get(f"{section}_tests", []) or []]
+
+
+def verdict_for(execution: dict[str, Any] | None) -> str:
+    status = (execution or {}).get("status", "not_run")
+    return {"passed": "PASS", "passed_with_skips": "PASS_WITH_SKIPS", "failed": "FAIL"}.get(status, "INCONCLUSIVE")
+
+
+def build_qa_report(*, repo: dict[str, Any], requirements: dict[str, Any], design: dict[str, Any],
+                    generation: dict[str, Any], execution: dict[str, Any] | None,
+                    provenance: dict[str, Any] | None = None, stack: dict[str, Any] | None = None) -> dict[str, Any]:
+    files = generation.get("files", [])
+    file_for_case = {f["case_ids"][0]: f["path"] for f in files}
+    results = map_results_to_cases((execution or {}).get("cases", []), files)
+    result_for_case = {r["case_id"]: r for r in results if r.get("case_id")}
+    cases = []
+    diagnostics = (execution or {}).get("diagnostics", [])
+    for case in design_cases(design):
+        result = result_for_case.get(case["id"])
+        message = (result or {}).get("message", "")
+        if not result and diagnostics:  # build/collection failure: attribute the lines that name this case's file
+            stem = (file_for_case.get(case["id"]) or "").rsplit("/", 1)[-1]
+            own = [ln for ln in diagnostics if stem and stem in ln]
+            message = "\n".join((own or diagnostics)[:8])[:900]
+        cases.append({
+            "id": case["id"], "title": case["title"], "type": case.get("type"), "level": case.get("level", ""),
+            "actor": case.get("actor", ""), "priority": case.get("priority"), "file": file_for_case.get(case["id"]),
+            "status": result["status"] if result else ("not_executed" if execution else "not_run"),
+            "message": message,
+            "requirements": [link["id"] for link in case.get("traceability_links", []) if link["type"] == "requirement"],
+        })
+    by_id = {c["id"]: c for c in cases}
+    coverage = []
+    for req in requirements.get("requirement_model", {}).get("requirements", []):
+        linked = [by_id[i] for i in design.get("traceability_matrix", {}).get("requirement_to_tests", {}).get(req["id"], [])
+                  if i in by_id]
+        statuses = {c["status"] for c in linked}
+        state = ("untested" if not linked else "failing" if statuses & {"failed", "error"}
+                 else "verified" if statuses == {"passed"} else "not_executed")
+        coverage.append({"id": req["id"], "text": req["text"], "category": req.get("category", ""),
+                         "actor": req.get("actor", ""), "state": state, "cases": [c["id"] for c in linked]})
+    counts: dict[str, int] = {}
+    for c in cases:
+        counts[c["status"]] = counts.get(c["status"], 0) + 1
+    unmapped = [r["name"] for r in results if not r.get("case_id")]
+    return {
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "repository": {"url": repo.get("repo_url"), "commit": repo.get("commit_sha"), "name": repo.get("repo_name")},
+        "verdict": verdict_for(execution),
+        "execution_status": (execution or {}).get("status", "not_run"),
+        "adapter": (execution or {}).get("adapter"),
+        "case_status_counts": counts,
+        "cases": cases,
+        "requirement_coverage": coverage,
+        "failures": [c for c in cases if c["status"] in {"failed", "error"} or (c["status"] == "not_executed" and c["message"])],
+        "unmapped_results": unmapped,
+        "stack": stack or {},
+        "provenance": provenance or {},
+        "warnings": list((execution or {}).get("warnings", [])),
+        "limitations": [
+            "Local-process execution is not a security sandbox.",
+            "A verified requirement means its linked generated tests passed; it is not proof of correctness.",
+            "Test design and source were authored by a model under human review; static validation checks structure, "
+            "not semantic completeness.",
+        ],
+    }
+
+
+def render_markdown(report: dict[str, Any]) -> str:
+    repo = report["repository"]
+    lines = [f"# QA report — {repo.get('name') or repo.get('url')}", "",
+             f"**Verdict: {report['verdict']}** · execution `{report['execution_status']}` · "
+             f"adapter `{report.get('adapter') or 'n/a'}` · commit `{(repo.get('commit') or '')[:12]}`", "",
+             "## Case results", "", "| Case | Level | Actor | Pri | Status | File |", "|---|---|---|---|---|---|"]
+    for c in report["cases"]:
+        lines.append(f"| {c['title'][:70]} | {c['level']} | {c['actor']} | {c['priority']} | {c['status']} | {c['file'] or ''} |")
+    lines += ["", "## Requirement coverage", "", "| State | Requirement |", "|---|---|"]
+    lines += [f"| {r['state']} | {r['text'][:110]} |" for r in report["requirement_coverage"]]
+    if report["failures"]:
+        lines += ["", "## Failures", ""]
+        lines += [f"- **{c['title']}** (`{c['file']}`)\n  ```\n  {c['message'][:600]}\n  ```" for c in report["failures"]]
+    if report["unmapped_results"]:
+        lines += ["", "## Executed tests not mapped to an approved case", ""] + [f"- {n}" for n in report["unmapped_results"]]
+    lines += ["", "## Limitations", ""] + [f"- {item}" for item in report["limitations"]]
+    return "\n".join(lines) + "\n"
