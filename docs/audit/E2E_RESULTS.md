@@ -20,8 +20,8 @@ Two runs from the original report were analyzed first (`.harness_runs/`):
 | reverse-1 … 5 | reverse-engineering-skill | each exposed a harness defect (skill never loaded; newline-stripped source; wrong pytest rootdir; collection errors aborting the session; guessed imports) | fixed, see [ERRORS.md](ERRORS.md) A3, B7, B8, C4–C6 |
 | reverse-7 | reverse-engineering-skill | 3 heal rounds | FAIL 27/31 passed |
 | **reverse-8** | reverse-engineering-skill | full current flow: environment stage → design policy → run → heal ×2 → ZIP | **FAIL 27 passed / 4 failed / 2 not executed (33 cases)** |
-| petstore-2 … 4 | agoncal-application-petstore-ee7 (Java EE 7, live app at `http://127.0.0.1:8080/applicationPetstore`) | exposed Java gaps: undeclared library, truncated files, semantic compile errors | fixed, see [ERRORS.md](ERRORS.md) B11, B12, C9, F5, F6 |
-| **petstore-5** | agoncal-application-petstore-ee7 | current flow incl. compile-error quarantine | see §4 |
+| petstore-2 … 5 | agoncal-application-petstore-ee7 (Java EE 7, live app at `http://127.0.0.1:8080/applicationPetstore`) | exposed Java gaps: undeclared library, truncated files, semantic compile errors | fixed, see [ERRORS.md](ERRORS.md) B11, B12, C9, F5, F6, F12 |
+| **petstore-6** | agoncal-application-petstore-ee7 | current flow incl. compile-error quarantine and Java gates | 45 tests executed (7 pass / 6 fail / 32 error); stopped at the 2M token limit during heal — see §4 |
 
 ## 3. reverse-engineering-skill — run `live-reverse-8` (current harness)
 
@@ -59,7 +59,7 @@ audit trail, `RUN_TESTS.md`).
 application is defective: the four failures may be wrong model expectations or real scoring differences; the report says which files to check.
 Two defects found earlier in this target by hand-written acceptance tests remain documented in [ERRORS.md §E](ERRORS.md).
 
-## 4. Petstore (Java EE 7) — run `live-petstore-5`
+## 4. Petstore (Java EE 7) — run `live-petstore-6`
 
 Target: `agoncal-application-petstore-ee7` at `725839cad3c5`, Maven/JDK 11, live baseline application on WildFly 26 at
 `http://127.0.0.1:8080/applicationPetstore` (`--app-url`). The run **stopped because it reached the 2,000,000-token workflow limit
