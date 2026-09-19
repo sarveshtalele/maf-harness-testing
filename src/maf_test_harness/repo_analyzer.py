@@ -591,3 +591,43 @@ def extract_target_sources(
                 chunks.append(block)
                 used += len(block)
     return "".join(chunks)
+
+
+_GRADLE_COORD = re.compile(r"""['"]([\w.\-]+):([\w.\-]+)(?::[^'"]*)?['"]""")
+
+
+def declared_dependencies(root: Path, package_files: list[str], limit: int = 120) -> list[str]:
+    """Library names declared in the build/manifest files (host-parsed, so generation cannot guess libraries)."""
+    root = Path(root).resolve()
+    found: dict[str, None] = {}
+    for rel in package_files:
+        name, text = Path(rel).name.lower(), _safe_read(root / rel)
+        if not text:
+            continue
+        if name == "pom.xml":
+            names = re.findall(r"<artifactId>([^<$]+)</artifactId>", text)
+        elif name.startswith("build.gradle"):
+            names = [artifact for _group, artifact in _GRADLE_COORD.findall(text)]
+        elif name == "package.json":
+            try:
+                data = json.loads(text)
+            except json.JSONDecodeError:
+                continue
+            names = [
+                k
+                for group in ("dependencies", "devDependencies")
+                if isinstance(data.get(group), dict)
+                for k in data[group]
+            ]
+        elif name == "requirements.txt":
+            names = re.findall(r"(?m)^([A-Za-z0-9][A-Za-z0-9_.\-]*)", text)
+        elif name == "pyproject.toml":
+            names = re.findall(r"""["']([A-Za-z0-9][A-Za-z0-9_.\-]*)\s*(?:[<>=!~\[;]|["'])""", text)
+        elif name == "go.mod":
+            names = re.findall(r"(?m)^\s*(?:require\s+)?([\w.\-]+/[\w./\-]+)\s+v", text)
+        elif name.endswith(".csproj"):
+            names = re.findall(r'PackageReference\s+Include="([^"]+)"', text)
+        else:
+            continue
+        found.update(dict.fromkeys(n.strip() for n in names))
+    return sorted(found)[:limit]

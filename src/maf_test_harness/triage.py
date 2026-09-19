@@ -75,9 +75,38 @@ ACTION = {
 
 REMEDIES: list[tuple[re.Pattern[str], str]] = [
     (
+        re.compile(r"patch(?:\.object)?\(\s*(?:sys\s*,\s*)?['\"](?:sys\.)?exit['\"]"),
+        "Do not mock sys.exit: execution then continues past the exit and fails later. Use "
+        "`with pytest.raises(SystemExit) as exc:` and assert `exc.value.code`.",
+    ),
+    (
+        re.compile(r"module '([\w.]+)' has no attribute '(\w+)'"),
+        "You patched a name that does not exist at module level (it may be imported lazily inside a function). Patch only "
+        "names shown in target_source; for a lazily imported package patch `sys.modules` with a stub instead.",
+    ),
+    (
         re.compile(r"reading from stdin|EOF when reading a line", re.I),
         "The code under test calls input(). Patch it (monkeypatch.setattr('builtins.input', lambda *_: '1')) or pass "
         "the CLI flag that skips the prompt; a test must never read real stdin.",
+    ),
+    (
+        re.compile(r"NameError: name '(capsys|capfd|monkeypatch|tmp_path|caplog|mocker)' is not defined"),
+        "A pytest fixture must be a parameter of the test function: add it to the signature, e.g. "
+        "`def test_x(monkeypatch, capsys):`.",
+    ),
+    (
+        re.compile(r"no Bean Validation provider", re.I),
+        "There is no Bean Validation provider on the test classpath: do not call Validation.buildDefaultValidatorFactory(); "
+        "assert with plain Java (constructors, setters, getters) instead.",
+    ),
+    (
+        re.compile(r"DeploymentScenario|Arquillian|No Container", re.I),
+        "`mvn test` has no Arquillian container: do not use @RunWith(Arquillian.class) or @Deployment; use plain JUnit, "
+        "or call the live application with java.net.http.HttpClient and BASE_URL.",
+    ),
+    (
+        re.compile(r"too many statically nested blocks"),
+        "Do not nest more than 5 `with` blocks: use @patch decorators or contextlib.ExitStack.",
     ),
     (
         re.compile(r"NameError: name '(\w+)' is not defined"),

@@ -32,6 +32,7 @@ from .repo_analyzer import (
     analyze_repository,
     build_repository_evidence,
     clone_repository,
+    declared_dependencies,
     extract_target_sources,
     validate_github_url,
 )
@@ -40,7 +41,6 @@ from .settings import (
     EXECUTION_TIMEOUT_SECONDS,
     GENERATION_BATCH_SIZE,
     GENERATION_MAX_ATTEMPTS,
-    RUN_TOKEN_LIMIT,
 )
 from .skill_contracts import (
     check_java_imports,
@@ -50,6 +50,8 @@ from .skill_contracts import (
     extra_import_roots,
     finalize_design,
     finalize_discovered_requirements,
+    flatten_nested_with,
+    resolve_id,
     validate_generated_files,
 )
 from .skill_reports import run_skill_checks
@@ -86,6 +88,13 @@ def atomic_json(path: Path, data: dict):
     temp.write_text(json.dumps(data, indent=2, default=str), encoding="utf-8")
     os.chmod(temp, 0o600)
     temp.replace(path)
+
+
+def _canonicalize_case_ids(candidate: dict[str, Any], known: set[str]) -> dict[str, Any]:
+    """Rewrite garbled case IDs (see skill_contracts.resolve_id) to the approved ones before validation."""
+    for item in candidate.get("files", []):
+        item["case_ids"] = [resolve_id(cid, known) or cid for cid in item.get("case_ids", [])]
+    return candidate
 
 
 def _compact_repo(analysis: dict[str, Any], preferred: list[str]) -> dict[str, Any]:
@@ -186,6 +195,11 @@ def _generation_policy(repo: dict[str, Any], state: dict[str, Any] | None = None
         "likely_test_directories": repo.get("likely_test_directories", []),
         "package_files": (repo.get("package_files") or [])[:30],
         "python_import_roots": extra_import_roots(repo.get("source_files") or []),
+        "declared_dependencies": (state.get("declared_dependencies") or [])[:120],
+        "dependency_rule": (
+            "Use only the JDK/standard library and the declared_dependencies. Any other import is rejected by the "
+            "host before you are asked again, which wastes a call."
+        ),
         "stack": {
             k: stack.get(k) for k in ("primary", "test_runner", "web_ui", "http_service") if k in stack
         },
@@ -199,6 +213,12 @@ def _generation_policy(repo: dict[str, Any], state: dict[str, Any] | None = None
             "integration": "Real collaborators in-process; temp dirs/in-memory DBs only.",
             "api": "Use the framework's in-process test client when one exists, else BASE_URL.",
             "cli": "Invoke the real entry point via subprocess or the framework runner; assert exit code and output.",
+            "jvm": (
+                "`mvn test` runs without an application server: no Arquillian container, no CDI/EJB injection, no Bean "
+                "Validation provider unless declared. Test plain classes with plain JUnit; for the live application use "
+                'java.net.http.HttpClient with System.getenv("BASE_URL").'
+            ),
+            "python": "Never nest more than 5 `with` blocks (CPython allows 20): use @patch decorators or contextlib.ExitStack.",
             "ui/e2e/accessibility": "Only with live_app.available; existing browser framework first, else Playwright.",
             "security": "Assert rejection/sanitization paths that the source shows.",
         },
@@ -264,8 +284,6 @@ class Harness:
             }
         )
         self.state = self.view.get("state", {})
-        if self._sync_budget_limit():
-            self.save()
         self.storage = FileCheckpointStorage(self.run_dir / "checkpoints")
         executors = [StageExecutor(stage, self) for stage in self.stages]
         builder = WorkflowBuilder(
@@ -277,17 +295,6 @@ class Harness:
             builder.add_edge(executors[-1], executors[self.stages.index("test_generation")])
         self.workflow = builder.build()
         self._restored = False
-
-    def _sync_budget_limit(self) -> bool:
-        """Saved runs adopt the current per-run token limit (the only limit)."""
-        changed = False
-        pending = self.view.get("pending")
-        for holder in (self.view.get("state"), pending.get("state") if isinstance(pending, dict) else None):
-            budget = holder.get("budget") if isinstance(holder, dict) else None
-            if isinstance(budget, dict) and budget.get("limit") != RUN_TOKEN_LIMIT:
-                budget["limit"] = RUN_TOKEN_LIMIT
-                changed = True
-        return changed
 
     def save(self):
         self.view["state"] = self.state
@@ -349,7 +356,6 @@ class Harness:
             "feedback": {},
             "approved": {},
             "budget": {
-                "limit": RUN_TOKEN_LIMIT,
                 "charged": 0,
                 "calls": 0,
                 "reported_tokens": 0,
@@ -574,6 +580,9 @@ class Harness:
             state["stack"] = (
                 await asyncio.to_thread(detect_stack, self.run_dir / "repo", artifact.languages)
             ).to_dict()
+            state["declared_dependencies"] = await asyncio.to_thread(
+                declared_dependencies, self.run_dir / "repo", artifact.package_files
+            )
             state["evidence"] = build_repository_evidence(
                 self.run_dir / "repo", max_files=60, max_total_chars=120_000
             )
@@ -992,8 +1001,17 @@ class Harness:
                 if req.get("id") in linked_ids
                 for path in req.get("source_files", [])
             ]
+            target_source = extract_target_sources(
+                self.run_dir / "repo",
+                [str(case.get("target") or "") for case in batch],
+                state["artifacts"]["repo_analysis"].get("source_files", []),
+            )
+            # The complete target code is supplied separately, so the head-truncated excerpts can be smaller.
             evidence = build_repository_evidence(
-                self.run_dir / "repo", max_files=16, max_total_chars=40_000, preferred_paths=preferred
+                self.run_dir / "repo",
+                max_files=10 if target_source else 16,
+                max_total_chars=24_000 if target_source else 40_000,
+                preferred_paths=preferred,
             )
             repair_feedback = ""
             accepted = cache["batches"].get(str(batch_index))
@@ -1039,7 +1057,8 @@ class Harness:
                             self.run_dir / "repo",
                             [str(case.get("target") or "") for case in work],
                             state["artifacts"]["repo_analysis"].get("source_files", []),
-                        ),
+                        )
+                        or target_source,
                         "repository_evidence": evidence or state.get("evidence", ""),
                         "revision_feedback": state.get("feedback", {}).get("test_generation"),
                         "repair_feedback": repair_feedback or None,
@@ -1082,6 +1101,13 @@ class Harness:
                     candidate = expand_generated_lines(
                         GeneratedFilesDraft.model_validate(result["artifact"]).model_dump()
                     )
+                    candidate = _canonicalize_case_ids(candidate, work_ids)
+                    for item in candidate["files"]:
+                        if item["path"].endswith(".py") and (flat := flatten_nested_with(item["content"])):
+                            item["content"] = (
+                                flat  # deep `with patch(...)` chains cannot compile; see skill_contracts
+                            )
+                            self.audit("nested_with_flattened", batch=batch_index, path=item["path"])
                     candidate = ensure_generated_case_markers(candidate)
                     raw_batches.append(json.dumps(candidate, separators=(",", ":"), default=str))
                     validation = validate_generated_files(candidate, work_ids)
@@ -1106,7 +1132,9 @@ class Harness:
                     break
                 except Exception as exc:
                     repair_feedback = (
-                        f"Attempt {attempt} failed generation or static validation: {exc}. Regenerate ONLY this batch. "
+                        f"Attempt {attempt} failed generation or static validation: {exc}. "
+                        + (f"HOW TO FIX: {remedy_for(str(exc))} " if remedy_for(str(exc)) else "")
+                        + "Regenerate ONLY this batch. "
                         "Return one complete schema-valid JSON object. Generate one file per supplied case ID, exactly one "
                         "test declaration per file, and one matching case_ids entry. The host supplies CASE_ID comments. "
                         "Keep imports minimal and source complete. Python files must define a top-level def test_name(...): "

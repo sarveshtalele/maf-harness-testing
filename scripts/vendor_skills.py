@@ -39,7 +39,10 @@ SELECTED = [
 # outside stdout. "model" scripts may be called by the agent through MAF run_skill_script; "host" scripts are
 # only ever run by the harness itself on its own artifacts.
 REVIEWED_SCRIPTS = {
-    "test-data-generator": {"model": ["scripts/deterministic_helpers.py"], "host": ["scripts/validate_fixtures.py"]},
+    "test-data-generator": {
+        "model": ["scripts/deterministic_helpers.py"],
+        "host": ["scripts/validate_fixtures.py"],
+    },
     "traceability-generator": {"model": [], "host": ["scripts/validate_traceability.py"]},
     "api-contract-analyzer": {"model": [], "host": ["scripts/validate_contract.py"]},
 }
@@ -63,8 +66,17 @@ def package_files(directory: Path) -> dict[str, str]:
 def audit(evaluator: Path, skill_dir: Path, out: Path) -> dict:
     """Run the upstream evaluator (offline, no LLM) and keep the numbers that matter."""
     out.mkdir(parents=True, exist_ok=True)
-    run = [sys.executable, str(evaluator / "scripts" / "run_evaluation.py"), "--skill", str(skill_dir),
-           "--no-llm", "--format", "json", "--output", str(out)]
+    run = [
+        sys.executable,
+        str(evaluator / "scripts" / "run_evaluation.py"),
+        "--skill",
+        str(skill_dir),
+        "--no-llm",
+        "--format",
+        "json",
+        "--output",
+        str(out),
+    ]
     subprocess.run(run, capture_output=True, text=True, timeout=300, check=False)
     report = next(iter(out.glob("*.json")), None)
     for candidate in out.glob(f"{skill_dir.name}*.json"):
@@ -73,22 +85,39 @@ def audit(evaluator: Path, skill_dir: Path, out: Path) -> dict:
         return {"status": "not_run"}
     data = json.loads(report.read_text(encoding="utf-8"))
     security = data.get("security", {})
-    return {"tool": "evaluator-skill (NVIDIA SkillSpector rules, --no-llm)", "score": data.get("overall_score"),
-            "gate": data.get("gate_decision"), "security_findings": len(security.get("findings", [])),
-            "security_risk": security.get("risk_severity")}
+    return {
+        "tool": "evaluator-skill (NVIDIA SkillSpector rules, --no-llm)",
+        "score": data.get("overall_score"),
+        "gate": data.get("gate_decision"),
+        "security_findings": len(security.get("findings", [])),
+        "security_risk": security.get("risk_severity"),
+    }
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
     parser.add_argument("--source", type=Path, required=True, help="Clone of the upstream skills repository")
     parser.add_argument("--url", default="https://github.com/shivswami/awesome-agent-skills.git")
     parser.add_argument("--audit-dir", type=Path, default=ROOT / ".skill-audit")
     args = parser.parse_args()
     source = args.source.resolve()
-    commit = subprocess.run(["git", "-C", str(source), "rev-parse", "HEAD"], capture_output=True, text=True, check=True).stdout.strip()
-    branch = subprocess.run(["git", "-C", str(source), "rev-parse", "--abbrev-ref", "HEAD"], capture_output=True, text=True, check=True).stdout.strip()
+    commit = subprocess.run(
+        ["git", "-C", str(source), "rev-parse", "HEAD"], capture_output=True, text=True, check=True
+    ).stdout.strip()
+    branch = subprocess.run(
+        ["git", "-C", str(source), "rev-parse", "--abbrev-ref", "HEAD"],
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout.strip()
     evaluator = source / "Skills" / "evaluator-skill"
-    lock = {"upstream": {"url": args.url, "branch": branch, "commit": commit}, "skills": {}, "reviewed_scripts": {}}
+    lock = {
+        "upstream": {"url": args.url, "branch": branch, "commit": commit},
+        "skills": {},
+        "reviewed_scripts": {},
+    }
     for name in SELECTED:
         origin = source / "Skills" / name
         if not (origin / "SKILL.md").is_file():
@@ -98,13 +127,20 @@ def main() -> int:
             shutil.rmtree(target)
         shutil.copytree(origin, target, ignore=shutil.ignore_patterns(*SKIP_NAMES))
         entry = {"origin": "upstream", "path": f"Skills/{name}", "files": package_files(target)}
-        entry["audit"] = audit(evaluator, target, args.audit_dir / name) if evaluator.is_dir() else {"status": "not_run"}
+        entry["audit"] = (
+            audit(evaluator, target, args.audit_dir / name) if evaluator.is_dir() else {"status": "not_run"}
+        )
         lock["skills"][name] = entry
         for tier, scripts in REVIEWED_SCRIPTS.get(name, {}).items():
             for rel in scripts:
-                lock["reviewed_scripts"].setdefault(name, {})[rel] = {"tier": tier, "sha256": entry["files"][rel]}
+                lock["reviewed_scripts"].setdefault(name, {})[rel] = {
+                    "tier": tier,
+                    "sha256": entry["files"][rel],
+                }
         print(f"vendored {name}: {len(entry['files'])} files, audit {entry['audit']}")
-    (SKILLS / "SKILLS.lock.json").write_text(json.dumps(lock, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    (SKILLS / "SKILLS.lock.json").write_text(
+        json.dumps(lock, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+    )
     return 0
 
 

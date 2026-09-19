@@ -13,7 +13,8 @@ from maf_test_harness.artifact_presenter import artifact_downloads, humanize, re
 from maf_test_harness.maf_runtime import MAFHarnessRuntime
 from maf_test_harness.personas import PERSONAS
 from maf_test_harness.runtime_service import RuntimeService
-from maf_test_harness.settings import API_KEY, BASE_URL, MODEL, RUN_TOKEN_LIMIT, validate_gateway_settings
+from maf_test_harness.settings import API_KEY, BASE_URL, MODEL, validate_gateway_settings
+from maf_test_harness.usage import DailyUsageLedger
 from maf_test_harness.workflow import STAGES, Harness
 
 ROOT = Path(__file__).resolve().parent
@@ -283,7 +284,12 @@ with st.sidebar:
     st.caption(f"Model: {MODEL}")
     st.caption(f"Base URL: {BASE_URL or 'not configured'}")
     st.caption("API key: configured" if API_KEY else "API key: not configured")
-    st.caption(f"Token budget per workflow run: {RUN_TOKEN_LIMIT:,} (the only limit)")
+    daily = DailyUsageLedger().snapshot()
+    st.caption(f"Daily token cap (all runs, resets at local midnight): {daily['limit']:,} (the only limit)")
+    st.progress(
+        min(1.0, daily["used"] / daily["limit"]),
+        text=f"Used today: {daily['used']:,} · left: {daily['remaining']:,}",
+    )
 
     st.divider()
     st.subheader("Agent personas")
@@ -325,7 +331,7 @@ with st.sidebar:
         st.divider()
         st.caption(f"Run: {harness.run_dir.name}")
         budget = harness.state.get("budget", {})
-        st.metric("Token budget", f"{budget.get('charged', 0):,} / {RUN_TOKEN_LIMIT:,}")
+        st.metric("Tokens used by this run", f"{budget.get('reported_tokens', budget.get('charged', 0)):,}")
         st.caption(f"Provider calls: {budget.get('calls', 0)}")
 
 

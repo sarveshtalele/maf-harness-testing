@@ -310,3 +310,121 @@ def test_modules_in_non_package_directories_are_importable_by_bare_name_because_
     check_python_imports("from reverse_engineer_agent import ReverseEngineerAgent\n", repo, "", "t.py")
     with pytest.raises(ValueError, match="does not match any repository path|not stdlib"):
         check_python_imports("from other_module import X\n", repo, "", "t.py")
+
+
+def test_resolve_id_repairs_garbled_hash_suffixes_but_never_guesses_between_candidates():
+    from maf_test_harness.skill_contracts import resolve_id
+
+    known = [
+        "AC-PUT-CATEGORIES-ID-WITH-VALID-BODY-RETURNS-204-WITH-S-BD50B1F2",
+        "AC-GET-ITEMS-RETURNS-200-11223344",
+    ]
+    assert (
+        resolve_id("AC-PUT-CATEGORIES-ID-WITH-VALID-BODY-RETURNS-204-WITH-S-BD50F1B2", known) == known[0]
+    )  # transposed
+    assert resolve_id("ac-get-items-returns-200-11223344", known) == known[1]  # case
+    assert resolve_id(known[0], known) == known[0]
+    assert resolve_id("AC-DELETE-SOMETHING-ELSE-00000000", known) is None
+    twins = ["TC-POS-SUM-AAAAAAAA", "TC-POS-SUM-BBBBBBBB"]
+    assert resolve_id("TC-POS-SUM-CCCCCCCC", twins) is None  # ambiguous: refuse rather than guess
+
+
+def test_generation_case_ids_are_canonicalized_before_validation():
+    from maf_test_harness.workflow import _canonicalize_case_ids
+
+    files = {"files": [{"path": "t.py", "case_ids": ["TC-POS-ADD-RETURNS-SUM-DBF3F6C3"]}]}
+    out = _canonicalize_case_ids(files, {"TC-POS-ADD-RETURNS-SUM-DBF3F6CE"})
+    assert out["files"][0]["case_ids"] == ["TC-POS-ADD-RETURNS-SUM-DBF3F6CE"]
+
+
+def test_python_source_that_only_fails_at_compile_time_is_rejected():
+    """ast.parse accepts 21 nested `with` blocks; CPython refuses them when compiling (i.e. at collection)."""
+    nested = "".join("    " * i + "with cm():\n" for i in range(1, 22)) + "    " * 22 + "pass\n"
+    code = (
+        "from contextlib import nullcontext as cm\n\n\ndef test_deep():\n"
+        + nested
+        + "    assert value() == 1\n"
+    )
+    with pytest.raises(ValueError, match="too many statically nested blocks|invalid Python|syntax"):
+        validate_generated_files(payload(code, "test_deep.py"), {"TC-1"})
+
+
+def test_declared_dependencies_are_parsed_from_build_and_manifest_files(tmp_path):
+    from maf_test_harness.repo_analyzer import declared_dependencies
+
+    files = {
+        "pom.xml": "<project><dependencies><dependency><artifactId>junit</artifactId></dependency>"
+        "<dependency><artifactId>hibernate-validator</artifactId></dependency></dependencies></project>",
+        "build.gradle": "dependencies { testImplementation 'org.mockito:mockito-core:5.0' }",
+        "package.json": '{"dependencies": {"express": "4"}, "devDependencies": {"jest": "29"}}',
+        "requirements.txt": "requests==2.31\nanthropic>=0.40\n# comment\n",
+        "go.mod": "module x\nrequire github.com/stretchr/testify v1.8.0\n",
+    }
+    for name, content in files.items():
+        (tmp_path / name).write_text(content)
+    found = declared_dependencies(tmp_path, list(files))
+    assert {
+        "junit",
+        "hibernate-validator",
+        "mockito-core",
+        "express",
+        "jest",
+        "requests",
+        "anthropic",
+        "github.com/stretchr/testify",
+    } <= set(found)
+    assert "restassured" not in found and "rest-assured" not in found
+
+
+def _deeply_nested_test(depth: int) -> str:
+    lines = [
+        "from contextlib import contextmanager",
+        "LOG = []",
+        "",
+        "@contextmanager",
+        "def cm(name):",
+        "    LOG.append('enter ' + name)",
+        "    try:",
+        "        yield name.upper()",
+        "    finally:",
+        "        LOG.append('exit ' + name)",
+        "",
+        "def test_deep():",
+    ]
+    for i in range(depth):
+        lines.append("    " * (i + 1) + f"with cm('c{i}') as v{i}:")
+    lines.append("    " * (depth + 1) + "assert v0 == 'C0' and v" + str(depth - 1) + f" == 'C{depth - 1}'")
+    return "\n".join(lines) + "\n"
+
+
+def test_deep_with_chains_are_flattened_to_exitstack_with_identical_semantics():
+    from maf_test_harness.skill_contracts import flatten_nested_with
+
+    source = _deeply_nested_test(25)
+    with pytest.raises(SyntaxError, match="too many statically nested blocks"):
+        compile(source, "t.py", "exec")  # the original cannot even be compiled
+    flat = flatten_nested_with(source)
+    assert flat and "ExitStack" in flat and "with cm(" not in flat.replace("enter_context(cm(", "")
+    namespace: dict = {}
+    exec(compile(flat, "t.py", "exec"), namespace)
+    namespace["test_deep"]()
+    log = namespace["LOG"]
+    assert log[:25] == [f"enter c{i}" for i in range(25)]  # entered in order
+    assert log[25:] == [f"exit c{i}" for i in reversed(range(25))]  # exited in reverse order
+    assert flatten_nested_with(_deeply_nested_test(3)) is None  # shallow chains are left alone
+
+
+def test_a_flattened_test_passes_the_static_gate_that_rejected_the_original():
+    from maf_test_harness.skill_contracts import flatten_nested_with
+
+    def py_payload(code):
+        return {
+            "files": [{"path": "test_deep.py", "content": "# CASE_ID: TC-1\n" + code, "case_ids": ["TC-1"]}]
+        }
+
+    source = _deeply_nested_test(25)
+    with pytest.raises(ValueError, match="nested blocks"):
+        validate_generated_files(py_payload(source), {"TC-1"})
+    assert (
+        validate_generated_files(py_payload(flatten_nested_with(source)), {"TC-1"})["test_declarations"] == 1
+    )

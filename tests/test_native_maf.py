@@ -78,7 +78,7 @@ class ScriptedClient(FunctionInvocationLayer, ChatMiddlewareLayer, BaseChatClien
 
 def fresh_state():
     return {
-        "budget": {"limit": 2_000_000, "charged": 0, "calls": 0, "reported_tokens": 0},
+        "budget": {"charged": 0, "calls": 0, "reported_tokens": 0},
         "sessions": {},
         "model_requests": {},
     }

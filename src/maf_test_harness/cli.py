@@ -21,6 +21,7 @@ from .maf_runtime import MAFHarnessRuntime
 from .settings import API_KEY, BASE_URL, MODEL, SKILL_MODE, validate_gateway_settings
 from .skills_config import SKILL_NAMES
 from .skills_registry import lint_all, load_lock, tree_sha256, verify_lock
+from .usage import DailyUsageLedger
 from .workflow import ENV_STAGE, EXECUTION_STAGE, Harness
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -101,6 +102,7 @@ async def run(args) -> int:
     _say(
         f"\nstatus: {view['status']}  provider calls: {budget.get('calls')}  reported tokens: "
         f"{budget.get('reported_tokens')}"
+        f"  daily cap: {DailyUsageLedger().snapshot()['used']:,}/{DailyUsageLedger().limit:,} used today"
     )
     if state.get("deliverable_zip"):
         _say(f"deliverable ZIP (repository + generated tests + reports): {state['deliverable_zip']}")

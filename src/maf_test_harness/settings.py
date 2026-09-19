@@ -18,9 +18,9 @@ MODEL = os.getenv("OPENAI_MODEL", "deepseek-v4-flash-global").strip()
 #                that cannot call tools; recorded in provenance as NOT using the MAF Agent Skills provider.
 SKILL_MODE = os.getenv("HARNESS_SKILL_MODE", "progressive").strip().lower()
 
-# The ONLY token limit: total tokens (input + output) one workflow run may spend across every model call.
-# There are deliberately no separate per-call input or provider-call-count limits.
-RUN_TOKEN_LIMIT = 2_000_000
+# The ONLY spending limit: tokens (input + output) across ALL runs on this machine per local calendar day.
+# There are deliberately no per-run, per-call, or call-count limits. See usage.py.
+DAILY_TOKEN_LIMIT = 5_000_000
 
 # Provider response cap, not the total workflow budget.
 MAX_OUTPUT_TOKENS = int(os.getenv("HARNESS_MAX_OUTPUT_TOKENS", "16384"))

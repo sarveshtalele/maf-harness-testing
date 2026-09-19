@@ -466,3 +466,26 @@ def test_generation_prompts_carry_only_the_requirements_the_batch_traces_to():
         c["id"] for c in out["acceptance_criteria"]
     ] == ["AC1"]
     assert out["actors"] == [{"name": "Dev"}]
+
+
+def test_new_remedies_cover_fixtures_containers_validation_providers_and_deep_nesting():
+    from maf_test_harness.triage import remedy_for
+
+    assert "parameter of the test function" in remedy_for("NameError: name 'capsys' is not defined")
+    assert "Bean Validation" in remedy_for(
+        "Unable to create a Configuration, because no Bean Validation provider could be found"
+    )
+    assert "Arquillian" in remedy_for(
+        "DeploymentScenario contains a target (_DEFAULT_) not matching any defined Container"
+    )
+    assert "nest more than 5" in remedy_for("SyntaxError: too many statically nested blocks")
+
+
+def test_remedies_for_mocked_exit_and_patching_missing_module_attributes():
+    from maf_test_harness.triage import remedy_for
+
+    mocked_exit = "AttributeError: 'NoneType' object has no attribute 'rstrip'\n    mock_exit = mocker.patch.object(sys, \"exit\")\n"
+    assert "pytest.raises(SystemExit)" in remedy_for(mocked_exit)
+    assert "sys.modules" in remedy_for(
+        "AttributeError: module 'engine.ai_analysis' has no attribute 'anthropic'"
+    )

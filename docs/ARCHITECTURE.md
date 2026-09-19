@@ -96,7 +96,7 @@ sequenceDiagram
 | The assigned Agent Skill was loaded through MAF's `load_skill` | `maf_runtime.ToolTraceMiddleware` + `_verify_skill_loaded`; audited by `maf-harness verify-run` |
 | Skills follow the Agent Skills spec and vendored upstream skills are unmodified | `skills_registry.lint_skill`, `verify_lock` against `skills/SKILLS.lock.json` (per-file SHA-256), both inside `require_valid` before each stage |
 | Skill scripts run only if reviewed and unchanged | `skill_scripts.HarnessScriptRunner` (allow-list + SHA-256 per run, argv-only, temp dir, sanitized env, timeout); MAF `run_skill_script` is auto-approved only for model-tier scripts (`script_approval_rule`) |
-| Only 2,000,000 tokens per workflow run; no per-call or call-count limits | `maf_runtime.BudgetGuard`, `settings.RUN_TOKEN_LIMIT` |
+| Only a daily cap of 5,000,000 tokens (all runs on the machine); no per-run, per-call or call-count limits | `usage.DailyUsageLedger` (locked JSON file per local day), `maf_runtime.BudgetGuard` (reserve → call → settle), `settings.DAILY_TOKEN_LIMIT` |
 | Design cases exist at unit level, per actor, and per requirement (or the gap is explained) | `workflow._require_coverage_or_reason` (repair loop, last attempt reaches the human with the gap recorded) |
 | Test source only after the design is approved | graph edge `test_design → test_generation` only fires on approve; `state.approved` hash checked; `tests/test_policies.py` |
 | Generated source is structurally sound | `skill_contracts.validate_generated_files`: paths, markers, one declaration per file, no placeholders/skips, syntax (Python AST; javac/node/gofmt or brace balance), import resolution (Python, Java) |
@@ -128,15 +128,15 @@ sequenceDiagram
 | File | Responsibility | Key contents | Notes |
 |---|---|---|---|
 | `__init__.py` | Package marker | exports `RepoAnalysis`, `TestPlan` | — |
-| `settings.py` | Single source of configuration | gateway env vars, `RUN_TOKEN_LIMIT = 2_000_000`, batch/attempt sizes, timeouts, `SKILL_MODE` | Credentials are read from the environment only |
+| `settings.py` | Single source of configuration | gateway env vars, `DAILY_TOKEN_LIMIT = 5_000_000`, batch/attempt sizes, timeouts, `SKILL_MODE` | Credentials are read from the environment only |
 | `models.py` | Pydantic contracts for model output | `RequirementsDraft` (actors, requirements, criteria, rules, contracts, environment needs), `TestPlan`, `TestDesignDraft`/`TestDesignCaseDraft` (level/actor/target), `GeneratedFilesDraft` (source as `lines[]`), `RepoAnalysis` | `extra="forbid"` + bounded lists so structured output is enforceable and cannot run away |
 | `personas.py` | Role, goal and rules per stage | `PERSONAS` for the 5 agent stages + 2 host stages, `persona_instructions()` | Host stages appear so the UI/audit list every stage uniformly |
-| `repo_analyzer.py` | Repository intake | `validate_github_url` (page or clone URL, optional `/tree/<ref>`), `clone_repository` (no prompts, no hooks), `analyze_repository`, `_detect_frameworks`, `build_repository_evidence` (source-first, line-numbered, bounded, secrets redacted) | Only tracked files are analyzed |
+| `repo_analyzer.py` | Repository intake (incl. `declared_dependencies`, `extract_target_sources`) | `validate_github_url` (page or clone URL, optional `/tree/<ref>`), `clone_repository` (no prompts, no hooks), `analyze_repository`, `_detect_frameworks`, `build_repository_evidence` (source-first, line-numbered, bounded, secrets redacted) | Only tracked files are analyzed |
 | `stack.py` | Deterministic stack profile | `detect_stack` → ecosystems, primary, test runner, web UI/service hints, OpenAPI/CI/container files, missing tools | Drives runner and environment plan |
 | `environment.py` | Environment plan | `build_environment_plan` (prerequisites with versions and install hints, isolation strategy, exact install steps), `steps_from_plan` | System tools are reported, never installed |
 | `runners.py` | Per-ecosystem adapters and execution | `setup_steps`, `build_plan`, `execute_setup`, `execute_plan` (fresh evidence only, compile-error quarantine), result parsers (JUnit/Jest/Go/TRX), `map_results_to_cases`, allow-listed pytest helpers | Python, Node (jest/vitest/Playwright), Maven, Gradle, Go, .NET |
 | `execution.py` | Safe process execution + workspace | `run_command` (argv only, process-group timeout, sanitized env, immutable result dir), `copy_repo`, `write_generated`, JUnit reader | Local process — **not a sandbox** |
-| `skill_contracts.py` | Deterministic adapters around skill contracts | ID assignment, `finalize_discovered_requirements`, `finalize_design` (traceability matrix, coverage, gaps, schema check), `validate_generated_files`, syntax/import gates | The "trust boundary" between model text and accepted artifacts |
+| `skill_contracts.py` | Deterministic adapters around skill contracts (incl. `resolve_id`, `flatten_nested_with`, import gates) | ID assignment, `finalize_discovered_requirements`, `finalize_design` (traceability matrix, coverage, gaps, schema check), `validate_generated_files`, syntax/import gates | The "trust boundary" between model text and accepted artifacts |
 | `skills_registry.py` | Agent Skills spec lint + supply-chain lock | `lint_skill`, `lint_all`, `load_lock`, `verify_lock`, `reviewed_scripts`, `require_valid`, `tree_sha256` | Package hash goes into provenance; tampering with a vendored skill is refused |
 | `skills_config.py` | Which skills each stage loads | `SKILL_NAMES`, `COMPANION_PURPOSE`, `skills_for(stage, state)` → primary + companions | Deterministic over the stack profile and the approved design |
 | `skill_scripts.py` | Reviewed-script execution | `HarnessScriptRunner` (MAF `SkillScriptRunner` + host executor), `script_approval_rule`, `ScriptRefused` | Two tiers: model-callable and host-only |
@@ -148,13 +148,14 @@ sequenceDiagram
 | `triage.py` | Files/lines to update | `locations`, `classify`, `build_updates` | Test-defect vs application-first classification |
 | `packaging.py` | Deliverable ZIP | `build_deliverable`, `run_instructions` | Repo + generated tests + `harness-report/` |
 | `artifact_presenter.py` | JSON → readable UI/Markdown | `json_to_markdown`, `render_json_ui`, `artifact_downloads`, `humanize` | Shared by UI and `scripts/json_to_markdown.py` |
+| `usage.py` | Daily token ledger | `DailyUsageLedger` (`reserve`, `settle`, `snapshot`), `DailyLimitError` | File lock makes concurrent runs safe |
 | `cli.py` | Headless driver | `run`, `verify-run`, `lint-skills` | Exit codes 0 pass, 1 fail, 2 inconclusive/error |
 
 ### 6.2 Entry points and scripts
 
 | File | Responsibility |
 |---|---|
-| `app.py` | Streamlit UI: start form (URL, optional app URL), review/tool gates, QA tab with files to update, generated tests, audit/provenance, ZIP download, 2M token meter |
+| `app.py` | Streamlit UI: start form (URL, optional app URL), review/tool gates, QA tab with files to update, generated tests, audit/provenance, ZIP download, daily token meter |
 | `scripts/json_to_markdown.py` | Convert any saved JSON artifact to Markdown with the same formatter as the UI |
 | `scripts/vendor_skills.py` | Vendor selected skills from the upstream repository: copy, audit (upstream `evaluator-skill`, offline), hash, write `skills/SKILLS.lock.json` incl. the reviewed-script allow-list |
 | `pyproject.toml` | Package metadata, pinned MAF versions, `maf-harness` script, ruff lint/format and pytest config |
@@ -199,7 +200,7 @@ its own artifacts. Everything else is refused, and every run is recorded in `sta
 |---|---|
 | `fakes.py` | Scripted stage runtime + environment double shared by workflow tests |
 | `test_native_maf.py` | Real MAF harness/`SkillsProvider`/middleware with a scripted transport: skill loaded once per stage, rejection when not loaded, script requests rejected, preloaded mode labelled |
-| `test_policies.py` | 2M-only token budget, generation only after design approval, unit/actor/requirement design policy |
+| `test_policies.py` | Daily-cap ledger (shared across runs, day rollover, concurrency, refunds), generation only after design approval, unit/actor/requirement design policy |
 | `test_execution_stage.py` | End-to-end workflow with real subprocess execution: environment approval, run approval, QA verdicts, heal loop, skip, tamper checks, repair loops, ZIP contents |
 | `test_stack_and_runners.py` | Stack detection, adapters, parsers, quarantine of uncompilable files, secrets not forwarded |
 | `test_execution.py` | `run_command`, JUnit reading, workspace copy, no overwrite, no stale bytecode |
@@ -229,7 +230,7 @@ its own artifacts. Everything else is refused, and every run is recorded in `sta
 * **Skill provider**: `SkillsProvider(DeduplicatingSkillsSource(FilteringSkillsSource(FileSkillsSource(skills_dir, script_runner=HarnessScriptRunner, script_filter=model-tier allow-list))))`, filtered to exactly the assigned skills.
 * **Priming**: a tool-only turn ("call `load_skill` once for each of …, then reply READY", up to 5 attempts) runs first because some gateways skip tool calls when structured output is requested in the same turn. The primed session snapshot is copied for every later call of that stage.
 * **Verification**: `ToolTraceMiddleware` records each real tool invocation; output is rejected unless `load_skill` succeeded for **every** assigned skill. Provenance (`skill_provenance` with companions, `skill_tool_trace`, `runtime_provenance`, `skill_script_runs`, per-call hashes) is stored in `run.json`; `maf-harness verify-run` re-checks it and the lock.
-* **Budget**: `BudgetGuard` reserves estimate + max output before each call and reconciles with reported usage; the only refusal is exceeding 2,000,000 tokens for the run.
+* **Budget**: `BudgetGuard` reserves estimate + max output against the daily ledger before each call (raising `DailyLimitError` before any provider call) and settles to the provider-reported usage afterwards; failed calls are refunded. The only refusal is exceeding 5,000,000 tokens for the local day.
 * **Fallback**: `HARNESS_SKILL_MODE=preloaded` injects all assigned skill texts into instructions and is recorded as `uses_maf_skills_provider: false`.
 
 ## 8. Extending
@@ -246,7 +247,8 @@ its own artifacts. Everything else is refused, and every run is recorded in `sta
 | Setting | Source | Default | Purpose |
 |---|---|---|---|
 | `OPENAI_API_KEY`, `OPENAI_BASE_URL`, `OPENAI_MODEL` | env | — / — / `deepseek-v4-flash-global` | model gateway |
-| `RUN_TOKEN_LIMIT` | constant in `settings.py` | 2,000,000 | the only token limit, per workflow run |
+| `DAILY_TOKEN_LIMIT` | constant in `settings.py` | 5,000,000 | the only token limit, per local day across all runs |
+| `HARNESS_USAGE_DIR` | env | `~/.maf-harness/usage` | where the daily ledger is stored |
 | `HARNESS_SKILL_MODE` | env | `progressive` | MAF SkillsProvider vs preloaded fallback |
 | `HARNESS_GENERATION_BATCH_SIZE` / `_MAX_ATTEMPTS` | env | 3 / 3 | cases per model call / repair attempts |
 | `HARNESS_MAX_OUTPUT_TOKENS` | env | 16384 | per-response cap (not a workflow limit) |

@@ -24,12 +24,12 @@ from agent_framework.openai import OpenAIChatClient, OpenAIChatCompletionClient
 
 from .settings import (
     MAX_OUTPUT_TOKENS,
-    RUN_TOKEN_LIMIT,
     SKILL_MODE,
 )
 from .skill_scripts import HarnessScriptRunner, script_approval_rule
 from .skills_config import COMPANION_PURPOSE
 from .skills_registry import require_valid
+from .usage import DailyUsageLedger
 
 
 class AgentOutputError(RuntimeError):
@@ -100,8 +100,10 @@ def extract_json_object(text: str) -> dict[str, Any]:
 
 
 class BudgetGuard(ChatMiddleware):
-    def __init__(self, budget: dict, persist):
-        self.budget, self.persist = budget, persist
+    """Reserves worst-case tokens against the daily ledger before each call and settles to reported usage."""
+
+    def __init__(self, budget: dict, persist, ledger: DailyUsageLedger):
+        self.budget, self.persist, self.ledger = budget, persist, ledger
 
     async def process(self, context, call_next):
         # Include message history AND tool schemas. Estimates are explicitly identified in the UI.
@@ -111,22 +113,24 @@ class BudgetGuard(ChatMiddleware):
         output_limit = int((context.options or {}).get("max_output_tokens") or DEFAULT_MAX_OUTPUT_TOKENS)
         reservation = estimate + output_limit
         budget = self.budget
-        budget["limit"] = RUN_TOKEN_LIMIT
-        if budget["charged"] + reservation > budget["limit"]:
-            raise ValueError(
-                f"Workflow token budget of {RUN_TOKEN_LIMIT:,} tokens exhausted "
-                f"({budget['charged']:,} used). Start a new run or reduce scope."
-            )
-        budget["charged"] += reservation
+        claim = self.ledger.reserve(reservation)  # raises DailyLimitError before any provider call is made
+        budget["charged"] = budget.get("charged", 0) + reservation
         budget["calls"] = budget.get("calls", 0) + 1
         self.persist()
-        await call_next()
+        try:
+            await call_next()
+        except BaseException:
+            self.ledger.settle(claim, 0)  # a failed call is not charged
+            budget["charged"] -= reservation
+            self.persist()
+            raise
         usage = getattr(context.result, "usage_details", None) or {}
         usage = usage.to_dict() if hasattr(usage, "to_dict") else usage
         actual = usage.get("total_token_count")
         if actual is None and usage.get("input_token_count") is not None:
             actual = usage["input_token_count"] + usage.get("output_token_count", output_limit)
         if actual is not None:
+            self.ledger.settle(claim, int(actual))
             budget["charged"] += int(actual) - reservation
             budget["reported_tokens"] = budget.get("reported_tokens", 0) + int(actual)
         else:
@@ -165,6 +169,7 @@ class MAFHarnessRuntime:
         base_url: str | None = None,
         api_mode: str = "auto",
         skill_mode: str = SKILL_MODE,
+        usage_ledger: DailyUsageLedger | None = None,
     ):
         if not api_key.strip() or not model.strip():
             raise ValueError("Model and API key are required before model stages.")
@@ -175,6 +180,7 @@ class MAFHarnessRuntime:
         self.base_url = base_url.strip() if base_url else None
         self.api_mode = api_mode
         self.skill_mode = skill_mode
+        self.ledger = usage_ledger or DailyUsageLedger()
         self._agents = {}
         self._clients = []
         self._guards = {}
@@ -272,7 +278,7 @@ class MAFHarnessRuntime:
         client.function_invocation_configuration["include_detailed_errors"] = True
         self._clients.append(client)
         self._record_provenance(stage, skills, state, persist)
-        self._guards[stage] = BudgetGuard(state["budget"], persist)
+        self._guards[stage] = BudgetGuard(state["budget"], persist, self.ledger)
         self._tracers[stage] = ToolTraceMiddleware()
 
         common = (

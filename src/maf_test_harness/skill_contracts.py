@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import ast
+import difflib
 import json
 import re
 import shutil
@@ -74,6 +75,31 @@ def design_schema(skills_root: Path) -> dict[str, Any]:
     except jsonschema.SchemaError as exc:
         raise ValueError(f"invalid test-design output_contract: {exc.message}") from exc
     return schema
+
+
+_HEX_SUFFIX = re.compile(r"-[0-9A-F]{8}$")
+
+
+def resolve_id(candidate: Any, known: Any) -> str | None:
+    """Map a model-written ID to the one canonical ID it means, or None when it is unknown or ambiguous.
+
+    The host assigns IDs like ``TC-POS-ADD-SUMS-DBF3F6CE``. Models copy the descriptive part faithfully but routinely
+    garble the 8-hex suffix (``...50B1F2`` written as ``...50F1B2``). Exact match wins; otherwise a unique known ID
+    with the same descriptive label (or a unique very close spelling) is accepted and the link is canonicalized.
+    """
+    ids = list(known)
+    text = str(candidate).strip()
+    if text in ids:
+        return text
+    same_case = [k for k in ids if k.upper() == text.upper()]
+    if len(same_case) == 1:
+        return same_case[0]
+    label = _HEX_SUFFIX.sub("", text.upper())
+    same_label = [k for k in ids if _HEX_SUFFIX.sub("", k.upper()) == label]
+    if len(same_label) == 1:
+        return same_label[0]
+    close = difflib.get_close_matches(text, ids, n=2, cutoff=0.92)
+    return close[0] if len(close) == 1 else None
 
 
 def _clean_paths(paths: Any, what: str) -> list[str]:
@@ -373,7 +399,10 @@ def finalize_design(
                     raise ValueError("invalid traceability link")
                 collection = _LINK_COLLECTION[link["type"]]
                 if link.get("id") not in source_ids[collection]:
-                    raise ValueError(f"unknown {link['type']} source ID: {link.get('id')!r}")
+                    resolved = resolve_id(link.get("id"), source_ids[collection])
+                    if resolved is None:
+                        raise ValueError(f"unknown {link['type']} source ID: {link.get('id')!r}")
+                    link["id"] = resolved  # canonicalized (garbled hash suffix, letter case)
             case["traceability_links"] = sorted(
                 links, key=lambda link: (str(link.get("type", "")), str(link.get("id", "")))
             )
@@ -467,6 +496,70 @@ def finalize_design(
     result["gaps_report"] = gaps
     _validate_design_schema(result, schema)
     return result
+
+
+class _FlattenWithChains(ast.NodeTransformer):
+    """Rewrite a pure chain of nested ``with`` statements into one ``with ExitStack()``.
+
+    CPython refuses more than 20 statically nested blocks, and a multi-item ``with a, b:`` counts the same way, so a
+    test that patches two dozen collaborators (a common way to unit-test an orchestration function) cannot be
+    written with nested ``with``. ``ExitStack`` is the semantics-preserving form: contexts are entered in order and
+    exited in reverse order, exactly like the nested statements.
+    """
+
+    def __init__(self, min_depth: int = 8):
+        self.min_depth, self.changed = min_depth, False
+
+    def visit_With(self, node: ast.With):
+        chain, current = [node], node
+        while len(current.body) == 1 and isinstance(current.body[0], ast.With):
+            current = current.body[0]
+            chain.append(current)
+        items = [item for with_ in chain for item in with_.items]
+        if len(items) < self.min_depth:
+            return self.generic_visit(node)
+        self.changed = True
+        stack = ast.Name(id="_exit_stack", ctx=ast.Load())
+        entered: list[ast.stmt] = []
+        for item in items:
+            call = ast.Call(
+                func=ast.Attribute(value=stack, attr="enter_context", ctx=ast.Load()),
+                args=[item.context_expr],
+                keywords=[],
+            )
+            entered.append(
+                ast.Assign(targets=[item.optional_vars], value=call)
+                if item.optional_vars is not None
+                else ast.Expr(value=call)
+            )
+        body = [self.visit(stmt) for stmt in current.body]
+        new = ast.With(
+            items=[
+                ast.withitem(
+                    context_expr=ast.Call(
+                        func=ast.Name(id="ExitStack", ctx=ast.Load()), args=[], keywords=[]
+                    ),
+                    optional_vars=ast.Name(id="_exit_stack", ctx=ast.Store()),
+                )
+            ],
+            body=entered + body,
+        )
+        return ast.copy_location(new, node)
+
+
+def flatten_nested_with(content: str) -> str | None:
+    """Source with deep ``with`` chains rewritten to ExitStack, or None when nothing needed changing."""
+    try:
+        tree = ast.parse(content)
+    except SyntaxError:
+        return None
+    transformer = _FlattenWithChains()
+    tree = transformer.visit(tree)
+    if not transformer.changed:
+        return None
+    ast.fix_missing_locations(tree)
+    imports = "from contextlib import ExitStack\n" if "ExitStack" not in content else ""
+    return imports + ast.unparse(tree) + "\n"
 
 
 def _python_tests(content: str) -> list:
@@ -675,7 +768,10 @@ def validate_generated_files(payload: dict[str, Any], case_ids: set[str]) -> dic
         if pure.suffix.lower() == ".py":
             try:
                 tree = ast.parse(content, filename=path)
-            except SyntaxError as exc:
+                # ast.parse does not compile: limits such as "too many statically nested blocks" (>20 nested
+                # `with`/`for`) only fail in compile(), i.e. at test collection time. Catch them now.
+                compile(content, path, "exec", dont_inherit=True)
+            except (SyntaxError, ValueError, RecursionError) as exc:
                 raise ValueError(f"generated Python source is invalid in {path}: {exc}") from exc
             imports = [node for node in ast.walk(tree) if isinstance(node, (ast.Import, ast.ImportFrom))]
             if sum(len(node.names) for node in imports) > 20:
