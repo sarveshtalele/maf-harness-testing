@@ -12,6 +12,8 @@ repo URL ─► analyze ─► requirements ─► environment ─► test plan 
 ```
 
 Every model-authored artifact passes a human gate. Cloning, installing and running each need their own tool-call approval.
+Whatever the host can compute exactly (does this import resolve, what are this class's real constructors, which URL routes exist, does this file
+compile) is answered by deterministic **central tools** instead of a model retry — see [section 7](#7-central-tools-less-llm-guessing).
 Full design: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) · roadmap: [docs/IMPLEMENTATION_PLAN.md](docs/IMPLEMENTATION_PLAN.md) ·
 defect register: [docs/audit/ERRORS.md](docs/audit/ERRORS.md) · live runs: [docs/audit/E2E_RESULTS.md](docs/audit/E2E_RESULTS.md).
 
@@ -39,8 +41,18 @@ Set the model gateway in your shell (never commit it; see `.env.example`):
 ```bash
 export OPENAI_API_KEY="<your key>"
 export OPENAI_BASE_URL="https://your-openai-compatible-gateway"   # omit for api.openai.com
-export OPENAI_MODEL="deepseek-v4-flash-global"                    # any tool-capable chat model
+export OPENAI_MODEL="deepseek-v4-flash-global"                    # any tool-capable chat model (LLM_MODEL is accepted as an alias)
 ```
+
+Optional switches (defaults shown, all listed in `.env.example`):
+
+| Variable | Default | Effect |
+|---|---|---|
+| `HARNESS_DAILY_TOKEN_LIMIT` | `50000000` | the harness's daily token cap, shared by all runs on this machine |
+| `HARNESS_AGENT_TOOLS` / `HARNESS_AUTOFIX` / `HARNESS_BUILD_GATE` | `on` | central agent tools / mechanical import repairs / compile-collect gate (`off` for A/B comparison) |
+| `HARNESS_SKILL_MODE` | `progressive` | MAF `SkillsProvider`, or `preloaded` for models that cannot call tools |
+| `HARNESS_GENERATION_BATCH_SIZE`, `HARNESS_GENERATION_MAX_ATTEMPTS` | `3`, `3` | cases per model call, repair attempts per batch |
+| `HARNESS_EXECUTION_TIMEOUT` | `900` | seconds per install/test command |
 
 ## 3. Run the application and open it in the browser
 
@@ -54,9 +66,10 @@ Walk-through:
 
 1. Paste the repository URL — either the page URL (`https://github.com/owner/repo`, optionally `/tree/<branch-or-tag>`) or the clone URL (`.../repo.git`).
    Optionally paste the **running application URL** (`http://localhost:8080`) to allow UI/E2E cases.
-2. **Approve clone** → review the analysis.
+2. **Approve clone** (*Approve repository inspection*) → review the analysis (*Approve and proceed*).
 3. **Requirements review** shows actors, requirements, acceptance criteria, API contracts, the model's *environment needs*, and the host's deterministic
-   **environment plan** (prerequisites with versions and install hints, isolation strategy, exact install commands).
+   **environment plan** (prerequisites with versions and install hints, isolation strategy, exact install commands — including nested `requirements*.txt`
+   files and packages that the repository's own files document).
 4. **Environment setup** is a tool-call approval: nothing is installed until you click *Install in isolated env* (or *Skip*). Libraries go into a venv,
    the project's `node_modules`, or harness cache directories — never the system interpreter. Missing system tools (JDK, Node, Maven…) are reported with
    install hints; install them and press *Re-check environment*.
@@ -66,7 +79,8 @@ Walk-through:
    with `file:line`, requirements still lacking a passing test). *Regenerate failing tests* sends only the failing cases back (≤3 rounds).
 8. On completion, download the **ZIP** (repository + generated tests + reports).
 
-The sidebar shows the token meter: **a daily cap of 50,000,000 tokens (shared by all runs on this machine, resetting at local midnight) is the only limit** — no per-run, per-call or call-count limits. The ledger lives in `~/.maf-harness/usage` (override with `HARNESS_USAGE_DIR`); counting starts when it is first written.
+The sidebar shows the token meter: **a daily cap of 50,000,000 tokens (shared by all runs on this machine, resetting at local midnight) is the only harness limit** — no per-run, per-call or call-count limits. The ledger lives in `~/.maf-harness/usage` (override with `HARNESS_USAGE_DIR`); counting starts when it is first written.
+Your model gateway may enforce its own, separate quota; when it answers HTTP 429 the UI says so and retrying will not help until it resets (the harness never works around a provider limit).
 
 ## 4. Command line
 
@@ -75,6 +89,7 @@ uv run maf-harness run https://github.com/owner/repo                       # ans
 uv run maf-harness run https://github.com/owner/repo --auto-approve --auto-heal 2      # unattended; exit 0 pass / 1 fail / 2 inconclusive
 uv run maf-harness run https://github.com/owner/repo --app-url http://127.0.0.1:8080/app   # allow UI/E2E cases
 uv run maf-harness verify-run .harness_runs/<run>     # evidence that MAF harness + Agent Skills were really used
+uv run maf-harness run <repo> --run-dir .harness_runs/<run>   # an existing run directory resumes at its pending gate
 uv run maf-harness lint-skills                        # Agent Skills spec lint
 ```
 
@@ -91,7 +106,7 @@ uv run maf-harness lint-skills                        # Agent Skills spec lint
         harness-report/qa_report.md       the report
         harness-report/RUN_TESTS.md       exact install/run commands to reproduce
         harness-report/*.json             requirements, environment, plan, design, generation catalog, executions, audit.jsonl
-  workspace/  environment/  executions/  generation_attempts/  audit.jsonl  run.json
+  workspace/  environment/  executions/  generation_attempts/  build_checks/  audit.jsonl  run.json
 ```
 
 Verdicts: `PASS` (≥1 executed passing test, no failures) · `PASS_WITH_SKIPS` · `FAIL` · `INCONCLUSIVE` (setup failed, tools missing, or zero tests ran —
@@ -101,7 +116,7 @@ never reported as pass).
 
 * **Unit tests are required** in the design when the repository has source code; every actor (persona) needs cases; every requirement needs a case or a stated reason.
 * Cases carry **level, actor, target, preconditions, data**; UI/E2E/accessibility cases only when a running application URL is supplied.
-* Source is generated **one file per approved case**, validated (syntax, no placeholders/skips, import resolution, undefined names, mocked `sys.exit`, patch targets that do not exist, URL paths that are not routes of the application) before you see it.
+* Source is generated **one file per approved case** and validated before you see it: syntax, no placeholders/skips, import resolution, undefined names, mocked `sys.exit`, patch targets that do not exist, setup collections never used, URL paths that are not routes of the application, no Arquillian; after the environment install it must also collect/compile.
 * Skills are loaded through MAF's `SkillsProvider` and verified from a tool trace; see `verify-run`.
 
 ## 7. Central tools (less LLM guessing)
@@ -114,6 +129,11 @@ Import and build errors are facts, so the harness answers them itself before ask
 | Auto-fix | adds an unambiguous missing import (stdlib, mock, JDK, unique repository class, JUnit) or corrects a module path to the one repository module with that name; every fix is audited | `HARNESS_AUTOFIX` |
 | Static gates | syntax, imports, undefined names, mocked `sys.exit`, patch targets, URL paths | always on |
 | Build gate | `pytest --collect-only` / `mvn test-compile` in the prepared workspace, after the approved environment install; reports `file:line` and symbol detail | `HARNESS_BUILD_GATE` |
+
+Prompts also carry the facts a model would otherwise guess: the application's routes and the real `BASE_URL` (which already contains the context path),
+constructor/method signatures of the classes the code under test uses, declared and *forbidden* libraries. Retries raise the sampling temperature and
+name the exact defect (for example the extra test methods), because a deterministic model otherwise repeats a rejected answer.
+The host applies every check itself, so correctness never depends on an agent choosing to call a tool (in the measured run the agents called none).
 
 ## 8. Agent Skills
 
@@ -154,7 +174,9 @@ HARNESS_BROWSER=1 PLAYWRIGHT_BROWSERS_PATH=$PWD/.browser-cache uv run pytest tes
 | "did not load the assigned Agent Skill" | the model skipped tool calls; retry, use a tool-capable model, or `HARNESS_SKILL_MODE=preloaded` (recorded as not using the provider) |
 | Environment step says a tool is missing | install it (hint shown), then *Re-check environment* |
 | `INCONCLUSIVE` with "not_executed" cases | build/collection failed; the report names the files and lines; use *Regenerate failing tests* |
-| "Daily token cap of 50,000,000 reached" | wait for local midnight; all runs on this machine share the cap (`maf-harness run` prints today's usage) |
+| "Daily token cap of 50,000,000 reached" | wait for local midnight or raise `HARNESS_DAILY_TOKEN_LIMIT`; all runs on this machine share the cap (`maf-harness run` prints today's usage) |
+| "The model gateway refused the request (HTTP 429)" | the provider's own quota is exhausted; nothing in the harness can lift it. Choose *Retry* at the error gate after it resets (a *Stop* cannot be resumed) |
+| A batch keeps failing generation | the audit log (`audit.jsonl`, `generation_attempts/`) names the gate; retries vary the temperature, and the error text says what to fix |
 | UI tests need a live app | pass the running application URL; the harness does not start the system under test |
 
 ## 11. Security notes

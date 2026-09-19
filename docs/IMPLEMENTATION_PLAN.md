@@ -26,23 +26,25 @@ untrusted code without a sandbox; supporting private repositories (needs credent
 | Agents | `create_harness_agent` per stage | Same factory the MAF Harness docs use; budget, tools and approvals stay framework-native. |
 | Agent Skills | **`SkillsProvider` (progressive disclosure)**, one skill per stage, `load_skill` verified by the host | Matches MS Learn "Agent Skills". A skill is never trusted to have been used: the host reads a `FunctionMiddleware` trace and rejects output otherwise. |
 | Skill fallback | `HARNESS_SKILL_MODE=preloaded` injects `SKILL.md` into instructions; recorded as `uses_maf_skills_provider: false` | Some models cannot call tools. The fallback is explicit, never silent. |
-| Determinism boundary | Host is deterministic (URLs, skill assignment + hashes, IDs, schemas, traceability, commands, verdict). Model output is not. `temperature=0` reduces variance, it does not create determinism. | Say what is and is not guaranteed. |
+| Determinism boundary | Host is deterministic (URLs, skill assignment + hashes, IDs, schemas, traceability, commands, verdict, import resolution, signatures, routes, compile results). Model output is not. `temperature=0` reduces variance, it does not create determinism, and a deterministic model repeats a rejected answer, so retries raise the temperature. | Say what is and is not guaranteed. |
+| Facts vs. guesses | Anything the host can compute exactly is a **central tool** (`code_intel`, `autofix`, `build_gate`, exposed to agents through `agent_tools`) and is also applied by the host itself on every candidate | A model call costs ~35k tokens; a dictionary lookup costs nothing. Correctness must not depend on the agent choosing to call a tool (measured: it did not). |
 | Test execution | Separate host step, adapters per ecosystem, argv-only commands, new immutable result dir per run, sanitized environment, timeout kills the process group | Untrusted code executes only after explicit approval; evidence cannot be overwritten. |
 | Isolation | Dependencies install into a venv / project `node_modules` / harness cache dirs after a tool-call approval; system tools are reported with install hints | Never mutate the host toolchain; approval before any network/installer side effect. |
-| Token budget | **50,000,000 tokens per local day across all runs** is the only limit (file ledger with exclusive lock; reserve-before-call, settle to reported usage; failed calls refunded) | A predictable daily spend ceiling without throttling any single run, and safe under concurrent runs. |
+| Token budget | **50,000,000 tokens per local day across all runs** (env `HARNESS_DAILY_TOKEN_LIMIT`) is the only harness limit (file ledger with exclusive lock; reserve-before-call, settle to reported usage; failed calls refunded) | A predictable daily spend ceiling without throttling any single run, and safe under concurrent runs. The gateway may have its own quota; that is reported, never worked around. |
 | Verdict | `PASS` needs fresh report evidence with ≥1 passing test and 0 failures; setup failure/blocked/zero tests → `INCONCLUSIVE`; skips → `PASS_WITH_SKIPS` | A green run must mean something. |
 
 ## 3. Architecture
 
 | Module | Responsibility |
 |---|---|
-| `repo_analyzer.py` | URL policy, clone, inventory, framework detection, source-first evidence |
+| `repo_analyzer.py` | URL policy, clone, inventory, framework detection, source-first evidence, target source and collaborator signatures |
 | `stack.py` | Ecosystem/runner/UI/service/OpenAPI/CI detection (deterministic) |
 | `maf_runtime.py` | Harness agents, `SkillsProvider`, skill priming + verification, budget/provenance middleware |
 | `skills_registry.py` | Agent Skills spec lint + package hashes (fail fast on invalid skills) |
 | `personas.py`, `models.py`, `skill_contracts.py` | Stage roles, bounded schemas, ID assignment, traceability, static test validation |
 | `workflow.py` | Checkpointed stages, approvals, heal loop, execution stage |
 | `runners.py`, `execution.py` | Runner adapters (pytest, jest/vitest/playwright, maven, gradle, go, dotnet), result parsers, safe process execution |
+| `code_intel.py`, `autofix.py`, `build_gate.py`, `agent_tools.py`, `routes.py` | Central deterministic tools: import resolution, API/symbol lookup, static gates, mechanical repairs, compile/collect gate, route inventory; MAF function-tool wrappers |
 | `qa_report.py` | requirement → case → test → result report and verdict |
 | `cli.py`, `app.py` | Headless/CI driver and Streamlit UI over the same workflow |
 
@@ -53,11 +55,11 @@ untrusted code without a sandbox; supporting private repositories (needs credent
 | Skill = directory, `SKILL.md` with `name` matching directory, `description` ≤ 1024, body < 500 lines | `skills_registry.lint_skill`; `require_valid` before every stage | `tests/test_skills_registry.py`, `maf-harness lint-skills` |
 | Progressive disclosure: advertise → `load_skill` → `read_skill_resource` | `SkillsProvider(FilteringSkillsSource(FileSkillsSource))`, exactly the assigned skill advertised | `test_progressive_mode_loads_skill_through_maf_skills_provider` |
 | Harness agents take a provider via `skills_provider` / `skills_paths` | `create_harness_agent(skills_provider=…)` | same |
-| Skill tools need approval by default; auto-approve only trusted read-only tools | `auto_approval_rules=[SkillsProvider.read_only_tools_auto_approval_rule]`; anything else is rejected by the host | `test_script_execution_request_is_rejected_by_the_host` |
-| Scripts need a runner and sandboxing; treat skills as third-party code | Script discovery disabled (`script_filter → False`), no `script_runner`; skill package hashed into provenance | runtime provenance test |
+| Skill tools need approval by default; auto-approve only trusted read-only tools | `auto_approval_rules=[SkillsProvider.read_only_tools_auto_approval_rule, script_approval_rule]`; anything else is rejected by the host. The central harness tools are read-only or scratch-only and declared `approval_mode="never_require"` | `test_script_execution_request_is_rejected_by_the_host`, `test_central_tools.py` |
+| Scripts need a runner and sandboxing; treat skills as third-party code | Vendored skills are locked by per-file SHA-256; only reviewed scripts run (`HarnessScriptRunner`: allow-list + hash check, argv-only, temp dir, sanitized env); model-tier scripts may be called through `run_skill_script`, host-tier scripts only by the harness | `test_skills_registry.py`, `test_native_maf.py` |
 | Audit trail of loaded skills/resources | `state.skill_tool_trace`, `skill_provenance`, per-call `invocations`, `audit.jsonl` | UI *Audit* tab |
 | Skills vs workflows: workflows for checkpointing and side effects | Skills only shape a stage's model turn; workflow owns sequencing, approvals, execution | architecture |
-| **Doc/implementation gap**: docs say `run_skill_script` is advertised only when scripts exist; MAF 1.18 registers it unconditionally | Mitigated (approval required, never auto-approved, discovery off); asserted in tests so an upgrade is noticed | `test_progressive_mode_…` |
+| **Doc/implementation gap**: docs say `run_skill_script` is advertised only when scripts exist; MAF 1.18 registers it unconditionally | Mitigated (scripts refused unless on the reviewed allow-list); asserted in tests so an upgrade is noticed | `test_native_maf.py` |
 
 ## 5. Delivery plan
 
@@ -66,9 +68,9 @@ Reproduce reported failures, inventory files, error table (`docs/audit/ERRORS.md
 
 ### M1 — Real MAF Agent Skills ✅
 `SkillsProvider`, two-phase priming (a tool-only turn loads the skill; the structured-output turn runs on the primed
-session — found necessary because some gateways skip tool calls when structured output is requested), three priming
+session — found necessary because some gateways skip tool calls when structured output is requested), five priming
 attempts, host-verified trace, provenance, explicit `preloaded` fallback, spec lint.
-**Exit:** the 4 assigned skills lint clean; live run shows `skill_loaded_via_maf: true` for every stage.
+**Exit:** the assigned skills lint clean; live run shows `skill_loaded_via_maf: true` for every stage.
 
 ### M2 — Accurate test design for any stack and persona ✅
 Requirements now carry **actors**, categories, acceptance criteria, validation rules and explicit API contracts.
@@ -90,7 +92,9 @@ execution approval, app URL, provenance), GitHub Actions CI.
 
 ### M6 — Qualification against real targets 🟡
 Reverse-engineering-skill (Python CLI + generated HTML dashboard) and Petstore (Java EE 7) — see
-`docs/audit/E2E_RESULTS.md`. Needs a funded gateway key for repeatable nightly runs.
+`docs/audit/E2E_RESULTS.md`. Reverse completes end to end on the current code (FAIL verdict with authentic, analyzed test defects). Petstore
+completed on an earlier revision; on the current code three attempts stopped in generation (two model-behavior issues, fixed; one provider quota
+limit). Needs gateway quota headroom for repeatable nightly runs.
 
 ### M7 — Isolation, design policy, deliverables ✅
 * **Environment stage:** requirements list *environment needs*; the host adds a deterministic plan (prerequisites with versions and install
@@ -110,12 +114,24 @@ what the harness needs. Stage → skill sets are deterministic (`skills_config.s
 Scripts are governed by a reviewed allow-list with hash checks: one pure script is callable by the agent through MAF `run_skill_script`; the QA stage
 runs the upstream `validate_traceability.py` and validates the coverage report against the upstream schema. Modified vendored files or scripts are refused.
 
+### M9 — Central deterministic tools ✅ (🟡 live pass on Petstore pending gateway quota)
+Import errors and build errors are facts, so the host answers them before asking a model again:
+* **Tools** (`code_intel`, `agent_tools`): `resolve_import`, `module_api`, `find_symbol`, `read_source`, `check_test`, `list_routes`, `installed_packages`,
+  `probe_tools`, `try_build`, exposed to stage agents as MAF function tools (small per-stage selection).
+* **Auto-fix** (`autofix`): unambiguous missing imports (stdlib, mock, JDK, unique repository class, JUnit) and module-path corrections; audited.
+* **Static gates**: undefined names, mocked `sys.exit`, non-existent patch targets, unused setup, URL paths that are not routes, Arquillian, undeclared libraries.
+* **Build gate** (`build_gate`): `pytest --collect-only` / `mvn test-compile` after the approved environment install; `file:line` diagnostics.
+* **Prompt facts**: routes and the real `BASE_URL`, collaborator signatures, declared and forbidden libraries, nested requirements and evidence-backed packages installed.
+* **Retry policy**: temperature rises per attempt and per round; remedies name the fix; extra test methods are listed.
+**Measured:** on reverse the agents called none of the tools; the host layer did the work (25 build checks, 0 build failures, replayed gates flag 6 of 34
+generated files, each a real defect). Whether an agent-side call ever pays for its extra round trip is still open (`HARNESS_AGENT_TOOLS=off` allows A/B).
+
 ### Next (⏭, in priority order)
 1. **Sandboxed execution** (container/VM adapter behind the existing `execute_plan` boundary) — required before any
    unattended or multi-tenant use. Local-process execution is explicitly *not* a sandbox.
 2. **Application lifecycle manager**: start/stop the system under test (compose/WildFly/npm start) with readiness
    probes, so UI/E2E cases run without a hand-started app.
-3. **Deeper static gates**: compile Java/C#/TS generated sources against the repo classpath before approval.
+3. **Build gate for more ecosystems**: Java and Python are covered; add C#/TS/Go compile checks, and Gradle.
 4. **Evidence retrieval beyond bounded excerpts** (symbol index / embeddings) for large repos; OpenAPI extraction.
 5. **Coverage and mutation feedback** into the heal loop (line coverage delta, mutation score).
 6. **Multi-user hosting**: job queue, tamper-evident approvals, quotas, per-tenant run storage.
@@ -138,7 +154,9 @@ runs the upstream `validate_traceability.py` and validates the coverage report a
 | Model ignores tools / hallucinates tool names | High on small models | Stage blocked | priming retries, host verification, retry gate, explicit `preloaded` fallback |
 | Generated tests wrong (assert wrong behavior) | Medium | False failures/false confidence | human review of design and source; failure evidence loop; never-weaken rule; verdict never claims correctness |
 | Executing untrusted repo code | Certain when enabled | Host compromise | separate approval with exact commands, sanitized env, timeout; **sandbox is a release gate for unattended use** |
-| Token/cost blow-up | Medium | Cost | per-run token/call budgets, batch caching, fresh-session-from-snapshot |
+| Token/cost blow-up | Medium | Cost | daily ledger, batch caching, fresh-session-from-snapshot, retry only what failed, mechanical repairs instead of model retries |
+| Provider quota exhausted mid-run | Medium | Run stops, tokens already spent | reported as the provider's limit; artifacts retained; choose *Retry* at the error gate after the reset (a *Stop* decision cannot be resumed, so `--auto-approve` runs must be relaunched) |
+| Model repeats a rejected answer | High at temperature 0 | Wasted attempts (1.6M tokens in one session) | retry temperature schedule, forbidden-library list, actionable feedback |
 | Gateway credential exposure | Medium | Account abuse | env-only, never persisted, never forwarded to test commands; rotate the credential that was previously embedded |
 | MAF API drift (1.x) | Medium | Breakage | pinned versions, docs-gap assertion tests |
 
@@ -150,5 +168,7 @@ runs the upstream `validate_traceability.py` and validates the coverage report a
 - [x] Credentials env-only; not forwarded; secrets scan clean
 - [x] CI: lint + unit + component + workflow e2e
 - [x] Isolated dependency install behind a tool-call approval; ZIP deliverable; files-to-update report
+- [x] Deterministic import/build checks before any model retry (auto-fix, static gates, build gate)
 - [ ] Sandbox adapter (blocks unattended/multi-tenant use)
+- [ ] Live pass of the current code on both targets (Petstore blocked by gateway quota)
 - [ ] Nightly live qualification with budget alarms

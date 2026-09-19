@@ -26,6 +26,8 @@ Two runs from the original report were analyzed first (`.harness_runs/`):
 | final3-reverse | reverse-engineering-skill | 20+ nested `with patch(...)` rejected 9 times by the new gate | auto-flatten to `ExitStack` |
 | **final4-reverse** | reverse-engineering-skill | **complete, 0 stage errors** | §3 |
 | **final3-petstore** | agoncal-application-petstore-ee7 | **complete, 0 stage errors** | §4 |
+| **final5-reverse** | reverse-engineering-skill | **complete, 0 stage errors** on the central-tools code; agents never called the tools | §4c |
+| final5/6/7-petstore | agoncal-application-petstore-ee7 | two model-behavior loops (two `@Test` methods; RestAssured ×9) and a gateway quota stop | F35, F36, §4c |
 
 "Harness error" below means a stage error, retry/stop gate, interrupted run, or budget stop. A `FAIL` verdict means generated tests failed against the
 application; that is a result, not a harness error.
@@ -79,9 +81,9 @@ The heal loop moved Petstore from 9 to 24 passing tests by removing container-on
 What remains: `expected:<201> but was:<405>` for POST on items/products and `404`/`400` on category content negotiation — **check the application first**: these
 may be real behavior of the live app (or wrong assumptions in the tests), and the report lists the exact test files. Three tests do not compile against the
 production classes (private access, constructor shape) and were quarantined so the rest could run. This run does not prove Petstore correct or defective; the
-two defects found earlier by hand-written acceptance tests are in [ERRORS.md §E](ERRORS.md).
+two defects found earlier by hand-written acceptance tests are in [ERRORS.md §G](ERRORS.md).
 
-## 4b. Remaining failures of `final4-reverse` / `final3-petstore` → fixes (rerun pending)
+## 4b. Remaining failures of `final4-reverse` / `final3-petstore` → fixes
 
 Every remaining failure was traced to a test-authoring or environment defect the harness can detect (defects F28–F31 in
 [ERRORS.md](ERRORS.md)); none was an application bug except the reverse skill's Java-parser wildcard-import assertion,
@@ -96,13 +98,13 @@ which is left failing on purpose (a FAIL is a result, not a harness error).
 | 8 API tests (Petstore) | guessed `/petstore/rest/...` path while `BASE_URL` = `http://127.0.0.1:8080/applicationPetstore` | route inventory + `check_route_literals` + 404/405 remedy |
 | 3 quarantined Java tests (Petstore) | guessed constructors/methods of collaborators | `collaborator_signatures` in the prompt |
 
-Replaying the new static gates on the previously generated tests flags 4 of 36 reverse files and 5 of 33 Petstore files, each one
-a test that failed at run time. The live rerun of both targets needs gateway credentials in the shell (`OPENAI_API_KEY`,
-`OPENAI_BASE_URL`) and about 2.4M tokens; today's shared cap has 1,871,820 left, so Petstore may need to wait for local midnight.
+Replaying the new static gates on the previously generated tests flagged 4 of 36 reverse files and 5 of 33 Petstore files, each one a test that
+failed at run time. The live reruns are in §4c: reverse ran to completion; Petstore did not (see there).
 
 ## 4c. Central-tools runs (`final5-reverse`, Petstore `final5`/`final6`/`final7`)
 
-Code under test: central tools, auto-fix, build gate, route/hygiene gates (see [ERRORS.md](ERRORS.md) F28–F33).
+Code under test: central tools, auto-fix, build gate, route/hygiene gates (see [ERRORS.md](ERRORS.md) F28–F39). Run through the CLI with
+`--auto-approve --auto-heal 2`; the daily cap was raised for the session with `HARNESS_DAILY_TOKEN_LIMIT` (the default is now 50,000,000).
 
 **reverse-engineering-skill (`final5-reverse`)** — complete, 0 stage errors: verdict **FAIL**, 25 passed / 9 failed, 44 provider calls,
 1.15M tokens, 25 build-gate checks (0 build failures), 1 auto-fix. The 9 failures are authentic requirement-derived tests that were
@@ -130,18 +132,30 @@ layer (auto-fix, gates, build gate), which does not depend on the model choosing
 
 The Petstore fixes above are covered by unit tests and replays, not by a live pass. The next full run should start after the gateway quota resets.
 
-## 5. Daily token accounting
+## 4d. Browser review of the Streamlit UI
 
-The ledger (`~/.maf-harness/usage`) counted the three runs of this session after it was introduced: 3,128,180 of the 5,000,000-token daily cap after
-`final3-reverse` (stopped, 712,805), `final3-petstore` (1,434,870) and `final4-reverse` (980,505). Earlier runs of the day predate the ledger and are not counted.
+Driven through the browser pane against the reverse-engineering repository: start form → clone approval (tool, URL, destination shown) → repository analysis
+(commit `e6139c31`, 71 files, 15 source files, downloads) → approval of the analysis → requirements model call. The call failed with the gateway's 429, which
+exposed two UI defects (raw exception shown twice; no hint that retrying is pointless), fixed as F38 and re-verified in the browser. A second pass, started
+without the raised cap, showed the harness's own daily-cap message correctly. A complete model-driven UI run needs gateway quota.
+
+## 5. Token accounting
+
+* **Harness ledger** (`~/.maf-harness/usage`, default cap 50,000,000 per local day): 3,128,180 after `final3-reverse` (stopped, 712,805), `final3-petstore`
+  (1,434,870) and `final4-reverse` (980,505); 6,319,094 after the `final5-*` runs (`final5-reverse` 1,154,828; Petstore attempts 890,002 / 667,633 / 478,451).
+  Earlier runs of the day predate the ledger and are not counted.
+* **Gateway quota** is separate and provider-owned: it returned `daily token limit exceeded (25,003,793/25,000,000)` on 2026-09-19. It cannot be raised
+  from the harness, and the harness does not try.
 
 ## 6. Reproduce
 
 ```bash
-export OPENAI_API_KEY=… OPENAI_BASE_URL=… OPENAI_MODEL=deepseek-v4-flash-global
+export OPENAI_API_KEY=… OPENAI_BASE_URL=… OPENAI_MODEL=deepseek-v4-flash-global   # LLM_MODEL is accepted as an alias
+# optional: HARNESS_DAILY_TOKEN_LIMIT=… (default 50,000,000), HARNESS_AGENT_TOOLS/AUTOFIX/BUILD_GATE=off for A/B runs
 uv run maf-harness run https://github.com/sarveshtalele/reverse-engineering-skill --auto-approve --auto-heal 2
 # Petstore: WildFly 26 with the WAR deployed, JDK 11 on PATH/JAVA_HOME
 uv run maf-harness run https://github.com/agoncal/agoncal-application-petstore-ee7 \
     --app-url http://127.0.0.1:8080/applicationPetstore --auto-approve --auto-heal 2
 uv run maf-harness verify-run .harness_runs/<run>
+# an existing --run-dir resumes at its pending gate (a run ended by a Stop decision cannot be resumed)
 ```

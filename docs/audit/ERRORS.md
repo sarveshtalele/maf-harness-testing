@@ -1,11 +1,11 @@
-# Defect register — MAF test harness (audit of 2026-09-19)
+# Defect register — MAF test harness (audit of 2026-09-19, updated through the central-tools and browser-review work)
 
 Method: reviewed every first-party module, skill, test and script; ran the suite; compared behavior with the Microsoft Learn
 *Agent Skills* documentation and the agentskills.io specification; ran live end-to-end workflows through a real model
 gateway. "Found by" tells you how each defect was established. All rows are **fixed** in this repository unless marked
 otherwise; each fix has a regression test.
 
-Severity: **H** breaks the stated purpose or gives false confidence · **M** wrong/fragile behavior · **L** hygiene.
+Severity: **H** breaks the stated purpose or gives false confidence · **M** wrong/fragile behavior · **L** hygiene · **I** informational (external, not fixable here).
 
 ## A. MAF and Agent Skills
 
@@ -69,7 +69,7 @@ Severity: **H** breaks the stated purpose or gives false confidence · **M** wro
 | D10 | L | repo | No CI, no secrets scan, machine paths in audit logs, `.claude/` local state. | repo review | GitHub Actions, secrets scan, ignore rules |
 | D11 | H | (original report) | "Generation failed after 3 attempts / Interrupted after approval". Root causes: README-starved evidence (fixed earlier), no retryable gate after downstream failure (fixed earlier), and now B7/B8 for the model-side causes. | run audit | see B7, B8, `tests/test_recovery.py` |
 
-## F. Second audit pass (environment, policy, deliverables, hygiene)
+## F. Second audit pass and live-run analysis (environment, policy, deliverables, hygiene, central tools)
 
 | # | Sev | File | Defect | Found by | Fix |
 |---|---|---|---|---|---|
@@ -83,6 +83,7 @@ Severity: **H** breaks the stated purpose or gives false confidence · **M** wro
 | F8 | M | delivery | No single artifact with the repository plus the tests that were generated and executed. | user requirement | `packaging.py` ZIP (repository + tests + `harness-report/`) |
 | F9 | L | repo | Dead code: 4 unused skills, `scripts/audit_project.py`, `required_inputs`, `normalize_requirements`, `MAFUnavailableError`, `cancel_event`, v1 saved-run migration, `execution` CLI, `skills_registry` CLI, stale audit evidence and first-pass audit doc. | vulture + manual review | removed; `execution.export_tests` replaced by `copy_repo` + `write_generated` |
 | F10 | L | repo | Mixed quote styles/formatting, narrow lint rules. | review | `ruff format` + `E,W,F,I,B,UP,SIM,C4,PIE` enforced in CI |
+| F11 | L | docs | No file-by-file architecture document. | user requirement | `docs/ARCHITECTURE.md` |
 | F12 | H | live Petstore run 5 | **Live:** the model generated a test at a path that already exists in the repository (`CustomerEndpointIT.java`); the collision was only detected at execution time and stopped the run after a full generation. | live run | generation validation rejects existing paths during the repair loop (`_check_paths_are_new`); the Java import gate now suggests `java.net.http.HttpClient` instead of undeclared RestAssured |
 | F13 | H | live reverse run 8 | Four evaluator tests failed with `got 36`: the design said "prepare inputs that sum to 85" and generation saw only the first 12,000 characters of a 34 KB `evaluator.py`, so all six scoring functions were cut off. | failure analysis of run 8 | `repo_analyzer.extract_target_sources` supplies the COMPLETE code of each case's target plus same-module helpers (`target_source`); persona rules: patch collaborators instead of reproducing an unseen formula |
 | F14 | H | live reverse run 8 | Two cases were reported `not_executed` with no message: pytest reports collection errors under the dotted module name with no class, and result mapping only matched the class. The real cause (`ImportError: cannot import name '_layer'`) was lost, so heal could not use it. | failure analysis of run 8 | `map_results_to_cases` also matches the dotted module stem |
@@ -111,14 +112,13 @@ Severity: **H** breaks the stated purpose or gives false confidence · **M** wro
 | F37 | L | cli | An existing run directory could not be resumed from the CLI. | usage | `maf-harness run` resumes at the pending gate of an existing run directory |
 | F38 | L | UI review (browser) | A provider failure showed the raw exception repr twice (two identical red boxes) with no hint that retrying is pointless. | browser run | `friendly_error` (HTTP 429 → "provider's limit, not the harness's cap; retrying will not help until it resets"), single error box |
 | F39 | L | policy | Owner raised the daily cap from 5M to 50M. Note: the model gateway enforces its own separate daily cap (25M observed), so this does not lift a provider 429. | user request | default `HARNESS_DAILY_TOKEN_LIMIT` = 50,000,000 (`settings.py`); docs and test updated |
-| F11 | L | docs | No file-by-file architecture document. | user requirement | `docs/ARCHITECTURE.md` |
 
-## E. Findings in the systems under test (from qualification runs; upstream fixes as patches)
+## G. Findings in the systems under test (from qualification runs; upstream fixes as patches)
 
 | Target | Finding | Evidence |
 |---|---|---|
 | reverse-engineering-skill | Generated dashboard raises `Unexpected token 'export'` (ESM `@hpcc-js/wasm` loaded as a classic script) | `reverse-e2e.xml`, `patches/reverse-dashboard-unused-esm.patch` |
 | agoncal-application-petstore-ee7 | `AccountBean.doLogin()` selects the customer by login and **never verifies the password** | `petstore-baseline-e2e.xml`, `patches/petstore-verify-password.patch` |
 
-Still open (not defects fixed here): sandboxed execution, application lifecycle manager, compile gates for typed languages,
-full-repo retrieval — see [IMPLEMENTATION_PLAN.md](../IMPLEMENTATION_PLAN.md).
+Still open (not defects fixed here): sandboxed execution, application lifecycle manager, build gate for C#/TS/Go/Gradle (Java/Maven and Python
+are covered), full-repo retrieval, a live pass of the current code on Petstore (blocked by the gateway quota) — see [IMPLEMENTATION_PLAN.md](../IMPLEMENTATION_PLAN.md).
