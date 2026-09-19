@@ -16,6 +16,16 @@ pytestmark = pytest.mark.skipif(
 )
 
 
+@pytest.fixture(autouse=True)
+def _patient_expectations():
+    """Streamlit's first script run imports the model stack; on a small CI runner it can outlast Playwright's 5 s default."""
+    from playwright.sync_api import expect
+
+    expect.set_options(timeout=30_000)
+    yield
+    expect.set_options(timeout=5_000)
+
+
 @pytest.fixture
 def harness_url(tmp_path):
     with socket.socket() as sock:
