@@ -11,8 +11,8 @@ jobs:
       matrix:
         python: ["3.11", "3.12"]
     steps:
-      - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v5
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v7
       - name: Install
         run: uv sync --extra dev --python ${{ matrix.python }}
       - name: Lint
@@ -26,8 +26,8 @@ jobs:
     runs-on: ubuntu-latest
     needs: test
     steps:
-      - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v5
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v7
       - run: uv sync --extra dev --extra e2e
       - run: uv run playwright install --with-deps chromium
       - name: Streamlit UI browser checks
@@ -36,7 +36,7 @@ jobs:
   secrets-scan:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Fail on credential-shaped strings
         run: |
           if grep -rIE "sk-[A-Za-z0-9_-]{16,}|gh[pousr]_[A-Za-z0-9]{20,}" --exclude-dir=.git --exclude=uv.lock . ; then

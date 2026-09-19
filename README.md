@@ -36,7 +36,11 @@ cd maf-harness-testing
 uv sync --extra dev            # creates .venv and installs the pinned dependencies
 ```
 
-Set the model gateway in your shell (never commit it; see `.env.example`):
+Set the model gateway with **either** of these (never commit a key; `.env` is git-ignored):
+
+1. a **`.env` file in the project root** — `cp .env.example .env`, then edit `OPENAI_API_KEY`, `OPENAI_BASE_URL` and `OPENAI_MODEL` in it; it is read automatically
+   (the shell wins if a variable is set in both places; only `OPENAI_*`, `LLM_MODEL` and `HARNESS_*` are read); or
+2. environment variables in the shell that starts the app:
 
 ```bash
 export OPENAI_API_KEY="<your key>"
@@ -181,6 +185,6 @@ HARNESS_BROWSER=1 PLAYWRIGHT_BROWSERS_PATH=$PWD/.browser-cache uv run pytest tes
 
 ## 11. Security notes
 
-Credentials are environment-only and never forwarded to install/test commands; commands are argv-only with timeouts and a plan hash checked after approval;
+Credentials come from the environment or the git-ignored `.env` and are never forwarded to install/test commands; commands are argv-only with timeouts and a plan hash checked after approval;
 npm lifecycle scripts are disabled during install; generated files never touch the clone. Execution is a local process, not a sandbox — see
 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md#4-guarantees-and-where-they-are-enforced).

@@ -204,3 +204,38 @@ def test_unresolved_policy_gaps_reach_the_human_instead_of_blocking(drive):
     assert host.view["pending"]["kind"] == "review"
     assert "no unit-level test case" in host.view["pending"]["details"]["artifact"]["gaps_report"]["notes"]
     json.dumps(host.view["pending"]["details"])
+
+
+def test_dotenv_is_read_without_overriding_the_environment_or_importing_unrelated_keys(tmp_path, monkeypatch):
+    from maf_test_harness.settings import load_dotenv
+
+    env = tmp_path / ".env"
+    env.write_text(
+        "# comment\n"
+        "OPENAI_API_KEY=sk-from-file\n"
+        "export OPENAI_BASE_URL='https://gw.example  # not a comment inside quotes'\n"
+        'OPENAI_MODEL="my-model"   \n'
+        "HARNESS_DAILY_TOKEN_LIMIT=123   # inline comment\n"
+        "LLM_MODEL=\n"
+        "AWS_SECRET_ACCESS_KEY=must-not-load\n"
+        "garbage line\n"
+    )
+    for name in (
+        "OPENAI_API_KEY",
+        "OPENAI_BASE_URL",
+        "OPENAI_MODEL",
+        "HARNESS_DAILY_TOKEN_LIMIT",
+        "LLM_MODEL",
+    ):
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.delenv("AWS_SECRET_ACCESS_KEY", raising=False)
+    monkeypatch.setenv("OPENAI_MODEL", "already-set")  # the real environment wins
+    load_dotenv(env)
+    import os
+
+    assert os.environ["OPENAI_API_KEY"] == "sk-from-file"
+    assert os.environ["OPENAI_BASE_URL"] == "https://gw.example  # not a comment inside quotes"
+    assert os.environ["OPENAI_MODEL"] == "already-set"
+    assert os.environ["HARNESS_DAILY_TOKEN_LIMIT"] == "123"
+    assert "LLM_MODEL" not in os.environ and "AWS_SECRET_ACCESS_KEY" not in os.environ
+    load_dotenv(tmp_path / "missing.env")  # a missing file is fine
