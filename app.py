@@ -542,7 +542,8 @@ with review_tab:
                 respond({"decision": "stop"})
 
         elif kind == "error":
-            st.error(details.get("message") or pending.get("error") or "Stage failed.")
+            if not pending.get("error"):  # the error is already shown above the request
+                st.error(details.get("message") or "Stage failed.")
             retry_col, stop_col = st.columns(2)
             if retry_col.button("Retry stage", key=request_id + "-retry", width="stretch"):
                 respond({"decision": "retry"})

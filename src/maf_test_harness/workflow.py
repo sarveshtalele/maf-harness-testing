@@ -260,6 +260,23 @@ def _generation_policy(repo: dict[str, Any], state: dict[str, Any] | None = None
     }
 
 
+def friendly_error(exc: BaseException) -> str:
+    """A readable message for provider failures; everything else keeps its own text."""
+    text = str(exc)
+    status = re.search(r"Error code: (\d{3})", text)
+    detail = re.search(r"'message': '([^']+)'", text)
+    if status and status.group(1) == "429":
+        return (
+            f"The model gateway refused the request (HTTP 429): {detail.group(1) if detail else 'rate or quota limit'}. "
+            "This is the provider's limit, not the harness's daily cap; retrying will not help until it resets."
+        )
+    if status:
+        return (
+            f"The model gateway returned HTTP {status.group(1)}: {detail.group(1) if detail else text[:200]}"
+        )
+    return text
+
+
 class StageExecutor(Executor):
     def __init__(self, stage: str, host):
         super().__init__(id=stage)
@@ -279,7 +296,7 @@ class StageExecutor(Executor):
                 state,
                 ctx,
                 title="Stage failed; approved artifacts retained",
-                error=str(exc),
+                error=friendly_error(exc),
             )
 
     @response_handler

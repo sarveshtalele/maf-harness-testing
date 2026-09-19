@@ -201,3 +201,19 @@ def test_a_setup_collection_that_is_never_used_is_rejected():
     used = "def test_a():\n    sections = [1, 2]\n    assert sum(sections) == 3\n"
     check_python_test_hygiene(used, "t.py")
     check_python_test_hygiene("def test_a():\n    _unused = [1]\n    assert True\n", "t.py")
+
+
+def test_provider_quota_errors_are_shown_readably_and_other_errors_unchanged():
+    from maf_test_harness.workflow import friendly_error
+
+    quota = RuntimeError(
+        "(\"<class 'X'> service failed: Error code: 429 - {'error': {'message': 'Token quota exceeded - daily token "
+        "limit exceeded (25,003,793/25,000,000).', 'code': '429'}}\")"
+    )
+    text = friendly_error(quota)
+    assert text.startswith("The model gateway refused the request (HTTP 429): Token quota exceeded")
+    assert "not the harness's daily cap" in text and "<class" not in text
+    assert friendly_error(RuntimeError("boom")) == "boom"
+    assert friendly_error(RuntimeError("Error code: 500 - {'error': {'message': 'down'}}")).endswith(
+        "500: down"
+    )

@@ -109,6 +109,7 @@ Severity: **H** breaks the stated purpose or gives false confidence · **M** wro
 | F35 | H | live final5/final6 Petstore | A model at temperature 0 repeats a rejected answer verbatim (RestAssured 9×, two `@Test` methods 9×); 1.6M tokens spent on identical outputs. | audit log | retry temperature rises per attempt and per round; `forbidden_imports` in the policy; declaration feedback names the extra methods; Arquillian gate |
 | F36 | I | live final7 Petstore | Gateway returned 429 `daily token limit exceeded (25,003,793/25,000,000)` — the provider's cap, not the harness's. | run log | none in code (a provider limit must not be worked around); the run stops with the provider's message |
 | F37 | L | cli | An existing run directory could not be resumed from the CLI. | usage | `maf-harness run` resumes at the pending gate of an existing run directory |
+| F38 | L | UI review (browser) | A provider failure showed the raw exception repr twice (two identical red boxes) with no hint that retrying is pointless. | browser run | `friendly_error` (HTTP 429 → "provider's limit, not the harness's cap; retrying will not help until it resets"), single error box |
 | F11 | L | docs | No file-by-file architecture document. | user requirement | `docs/ARCHITECTURE.md` |
 
 ## E. Findings in the systems under test (from qualification runs; upstream fixes as patches)
