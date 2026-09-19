@@ -1,0 +1,291 @@
+{
+  "api_contracts": [
+    {
+      "path": "/payments/{paymentId}",
+      "method": "get",
+      "operationId": "getPayment",
+      "summary": "Retrieve a payment",
+      "deprecated": false,
+      "tags": ["payments", "read"],
+      "request_schema": null,
+      "request_examples": [],
+      "response_schemas": {
+        "200": {
+          "$ref": "#/components/schemas/Payment"
+        },
+        "404": {
+          "type": "object",
+          "properties": {
+            "error": {
+              "type": "string"
+            }
+          }
+        }
+      },
+      "response_content_types": {
+        "200": ["application/json"],
+        "404": ["application/json"]
+      },
+      "response_examples": {
+        "200": {
+          "application/json": {
+            "id": "pay_12345",
+            "amount": 99.99,
+            "currency": "USD",
+            "status": "completed"
+          }
+        }
+      },
+      "response_headers": {
+        "200": {
+          "X-Request-Id": {
+            "required": false,
+            "description": "Unique request trace identifier",
+            "schema": {
+              "type": "string"
+            }
+          }
+        }
+      },
+      "status_codes": ["200", "404"],
+      "parameters": [
+        {
+          "name": "paymentId",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "pattern": "^pay_[a-z0-9]+$"
+          },
+          "constraints": {
+            "type": "string",
+            "pattern": "^pay_[a-z0-9]+$"
+          }
+        }
+      ],
+      "field_constraints": [],
+      "required_fields": [],
+      "content_types": [],
+      "servers": [
+        {
+          "url": "https://api.example.com/{version}",
+          "variables": {
+            "version": {
+              "default": "v2",
+              "enum": ["v1", "v2"]
+            }
+          }
+        }
+      ],
+      "security": [
+        {
+          "type": "oauth2",
+          "flows": {
+            "clientCredentials": {
+              "tokenUrl": "https://auth.example.com/oauth/token",
+              "scopes": ["payments:read"]
+            }
+          }
+        }
+      ],
+      "discriminator": null,
+      "traceability_links": [
+        {
+          "source_type": "api_contract",
+          "source_id": "getPayment"
+        }
+      ]
+    },
+    {
+      "path": "/payments/{paymentId}",
+      "method": "delete",
+      "operationId": "cancelPayment",
+      "summary": "Cancel a payment",
+      "deprecated": true,
+      "tags": ["payments"],
+      "request_schema": null,
+      "request_examples": [],
+      "response_schemas": {},
+      "response_content_types": {},
+      "response_examples": {},
+      "response_headers": {},
+      "status_codes": ["204"],
+      "parameters": [
+        {
+          "name": "paymentId",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "pattern": "^pay_[a-z0-9]+$"
+          },
+          "constraints": {
+            "type": "string",
+            "pattern": "^pay_[a-z0-9]+$"
+          }
+        }
+      ],
+      "field_constraints": [],
+      "required_fields": [],
+      "content_types": [],
+      "servers": [
+        {
+          "url": "https://api.example.com/{version}",
+          "variables": {
+            "version": {
+              "default": "v2",
+              "enum": ["v1", "v2"]
+            }
+          }
+        }
+      ],
+      "security": [
+        {
+          "type": "oauth2",
+          "flows": {
+            "clientCredentials": {
+              "tokenUrl": "https://auth.example.com/oauth/token",
+              "scopes": ["payments:write"]
+            }
+          }
+        }
+      ],
+      "discriminator": null,
+      "traceability_links": [
+        {
+          "source_type": "api_contract",
+          "source_id": "cancelPayment"
+        }
+      ]
+    },
+    {
+      "path": "/accounts/{accountId}/balance",
+      "method": "get",
+      "operationId": "getAccountBalance",
+      "summary": "Get account balance",
+      "deprecated": false,
+      "tags": ["accounts"],
+      "request_schema": null,
+      "request_examples": [],
+      "response_schemas": {
+        "200": {
+          "allOf": [
+            {
+              "$ref": "#/components/schemas/Balance"
+            },
+            {
+              "type": "object",
+              "properties": {
+                "pendingAmount": {
+                  "type": "number",
+                  "minimum": 0
+                }
+              }
+            }
+          ]
+        }
+      },
+      "response_content_types": {
+        "200": ["application/json"]
+      },
+      "response_examples": {},
+      "response_headers": {},
+      "status_codes": ["200"],
+      "parameters": [
+        {
+          "name": "accountId",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "constraints": {
+            "type": "integer",
+            "minimum": 1
+          }
+        },
+        {
+          "name": "includePending",
+          "in": "query",
+          "required": false,
+          "schema": {
+            "type": "boolean",
+            "default": false
+          },
+          "constraints": {
+            "type": "boolean",
+            "default": false
+          }
+        }
+      ],
+      "field_constraints": [
+        {
+          "field": "pendingAmount",
+          "type": "number",
+          "minimum": 0
+        }
+      ],
+      "required_fields": [],
+      "content_types": [],
+      "servers": [
+        {
+          "url": "https://api.example.com/{version}",
+          "variables": {
+            "version": {
+              "default": "v2",
+              "enum": ["v1", "v2"]
+            }
+          }
+        }
+      ],
+      "security": [],
+      "discriminator": null,
+      "traceability_links": [
+        {
+          "source_type": "api_contract",
+          "source_id": "getAccountBalance"
+        }
+      ]
+    }
+  ],
+  "validation_rules": [
+    {
+      "rule_id": "VAL-getPayment-001",
+      "target": "getPayment",
+      "constraint": {
+        "required_parameter": "paymentId"
+      },
+      "message": "paymentId is a required path parameter for GET /payments/{paymentId}."
+    },
+    {
+      "rule_id": "VAL-cancelPayment-001",
+      "target": "cancelPayment",
+      "constraint": {
+        "required_parameter": "paymentId"
+      },
+      "message": "paymentId is a required path parameter for DELETE /payments/{paymentId}."
+    },
+    {
+      "rule_id": "VAL-getAccountBalance-001",
+      "target": "getAccountBalance",
+      "constraint": {
+        "required_parameter": "accountId"
+      },
+      "message": "accountId is a required path parameter for GET /accounts/{accountId}/balance."
+    }
+  ],
+  "gaps_report": {
+    "invalid_document": false,
+    "missing_schemas": [
+      {
+        "operationId": "cancelPayment",
+        "context": "response",
+        "code": null,
+        "message": "Response 204 has no schema."
+      }
+    ],
+    "incomplete_endpoints": [],
+    "notes": "Deprecated operation: cancelPayment. Response 204 on cancelPayment has no schema (expected for no-content response)."
+  }
+}

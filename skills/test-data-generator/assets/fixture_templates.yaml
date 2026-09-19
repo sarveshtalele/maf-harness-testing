@@ -1,0 +1,107 @@
+templates:
+  fixture_model:
+    $schema: "http://json-schema.org/draft-07/schema#"
+    type: object
+    required: [positive_fixtures, negative_fixtures, boundary_fixtures, api_payload_examples, summary_metadata, gaps_report]
+    properties:
+      positive_fixtures:
+        description: "Valid fixtures generated for positive test cases."
+        type: array
+        items: &fixture
+          type: object
+          required: [test_case_id, payload, traceability_links]
+          properties:
+            test_case_id: {type: string}
+            payload: {type: object}
+            description: {type: string}
+            traceability_links: &traceability_links
+              type: array
+              minItems: 1
+              items: &traceability_link
+                type: object
+                required: [source_id, type]
+                properties:
+                  source_id: {type: string}
+                  type: {type: string, enum: [requirement, validation, api]}
+                  label: {type: string}
+      negative_fixtures:
+        description: "Invalid fixtures generated for negative test cases."
+        type: array
+        items:
+          <<: *fixture
+          required: [test_case_id, payload, invalid_reason, traceability_links]
+          properties:
+            test_case_id: {type: string}
+            payload: {type: object}
+            invalid_reason: {type: string}
+            traceability_links: *traceability_links
+      boundary_fixtures:
+        description: "Fixtures for boundary test cases."
+        type: array
+        items:
+          <<: *fixture
+          required: [test_case_id, payload, boundary_condition, traceability_links]
+          properties:
+            test_case_id: {type: string}
+            payload: {type: object}
+            boundary_condition: {type: string}
+            traceability_links: *traceability_links
+      api_payload_examples:
+        type: object
+        required: [requests, responses]
+        properties:
+          requests:
+            type: array
+            items:
+              type: object
+              required: [endpoint, method, payload]
+              properties:
+                endpoint: {type: string}
+                method: {type: string}
+                payload: {type: object}
+                headers: {type: object}
+                query_params: {type: object}
+                path_params: {type: object}
+          responses:
+            type: array
+            items:
+              type: object
+              required: [endpoint, method, payload, status_code]
+              properties:
+                endpoint: {type: string}
+                method: {type: string}
+                payload: {type: object}
+                status_code: {type: integer}
+                error_type: {type: string}
+      summary_metadata:
+        type: object
+        required: [fixture_count, positive_count, negative_count, boundary_count, coverage_percentage]
+        properties:
+          fixture_count: {type: integer, minimum: 0}
+          positive_count: {type: integer, minimum: 0}
+          negative_count: {type: integer, minimum: 0}
+          boundary_count: {type: integer, minimum: 0}
+          api_payload_count: {type: integer, minimum: 0}
+          coverage_percentage: {type: number, minimum: 0, maximum: 100}
+          uncovered_constraints:
+            type: array
+            items: {type: string}
+          notes: {type: string}
+      gaps_report:
+        type: object
+        required: [coverage_percentage]
+        properties:
+          coverage_percentage: {type: number, minimum: 0, maximum: 100}
+          missing_constraints:
+            type: array
+            items: {type: string}
+          uncovered_requirements:
+            type: array
+            items: {type: string}
+          incomplete_schemas:
+            type: array
+            items: {type: string}
+          suggested_actions:
+            type: array
+            items: {type: string}
+          notes: {type: string}

@@ -1,0 +1,95 @@
+{
+  "skill_card": {
+    "starterkit_id": "coverage-analyzer",
+    "name": "Coverage Analyzer",
+    "description": "Analyzes evidence-based test coverage and identifies actionable gaps by comparing traceable test cases against requirements, validation rules, and API contracts to produce quantitative coverage metrics.",
+    "origin": {
+      "BG": "BFSI",
+      "ISU": "APAC",
+      "Account": "NAB, CBA"
+    },
+    "maintainers": [
+      {
+        "name": "Shruti Talukder",
+        "contact": "shruti.talukder@tcs.com"
+      },
+      {
+        "name": "Tejus Ajit Manjrekar",
+        "contact": "tejus.manjrekar@tcs.com"
+      },
+      {
+        "name": "Shivprakash Swami",
+        "contact": "shivprakash.swami@tcs.com"
+      }
+    ],
+    "version": "1.0.0",
+    "status": "verified",
+    "technology": [
+      "Python",
+      "JavaScript",
+      "JSON Schema",
+      "YAML",
+      "Coverage Metrics",
+      "Traceability Analysis"
+    ],
+    "specialization": {
+      "primary": "test_coverage_analysis",
+      "domain_specific": [
+        "Evidence-Based Coverage",
+        "Requirement Gap Analysis",
+        "Traceability Verification",
+        "Orphan Linkage Detection",
+        "Multi-Dimensional Metrics"
+      ]
+    },
+    "tasks": [
+      {
+        "name": "Aggregate explicit traceability linkages",
+        "description": "Maps requirement IDs, validation rules, and API contracts directly to linked test case IDs.",
+        "input_schema": "Requirements model, test design cases, and optional API contract outputs.",
+        "output_schema": "Structured coverage details mapping source IDs to test IDs.",
+        "async": true
+      },
+      {
+        "name": "Compute quantitative coverage metrics",
+        "description": "Calculates percentage coverage across requirements, acceptance criteria, and validation dimensions.",
+        "input_schema": "Coverage mapping details and coverage threshold settings.",
+        "output_schema": "Summary metrics and threshold evaluation.",
+        "async": true
+      },
+      {
+        "name": "Generate actionable gaps report",
+        "description": "Detects uncovered requirement items, orphaned test links, and unlinked test cases into deterministic gap entries.",
+        "input_schema": "Coverage analysis dataset.",
+        "output_schema": "Actionable gaps report and missing evidence diagnostics.",
+        "async": true
+      }
+    ],
+    "documentation": {
+      "readme": "README.md",
+      "howto": "QuickStart.md",
+      "changelog": "Initial verified release."
+    },
+    "supported_harness": [
+      "GitHub Copilot",
+      "Claude Code",
+      "Cursor",
+      "Antigravity",
+      "AMPCode",
+      "OpenCode",
+      "Kiro",
+      "Codex",
+      "Cline",
+      "Windsurf",
+      "Roo Code",
+      "Aider"
+    ],
+    "tested_harness": [
+      "GitHub Copilot",
+      "Claude Code",
+      "Cursor",
+      "Antigravity"
+    ]
+  }
+}
+

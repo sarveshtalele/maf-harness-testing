@@ -27,31 +27,49 @@ SKILL = "test-design-generator"
 
 
 class ScriptedClient(FunctionInvocationLayer, ChatMiddlewareLayer, BaseChatClient):
-    """First turn optionally calls load_skill(<name>); later turns return JSON."""
+    """Turn 1 loads the named skills (one load_skill call each), an optional script call follows; then JSON."""
 
-    def __init__(self, load: str | None = None, extra_tool: str | None = None):
+    def __init__(self, load=None, extra_tool=None, script=None):
         super().__init__()
-        self.load, self.extra_tool = load, extra_tool
+        self.load = [load] if isinstance(load, str) else list(load or [])
+        self.extra_tool, self.script = extra_tool, script
         self.calls = 0
         self.instructions = []
         self.tool_names = []
         self.loops = []
+        self.script_results = []
 
     async def _inner_get_response(self, *, messages, stream, options, **kwargs):
         self.calls += 1
         self.instructions.append(str(options.get("instructions") or ""))
         self.tool_names.append([getattr(t, "name", str(t)) for t in (options.get("tools") or [])])
         self.loops.append(asyncio.get_running_loop())
-        seen_tool_result = any(c.type == "function_result" for m in messages for c in m.contents)
+        results = [c for m in messages for c in m.contents if c.type == "function_result"]
+        self.script_results = [str(c.result) for c in results if c.call_id == "call-script"]
         usage = {"input_token_count": 10, "output_token_count": 10, "total_token_count": 20}
-        if self.load and not seen_tool_result:
-            call = Content.from_function_call(
-                call_id="call-1", name="load_skill", arguments=json.dumps({"skill_name": self.load})
+
+        def respond(*calls):
+            return ChatResponse(
+                messages=[Message(role="assistant", contents=list(calls))], usage_details=usage
             )
-            return ChatResponse(messages=[Message(role="assistant", contents=[call])], usage_details=usage)
-        if self.extra_tool and not seen_tool_result:
-            call = Content.from_function_call(call_id="call-x", name=self.extra_tool, arguments="{}")
-            return ChatResponse(messages=[Message(role="assistant", contents=[call])], usage_details=usage)
+
+        if self.load and not results:
+            return respond(
+                *(
+                    Content.from_function_call(
+                        call_id=f"call-{i}", name="load_skill", arguments=json.dumps({"skill_name": n})
+                    )
+                    for i, n in enumerate(self.load)
+                )
+            )
+        if self.script and len(results) == len(self.load):
+            return respond(
+                Content.from_function_call(
+                    call_id="call-script", name="run_skill_script", arguments=json.dumps(self.script)
+                )
+            )
+        if self.extra_tool and not results:
+            return respond(Content.from_function_call(call_id="call-x", name=self.extra_tool, arguments="{}"))
         return ChatResponse(
             messages=[Message(role="assistant", contents=[Content.from_text('{"hello":"world"}')])],
             usage_details=usage,
@@ -66,7 +84,7 @@ def fresh_state():
     }
 
 
-def run_stage(monkeypatch, client, mode):
+def run_stage(monkeypatch, client, mode, companions=()):
     monkeypatch.setattr(runtime_module, "OpenAIChatCompletionClient", lambda **kwargs: client)
     runtime = MAFHarnessRuntime(
         api_key="test", model="test", skills_root=Path("skills"), base_url="http://test", skill_mode=mode
@@ -82,6 +100,7 @@ def run_stage(monkeypatch, client, mode):
             prompt="Return JSON.",
             state=state,
             persist=lambda: None,
+            companions=companions,
         )
 
     try:
@@ -180,3 +199,86 @@ def test_skill_is_loaded_once_per_stage_and_reused_across_calls(monkeypatch):
         service.close()
     assert client.calls == 4  # load + READY once, then one answer turn per call
     assert [c["name"] for c in state["skill_tool_trace"]["test_design"]["calls"]] == ["load_skill"]
+
+
+def test_companion_skills_are_advertised_loaded_and_recorded(monkeypatch):
+    client = ScriptedClient(load=[SKILL, "test-data-generator"])
+    result, state = run_stage(monkeypatch, client, "progressive", companions=("test-data-generator",))
+    assert result["status"] == "completed"
+    assert "test-data-generator" in client.instructions[0] and "PRIMARY skill" in client.instructions[0]
+    assert "junit-generator" not in client.instructions[0]  # only the selected skills are advertised
+    trace = state["skill_tool_trace"]["test_design"]
+    assert trace["skill_loaded_via_maf"] is True and set(trace["loaded_skills"]) == {
+        SKILL,
+        "test-data-generator",
+    }
+    prov = state["skill_provenance"]["test_design"]
+    assert [c["name"] for c in prov["companions"]] == ["test-data-generator"] and len(
+        prov["companions"][0]["package_sha256"]
+    ) == 64
+
+
+def test_output_is_rejected_when_a_companion_skill_was_not_loaded(monkeypatch):
+    client = ScriptedClient(load=SKILL)  # primary loaded, companion ignored
+    with pytest.raises(AgentOutputError, match="'test-data-generator'"):
+        run_stage(monkeypatch, client, "progressive", companions=("test-data-generator",))
+
+
+def test_reviewed_skill_script_runs_through_maf_run_skill_script_without_approval(monkeypatch):
+    call = {
+        "skill_name": "test-data-generator",
+        "script_name": "scripts/deterministic_helpers.py",
+        "args": ["--seed", "7", "--count", "2"],
+    }
+    client = ScriptedClient(load=[SKILL, "test-data-generator"], script=call)
+    result, state = run_stage(monkeypatch, client, "progressive", companions=("test-data-generator",))
+    assert result["status"] == "completed"
+    payload = json.loads(client.script_results[0])  # the real script ran and produced deterministic JSON
+    assert payload["seed"] == 7 and len(payload["id_ids"]) == 2
+    run = state["skill_script_runs"][0]
+    assert (run["skill"], run["script"], run["exit_code"]) == (
+        "test-data-generator",
+        "scripts/deterministic_helpers.py",
+        0,
+    )
+    assert (
+        len(run["sha256"]) == 64
+        and "run_skill_script" in state["skill_tool_trace"]["test_design"]["calls"][-1]["name"]
+    )
+
+
+def test_scripts_that_are_not_model_tier_are_rejected_by_the_host(monkeypatch):
+    call = {
+        "skill_name": "traceability-generator",
+        "script_name": "scripts/validate_traceability.py",
+        "args": ["x.json"],
+    }
+    client = ScriptedClient(load=[SKILL, "traceability-generator"], script=call)
+    with pytest.raises(AgentOutputError, match="needs approval|reviewed skill tools"):
+        run_stage(monkeypatch, client, "progressive", companions=("traceability-generator",))
+
+
+def test_script_runner_refuses_modified_scripts_unsafe_args_and_unlisted_scripts(tmp_path):
+    import shutil
+
+    from maf_test_harness.skill_scripts import HarnessScriptRunner, ScriptRefused
+
+    root = tmp_path / "skills"
+    shutil.copytree("skills", root)
+    runner = HarnessScriptRunner(root, tiers=("model",))
+    ok = runner.run(
+        "test-data-generator", "scripts/deterministic_helpers.py", ["--seed", "1", "--count", "1"]
+    )
+    assert ok["exit_code"] == 0 and json.loads(ok["stdout"])["seed"] == 1
+    for bad in (["../../etc/passwd"], ["/etc/passwd"], ["~/x"], ["a" * 400]):
+        with pytest.raises(ScriptRefused, match="Argument not allowed"):
+            runner.run("test-data-generator", "scripts/deterministic_helpers.py", bad)
+    with pytest.raises(ScriptRefused, match="not on the reviewed allow-list"):
+        runner.run("traceability-generator", "scripts/validate_traceability.py", [])  # host tier only
+    with pytest.raises(ScriptRefused, match="not on the reviewed allow-list"):
+        runner.run(
+            "coverage-analyzer", "scripts/run-coverage.js", []
+        )  # reviewed and deliberately not enabled
+    (root / "test-data-generator" / "scripts" / "deterministic_helpers.py").write_text("print('evil')\n")
+    with pytest.raises(ScriptRefused, match="changed since it was reviewed"):
+        runner.run("test-data-generator", "scripts/deterministic_helpers.py", [])

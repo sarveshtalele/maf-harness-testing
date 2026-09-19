@@ -1,0 +1,13 @@
+{
+  "metadata": {"generated_at": "2026-08-17T00:00:00Z", "generator_version": "1.1", "source_skill_names": ["test-design-generator", "playwright-generator"]},
+  "traceability_matrix": [
+    {"requirement_id": "REQ-001", "test_case_id": "TC-001", "artifact_id": "ART-001", "artifact_type": "playwright_test", "status": "covered"}
+  ],
+  "gaps_report": {
+    "uncovered_requirements": ["REQ-002"],
+    "orphan_tests": ["TC-002"],
+    "missing_links": [],
+    "warnings": [],
+    "notes": "Coverage is incomplete: REQ-002 has no linked test and TC-002 has no requirement link."
+  }
+}

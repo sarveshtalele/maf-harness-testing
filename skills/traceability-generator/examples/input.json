@@ -1,0 +1,17 @@
+{
+  "requirements": [
+    {"id": "REQ-001", "text": "A shopper can save a payment card."},
+    {"id": "REQ-002", "text": "A shopper can remove a saved payment card."}
+  ],
+  "test_cases": [
+    {"id": "TC-001", "title": "Save payment card", "linked_requirements": ["REQ-001"]},
+    {"id": "TC-002", "title": "Remove payment card", "linked_requirements": []}
+  ],
+  "generated_artifacts": [
+    {
+      "id": "ART-001",
+      "type": "playwright_test",
+      "test_case_id": "TC-001"
+    }
+  ]
+}

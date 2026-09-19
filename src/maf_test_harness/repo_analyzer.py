@@ -502,3 +502,92 @@ def build_repository_evidence(
         chunks.append(chunk)
         used += len(chunk)
     return "".join(chunks)
+
+
+_DEFINITION = re.compile(
+    r"^\s*(?:export\s+)?(?:async\s+)?(?:public\s+|private\s+|protected\s+|static\s+|final\s+)*"
+    r"(?:def|function|class|interface|func|fn|void|int|String|boolean|[A-Z][\w<>\[\]]*)\s+(\w+)\s*[(<{:]"
+)
+
+
+def _compact_lines(source_lines: list[str], first: int) -> str:
+    """Original line numbers, without blank lines and comment-only lines."""
+    return "\n".join(
+        f"{first + i}: {line}"
+        for i, line in enumerate(source_lines)
+        if line.strip() and not line.lstrip().startswith(("#", "//", "*", "/*"))
+    )
+
+
+def _python_target_chunks(src: str, wanted: set[str]) -> list[tuple[str, int, int, str]]:
+    """Complete bodies of the wanted top-level functions/classes plus the same-module helpers they call."""
+    try:
+        tree = ast.parse(src)
+    except SyntaxError:
+        return []
+    top = {
+        n.name: n for n in tree.body if isinstance(n, ast.FunctionDef | ast.AsyncFunctionDef | ast.ClassDef)
+    }
+    chosen = [name for name in top if name in wanted]
+    for name in list(
+        chosen
+    ):  # one hop of callees inside the same module (e.g. the scorers a total is built from)
+        for call in ast.walk(top[name]):
+            callee = call.func.id if isinstance(call, ast.Call) and isinstance(call.func, ast.Name) else None
+            if callee in top and callee not in chosen:
+                chosen.append(callee)
+    lines = src.splitlines()
+    return [
+        (
+            name,
+            top[name].lineno,
+            top[name].end_lineno or top[name].lineno,
+            _compact_lines(lines[top[name].lineno - 1 : top[name].end_lineno], top[name].lineno),
+        )
+        for name in chosen
+    ]
+
+
+def extract_target_sources(
+    root: Path, targets: list[str], source_files: list[str], max_chars: int = 24_000
+) -> str:
+    """Complete source of the code each case targets, so tests are written against what the code really does.
+
+    Head-truncated file excerpts routinely cut off the functions that matter (a 35 KB evaluator lost all of its scoring
+    rules). A case's ``target`` names a file and symbol; this returns those symbols in full, plus their same-module helpers.
+    """
+    root = Path(root).resolve()
+    chunks: list[str] = []
+    used = 0
+    seen: set[tuple[str, str]] = set()
+    for text in targets:
+        rels = sorted((f for f in source_files if f in text or Path(f).name in text), key=len, reverse=True)[
+            :2
+        ]
+        wanted = set(re.findall(r"[A-Za-z_]\w*", text))
+        for rel in rels:
+            src = _safe_read(root / rel)
+            if not src:
+                continue
+            if rel.endswith(".py"):
+                found = _python_target_chunks(src, wanted)
+            else:  # other languages: the definition line and what follows it
+                all_lines = src.splitlines()
+                found = []
+                for index, line in enumerate(all_lines):
+                    match = _DEFINITION.match(line)
+                    if match and match.group(1) in wanted:
+                        end = min(len(all_lines), index + 70)
+                        found.append(
+                            (match.group(1), index + 1, end, _compact_lines(all_lines[index:end], index + 1))
+                        )
+            for name, start, end, body in found:
+                if (rel, name) in seen:
+                    continue
+                block = f"\n--- SOURCE: {rel} :: {name} (lines {start}-{end}) ---\n{body}\n"
+                if used + len(block) > max_chars:
+                    continue
+                seen.add((rel, name))
+                chunks.append(block)
+                used += len(block)
+    return "".join(chunks)

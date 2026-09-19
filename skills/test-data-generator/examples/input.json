@@ -1,0 +1,47 @@
+{
+  "test_cases": [
+    {
+      "id": "TC-001",
+      "title": "Save payment card successfully",
+      "type": "positive",
+      "linked_requirements": ["REQ-001"]
+    },
+    {
+      "id": "TC-001-NEG-01",
+      "title": "Reject a payment amount below the minimum",
+      "type": "negative",
+      "linked_requirements": ["REQ-001"]
+    },
+    {
+      "id": "TC-001-BND-01",
+      "title": "Accept the minimum payment amount",
+      "type": "boundary",
+      "linked_requirements": ["REQ-001"]
+    }
+  ],
+  "validation_rules": [
+    "Payment amount must be at least 0.01.",
+    "Currency is required."
+  ],
+  "api_contracts": [
+    {
+      "path": "/payments",
+      "method": "post",
+      "request_schema": {
+        "type": "object",
+        "required": ["amount", "currency"],
+        "properties": {
+          "amount": {"type": "number", "minimum": 0.01},
+          "currency": {"type": "string"}
+        }
+      },
+      "response_schema": {
+        "type": "object",
+        "properties": {
+          "id": {"type": "string"},
+          "status": {"type": "string"}
+        }
+      }
+    }
+  ]
+}

@@ -1,0 +1,62 @@
+# Authoritative output contract for coverage-analyzer.
+# The notation follows JSON Schema conventions and is intentionally declarative.
+output_contract:
+  type: object
+  required: [summary, coverage_report, coverage_details, gaps_report]
+  properties:
+    summary:
+      type: object
+      required: [requirements_total, requirements_covered, validations_total, validations_covered, api_contracts_total, api_contracts_covered, traceable_items]
+      properties:
+        requirements_total: {type: integer, minimum: 0}
+        requirements_covered: {type: integer, minimum: 0}
+        validations_total: {type: integer, minimum: 0}
+        validations_covered: {type: integer, minimum: 0}
+        api_contracts_total: {type: integer, minimum: 0}
+        api_contracts_covered: {type: integer, minimum: 0}
+        traceable_items: {type: integer, minimum: 0}
+    coverage_report:
+      type: object
+      required: [acceptance_criteria_coverage, validation_coverage, api_coverage]
+      properties:
+        acceptance_criteria_coverage: {$ref: '#/$defs/coverage_metric'}
+        validation_coverage: {$ref: '#/$defs/coverage_metric'}
+        api_coverage: {$ref: '#/$defs/coverage_metric'}
+    coverage_details:
+      type: array
+      items:
+        type: object
+        required: [source_id, source_type, covered, test_case_ids]
+        properties:
+          source_id: {type: string, minLength: 1}
+          source_type: {type: string, enum: [requirement, acceptance_criterion, validation, api_contract]}
+          covered: {type: boolean}
+          test_case_ids:
+            type: array
+            items: {type: string, minLength: 1}
+    gaps_report:
+      type: object
+      required: [uncovered_requirements, uncovered_validations, uncovered_api_contracts, orphaned_linkages, unlinked_test_cases, notes]
+      properties:
+        uncovered_requirements: {type: array, items: {type: string}}
+        uncovered_validations: {type: array, items: {type: string}}
+        uncovered_api_contracts: {type: array, items: {type: string}}
+        orphaned_linkages:
+          type: array
+          items:
+            type: object
+            required: [test_case_id, source_id, source_type]
+            properties:
+              test_case_id: {type: string}
+              source_id: {type: string}
+              source_type: {type: string}
+        unlinked_test_cases: {type: array, items: {type: string}}
+        notes: {type: string}
+  $defs:
+    coverage_metric:
+      type: object
+      required: [total, covered, percentage]
+      properties:
+        total: {type: integer, minimum: 0}
+        covered: {type: integer, minimum: 0}
+        percentage: {type: number, minimum: 0, maximum: 100}

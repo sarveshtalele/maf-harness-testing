@@ -1,0 +1,112 @@
+{
+  "api_contracts": [
+    {
+      "path": "/payments",
+      "method": "post",
+      "operationId": "post_payments",
+      "summary": "Create a payment",
+      "deprecated": false,
+      "tags": ["payments"],
+      "request_schema": {
+        "type": "object",
+        "required": ["amount", "currency"],
+        "properties": {
+          "amount": {
+            "type": "number",
+            "minimum": 0.01
+          },
+          "currency": {
+            "type": "string",
+            "enum": ["USD", "EUR"]
+          }
+        }
+      },
+      "request_examples": [
+        {
+          "mediaType": "application/json",
+          "value": {
+            "amount": 99.99,
+            "currency": "USD"
+          }
+        }
+      ],
+      "response_schemas": {
+        "201": {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string"
+            },
+            "status": {
+              "type": "string"
+            }
+          }
+        }
+      },
+      "response_content_types": {
+        "201": ["application/json"]
+      },
+      "response_examples": {
+        "201": {
+          "application/json": {
+            "id": "pay_12345",
+            "status": "pending"
+          }
+        }
+      },
+      "response_headers": {
+        "201": {
+          "Location": {
+            "required": true,
+            "description": "URL of the newly created payment resource.",
+            "schema": {
+              "type": "string",
+              "format": "uri"
+            }
+          }
+        }
+      },
+      "status_codes": ["201"],
+      "parameters": [],
+      "field_constraints": [
+        {
+          "field": "amount",
+          "type": "number",
+          "minimum": 0.01
+        },
+        {
+          "field": "currency",
+          "type": "string",
+          "enum": ["USD", "EUR"]
+        }
+      ],
+      "required_fields": ["amount", "currency"],
+      "content_types": ["application/json"],
+      "servers": [],
+      "security": [],
+      "discriminator": null,
+      "traceability_links": [
+        {
+          "source_type": "api_contract",
+          "source_id": "post_payments"
+        }
+      ]
+    }
+  ],
+  "validation_rules": [
+    {
+      "rule_id": "VAL-001",
+      "target": "post_payments",
+      "constraint": {
+        "required": ["amount", "currency"]
+      },
+      "message": "Request body is required for POST /payments."
+    }
+  ],
+  "gaps_report": {
+    "invalid_document": false,
+    "missing_schemas": [],
+    "incomplete_endpoints": [],
+    "notes": ""
+  }
+}

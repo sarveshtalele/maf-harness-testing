@@ -1,0 +1,95 @@
+{
+  "skill_card": {
+    "starterkit_id": "traceability-generator",
+    "name": "Traceability Generator",
+    "description": "Aggregates verified requirement, test case, and artifact links into an auditable requirement-to-test traceability matrix with orphan detection and coverage gap reporting.",
+    "origin": {
+      "BG": "BFSI",
+      "ISU": "APAC",
+      "Account": "NAB, CBA"
+    },
+    "maintainers": [
+      {
+        "name": "Shruti Talukder",
+        "contact": "shruti.talukder@tcs.com"
+      },
+      {
+        "name": "Tejus Ajit Manjrekar",
+        "contact": "tejus.manjrekar@tcs.com"
+      },
+      {
+        "name": "Shivprakash Swami",
+        "contact": "shivprakash.swami@tcs.com"
+      }
+    ],
+    "version": "1.1.0",
+    "status": "verified",
+    "technology": [
+      "Python",
+      "JSON Schema",
+      "YAML",
+      "Traceability Matrix",
+      "Impact Analysis",
+      "Audit Reporting"
+    ],
+    "specialization": {
+      "primary": "requirement_traceability_matrix",
+      "domain_specific": [
+        "Bi-Directional Traceability",
+        "Orphan Test Detection",
+        "Uncovered Requirement Identification",
+        "Artifact Resolution",
+        "Coverage Audit Reporting"
+      ]
+    },
+    "tasks": [
+      {
+        "name": "Aggregate requirement and test relationships",
+        "description": "Validates requirement IDs and matches test cases and generated artifacts against explicit traceability links.",
+        "input_schema": "Requirements model, test design, and generated artifact manifests.",
+        "output_schema": "Unified requirement-to-test-to-artifact mapping dataset.",
+        "async": true
+      },
+      {
+        "name": "Build requirement traceability matrix",
+        "description": "Generates structured matrix rows with covered, partial, or missing_artifact status for each link.",
+        "input_schema": "Traceability mappings and verification rules.",
+        "output_schema": "Auditable traceability matrix JSON.",
+        "async": true
+      },
+      {
+        "name": "Detect orphans and output gap diagnostics",
+        "description": "Identifies uncovered requirements, orphan tests lacking requirement links, and broken artifact references.",
+        "input_schema": "Matrix data and input models.",
+        "output_schema": "Actionable gaps report and diagnostic notes.",
+        "async": true
+      }
+    ],
+    "documentation": {
+      "readme": "README.md",
+      "howto": "QuickStart.md",
+      "changelog": "Initial verified release."
+    },
+    "supported_harness": [
+      "GitHub Copilot",
+      "Claude Code",
+      "Cursor",
+      "Antigravity",
+      "AMPCode",
+      "OpenCode",
+      "Kiro",
+      "Codex",
+      "Cline",
+      "Windsurf",
+      "Roo Code",
+      "Aider"
+    ],
+    "tested_harness": [
+      "GitHub Copilot",
+      "Claude Code",
+      "Cursor",
+      "Antigravity"
+    ]
+  }
+}
+

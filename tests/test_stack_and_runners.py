@@ -322,3 +322,36 @@ def test_uncompilable_generated_files_are_quarantined_so_the_rest_still_run(tmp_
     by = {c["id"]: c for c in qa["cases"]}
     assert by["TC-B"]["status"] == "error" and "cannot find symbol" in by["TC-B"]["message"]
     assert by["TC-G"]["status"] == "passed" and qa["verdict"] == "FAIL"
+
+
+def test_collection_errors_map_back_to_their_case_by_dotted_module_name():
+    """pytest reports collection failures with the dotted module path as the name and no class."""
+    generated = [
+        {
+            "path": "tests/batch_07/test_x.py",
+            "content": "def test_x():\n    assert 1\n",
+            "case_ids": ["TC-X"],
+        },
+        {
+            "path": "tests/batch_07/test_xy.py",
+            "content": "def test_xy():\n    assert 1\n",
+            "case_ids": ["TC-XY"],
+        },
+    ]
+    mapped = runners.map_results_to_cases(
+        [{"name": "tests.batch_07.test_xy", "classname": "", "status": "error", "message": "ImportError"}],
+        generated,
+    )
+    assert mapped[0]["case_id"] == "TC-XY"  # not TC-X: matching is on the whole dotted stem, not a substring
+
+
+def test_python_runner_adds_non_package_directories_to_the_import_path(tmp_path):
+    (tmp_path / "skill-packages" / "03-agent").mkdir(parents=True)
+    (tmp_path / "skill-packages" / "03-agent" / "agent.py").write_text("class Agent: ...\n")
+    (tmp_path / "engine").mkdir()
+    (tmp_path / "engine" / "core.py").write_text("x = 1\n")
+    plan = runners.build_plan(
+        StackProfile(primary="python"), tmp_path, files("tests/test_a.py"), cache_dir=tmp_path / "c"
+    )
+    path = plan.steps[-1].env["PYTHONPATH"].split(":")
+    assert str(tmp_path / "skill-packages" / "03-agent") in path and str(tmp_path / "engine") not in path

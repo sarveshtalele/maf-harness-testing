@@ -331,3 +331,138 @@ def test_missing_system_tools_are_reported_with_install_hints_not_installed(tmp_
     pending = host.view["pending"]
     assert pending["kind"] == "review" and pending["details"]["artifact"]["status"] == "blocked"
     assert pending["details"]["artifact"]["prerequisites"][0]["install_hint"] == "brew install maven"
+
+
+def test_qa_outputs_follow_the_vendored_skill_contracts_and_are_validated_by_their_scripts(drive):
+    import json
+    import zipfile
+
+    host, answer = drive(ScriptedStageRuntime())
+    to_execution_gate(host, answer)
+    answer(decision="approve")
+    artifact = host.state["artifacts"]["test_execution"]
+    checks = artifact["qa_report"]["skill_checks"]
+    assert (
+        checks["traceability"]["passed"]
+        and checks["traceability"]["script"] == "scripts/validate_traceability.py"
+    )
+    assert (
+        len(checks["traceability"]["sha256"]) == 64
+    )  # the reviewed, hash-checked upstream script really ran
+    assert checks["coverage"]["passed"] and checks["coverage"]["contract"] == "assets/coverage_templates.yaml"
+    matrix = artifact["skill_reports"]["traceability"]["traceability_matrix"]
+    assert matrix[0]["artifact_type"] == "generated_test" and matrix[0]["status"] == "covered"
+    assert artifact["skill_reports"]["coverage"]["summary"]["requirements_covered"] == 1
+    assert "## Skill contract checks" in artifact["markdown"]
+    answer(decision="approve")
+    names = set(zipfile.ZipFile(host.state["deliverable_zip"]).namelist())
+    assert {"harness-report/traceability-matrix.json", "harness-report/coverage-summary.json"} <= names
+    assert json.loads(
+        zipfile.ZipFile(host.state["deliverable_zip"]).read("harness-report/coverage-summary.json")
+    )["summary"]
+
+
+def test_skills_are_selected_from_the_stack_and_the_approved_design():
+    from maf_test_harness.skills_config import skills_for
+
+    base = {"artifacts": {"repo_analysis": {"languages": {"Python": 3}}}, "stack": {}}
+    assert skills_for("requirements", base).all == ["repository-requirements"]
+    assert skills_for("requirements", {**base, "stack": {"openapi_files": ["api.yaml"]}}).all == [
+        "repository-requirements",
+        "api-contract-analyzer",
+    ]
+    assert skills_for("test_design", base).all == ["test-design-generator", "test-data-generator"]
+    assert skills_for("test_generation", base).all == ["generic-test-generator", "test-data-generator"]
+    java = {
+        "artifacts": {
+            "repo_analysis": {"languages": {"Java": 9}},
+            "test_design": {"positive_tests": [{"level": "unit"}, {"level": "e2e"}]},
+        }
+    }
+    assert skills_for("test_generation", java).all == [
+        "generic-test-generator",
+        "test-data-generator",
+        "junit-generator",
+        "playwright-test-generator",
+    ]
+
+
+def test_heal_regenerates_only_failing_cases_even_inside_a_shared_batch(drive):
+    """Batch size is 3, both cases share one batch; the passing case's file must stay byte for byte identical."""
+    import json
+
+    bad_case = {
+        "title": "add rejects wrong total",
+        "priority": "P1",
+        "level": "unit",
+        "actor": "Developer",
+        "target": "service.add",
+        "description": "Wrong expectation.",
+        "preconditions": [],
+        "data_notes": "2 and 2",
+        "expected_result": "add(2, 2) is not 5",
+        "steps": ["Call add", "Compare"],
+    }
+    runtime = ScriptedStageRuntime(extra_cases=[bad_case])
+    host, answer = drive(runtime)
+    to_execution_gate(host, answer)
+    answer(decision="approve")
+    qa = host.state["artifacts"]["test_execution"]["qa_report"]
+    assert qa["case_status_counts"] == {"passed": 1, "failed": 1}
+    passing = {f["path"]: f["content"] for f in host.state["artifacts"]["test_generation"]["files"]}
+    good_id = next(c["id"] for c in qa["cases"] if c["status"] == "passed")
+    sent, original = [], runtime.run_stage
+
+    async def spy(**kwargs):
+        if kwargs["stage"] == "test_generation":
+            body = json.loads(kwargs["prompt"])
+            sent.append([c["id"] for c in body["approved_inputs"]["approved_cases"]])
+            sent_requirements.append(
+                [r["id"] for r in body["approved_inputs"]["requirements"]["requirements"]]
+            )
+        return await original(**kwargs)
+
+    sent_requirements: list = []
+    runtime.run_stage = spy
+    answer(decision="revise", feedback="")
+    assert sent == [[next(c["id"] for c in qa["cases"] if c["status"] == "failed")]]  # only the failing case
+    assert (
+        host.state["feedback"]["test_generation"].count("REMEDY") == 0
+        or "Recompute the expected value" in host.state["feedback"]["test_generation"]
+    )
+    regenerated = {f["path"]: f["content"] for f in host.state["artifacts"]["test_generation"]["files"]}
+    good_path = next(p for p, c in passing.items() if good_id in c)
+    assert regenerated[good_path] == passing[good_path]  # untouched
+    assert len(regenerated) == 2
+
+
+def test_failure_remedies_are_concrete_and_reach_the_regeneration_feedback():
+    from maf_test_harness.triage import remedy_for
+
+    assert "builtins.input" in remedy_for("OSError: pytest: reading from stdin while output is captured")
+    assert "Import or define" in remedy_for("NameError: name 'patch' is not defined")
+    assert "monkeypatch.setattr" in remedy_for("AttributeError: readonly attribute")
+    assert "full shape" in remedy_for("KeyError: 'name'")
+    assert remedy_for("something unrelated") == ""
+
+
+def test_generation_prompts_carry_only_the_requirements_the_batch_traces_to():
+    from maf_test_harness.workflow import _requirements_for
+
+    requirements = {
+        "requirement_model": {
+            "requirements": [{"id": "R1", "text": "a"}, {"id": "R2", "text": "b"}],
+            "acceptance_criteria": [
+                {"id": "AC1", "requirement_id": "R1", "text": "x"},
+                {"id": "AC2", "requirement_id": "R2", "text": "y"},
+            ],
+            "validation_rules": [],
+        },
+        "api_contracts": [],
+        "actors": [{"name": "Dev"}],
+    }
+    out = _requirements_for(requirements, {"R1"})
+    assert [r["id"] for r in out["requirements"]] == ["R1"] and [
+        c["id"] for c in out["acceptance_criteria"]
+    ] == ["AC1"]
+    assert out["actors"] == [{"name": "Dev"}]

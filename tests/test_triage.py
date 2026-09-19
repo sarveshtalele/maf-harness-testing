@@ -77,3 +77,29 @@ def test_qa_markdown_has_a_files_to_update_section():
     )
     md = render_markdown(qa)
     assert "## Files to update" in md and "`tests/test_x.py`" in md and "`service.py:2`" in md
+
+
+def test_target_source_returns_complete_functions_and_their_helpers_not_a_truncated_head(tmp_path):
+    from maf_test_harness.repo_analyzer import extract_target_sources
+
+    (tmp_path / "engine").mkdir()
+    filler = "".join(
+        f"# filler line {i}\n" for i in range(3000)
+    )  # pushes the scorers far past any head excerpt
+    (tmp_path / "engine/evaluator.py").write_text(
+        "def evaluate(x):\n    return _score_a(x) + _score_b(x)\n\n"
+        + filler
+        + "def _score_a(x):\n    return 10 if x else 0\n\ndef _score_b(x):\n    return 5\n\ndef unrelated():\n    return 1\n"
+    )
+    out = extract_target_sources(tmp_path, ["engine/evaluator.py evaluate()"], ["engine/evaluator.py"])
+    assert "def _score_a" in out and "return 10 if x else 0" in out and "def _score_b" in out
+    assert "unrelated" not in out and "filler line" not in out
+
+
+def test_target_source_handles_java_and_missing_targets(tmp_path):
+    from maf_test_harness.repo_analyzer import extract_target_sources
+
+    (tmp_path / "A.java").write_text("class A {\n  public int total(int a) {\n    return a * 2;\n  }\n}\n")
+    out = extract_target_sources(tmp_path, ["A.java total()"], ["A.java"])
+    assert "return a * 2" in out
+    assert extract_target_sources(tmp_path, ["nothing here"], ["A.java"]) == ""

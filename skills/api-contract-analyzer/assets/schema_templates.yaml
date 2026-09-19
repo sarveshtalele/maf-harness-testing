@@ -1,0 +1,151 @@
+templates:
+  api_contract_report:
+    type: object
+    required: [api_contracts, validation_rules, gaps_report]
+    properties:
+      api_contracts:
+        type: array
+        items:
+          type: object
+          required: [path, method, operationId, response_schemas, status_codes,
+                     field_constraints, required_fields, parameters, content_types,
+                     response_content_types, servers, security]
+          properties:
+            path: {type: string}
+            method: {type: string}
+            operationId: {type: string}
+            summary: {type: string, nullable: true}
+            deprecated: {type: boolean}
+            tags:
+              type: array
+              items: {type: string}
+              nullable: true
+            request_schema: {type: object, nullable: true}
+            response_schemas: {type: object}
+            status_codes:
+              type: array
+              items: {type: string}
+            parameters:
+              type: array
+              items:
+                type: object
+                required: [name, in, required, schema, constraints]
+                properties:
+                  name: {type: string}
+                  in: {type: string}
+                  required: {type: boolean}
+                  schema: {type: object, nullable: true}
+                  constraints: {type: object}
+                  example: {}
+                  default: {}
+            field_constraints:
+              type: array
+              items:
+                type: object
+                required: [field, type]
+                properties:
+                  field: {type: string}
+                  type: {type: string}
+                  format: {type: string}
+                  pattern: {type: string}
+                  minimum: {type: number}
+                  maximum: {type: number}
+                  exclusiveMinimum: {}
+                  exclusiveMaximum: {}
+                  multipleOf: {type: number}
+                  minLength: {type: integer}
+                  maxLength: {type: integer}
+                  minItems: {type: integer}
+                  maxItems: {type: integer}
+                  enum: {type: array}
+                  nullable: {type: boolean}
+                  additionalProperties: {}
+            required_fields:
+              type: array
+              items: {type: string}
+            content_types:
+              type: array
+              items: {type: string}
+            response_content_types:
+              type: object
+            response_headers:
+              type: object
+              description: Map of status code to extracted header schemas.
+              nullable: true
+              additionalProperties:
+                type: object
+                patternProperties:
+                  "^[a-zA-Z0-9-]+$":
+                    type: object
+                    properties:
+                      required: {type: boolean}
+                      schema: {type: object, nullable: true}
+                      description: {type: string, nullable: true}
+            request_examples:
+              type: array
+              items: {type: object}
+              description: Extracted examples from request body schemas, keyed by media type.
+              nullable: true
+            response_examples:
+              type: object
+              description: Map of status code to extracted examples, keyed by media type.
+              nullable: true
+              additionalProperties:
+                type: object
+                patternProperties:
+                  "^.+$": {type: object}
+            servers:
+              type: array
+              items: {type: object}
+            security:
+              type: array
+              items: {type: object}
+            discriminator:
+              type: object
+              nullable: true
+              properties:
+                propertyName: {type: string}
+                mapping: {type: object, additionalProperties: {type: string}}
+              description: Polymorphic discriminator from schema. Preserved verbatim when present.
+            traceability_links:
+              type: array
+              items:
+                type: object
+                required: [source_type, source_id]
+                properties:
+                  source_type: {type: string, enum: [api_contract]}
+                  source_id: {type: string}
+              description: Explicit links usable by downstream traceability-generator.
+      validation_rules:
+        type: array
+        description: Structured validation rules derived from the API spec, each with a stable ID.
+        items:
+          type: object
+          required: [rule_id, target, constraint, message]
+          properties:
+            rule_id: {type: string, minLength: 1}
+            target: {type: string, minLength: 1}
+            constraint: {type: object, nullable: true}
+            message: {type: string, minLength: 1}
+      gaps_report:
+        type: object
+        required: [invalid_document, missing_schemas, incomplete_endpoints, notes]
+        properties:
+          invalid_document: {type: boolean}
+          missing_schemas:
+            type: array
+            description: Structured entries for missing request or response schemas.
+            items:
+              type: object
+              required: [operationId, context, message]
+              properties:
+                operationId: {type: string, minLength: 1}
+                context: {type: string, enum: [request, response]}
+                code: {type: string, nullable: true}
+                message: {type: string, minLength: 1}
+          incomplete_endpoints:
+            type: array
+            items: {type: string, minLength: 1}
+          notes:
+            type: string
+            description: Accumulated non-fatal notes; use empty string when none exist, matching coverage-analyzer contract.

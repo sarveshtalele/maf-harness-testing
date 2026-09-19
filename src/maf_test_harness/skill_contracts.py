@@ -9,6 +9,7 @@ import shutil
 import subprocess
 import tempfile
 import uuid
+from collections.abc import Callable
 from copy import deepcopy
 from datetime import UTC, datetime
 from pathlib import Path, PurePosixPath
@@ -17,12 +18,7 @@ from typing import Any
 import jsonschema
 import yaml
 
-SKILL_NAMES = {
-    "requirements": "repository-requirements",
-    "test_planning": "test-planning",
-    "test_design": "test-design-generator",
-    "test_generation": "generic-test-generator",
-}
+from .skills_config import SKILL_NAMES
 
 _NAMESPACE = uuid.NAMESPACE_URL
 _SECTIONS = ("positive", "negative", "boundary", "validation", "contract")
@@ -779,10 +775,120 @@ _COMMON_TEST_MODULES = {
 }
 
 
-def check_python_imports(content: str, repo_files: list[str], dependency_text: str, path: str = "") -> None:
+def _module_symbols(source: str) -> tuple[set[str], dict[str, tuple[str, int]]] | None:
+    """Names importable from a module (module-level bindings) and names that exist only as locals of a function.
+
+    Returns ``None`` when the set cannot be known statically (``from x import *`` or a module ``__getattr__``).
+    """
+    try:
+        tree = ast.parse(source)
+    except SyntaxError:
+        return None
+    names: set[str] = set()
+
+    def bind(target: ast.AST) -> None:
+        for node in ast.walk(target):
+            if isinstance(node, ast.Name):
+                names.add(node.id)
+
+    def visit(body: list[ast.stmt]) -> bool:
+        for node in body:
+            if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef | ast.ClassDef):
+                names.add(node.name)
+            elif isinstance(node, ast.Assign):
+                for target in node.targets:
+                    bind(target)
+            elif isinstance(node, ast.AnnAssign | ast.AugAssign):
+                bind(node.target)
+            elif isinstance(node, ast.Import):
+                names.update((a.asname or a.name).split(".")[0] for a in node.names)
+            elif isinstance(node, ast.ImportFrom):
+                if any(a.name == "*" for a in node.names):
+                    return False
+                names.update(a.asname or a.name for a in node.names)
+            elif isinstance(node, ast.If | ast.Try | ast.With | ast.For | ast.While):
+                for field in ("body", "orelse", "finalbody", "handlers"):
+                    for child in getattr(node, field, []):
+                        if isinstance(child, ast.ExceptHandler):
+                            if not visit(child.body):
+                                return False
+                        elif not visit([child]):
+                            return False
+        return True
+
+    if not visit(tree.body) or "__getattr__" in names:
+        return None
+    local: dict[str, tuple[str, int]] = {}
+    for func in ast.walk(tree):
+        if isinstance(func, ast.FunctionDef | ast.AsyncFunctionDef):
+            for node in ast.walk(func):
+                inner = (
+                    [node.name]
+                    if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef | ast.ClassDef)
+                    and node is not func
+                    else [
+                        t.id
+                        for t in ast.walk(node)
+                        if isinstance(t, ast.Name) and isinstance(t.ctx, ast.Store)
+                    ]
+                    if isinstance(node, ast.Assign)
+                    else []
+                )
+                for name in inner:
+                    local.setdefault(name, (func.name, getattr(node, "lineno", func.lineno)))
+    return names, local
+
+
+def _check_imported_names(
+    node: ast.ImportFrom, module_file: str, source: str, modules: set[str], path: str
+) -> None:
+    """`from pkg.mod import a, b`: every name must be a module-level binding (or a submodule) of pkg/mod.py."""
+    parsed = _module_symbols(source)
+    if parsed is None:
+        return
+    names, local = parsed
+    base = module_file.removesuffix(".py").removesuffix("/__init__")
+    for alias in node.names:
+        if alias.name in names or f"{base}/{alias.name}" in modules:
+            continue
+        where = local.get(alias.name)
+        hint = (
+            f" It exists only inside {where[0]}() (line {where[1]}), which cannot be imported: exercise that code by "
+            f"calling {where[0]}() with its collaborators patched, or test a module-level function instead."
+            if where
+            else " Use only names defined at module level in the supplied source."
+        )
+        raise ValueError(
+            f"cannot import name '{alias.name}' from '{node.module}' in {path or 'generated test'}: "
+            f"{module_file} defines no such module-level name.{hint}"
+        )
+
+
+def extra_import_roots(py_files: list[str], limit: int = 12) -> list[str]:
+    """Directories whose modules cannot be imported by dotted path (a hyphen or leading digit in the path).
+
+    The runner puts these directories on PYTHONPATH, exactly as a maintainer would configure ``pythonpath`` for the
+    suite, so a test can simply ``import module`` for a file like ``skill-packages/03-agent-sdk/module.py``.
+    """
+    roots = {
+        parent.as_posix()
+        for parent in (PurePosixPath(f).parent for f in py_files if f.endswith(".py"))
+        if parent.as_posix() != "." and not all(part.isidentifier() for part in parent.parts)
+    }
+    return sorted(roots)[:limit]
+
+
+def check_python_imports(
+    content: str,
+    repo_files: list[str],
+    dependency_text: str,
+    path: str = "",
+    read_source: Callable[[str], str | None] | None = None,
+) -> None:
     """Reject imports that cannot resolve: not stdlib, not a repository module, not a declared dependency.
 
-    Catches the most common model failure (guessing an import path) before a run is wasted on it.
+    Catches the most common model failures (guessing an import path, importing a name that does not exist at module
+    level) before a run is wasted on them. With ``read_source`` the imported *names* are verified too.
     """
     try:
         tree = ast.parse(content)
@@ -791,7 +897,8 @@ def check_python_imports(content: str, repo_files: list[str], dependency_text: s
     stdlib = getattr(__import__("sys"), "stdlib_module_names", frozenset())
     # The runner puts the workspace root and src/ (and lib/) on PYTHONPATH, so all three layouts resolve.
     py_files = [f for f in repo_files if f.endswith(".py")]
-    rooted = {f[len(root) :] for f in py_files for root in ("", "src/", "lib/") if f.startswith(root)}
+    import_roots = ("", "src/", "lib/", *(f"{r}/" for r in extra_import_roots(py_files)))
+    rooted = {f[len(root) :] for f in py_files for root in import_roots if f.startswith(root)}
     modules_in_repo = {PurePosixPath(f).with_suffix("").as_posix() for f in rooted}
     packages = {PurePosixPath(f).parent.as_posix() for f in rooted}
     dependencies = dependency_text.lower().replace("_", "-")
@@ -821,6 +928,17 @@ def check_python_imports(content: str, repo_files: list[str], dependency_text: s
                     or dotted in packages
                     or any(m.startswith(dotted + "/") for m in modules_in_repo)
                 ):
+                    if read_source and isinstance(node, ast.ImportFrom):
+                        for rel in (
+                            f"{dotted}.py",
+                            f"{dotted}/__init__.py",
+                            f"src/{dotted}.py",
+                            f"lib/{dotted}.py",
+                        ):
+                            source = read_source(rel)
+                            if source is not None:
+                                _check_imported_names(node, rel, source, modules_in_repo, path)
+                                break
                     continue
                 raise ValueError(
                     f"import '{name}' in {path or 'generated test'} does not match any repository path "

@@ -1,0 +1,43 @@
+{
+  "summary": {
+    "requirements_total": 2,
+    "requirements_covered": 1,
+    "validations_total": 2,
+    "validations_covered": 1,
+    "api_contracts_total": 1,
+    "api_contracts_covered": 1,
+    "traceable_items": 3
+  },
+  "coverage_report": {
+    "acceptance_criteria_coverage": {
+      "total": 2,
+      "covered": 1,
+      "percentage": 50.0
+    },
+    "validation_coverage": {
+      "total": 2,
+      "covered": 1,
+      "percentage": 50.0
+    },
+    "api_coverage": {
+      "total": 1,
+      "covered": 1,
+      "percentage": 100.0
+    }
+  },
+  "coverage_details": [
+    {"source_id": "REQ-001", "source_type": "requirement", "covered": true, "test_case_ids": ["TC-001"]},
+    {"source_id": "REQ-002", "source_type": "requirement", "covered": false, "test_case_ids": []},
+    {"source_id": "VAL-001", "source_type": "validation", "covered": true, "test_case_ids": ["TC-001"]},
+    {"source_id": "VAL-002", "source_type": "validation", "covered": false, "test_case_ids": []},
+    {"source_id": "API-001", "source_type": "api_contract", "covered": true, "test_case_ids": ["TC-001"]}
+  ],
+  "gaps_report": {
+    "uncovered_requirements": ["REQ-002"],
+    "uncovered_validations": ["VAL-002"],
+    "uncovered_api_contracts": [],
+    "orphaned_linkages": [{"test_case_id": "TC-003", "source_id": "REQ-404", "source_type": "requirement"}],
+    "unlinked_test_cases": ["TC-002"],
+    "notes": "Coverage inputs are complete, but REQ-002 and VAL-002 are uncovered. TC-003 has an orphaned linkage and TC-002 has no traceability links."
+  }
+}

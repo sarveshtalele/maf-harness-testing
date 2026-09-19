@@ -16,6 +16,7 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path, PurePosixPath
 
 from .execution import read_junit_cases, run_command
+from .skill_contracts import extra_import_roots
 from .stack import REQUIRED_TOOLS, StackProfile
 
 REPORT_DIR = ".harness-reports"
@@ -74,6 +75,19 @@ def python_test_helpers(files: list[dict]) -> list[str]:
         for pkg, patterns in PYTHON_TEST_HELPERS.items()
         if any(re.search(pattern, text, re.M) for pattern in patterns)
     ]
+
+
+def _python_import_roots(ws: Path) -> list[str]:
+    """Import roots for modules living in directories that are not valid package names (see skill_contracts)."""
+    found = []
+    for folder, dirs, names in os.walk(ws):
+        dirs[:] = [
+            d
+            for d in dirs
+            if d not in {".git", "node_modules", ".harness-venv", "__pycache__", "venv", ".venv"}
+        ]
+        found += [(Path(folder) / n).relative_to(ws).as_posix() for n in names if n.endswith(".py")]
+    return extra_import_roots(found)
 
 
 def _repo_has_pytest_config(ws: Path) -> bool:
@@ -284,7 +298,11 @@ def build_plan(
                     *_paths(files, (".py",)),
                 ],
                 "test",
-                env={"PYTHONPATH": f"{ws}:{ws / 'src'}"},
+                env={
+                    "PYTHONPATH": ":".join(
+                        [str(ws), str(ws / "src"), *(str(ws / r) for r in _python_import_roots(ws))]
+                    )
+                },
                 timeout=timeout,
                 parser="junit",
                 report_glob=f"{REPORT_DIR}/junit.xml",
@@ -752,7 +770,12 @@ def declared_test_name(path: str, content: str) -> str | None:
 
 
 def map_results_to_cases(cases: list[dict], files: list[dict]) -> list[dict]:
-    """Attach the approved case ID to each executed test (one file per case, one test per file)."""
+    """Attach the approved case ID to each executed test (one file per case, one test per file).
+
+    Matching order: declared test name, then the file stem in the report's class/module name. Collection and compile
+    errors are reported by the runners with the *dotted module path* as the name and no class, so the stem is also
+    matched against the name; otherwise those failures lose their case and their message.
+    """
     by_name: dict[str, str] = {}
     by_stem: dict[str, str] = {}
     for f in files:
@@ -763,8 +786,14 @@ def map_results_to_cases(cases: list[dict], files: list[dict]) -> list[dict]:
         by_stem[PurePosixPath(f["path"]).stem] = case_id
     mapped = []
     for case in cases:
+        label = case.get("classname") or ""
         case_id = by_name.get(case["name"]) or next(
-            (cid for stem, cid in by_stem.items() if stem and stem in (case.get("classname") or "")), None
+            (
+                cid
+                for stem, cid in by_stem.items()
+                if stem and (stem in label or case["name"] == stem or case["name"].endswith("." + stem))
+            ),
+            None,
         )
         mapped.append({**case, "case_id": case_id})
     return mapped

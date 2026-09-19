@@ -1,0 +1,133 @@
+openapi: 3.0.1
+info:
+  title: Advanced Payment API
+  version: 2.0.0
+servers:
+  - url: https://api.example.com/{version}
+    variables:
+      version:
+        default: v2
+        enum: [v1, v2]
+paths:
+  /payments/{paymentId}:
+    parameters:
+      - name: paymentId
+        in: path
+        required: true
+        schema:
+          type: string
+          pattern: '^pay_[a-z0-9]+$'
+    get:
+      summary: Retrieve a payment
+      operationId: getPayment
+      tags:
+        - payments
+        - read
+      security:
+        - OAuth2: [payments:read]
+      responses:
+        '200':
+          description: Payment found
+          headers:
+            X-Request-Id:
+              schema:
+                type: string
+              description: Unique request trace identifier
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Payment'
+              example:
+                id: pay_12345
+                amount: 99.99
+                currency: USD
+                status: completed
+        '404':
+          description: Payment not found
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+    delete:
+      summary: Cancel a payment
+      operationId: cancelPayment
+      deprecated: true
+      tags:
+        - payments
+      security:
+        - OAuth2: [payments:write]
+      responses:
+        '204':
+          description: Cancelled successfully
+  /accounts/{accountId}/balance:
+    parameters:
+      - name: accountId
+        in: path
+        required: true
+        schema:
+          type: integer
+          minimum: 1
+      - name: includePending
+        in: query
+        required: false
+        schema:
+          type: boolean
+          default: false
+    get:
+      summary: Get account balance
+      operationId: getAccountBalance
+      tags:
+        - accounts
+      responses:
+        '200':
+          description: Current balance
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Balance'
+                  - type: object
+                    properties:
+                      pendingAmount:
+                        type: number
+                        minimum: 0
+components:
+  securitySchemes:
+    OAuth2:
+      type: oauth2
+      flows:
+        clientCredentials:
+          tokenUrl: https://auth.example.com/oauth/token
+          scopes:
+            payments:read: Read payment details
+            payments:write: Create or cancel payments
+  schemas:
+    Payment:
+      type: object
+      required: [id, amount, currency, status]
+      properties:
+        id:
+          type: string
+          pattern: '^pay_[a-z0-9]+$'
+        amount:
+          type: number
+          minimum: 0.01
+          maximum: 999999.99
+        currency:
+          type: string
+          enum: [USD, EUR, GBP]
+        status:
+          type: string
+          enum: [pending, processing, completed, failed]
+    Balance:
+      type: object
+      required: [accountId, currentBalance]
+      properties:
+        accountId:
+          type: integer
+          minimum: 1
+        currentBalance:
+          type: number

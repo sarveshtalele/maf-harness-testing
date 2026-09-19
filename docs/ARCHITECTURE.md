@@ -49,12 +49,12 @@ Seven stages, each a MAF `Executor`; gates are MAF `request_info` events; state 
 | # | Stage | Actor | Consumes | Produces | Human gate | Code |
 |---|---|---|---|---|---|---|
 | 1 | `repo_analysis` | host | URL | clone, inventory, frameworks, stack profile, evidence | tool approval (clone) → review | `workflow.answer`, `repo_analyzer`, `stack` |
-| 2 | `requirements` | agent · `repository-requirements` | analysis, evidence | actors, requirements, acceptance criteria, rules, API contracts, **environment needs** + deterministic environment plan | review / revise | `workflow.model`, `skill_contracts.finalize_discovered_requirements` |
+| 2 | `requirements` | agent · `repository-requirements` (+ `api-contract-analyzer` when an OpenAPI/Swagger file exists) | analysis, evidence | actors, requirements, acceptance criteria, rules, API contracts, **environment needs** + deterministic environment plan | review / revise | `workflow.model`, `skill_contracts.finalize_discovered_requirements` |
 | 3 | `environment_setup` | host | requirements, stack | isolated environment with dependencies installed | **tool approval (install)** → review; can skip | `workflow.plan_environment/run_environment`, `environment`, `runners.setup_steps/execute_setup` |
 | 4 | `test_planning` | agent · `test-planning` | requirements | levels, frameworks, risks, order | review / revise | `workflow.model` |
-| 5 | `test_design` | agent · `test-design-generator` | requirements, plan | cases with level/actor/target, traceability, coverage | review / revise; **generation cannot start before approval** | `skill_contracts.finalize_design`, `workflow._require_coverage_or_reason` |
-| 6 | `test_generation` | agent · `generic-test-generator` | approved cases, evidence | one test file per case (validated) | review / revise | `workflow._generate_tests_batched`, `skill_contracts.validate_generated_files` |
-| 7 | `test_execution` | host | generated files, environment | results, QA report, files to update, ZIP | **tool approval (run)** → review; regenerate failing tests (≤3 rounds) or skip | `workflow.plan_execution/run_execution/heal`, `runners.execute_plan`, `qa_report`, `triage`, `packaging` |
+| 5 | `test_design` | agent · `test-design-generator` + `test-data-generator` | requirements, plan | cases with level/actor/target, traceability, coverage | review / revise; **generation cannot start before approval** | `skill_contracts.finalize_design`, `workflow._require_coverage_or_reason` |
+| 6 | `test_generation` | agent · `generic-test-generator` + `test-data-generator` (+ `junit-generator` for Java/Kotlin, + `playwright-test-generator` for ui/e2e cases) | approved cases, evidence | one test file per case (validated) | review / revise | `workflow._generate_tests_batched`, `skill_contracts.validate_generated_files` |
+| 7 | `test_execution` | host | generated files, environment | results, QA report, files to update, skill-contract reports (`traceability-generator`, `coverage-analyzer`), ZIP | **tool approval (run)** → review; regenerate failing tests (≤3 rounds) or skip | `workflow.plan_execution/run_execution/heal`, `runners.execute_plan`, `qa_report`, `triage`, `packaging` |
 
 `execute=False` removes stages 3 and 7 (generation-only workflow).
 
@@ -94,7 +94,8 @@ sequenceDiagram
 | Guarantee | Enforcement point |
 |---|---|
 | The assigned Agent Skill was loaded through MAF's `load_skill` | `maf_runtime.ToolTraceMiddleware` + `_verify_skill_loaded`; audited by `maf-harness verify-run` |
-| Skills follow the Agent Skills spec | `skills_registry.lint_skill` / `require_valid` before each stage |
+| Skills follow the Agent Skills spec and vendored upstream skills are unmodified | `skills_registry.lint_skill`, `verify_lock` against `skills/SKILLS.lock.json` (per-file SHA-256), both inside `require_valid` before each stage |
+| Skill scripts run only if reviewed and unchanged | `skill_scripts.HarnessScriptRunner` (allow-list + SHA-256 per run, argv-only, temp dir, sanitized env, timeout); MAF `run_skill_script` is auto-approved only for model-tier scripts (`script_approval_rule`) |
 | Only 2,000,000 tokens per workflow run; no per-call or call-count limits | `maf_runtime.BudgetGuard`, `settings.RUN_TOKEN_LIMIT` |
 | Design cases exist at unit level, per actor, and per requirement (or the gap is explained) | `workflow._require_coverage_or_reason` (repair loop, last attempt reaches the human with the gap recorded) |
 | Test source only after the design is approved | graph edge `test_design → test_generation` only fires on approve; `state.approved` hash checked; `tests/test_policies.py` |
@@ -136,7 +137,10 @@ sequenceDiagram
 | `runners.py` | Per-ecosystem adapters and execution | `setup_steps`, `build_plan`, `execute_setup`, `execute_plan` (fresh evidence only, compile-error quarantine), result parsers (JUnit/Jest/Go/TRX), `map_results_to_cases`, allow-listed pytest helpers | Python, Node (jest/vitest/Playwright), Maven, Gradle, Go, .NET |
 | `execution.py` | Safe process execution + workspace | `run_command` (argv only, process-group timeout, sanitized env, immutable result dir), `copy_repo`, `write_generated`, JUnit reader | Local process — **not a sandbox** |
 | `skill_contracts.py` | Deterministic adapters around skill contracts | ID assignment, `finalize_discovered_requirements`, `finalize_design` (traceability matrix, coverage, gaps, schema check), `validate_generated_files`, syntax/import gates | The "trust boundary" between model text and accepted artifacts |
-| `skills_registry.py` | Agent Skills spec lint | `lint_skill`, `lint_all`, `require_valid`, `tree_sha256` | Package hash goes into provenance |
+| `skills_registry.py` | Agent Skills spec lint + supply-chain lock | `lint_skill`, `lint_all`, `load_lock`, `verify_lock`, `reviewed_scripts`, `require_valid`, `tree_sha256` | Package hash goes into provenance; tampering with a vendored skill is refused |
+| `skills_config.py` | Which skills each stage loads | `SKILL_NAMES`, `COMPANION_PURPOSE`, `skills_for(stage, state)` → primary + companions | Deterministic over the stack profile and the approved design |
+| `skill_scripts.py` | Reviewed-script execution | `HarnessScriptRunner` (MAF `SkillScriptRunner` + host executor), `script_approval_rule`, `ScriptRefused` | Two tiers: model-callable and host-only |
+| `skill_reports.py` | Skill-contract QA reports | `build_traceability`, `build_coverage`, `run_skill_checks` | Validated by the upstream `validate_traceability.py` and `coverage_templates.yaml` |
 | `maf_runtime.py` | MAF integration | `MAFHarnessRuntime` (per-stage `create_harness_agent`, `SkillsProvider`, priming, verification), `ToolTraceMiddleware`, `BudgetGuard`, `extract_json_object` | See §7 |
 | `runtime_service.py` | One asyncio loop thread | `RuntimeService.submit/close` | Keeps MAF clients on one loop for the Streamlit UI |
 | `workflow.py` | Checkpointed workflow | `Harness` (stages, gates, repair loops, heal loop, environment/execution stages), `StageExecutor`, batching and caching of generation | Central orchestration |
@@ -152,20 +156,42 @@ sequenceDiagram
 |---|---|
 | `app.py` | Streamlit UI: start form (URL, optional app URL), review/tool gates, QA tab with files to update, generated tests, audit/provenance, ZIP download, 2M token meter |
 | `scripts/json_to_markdown.py` | Convert any saved JSON artifact to Markdown with the same formatter as the UI |
+| `scripts/vendor_skills.py` | Vendor selected skills from the upstream repository: copy, audit (upstream `evaluator-skill`, offline), hash, write `skills/SKILLS.lock.json` incl. the reviewed-script allow-list |
 | `pyproject.toml` | Package metadata, pinned MAF versions, `maf-harness` script, ruff lint/format and pytest config |
 | `uv.lock` | Locked dependency set |
 | `.env.example` | Documented environment variables (no secrets) |
 | `.gitignore` | Excludes venvs, runs, caches, target checkouts, local tool state |
 | `.github/workflows/ci.yml` | Lint + format check, skills lint, tests, UI browser tests, secrets scan |
 
-### 6.3 Agent Skills `skills/` (only the four the workflow assigns)
+### 6.3 Agent Skills `skills/`
 
-| Skill | Stage | What it contributes |
-|---|---|---|
-| `repository-requirements/SKILL.md` | requirements | Rules for evidence-based requirements, actors, criteria, environment needs |
-| `test-planning/SKILL.md` | test_planning | Risk-based plan by level/framework |
-| `test-design-generator/` | test_design | Vendored upstream skill: `SKILL.md`, authoritative schema `assets/testcase_templates.yaml` (loaded by `skill_contracts.design_schema`), references/examples readable through `read_skill_resource`; `scripts/validate_design.py`, `marketplace.yaml`, `skill-card.json`, `UPSTREAM.*` are upstream package files (scripts are never executed by the harness; the hash in `UPSTREAM.sha256` records provenance) |
-| `generic-test-generator/SKILL.md` | test_generation | One-case-per-file generation rules, `lines[]` output, `BASE_URL` for UI tests |
+Selection is by what the harness requires, from [github.com/shivswami/awesome-agent-skills](https://github.com/shivswami/awesome-agent-skills)
+(branch `update-skills`, pinned in `skills/SKILLS.lock.json`). Each vendored skill was audited with the upstream `evaluator-skill`
+(NVIDIA SkillSpector rules, offline): all six have **0 security findings** (scores 94.5-95.5).
+
+| Skill | Origin | Loaded by | Purpose in the harness | Scripts |
+|---|---|---|---|---|
+| `repository-requirements` | local | requirements (primary) | evidence-based requirements, actors, criteria, environment needs | — |
+| `test-planning` | local | test_planning (primary) | risk-based plan by level/framework | — |
+| `test-design-generator` | upstream (earlier import, locally adapted `SKILL.md`; schema `assets/testcase_templates.yaml` is authoritative) | test_design (primary) | cases with traceability, coverage, gaps | `validate_design.py` (not run) |
+| `generic-test-generator` | local | test_generation (primary) | one-file-per-case polyglot generation rules | — |
+| `api-contract-analyzer` | upstream | requirements when an OpenAPI/Swagger file exists | normalized HTTP contracts | `validate_contract.py` (host tier, reviewed) |
+| `test-data-generator` | upstream | test_design + test_generation | deterministic seeds, IDs, fixtures | `deterministic_helpers.py` (**model tier**: callable by the agent), `validate_fixtures.py` (host tier) |
+| `junit-generator` | upstream | test_generation for Java/Kotlin repos | JUnit conventions | `generate_junit.js` reviewed, **not enabled** (writes files; output contains placeholders) |
+| `playwright-test-generator` | upstream | test_generation when ui/e2e cases exist | resilient browser tests | `mcp.json` (not a script) |
+| `traceability-generator` | upstream | QA (host) | requirement → test → artifact matrix contract | `validate_traceability.py` (host tier, run on every QA report) |
+| `coverage-analyzer` | upstream | QA (host) | coverage/gap contract (`assets/coverage_templates.yaml`, validated with jsonschema) | `run-coverage.js` reviewed, **not enabled** (`execSync` of npx) |
+
+Not selected from the upstream repository, with reasons: `requirement-analysis` (plans feature changes, not test requirements),
+`reverse-engineering-skill` (it is one of the qualification targets), `gherkin-generator` (no BDD requirement), `change-impact-analysis`
+(deployment risk), `playwright-test-executor` (needs Playwright traces/MCP), `jira-/confluence-story-converter` (no Jira/Confluence input),
+`vulnerability-checks-bundle` (needs Snyk/SonarQube/Wiz accounts), `skill-creator/-auditor/-gap-analyzer/-evaluator` (meta tools; the
+`evaluator-skill` is used only by `scripts/vendor_skills.py` as the pre-adoption audit).
+
+**Script policy.** MAF treats skill scripts as third-party code. A script may run only if it is in `SKILLS.lock.json` → `reviewed_scripts`
+(reviewed by reading it) and its bytes still match the recorded SHA-256. *Model tier* scripts are pure functions of their arguments and may be
+called by an agent through MAF `run_skill_script` (auto-approved by `script_approval_rule`); *host tier* scripts are run only by the harness on
+its own artifacts. Everything else is refused, and every run is recorded in `state.skill_script_runs`.
 
 ### 6.4 Tests `tests/`
 
@@ -196,14 +222,15 @@ sequenceDiagram
 | `docs/audit/*-e2e.xml`, `screenshots/` | Test evidence for defects found in the target applications |
 | `patches/*.patch` | Upstream fixes for those target defects |
 
-## 7. MAF integration in detail (`maf_runtime.py`)
+## 7. MAF integration in detail (`maf_runtime.py`, `skills_config.py`, `skill_scripts.py`)
 
-* **One harness agent per stage**: `create_harness_agent(client=…, skills_provider=…, auto_approval_rules=[read-only rule], middleware=[BudgetGuard, ToolTraceMiddleware])`. Web search, todos, modes, file memory and compaction are disabled; the agent has no tools except the skill tools.
-* **Skill provider**: `SkillsProvider(DeduplicatingSkillsSource(FilteringSkillsSource(FileSkillsSource(skills_dir, script_filter=lambda *_: False))))` filtered to exactly the assigned skill. `run_skill_script` exists in MAF 1.18 regardless; it needs approval, is never auto-approved, and any request is rejected.
-* **Priming**: a tool-only turn ("call `load_skill('<name>')`, then reply READY") runs first (up to 3 attempts) because some gateways skip tool calls when structured output is requested in the same turn. The primed session snapshot is copied for every later call of that stage.
-* **Verification**: `ToolTraceMiddleware` records each real tool invocation; output is rejected unless `load_skill(<assigned>)` succeeded. Provenance (`skill_provenance`, `skill_tool_trace`, `runtime_provenance`, per-call hashes) is stored in `run.json`.
+* **One harness agent per stage and skill set**: `create_harness_agent(client=…, skills_provider=…, auto_approval_rules=[read-only rule, script rule], middleware=[BudgetGuard, ToolTraceMiddleware])`. Web search, todos, modes, file memory and compaction are disabled; the only tools are the skill tools.
+* **Skill selection**: `skills_for(stage, state)` returns the primary skill plus companions chosen from the stack profile (OpenAPI file present) and the approved design (Java/Kotlin, ui/e2e levels). The instructions name the primary skill as the task contract and state what each companion is for.
+* **Skill provider**: `SkillsProvider(DeduplicatingSkillsSource(FilteringSkillsSource(FileSkillsSource(skills_dir, script_runner=HarnessScriptRunner, script_filter=model-tier allow-list))))`, filtered to exactly the assigned skills.
+* **Priming**: a tool-only turn ("call `load_skill` once for each of …, then reply READY", up to 5 attempts) runs first because some gateways skip tool calls when structured output is requested in the same turn. The primed session snapshot is copied for every later call of that stage.
+* **Verification**: `ToolTraceMiddleware` records each real tool invocation; output is rejected unless `load_skill` succeeded for **every** assigned skill. Provenance (`skill_provenance` with companions, `skill_tool_trace`, `runtime_provenance`, `skill_script_runs`, per-call hashes) is stored in `run.json`; `maf-harness verify-run` re-checks it and the lock.
 * **Budget**: `BudgetGuard` reserves estimate + max output before each call and reconciles with reported usage; the only refusal is exceeding 2,000,000 tokens for the run.
-* **Fallback**: `HARNESS_SKILL_MODE=preloaded` injects the skill text into instructions and is recorded as `uses_maf_skills_provider: false`.
+* **Fallback**: `HARNESS_SKILL_MODE=preloaded` injects all assigned skill texts into instructions and is recorded as `uses_maf_skills_provider: false`.
 
 ## 8. Extending
 
@@ -211,7 +238,7 @@ sequenceDiagram
 |---|---|
 | An ecosystem | `stack.detect_stack` (signals) → `stack.REQUIRED_TOOLS` → `environment.TOOLS/ISOLATION` → `runners.setup_steps` and `build_plan` (+ a result parser) → tests in `test_stack_and_runners.py` |
 | A stage | add an `Executor` name to `workflow.STAGES`, a persona, and either a model stage (schema in `models.py`, skill in `skills/`, entry in `SKILL_NAMES`) or a host stage (`enter` branch) |
-| A skill | directory with `SKILL.md` (name = directory), map it in `skill_contracts.SKILL_NAMES`; `maf-harness lint-skills` must pass |
+| A skill | add it to `SELECTED` in `scripts/vendor_skills.py` (upstream) or create `skills/<name>/SKILL.md` (local), reference it in `skills_config.skills_for`, review any script and list it in `REVIEWED_SCRIPTS`; `maf-harness lint-skills` must pass |
 | A sandbox | replace `execution.run_command` behind the same signature (container/VM); everything above it is unchanged |
 
 ## 9. Configuration reference

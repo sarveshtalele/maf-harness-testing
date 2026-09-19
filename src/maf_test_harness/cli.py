@@ -19,8 +19,8 @@ from pathlib import Path
 
 from .maf_runtime import MAFHarnessRuntime
 from .settings import API_KEY, BASE_URL, MODEL, SKILL_MODE, validate_gateway_settings
-from .skill_contracts import SKILL_NAMES
-from .skills_registry import lint_all, tree_sha256
+from .skills_config import SKILL_NAMES
+from .skills_registry import lint_all, load_lock, tree_sha256, verify_lock
 from .workflow import ENV_STAGE, EXECUTION_STAGE, Harness
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -131,7 +131,7 @@ def verify_run(run_dir: Path, skills_root: Path) -> int:
             bool(runtime.get("agent_framework_core") and runtime.get("agent_framework_openai")),
         ),
     ]
-    for stage, skill in SKILL_NAMES.items():
+    for stage in SKILL_NAMES:
         prov, trace = (
             state.get("skill_provenance", {}).get(stage),
             state.get("skill_tool_trace", {}).get(stage),
@@ -139,20 +139,33 @@ def verify_run(run_dir: Path, skills_root: Path) -> int:
         if not prov:
             rows.append((f"{stage}: stage ran", False))
             continue
+        assigned = [prov["name"], *(c["name"] for c in prov.get("companions", []))]
         rows += [
             (
-                f"{stage}: skill '{skill}' advertised by MAF SkillsProvider",
+                f"{stage}: skills {assigned} advertised by MAF SkillsProvider",
                 bool(prov.get("uses_maf_skills_provider")),
             ),
             (
-                f"{stage}: load_skill('{skill}') executed and succeeded (FunctionMiddleware trace)",
-                bool(trace and trace.get("skill_loaded_via_maf")),
+                f"{stage}: load_skill executed and succeeded for every assigned skill (FunctionMiddleware trace)",
+                bool(
+                    trace
+                    and trace.get("skill_loaded_via_maf")
+                    and set(trace.get("loaded_skills", [])) >= set(assigned)
+                ),
             ),
             (
-                f"{stage}: skill package unchanged since the run",
-                prov.get("package_sha256") == tree_sha256(skills_root / skill),
+                f"{stage}: skill packages unchanged since the run",
+                all(
+                    entry["package_sha256"] == tree_sha256(skills_root / entry["name"])
+                    for entry in [prov, *prov.get("companions", [])]
+                ),
             ),
         ]
+    rows.append(("vendored upstream skills match SKILLS.lock.json", not verify_lock(skills_root)))
+    for run in state.get("skill_script_runs", []):
+        rows.append(
+            (f"script {run['skill']}/{run['script']} ran from the reviewed allow-list", run["exit_code"] == 0)
+        )
     for label, ok in rows:
         _say(f"{'PASS' if ok else 'FAIL'}  {label}")
     invocations = state.get("invocations", [])
@@ -211,7 +224,15 @@ def main(argv: list[str] | None = None) -> int:
         reports = lint_all(args.skills_dir)
         for r in reports:
             _say(f"{'OK  ' if r.ok else 'FAIL'} {r.name}  {'; '.join(r.errors + r.warnings)}")
-        return 0 if all(r.ok for r in reports) else 1
+        lock = load_lock(args.skills_dir)
+        problems = verify_lock(args.skills_dir)
+        _say(
+            f"{'OK  ' if not problems else 'FAIL'} SKILLS.lock.json  upstream {lock.get('upstream', {}).get('commit', 'n/a')[:12]}"
+            f" · {len(lock.get('skills', {}))} vendored skills · {len(lock.get('reviewed_scripts', {}))} skills with reviewed scripts"
+        )
+        for problem in problems:
+            _say(f"FAIL {problem}")
+        return 0 if all(r.ok for r in reports) and not problems else 1
     try:
         return asyncio.run(run(args))
     except (Exception, KeyboardInterrupt) as exc:

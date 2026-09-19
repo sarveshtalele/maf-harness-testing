@@ -1,0 +1,27 @@
+# Deterministic extraction configuration for api-contract-analyzer
+
+extraction:
+  # Flatten allOf only when all component schemas are resolvable and non-conflicting
+  flatten_allOf: true
+
+  # Maximum depth to drill into nested object schemas for field_constraints
+  max_field_depth: 5
+
+  # Retain composition keywords (allOf, anyOf, oneOf) when set to true
+  preserve_composition: true
+
+  # Normalize nullable representations across OpenAPI 3.0 and 3.1
+  normalize_nullable: true
+
+  # Version priority when auto-detecting OpenAPI vs Swagger
+  version_priority: [openapi3.1, openapi3.0, swagger2.0]
+
+output:
+  # Alphabetical sorting for media types in content_types / response_content_types
+  sort_content_types: true
+
+  # Include empty arrays/objects when no data exists (vs omitting the key)
+  include_empty: true
+
+  # Default behavior for missing response schemas: record in gaps_report.missing_schemas
+  record_missing_schemas: true

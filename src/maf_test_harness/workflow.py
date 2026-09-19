@@ -32,6 +32,7 @@ from .repo_analyzer import (
     analyze_repository,
     build_repository_evidence,
     clone_repository,
+    extract_target_sources,
     validate_github_url,
 )
 from .runners import RunPlan, Step, build_plan, execute_plan, execute_setup
@@ -42,16 +43,19 @@ from .settings import (
     RUN_TOKEN_LIMIT,
 )
 from .skill_contracts import (
-    SKILL_NAMES,
     check_java_imports,
     check_python_imports,
     ensure_generated_case_markers,
     expand_generated_lines,
+    extra_import_roots,
     finalize_design,
     finalize_discovered_requirements,
     validate_generated_files,
 )
+from .skill_reports import run_skill_checks
+from .skills_config import skills_for
 from .stack import detect_stack
+from .triage import remedy_for
 
 CORE_STAGES = ["repo_analysis", "requirements", "test_planning", "test_design", "test_generation"]
 ENV_STAGE = "environment_setup"
@@ -82,6 +86,46 @@ def atomic_json(path: Path, data: dict):
     temp.write_text(json.dumps(data, indent=2, default=str), encoding="utf-8")
     os.chmod(temp, 0o600)
     temp.replace(path)
+
+
+def _compact_repo(analysis: dict[str, Any], preferred: list[str]) -> dict[str, Any]:
+    """Repository facts a generation call needs; the full inventory is not resent on every call."""
+    sources = analysis.get("source_files", [])
+    wanted = set(preferred)
+    ordered = [f for f in sources if f in wanted] + [f for f in sources if f not in wanted]
+    keys = (
+        "repo_name",
+        "commit_sha",
+        "languages",
+        "frameworks",
+        "test_frameworks",
+        "likely_test_directories",
+        "has_tests",
+    )
+    return {
+        **{k: analysis.get(k) for k in keys},
+        "package_files": (analysis.get("package_files") or [])[:30],
+        "source_files": ordered[:120],
+        "source_files_total": len(sources),
+        "existing_test_files": (analysis.get("test_files") or [])[:30],
+    }
+
+
+def _requirements_for(requirements: dict[str, Any], linked_ids: set[str]) -> dict[str, Any]:
+    """Only the requirements, criteria, rules and contracts the batch's cases trace to (plus the actors)."""
+    compact = _compact_requirements(requirements)
+    if not linked_ids:
+        return compact
+    reqs = {r["id"] for r in compact["requirements"] if r["id"] in linked_ids}
+    compact["requirements"] = [r for r in compact["requirements"] if r["id"] in reqs]
+    for key in ("acceptance_criteria", "validation_rules"):
+        compact[key] = [c for c in compact[key] if c["id"] in linked_ids or c.get("requirement_id") in reqs]
+    compact["api_contracts"] = [c for c in compact["api_contracts"] if c["id"] in linked_ids]
+    return compact
+
+
+def _plan_summary(plan: dict[str, Any]) -> dict[str, Any]:
+    return {k: plan.get(k) for k in ("objective", "recommended_frameworks", "setup_actions") if k in plan}
 
 
 def _allowed_levels(state: dict[str, Any]) -> set[str]:
@@ -141,6 +185,7 @@ def _generation_policy(repo: dict[str, Any], state: dict[str, Any] | None = None
         "existing_test_files": (repo.get("test_files") or [])[:30],
         "likely_test_directories": repo.get("likely_test_directories", []),
         "package_files": (repo.get("package_files") or [])[:30],
+        "python_import_roots": extra_import_roots(repo.get("source_files") or []),
         "stack": {
             k: stack.get(k) for k in ("primary", "test_runner", "web_ui", "http_service") if k in stack
         },
@@ -586,12 +631,24 @@ class Harness:
             },
         )
         execution = dict(report or {"status": "not_run"})
+        skill_reports = run_skill_checks(
+            self.skills_root, arts["requirements"], arts["test_design"], arts["test_generation"]
+        )
+        qa["skill_checks"] = skill_reports["checks"]
         environment = state.get("environment", {})
         qa["environment"] = {
             "status": environment.get("status", "not_planned"),
             "ecosystem": environment.get("plan", {}).get("ecosystem"),
         }
-        return {"qa_report": qa, "execution": execution, "markdown": render_markdown(qa)}
+        return {
+            "qa_report": qa,
+            "execution": execution,
+            "markdown": render_markdown(qa),
+            "skill_reports": {
+                "traceability": skill_reports["traceability"],
+                "coverage": skill_reports["coverage"],
+            },
+        }
 
     @property
     def workspace(self) -> Path:
@@ -770,7 +827,9 @@ class Harness:
             raise ValueError("No failing or unexecuted tests to regenerate; approve or stop instead.")
         state["heal_rounds"] = rounds + 1
         evidence = "\n".join(
-            f"- {c['id']} ({c['title']}): {c['status']} {c['message'][:500]}" for c in failed
+            f"- {c['id']} ({c['title']}): {c['status']} {c['message'][:500]}"
+            + (f"\n  REMEDY: {remedy_for(c['message'])}" if remedy_for(c["message"]) else "")
+            for c in failed
         )
         state.setdefault("feedback", {})["test_generation"] = (
             (feedback + "\n" if feedback else "")
@@ -779,11 +838,6 @@ class Harness:
         )
         failed_ids = {c["id"] for c in failed}
         state["heal"] = {"failed_case_ids": sorted(failed_ids), "round": state["heal_rounds"]}
-        batches = state.get("accepted_generation_batches", {}).get("batches", {})
-        for key in [
-            k for k, b in batches.items() if failed_ids & {i for f in b["files"] for i in f["case_ids"]}
-        ]:
-            batches.pop(key)
         for stage in ("test_generation", EXECUTION_STAGE):
             state["artifacts"].pop(stage, None)
             state.get("approved", {}).pop(stage, None)
@@ -854,9 +908,11 @@ class Harness:
                 },
                 separators=(",", ":"),
             )
+            skillset = skills_for(stage, state)
             result = await self.runtime.run_stage(
                 stage=stage,
-                skill_name=SKILL_NAMES[stage],
+                skill_name=skillset.primary,
+                companions=skillset.companions,
                 persona=persona_instructions(stage),
                 prompt=prompt,
                 state=state,
@@ -903,7 +959,10 @@ class Harness:
                 "plan": state["artifacts"].get("test_planning"),
                 "evidence": state.get("evidence"),
                 "batch_size": TEST_GENERATION_BATCH_SIZE,
-                "skill": (self.skills_root / SKILL_NAMES["test_generation"] / "SKILL.md").read_text(),
+                "skills": {
+                    name: (self.skills_root / name / "SKILL.md").read_text()
+                    for name in skills_for("test_generation", state).all
+                },
             }
         )
         cache = state.setdefault("accepted_generation_batches", {})
@@ -911,6 +970,7 @@ class Harness:
             cache.clear()
             cache.update(signature=signature, batches={})
         policy = _generation_policy(state["artifacts"]["repo_analysis"], state)
+        failed_ids = {str(i) for i in (state.get("heal") or {}).get("failed_case_ids", [])}
         schema = GeneratedFilesDraft.model_json_schema()
         accepted_files: list[dict[str, Any]] = []
         accepted_paths: set[str] = set()
@@ -937,10 +997,20 @@ class Harness:
             )
             repair_feedback = ""
             accepted = cache["batches"].get(str(batch_index))
+            work, kept_files = batch, []
             if accepted is not None:
-                cached_validation = validate_generated_files(accepted, batch_ids)
-                if cached_validation["uncovered_case_ids"]:
+                cached_ids = {i for f in accepted["files"] for i in f["case_ids"]}
+                regenerate = batch_ids & failed_ids
+                if not cached_ids >= batch_ids:
                     accepted = None
+                elif regenerate:
+                    # Heal: only the failing cases go back to the model; passing files are kept byte for byte.
+                    kept_files = [f for f in accepted["files"] if not set(f["case_ids"]) & regenerate]
+                    work = [c for c in batch if str(c["id"]) in regenerate]
+                    accepted = None
+                elif validate_generated_files(accepted, batch_ids)["uncovered_case_ids"]:
+                    accepted = None
+            work_ids = {str(case["id"]) for case in work}
             for attempt in range(1, 1 if accepted is not None else TEST_GENERATION_MAX_ATTEMPTS + 1):
                 prompt = json.dumps(
                     {
@@ -950,11 +1020,11 @@ class Harness:
                             "array containing the corresponding supplied ID. The host adds canonical CASE_ID source markers. "
                             "Use only necessary imports. Never emit placeholders, install dependencies, or execute tests."
                         ),
-                        "repository": state["artifacts"]["repo_analysis"],
+                        "repository": _compact_repo(state["artifacts"]["repo_analysis"], preferred),
                         "approved_inputs": {
-                            "approved_cases": batch,
-                            "requirements": _compact_requirements(requirements),
-                            "test_plan": state["artifacts"].get("test_planning", {}),
+                            "approved_cases": work,
+                            "requirements": _requirements_for(requirements, linked_ids),
+                            "test_plan": _plan_summary(state["artifacts"].get("test_planning", {})),
                             "generation_policy": policy,
                             "batch": {
                                 "index": batch_index,
@@ -965,6 +1035,11 @@ class Harness:
                                 ),
                             },
                         },
+                        "target_source": extract_target_sources(
+                            self.run_dir / "repo",
+                            [str(case.get("target") or "") for case in work],
+                            state["artifacts"]["repo_analysis"].get("source_files", []),
+                        ),
                         "repository_evidence": evidence or state.get("evidence", ""),
                         "revision_feedback": state.get("feedback", {}).get("test_generation"),
                         "repair_feedback": repair_feedback or None,
@@ -980,9 +1055,11 @@ class Harness:
                     separators=(",", ":"),
                 )
                 try:
+                    generation_skills = skills_for("test_generation", state)
                     result = await self.runtime.run_stage(
                         stage="test_generation",
-                        skill_name=SKILL_NAMES["test_generation"],
+                        skill_name=generation_skills.primary,
+                        companions=generation_skills.companions,
                         persona=persona_instructions("test_generation"),
                         prompt=prompt,
                         state=state,
@@ -1007,7 +1084,7 @@ class Harness:
                     )
                     candidate = ensure_generated_case_markers(candidate)
                     raw_batches.append(json.dumps(candidate, separators=(",", ":"), default=str))
-                    validation = validate_generated_files(candidate, batch_ids)
+                    validation = validate_generated_files(candidate, work_ids)
                     self._check_imports(candidate, state)
                     self._check_paths_are_new(candidate)
                     if validation["uncovered_case_ids"]:
@@ -1015,14 +1092,16 @@ class Harness:
                             "Generated batch does not implement all approved case IDs: "
                             + ", ".join(validation["uncovered_case_ids"])
                         )
-                    collisions = accepted_paths & {item["path"] for item in candidate["files"]}
+                    collisions = (accepted_paths | {f["path"] for f in kept_files}) & {
+                        item["path"] for item in candidate["files"]
+                    }
                     if collisions:
                         raise ValueError(
                             "Generated batch reuses paths from an earlier batch: "
                             + ", ".join(sorted(collisions))
                         )
-                    accepted = candidate
-                    cache["batches"][str(batch_index)] = candidate
+                    accepted = {**candidate, "files": kept_files + candidate["files"]}
+                    cache["batches"][str(batch_index)] = accepted
                     self.save()
                     break
                 except Exception as exc:
@@ -1085,6 +1164,7 @@ class Harness:
                 "Generated files do not implement all approved case IDs: "
                 + ", ".join(validation["uncovered_case_ids"])
             )
+        state.pop("heal", None)  # a heal round is finished once every failing case has been regenerated
         state.setdefault("generation_batches", {})["test_generation"] = {
             "batch_size": TEST_GENERATION_BATCH_SIZE,
             "batch_count": total_batches,
@@ -1146,6 +1226,10 @@ class Harness:
             return
         raise ValueError(" ".join(problems))
 
+    def _read_repo_file(self, rel: str) -> str | None:
+        target = self.run_dir / "repo" / rel
+        return target.read_text(encoding="utf-8", errors="replace") if target.is_file() else None
+
     def _check_paths_are_new(self, candidate: dict) -> None:
         """Generated tests must be new files: existing repository files (including existing tests) are never replaced."""
         clash = [i["path"] for i in candidate["files"] if (self.run_dir / "repo" / i["path"]).exists()]
@@ -1167,7 +1251,13 @@ class Harness:
         all_files = [*repo_files, *analysis.get("test_files", [])]
         for item in candidate["files"]:
             if item["path"].endswith(".py") and repo_files:
-                check_python_imports(item["content"], repo_files, dependency_text, item["path"])
+                check_python_imports(
+                    item["content"],
+                    repo_files,
+                    dependency_text,
+                    item["path"],
+                    read_source=self._read_repo_file,
+                )
             elif item["path"].endswith((".java", ".kt")) and dependency_text:
                 check_java_imports(item["content"], all_files, dependency_text, item["path"])
 

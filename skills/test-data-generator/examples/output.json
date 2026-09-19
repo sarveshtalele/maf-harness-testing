@@ -1,0 +1,85 @@
+{
+  "positive_fixtures": [
+    {
+      "test_case_id": "TC-001",
+      "payload": {
+        "amount": 100.00,
+        "currency": "USD"
+      },
+      "description": "Valid payment payload for creating a payment.",
+      "traceability_links": [
+        {"source_id": "REQ-001", "type": "requirement"}
+      ]
+    }
+  ],
+  "negative_fixtures": [
+    {
+      "test_case_id": "TC-001-NEG-01",
+      "payload": {
+        "amount": -1,
+        "currency": "USD"
+      },
+      "invalid_reason": "Amount must be a positive number.",
+      "traceability_links": [
+        {"source_id": "REQ-001", "type": "requirement", "label": "amount-positive"}
+      ]
+    }
+  ],
+  "boundary_fixtures": [
+    {
+      "test_case_id": "TC-001-BND-01",
+      "payload": {
+        "amount": 0.01,
+        "currency": "USD"
+      },
+      "boundary_condition": "Minimum allowed amount boundary value (just above zero).",
+      "traceability_links": [
+        {"source_id": "REQ-001", "type": "requirement", "label": "amount-boundary"}
+      ]
+    }
+  ],
+  "api_payload_examples": {
+    "requests": [
+      {
+        "endpoint": "/payments",
+        "method": "post",
+        "payload": {
+          "amount": 100.00,
+          "currency": "USD"
+        },
+        "headers": {
+          "Content-Type": "application/json"
+        }
+      }
+    ],
+    "responses": [
+      {
+        "endpoint": "/payments",
+        "method": "post",
+        "payload": {
+          "id": "pay_abc42",
+          "status": "created"
+        },
+        "status_code": 201
+      }
+    ]
+  },
+  "summary_metadata": {
+    "fixture_count": 3,
+    "positive_count": 1,
+    "negative_count": 1,
+    "boundary_count": 1,
+    "api_payload_count": 1,
+    "coverage_percentage": 100,
+    "uncovered_constraints": [],
+    "notes": "Fixtures derived from REQ-001. Traceability links use source_id+type pattern per fixture_templates.yaml."
+  },
+  "gaps_report": {
+    "coverage_percentage": 100,
+    "missing_constraints": [],
+    "uncovered_requirements": [],
+    "incomplete_schemas": [],
+    "suggested_actions": [],
+    "notes": "All constraints covered for the given input."
+  }
+}

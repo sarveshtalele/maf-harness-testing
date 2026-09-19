@@ -80,6 +80,9 @@ def build_deliverable(run_dir: Path, state: dict, executions_dir: Path | None = 
                 archive.writestr(
                     f"{REPORT_DIR}/execution.json", json.dumps(artifact["execution"], indent=2, default=str)
                 )
+                for name, report in artifact.get("skill_reports", {}).items():
+                    file = "coverage-summary" if name == "coverage" else "traceability-matrix"
+                    archive.writestr(f"{REPORT_DIR}/{file}.json", json.dumps(report, indent=2, default=str))
             else:
                 archive.writestr(f"{REPORT_DIR}/{stage}.json", json.dumps(artifact, indent=2, default=str))
         if state.get("environment"):

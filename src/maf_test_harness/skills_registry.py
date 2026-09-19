@@ -9,6 +9,7 @@ letters/digits/single hyphens; ``description`` is 1-1024 chars; ``compatibility`
 from __future__ import annotations
 
 import hashlib
+import json
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -97,9 +98,61 @@ def lint_all(skills_root: Path) -> list[SkillReport]:
     ]
 
 
+LOCK_FILE = "SKILLS.lock.json"
+
+
+def load_lock(skills_root: Path) -> dict:
+    """Upstream provenance: repository URL/commit, per-file hashes, audit results, reviewed-script allow-list."""
+    path = Path(skills_root) / LOCK_FILE
+    return (
+        json.loads(path.read_text(encoding="utf-8"))
+        if path.is_file()
+        else {"skills": {}, "reviewed_scripts": {}}
+    )
+
+
+def verify_lock(skills_root: Path, names: list[str] | None = None) -> list[str]:
+    """Problems for upstream skills whose files differ from the lock (edited, added, removed)."""
+    root = Path(skills_root)
+    problems = []
+    for name, entry in load_lock(root).get("skills", {}).items():
+        if names is not None and name not in names:
+            continue
+        directory = root / name
+        current = {
+            p.relative_to(directory).as_posix(): hashlib.sha256(p.read_bytes()).hexdigest()
+            for p in sorted(directory.rglob("*"))
+            if p.is_file() and "__pycache__" not in p.parts
+        }
+        for rel in sorted(set(entry["files"]) | set(current)):
+            if entry["files"].get(rel) != current.get(rel):
+                kind = (
+                    "missing"
+                    if rel not in current
+                    else "unexpected file"
+                    if rel not in entry["files"]
+                    else "modified"
+                )
+                problems.append(f"{name}/{rel}: {kind} (differs from {LOCK_FILE})")
+    return problems
+
+
+def reviewed_scripts(skills_root: Path, tier: str | None = None) -> dict[tuple[str, str], str]:
+    """{(skill, relative script path): sha256} for scripts that were reviewed and may be executed."""
+    return {
+        (skill, rel): info["sha256"]
+        for skill, scripts in load_lock(Path(skills_root)).get("reviewed_scripts", {}).items()
+        for rel, info in scripts.items()
+        if tier is None or info["tier"] == tier
+    }
+
+
 def require_valid(skills_root: Path, names: list[str]) -> dict[str, str]:
-    """Fail fast if an assigned skill is missing or invalid; return {name: package sha256}."""
+    """Fail fast if an assigned skill is missing, invalid or (for upstream skills) modified; return package hashes."""
     reports = {r.name: r for r in lint_all(skills_root)}
+    tampered = verify_lock(skills_root, names)
+    if tampered:
+        raise ValueError("Vendored Agent Skill modified after review: " + "; ".join(tampered[:5]))
     hashes: dict[str, str] = {}
     for name in names:
         report = reports.get(name)

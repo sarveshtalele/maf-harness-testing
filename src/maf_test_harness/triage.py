@@ -73,6 +73,52 @@ ACTION = {
 }
 
 
+REMEDIES: list[tuple[re.Pattern[str], str]] = [
+    (
+        re.compile(r"reading from stdin|EOF when reading a line", re.I),
+        "The code under test calls input(). Patch it (monkeypatch.setattr('builtins.input', lambda *_: '1')) or pass "
+        "the CLI flag that skips the prompt; a test must never read real stdin.",
+    ),
+    (
+        re.compile(r"NameError: name '(\w+)' is not defined"),
+        "Import or define the name shown in the error (for example add the missing import at the top of the file).",
+    ),
+    (
+        re.compile(r"cannot import name|No module named|ImportError"),
+        "Import only names defined at module level in target_source and modules listed in source_files / "
+        "python_import_roots.",
+    ),
+    (
+        re.compile(r"readonly attribute|can't set attribute|cannot set attribute", re.I),
+        "Do not assign to read-only attributes; patch the owning module/object with monkeypatch.setattr, or capture "
+        "output with capsys instead of replacing stream attributes.",
+    ),
+    (
+        re.compile(r"fixture '(\w+)' not found"),
+        "Use only built-in pytest fixtures (monkeypatch, tmp_path, capsys, capfd) or unittest.mock.",
+    ),
+    (
+        re.compile(r"KeyError: '(\w+)'"),
+        "The data you built lacks the key the code reads; construct the full shape shown in target_source, not a "
+        "partial mock.",
+    ),
+    (
+        re.compile(r"cannot find symbol|does not exist|has private access|cannot be applied", re.I),
+        "Use only classes, methods and constructors that appear in target_source; test through the public API.",
+    ),
+    (
+        re.compile(r"AssertionError|expected:<|Expected|assert ", re.I),
+        "Recompute the expected value from target_source. If the code's behavior is intended, correct the "
+        "expectation; never weaken the assertion just to pass.",
+    ),
+]
+
+
+def remedy_for(message: str) -> str:
+    """A concrete fix for the most common generated-test failures (empty when none applies)."""
+    return next((text for pattern, text in REMEDIES if pattern.search(message or "")), "")
+
+
 def build_updates(
     cases: list[dict[str, Any]],
     generated: list[dict[str, Any]],
@@ -105,7 +151,7 @@ def build_updates(
                     "case": case["title"],
                     "classification": kind,
                     "detail": case["message"].strip().splitlines()[0][:240],
-                    "action": ACTION[kind],
+                    "action": remedy_for(case["message"]) or ACTION[kind],
                 }
             )
         for path, line in dict.fromkeys(source_lines):

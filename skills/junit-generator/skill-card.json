@@ -1,0 +1,95 @@
+{
+  "skill_card": {
+    "starterkit_id": "junit-generator",
+    "name": "JUnit Generator",
+    "description": "Generates reviewable JUnit 5 Jupiter Java test skeletons, parameterized test methods, fixture mappings, and a traceability manifest from structured test cases and designs.",
+    "origin": {
+      "BG": "BFSI",
+      "ISU": "APAC",
+      "Account": "NAB, CBA"
+    },
+    "maintainers": [
+      {
+        "name": "Shruti Talukder",
+        "contact": "shruti.talukder@tcs.com"
+      },
+      {
+        "name": "Tejus Ajit Manjrekar",
+        "contact": "tejus.manjrekar@tcs.com"
+      },
+      {
+        "name": "Shivprakash Swami",
+        "contact": "shivprakash.swami@tcs.com"
+      }
+    ],
+    "version": "1.0.0",
+    "status": "verified",
+    "technology": [
+      "Java",
+      "JUnit 5 Jupiter",
+      "Node.js",
+      "JSON",
+      "Java Test Automation",
+      "Parameterized Tests"
+    ],
+    "specialization": {
+      "primary": "junit_test_generation",
+      "domain_specific": [
+        "JUnit 5 Jupiter Scaffolding",
+        "AAA Pattern Test Methods",
+        "Parameterized MethodSource",
+        "Exception Assertion Scaffolds",
+        "Traceability Manifest Generation"
+      ]
+    },
+    "tasks": [
+      {
+        "name": "Normalize test cases and fixture data",
+        "description": "Converts test cases into positive, negative, and boundary categories and maps fixture payloads to Java types.",
+        "input_schema": "Structured test design JSON and fixture definitions.",
+        "output_schema": "Normalized Java test case models.",
+        "async": true
+      },
+      {
+        "name": "Generate JUnit 5 test classes",
+        "description": "Emits Java source files containing @Test, @ParameterizedTest, @BeforeEach fixture setups, and AAA method skeletons.",
+        "input_schema": "Normalized test models and target package name.",
+        "output_schema": "Generated Java test class files.",
+        "async": true
+      },
+      {
+        "name": "Emit test manifest and traceability report",
+        "description": "Produces test_classes.json manifest recording class names, files, paths, and requirement links.",
+        "input_schema": "Generated test classes and metadata.",
+        "output_schema": "Traceability manifest JSON.",
+        "async": true
+      }
+    ],
+    "documentation": {
+      "readme": "README.md",
+      "howto": "QuickStart.md",
+      "changelog": "Initial verified release."
+    },
+    "supported_harness": [
+      "GitHub Copilot",
+      "Claude Code",
+      "Cursor",
+      "Antigravity",
+      "AMPCode",
+      "OpenCode",
+      "Kiro",
+      "Codex",
+      "Cline",
+      "Windsurf",
+      "Roo Code",
+      "Aider"
+    ],
+    "tested_harness": [
+      "GitHub Copilot",
+      "Claude Code",
+      "Cursor",
+      "Antigravity"
+    ]
+  }
+}
+

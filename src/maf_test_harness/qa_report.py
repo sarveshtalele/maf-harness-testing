@@ -215,6 +215,12 @@ def render_markdown(report: dict[str, Any]) -> str:
             f"- **{c['title']}** (`{c['file']}`)\n  ```\n  {c['message'][:600]}\n  ```"
             for c in report["failures"]
         ]
+    checks = report.get("skill_checks", {})
+    if checks:
+        lines += ["", "## Skill contract checks", "", "| Skill | Check | Result |", "|---|---|---|"]
+        for name, check in checks.items():
+            verdict = "PASS" if check["passed"] else "FAIL"
+            lines.append(f"| `{check['skill']}` | {name} | {verdict} — {check['output'][:100]} |")
     lines += _updates_markdown(report["updates"])
     if report["unmapped_results"]:
         lines += ["", "## Executed tests not mapped to an approved case", ""] + [

@@ -1,0 +1,21 @@
+templates:
+  traceability_result:
+    metadata:
+      generated_at: "ISO-8601 UTC timestamp"
+      generator_version: "1.1"
+      source_skill_names: []
+    traceability_matrix:
+      description: "Evidence-backed mappings between requirements, tests, and artifacts."
+      type: array
+      items:
+        requirement_id: string
+        test_case_id: string
+        artifact_id: "string | null"
+        artifact_type: string
+        status: "covered | partial | missing_artifact"
+    gaps_report:
+      uncovered_requirements: []
+      orphan_tests: []
+      missing_links: []
+      warnings: []
+      notes: string

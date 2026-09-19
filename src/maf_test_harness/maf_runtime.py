@@ -27,6 +27,8 @@ from .settings import (
     RUN_TOKEN_LIMIT,
     SKILL_MODE,
 )
+from .skill_scripts import HarnessScriptRunner, script_approval_rule
+from .skills_config import COMPANION_PURPOSE
 from .skills_registry import require_valid
 
 
@@ -132,7 +134,7 @@ class BudgetGuard(ChatMiddleware):
         self.persist()
 
 
-PRIME_ATTEMPTS = 3  # tool-calling reliability varies by model; priming is a short, cheap turn
+PRIME_ATTEMPTS = 5  # tool-calling reliability varies by model; priming is a short, cheap turn
 
 
 class ToolTraceMiddleware(FunctionMiddleware):
@@ -178,6 +180,8 @@ class MAFHarnessRuntime:
         self._guards = {}
         self._tracers = {}
         self._primed = {}
+        # Reviewed, hash-pinned scripts the agent may call through MAF run_skill_script (model tier only).
+        self.script_runner = HarnessScriptRunner(self.skills_root, tiers=("model",))
 
     def _resolved_api_mode(self):
         return (
@@ -203,22 +207,40 @@ class MAFHarnessRuntime:
             raise ValueError(f"Marketplace skill is empty: {skill_name}")
         return content
 
-    def _skills_provider(self, skill_name: str) -> SkillsProvider:
-        """MAF SkillsProvider exposing exactly the assigned skill, read-only (no script execution)."""
-        source = FileSkillsSource(self.skills_root, script_filter=lambda _skill, _path: False)
+    def _skills_provider(self, skills: list[str]) -> SkillsProvider:
+        """MAF SkillsProvider exposing exactly the assigned skills.
+
+        Scripts are discovered only when they are on the reviewed model-tier allow-list, and run through the
+        hash-checking HarnessScriptRunner; ``run_skill_script`` is approved automatically only for those.
+        """
+        allowed = set(self.script_runner.allowed)
+        source = FileSkillsSource(
+            self.skills_root,
+            script_runner=self.script_runner,
+            script_filter=lambda skill, path: (skill, path) in allowed,
+        )
         only_assigned = FilteringSkillsSource(
-            source, predicate=lambda skill, _context: skill.frontmatter.name == skill_name
+            source, predicate=lambda skill, _context: skill.frontmatter.name in skills
         )
         return SkillsProvider(DeduplicatingSkillsSource(only_assigned))
 
-    def _record_provenance(self, stage: str, skill_name: str, state: dict, persist) -> None:
-        skill_dir = self._skill_dir(skill_name)
-        package_hash = require_valid(self.skills_root, [skill_name])[skill_name]
+    def _record_provenance(self, stage: str, skills: list[str], state: dict, persist) -> None:
+        hashes = require_valid(
+            self.skills_root, skills
+        )  # spec lint + lock verification for every assigned skill
+        mode = "maf_skills_provider" if self.skill_mode == "progressive" else "host_preloaded"
+
+        def entry(name: str) -> dict[str, Any]:
+            return {
+                "name": name,
+                "sha256": hashlib.sha256((self._skill_dir(name) / "SKILL.md").read_bytes()).hexdigest(),
+                "package_sha256": hashes[name],
+            }
+
         state.setdefault("skill_provenance", {})[stage] = {
-            "name": skill_name,
-            "sha256": hashlib.sha256((skill_dir / "SKILL.md").read_bytes()).hexdigest(),
-            "package_sha256": package_hash,
-            "mode": ("maf_skills_provider" if self.skill_mode == "progressive" else "host_preloaded"),
+            **entry(skills[0]),
+            "companions": [entry(name) for name in skills[1:]],
+            "mode": mode,
             "uses_maf_skills_provider": self.skill_mode == "progressive",
         }
         state["runtime_provenance"] = {
@@ -229,11 +251,12 @@ class MAFHarnessRuntime:
             "api_mode": self._resolved_api_mode(),
             "skill_mode": self.skill_mode,
         }
-        state.setdefault("loaded_skills", {})[stage] = skill_name
-        state.setdefault("skill_loading_mode", {})[stage] = state["skill_provenance"][stage]["mode"]
+        state.setdefault("loaded_skills", {})[stage] = skills[0]
+        state.setdefault("skill_loading_mode", {})[stage] = mode
         persist()
 
-    def _create_agent(self, stage: str, skill_name: str, persona: str, state: dict, persist):
+    def _create_agent(self, stage: str, skills: list[str], persona: str, state: dict, persist):
+        skill_name = skills[0]
         kwargs = {"model": self.model, "api_key": self.api_key}
         if self.base_url:
             kwargs["base_url"] = self.base_url
@@ -248,7 +271,7 @@ class MAFHarnessRuntime:
         client.function_invocation_configuration["max_consecutive_errors_per_request"] = 2
         client.function_invocation_configuration["include_detailed_errors"] = True
         self._clients.append(client)
-        self._record_provenance(stage, skill_name, state, persist)
+        self._record_provenance(stage, skills, state, persist)
         self._guards[stage] = BudgetGuard(state["budget"], persist)
         self._tracers[stage] = ToolTraceMiddleware()
 
@@ -276,30 +299,52 @@ class MAFHarnessRuntime:
             middleware=[self._guards[stage], self._tracers[stage]],
             default_options={"temperature": 0},
         )
+        companions = skills[1:]
+        roles = (
+            f" The PRIMARY skill '{skill_name}' defines your task and the output. "
+            + " ".join(
+                f"Companion skill '{name}' applies only to {COMPANION_PURPOSE.get(name, 'its stated purpose')}."
+                for name in companions
+            )
+            if companions
+            else ""
+        )
         if self.skill_mode == "progressive":
             options.update(
                 harness_instructions=(
-                    common + f" Your FIRST action MUST be one call to the load_skill tool with skill_name="
-                    f"'{skill_name}'. Read referenced resources with read_skill_resource only when the loaded "
-                    "skill tells you to. load_skill and read_skill_resource are the only tools that exist; "
-                    "never call any other tool. Follow the loaded skill exactly."
+                    common
+                    + " Your FIRST actions MUST be one load_skill call for EACH assigned skill: "
+                    + ", ".join(f"skill_name='{name}'" for name in skills)
+                    + "."
+                    + roles
+                    + " Read referenced resources with read_skill_resource only when a loaded skill tells you to. "
+                    "run_skill_script may be used only for scripts the skill documents; anything else is refused. "
+                    "load_skill, read_skill_resource and run_skill_script are the only tools that exist; never call "
+                    "any other tool. Follow the loaded skills exactly."
                 ),
                 agent_instructions=(
                     persona
                     + "\n\nUse only repository facts, approved upstream artifacts, bounded repository "
                     "evidence, revision feedback, and output_contract. The output_contract is authoritative."
                 ),
-                skills_provider=self._skills_provider(skill_name),
-                auto_approval_rules=[SkillsProvider.read_only_tools_auto_approval_rule],
+                skills_provider=self._skills_provider(skills),
+                auto_approval_rules=[
+                    SkillsProvider.read_only_tools_auto_approval_rule,
+                    script_approval_rule(self.script_runner),
+                ],
             )
         else:
+            preloaded = "\n\n".join(
+                f"### SKILL {name}\n\n{self._load_assigned_skill(name)}" for name in skills
+            )
             options.update(
                 harness_instructions=common
-                + " The host preloaded the assigned Agent Skill below; no tools exist.",
+                + roles
+                + " The host preloaded the assigned Agent Skills below; no tools exist.",
                 agent_instructions=(
                     persona
-                    + "\n\nASSIGNED AGENT SKILL (preloaded by host, not via MAF skill tools):\n\n"
-                    + self._load_assigned_skill(skill_name)
+                    + "\n\nASSIGNED AGENT SKILLS (preloaded by host, not via MAF skill tools):\n\n"
+                    + preloaded
                     + "\n\nThe output_contract is authoritative."
                 ),
                 disable_tool_auto_approval=True,
@@ -316,44 +361,51 @@ class MAFHarnessRuntime:
         ]
 
     def _verify_skill_loaded(
-        self, stage: str, skill_name: str, trace: list[dict[str, Any]], state: dict, requested: list[str]
+        self, stage: str, skills: list[str], trace: list[dict[str, Any]], state: dict, requested: list[str]
     ) -> None:
-        loaded = any(
-            call["name"] == "load_skill"
-            and call.get("ok")
-            and skill_name in {str(v) for v in call["arguments"].values()}
-            for call in trace
-        )
-        unknown = sorted(
-            {
-                n
-                for n in requested + [c["name"] for c in trace]
-                if n not in {"load_skill", "read_skill_resource"}
-            }
-        )
+        """Every assigned skill (primary and companions) must have been loaded through MAF's load_skill tool."""
+        loaded = [
+            name
+            for name in skills
+            if any(
+                call["name"] == "load_skill"
+                and call.get("ok")
+                and name in {str(v) for v in call["arguments"].values()}
+                for call in trace
+            )
+        ]
+        missing = [name for name in skills if name not in loaded]
+        known_tools = {"load_skill", "read_skill_resource", "run_skill_script"}
+        unknown = sorted({n for n in requested + [c["name"] for c in trace] if n not in known_tools})
         state.setdefault("skill_tool_trace", {})[stage] = {
-            "assigned_skill": skill_name,
-            "skill_loaded_via_maf": loaded,
+            "assigned_skill": skills[0],
+            "assigned_skills": skills,
+            "loaded_skills": loaded,
+            "skill_loaded_via_maf": not missing,
             "calls": trace,
             "unexpected_tools": unknown,
         }
-        if self.skill_mode == "progressive" and not loaded:
+        if self.skill_mode == "progressive" and missing:
             raise AgentOutputError(
-                f"The model did not load the assigned Agent Skill '{skill_name}' through the MAF load_skill tool. "
-                "Retry this stage, or set HARNESS_SKILL_MODE=preloaded for models that cannot call tools."
+                f"The model did not load the assigned Agent Skill(s) {', '.join(repr(m) for m in missing)} through "
+                "the MAF load_skill tool. Retry this stage, or set HARNESS_SKILL_MODE=preloaded for models that "
+                "cannot call tools."
             )
 
-    async def _prime_skill(self, stage: str, skill_name: str, agent, state: dict) -> dict:
-        """Phase 1 (progressive mode): make the model load the assigned skill via MAF's load_skill tool.
+    async def _prime_skill(self, stage: str, skills: list[str], agent, state: dict) -> dict:
+        """Phase 1 (progressive mode): make the model load every assigned skill via MAF's load_skill tool.
 
         Some OpenAI-compatible models skip tool calls when structured output is requested in the same turn, so the
-        load is a separate tool-only turn. The resulting session snapshot (skill already in context) seeds every
-        later call for this stage; the host verifies the tool call from the FunctionMiddleware trace.
+        load is a separate tool-only turn. The resulting session snapshot (skills already in context) seeds every
+        later call for this stage; the host verifies the tool calls from the FunctionMiddleware trace.
         """
         tracer = self._tracers[stage]
+        listing = ", ".join(f"skill_name='{name}'" for name in skills)
         prompt = (
-            f"Your ONLY tools are load_skill and read_skill_resource. Call load_skill now with "
-            f"skill_name='{skill_name}'. Do not call any other tool. When it returns, reply with the single word READY."
+            "Your ONLY tools are load_skill, read_skill_resource and run_skill_script. There is no read_repo, "
+            "resolve_app_context, git_diff or any repository tool. Call load_skill now, once "
+            f"for each of: {listing}. Do not call any other tool. When all have returned, reply with the single "
+            "word READY."
         )
         failure = ""
         for attempt in range(1, PRIME_ATTEMPTS + 1):
@@ -362,11 +414,11 @@ class MAFHarnessRuntime:
             result = await agent.run(prompt, session=session, options={"temperature": 0})
             if result.user_input_requests:
                 raise AgentOutputError(
-                    "The model requested a tool that needs approval; only read-only skill tools are allowed."
+                    "The model requested a tool that needs approval; only reviewed skill tools are allowed."
                 )
             trace = [dict(call) for call in tracer.calls]
             try:
-                self._verify_skill_loaded(stage, skill_name, trace, state, self._requested_tool_names(result))
+                self._verify_skill_loaded(stage, skills, trace, state, self._requested_tool_names(result))
             except AgentOutputError as exc:
                 failure = str(exc)
                 state.setdefault("skill_tool_trace", {}).setdefault(stage, {})["prime_attempts"] = attempt
@@ -385,17 +437,20 @@ class MAFHarnessRuntime:
         state: dict,
         persist,
         response_format: Any | None = None,
+        companions: tuple[str, ...] | list[str] = (),
     ) -> dict:
-        if stage not in self._agents:
-            self._agents[stage] = self._create_agent(stage, skill_name, persona, state, persist)
-        agent = self._agents[stage]
+        skills = [skill_name, *companions]
+        if self._agents.get(stage, (None, None))[0] != skills:  # first call, or the skill set changed
+            self._agents[stage] = (skills, self._create_agent(stage, skills, persona, state, persist))
+            self._primed.pop(stage, None)
+        agent = self._agents[stage][1]
         self._guards[stage].budget, self._guards[stage].persist = state["budget"], persist
         # Stage prompts are self-contained (inputs, evidence, schema, feedback): use a clean session per call
         # so failed attempts can never poison a retry.
         primed_trace: list[dict[str, Any]] = []
         if self.skill_mode == "progressive":
             if stage not in self._primed:
-                self._primed[stage] = await self._prime_skill(stage, skill_name, agent, state)
+                self._primed[stage] = await self._prime_skill(stage, skills, agent, state)
                 persist()
             session = AgentSession.from_dict(copy.deepcopy(self._primed[stage]["session"]))
             primed_trace = self._primed[stage]["trace"]
@@ -408,6 +463,7 @@ class MAFHarnessRuntime:
         invocation = {
             "stage": stage,
             "skill": skill_name,
+            "companions": list(companions),
             "prompt_sha256": hashlib.sha256(prompt.encode()).hexdigest(),
             "status": "started",
         }
@@ -427,11 +483,16 @@ class MAFHarnessRuntime:
         if result.user_input_requests:
             invocation["status"] = "rejected_approval_request"
             raise AgentOutputError(
-                "The model requested a tool that needs approval; only read-only skill tools are allowed."
+                "The model requested a tool that needs approval; only reviewed skill tools are allowed."
             )
         trace = primed_trace + [dict(call) for call in self._tracers[stage].calls]
         invocation["tool_calls"] = [call["name"] for call in trace]
-        self._verify_skill_loaded(stage, skill_name, trace, state, self._requested_tool_names(result))
+        self._verify_skill_loaded(stage, skills, trace, state, self._requested_tool_names(result))
+        if (
+            self.script_runner.runs
+        ):  # scripts the agent ran through MAF run_skill_script (reviewed, hash-checked)
+            state.setdefault("skill_script_runs", []).extend(self.script_runner.runs)
+            self.script_runner.runs.clear()
         raw_text = result.text or ""
         state.setdefault("raw_model_output", {})[stage] = raw_text
         persist()

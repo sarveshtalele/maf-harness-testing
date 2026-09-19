@@ -1,0 +1,96 @@
+{
+  "skill_card": {
+    "starterkit_id": "api-contract-analyzer",
+    "name": "API Contract Analyzer",
+    "description": "Extracts normalized, deterministic API contracts from OpenAPI 3.x, Swagger 2.0, or JSON Schema specifications for downstream test design, coverage analysis, and requirement traceability.",
+    "origin": {
+      "BG": "BFSI",
+      "ISU": "APAC",
+      "Account": "NAB, CBA"
+    },
+    "maintainers": [
+      {
+        "name": "Shruti Talukder",
+        "contact": "shruti.talukder@tcs.com"
+      },
+      {
+        "name": "Tejus Ajit Manjrekar",
+        "contact": "tejus.manjrekar@tcs.com"
+      },
+      {
+        "name": "Shivprakash Swami",
+        "contact": "shivprakash.swami@tcs.com"
+      }
+    ],
+    "version": "1.0.0",
+    "status": "verified",
+    "technology": [
+      "Python",
+      "OpenAPI",
+      "Swagger",
+      "JSON Schema",
+      "YAML",
+      "REST API",
+      "Pydantic"
+    ],
+    "specialization": {
+      "primary": "api_contract_analysis",
+      "domain_specific": [
+        "OpenAPI 3.x Extraction",
+        "Swagger 2.0 Normalization",
+        "Field Constraints Parsing",
+        "API Traceability Extraction",
+        "Gaps Reporting"
+      ]
+    },
+    "tasks": [
+      {
+        "name": "Parse and normalize API specifications",
+        "description": "Parses OpenAPI 3.x or Swagger 2.0 YAML/JSON documents into normalized HTTP operations, endpoints, parameters, and schema constraints.",
+        "input_schema": "OpenAPI 3.x or Swagger 2.0 YAML/JSON specification.",
+        "output_schema": "Normalized API contract model conforming to schema templates.",
+        "async": true
+      },
+      {
+        "name": "Extract field constraints and validation rules",
+        "description": "Extracts data types, formats, regex patterns, enum bounds, and discriminators into structured field constraints.",
+        "input_schema": "Operation request/response schemas.",
+        "output_schema": "Structured field constraints and validation rules object.",
+        "async": true
+      },
+      {
+        "name": "Generate gaps report and traceability links",
+        "description": "Identifies missing response schemas, unresolvable circular references, incomplete endpoints, and assigns deterministic traceability links.",
+        "input_schema": "Parsed operations and schema graph.",
+        "output_schema": "Actionable gaps report and operation-level traceability links.",
+        "async": true
+      }
+    ],
+    "documentation": {
+      "readme": "README.md",
+      "howto": "QuickStart.md",
+      "changelog": "Initial verified release."
+    },
+    "supported_harness": [
+      "GitHub Copilot",
+      "Claude Code",
+      "Cursor",
+      "Antigravity",
+      "AMPCode",
+      "OpenCode",
+      "Kiro",
+      "Codex",
+      "Cline",
+      "Windsurf",
+      "Roo Code",
+      "Aider"
+    ],
+    "tested_harness": [
+      "GitHub Copilot",
+      "Claude Code",
+      "Cursor",
+      "Antigravity"
+    ]
+  }
+}
+

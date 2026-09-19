@@ -104,6 +104,12 @@ Reverse-engineering-skill (Python CLI + generated HTML dashboard) and Petstore (
   generated and executed tests plus evidence.
 * **Hygiene:** dead code/skills/scripts removed, strict ruff lint + format enforced in CI, full architecture documentation.
 
+### M8 — Skills from the upstream catalog, configured end to end ✅
+Six skills vendored from `shivswami/awesome-agent-skills` (pinned commit, per-file SHA-256 lock, offline security/quality audit, 0 findings), selected by
+what the harness needs. Stage → skill sets are deterministic (`skills_config.skills_for`); every assigned skill must be loaded through MAF `load_skill`.
+Scripts are governed by a reviewed allow-list with hash checks: one pure script is callable by the agent through MAF `run_skill_script`; the QA stage
+runs the upstream `validate_traceability.py` and validates the coverage report against the upstream schema. Modified vendored files or scripts are refused.
+
 ### Next (⏭, in priority order)
 1. **Sandboxed execution** (container/VM adapter behind the existing `execute_plan` boundary) — required before any
    unattended or multi-tenant use. Local-process execution is explicitly *not* a sandbox.

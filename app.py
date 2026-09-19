@@ -130,6 +130,22 @@ def render_qa_report(artifact: dict, *, key_prefix: str) -> None:
     for failure in qa["failures"]:
         with st.expander(f"Failure: {failure['title']}"):
             st.code(failure["message"] or "(no message)", language="text")
+    checks = qa.get("skill_checks", {})
+    if checks:
+        st.markdown("### Skill contract checks")
+        st.dataframe(
+            [
+                {
+                    "skill": c["skill"],
+                    "check": name,
+                    "result": "PASS" if c["passed"] else "FAIL",
+                    "detail": c["output"][:120],
+                }
+                for name, c in checks.items()
+            ],
+            width="stretch",
+            hide_index=True,
+        )
     updates = qa.get("updates", {})
     st.markdown("### Files to update")
     if not any(updates.values()):

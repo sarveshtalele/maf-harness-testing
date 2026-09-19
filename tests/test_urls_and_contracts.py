@@ -235,3 +235,78 @@ def test_java_semantic_errors_are_not_mistaken_for_syntax_errors():
         "import org.unknown.Lib;\npublic class ATest {\n  @org.junit.Test public void t() { Lib.go(); }\n}\n"
     )
     assert validate_generated_files(payload(code, "ATest.java"), {"TC-1"})["test_declarations"] == 1
+
+
+PIPELINE = """
+import os
+from helpers import util
+
+MODULE_CONSTANT = 3
+
+class Cache:
+    pass
+
+def run_pipeline(url):
+    FILE_CAP = 300
+    if len(url) > FILE_CAP:
+        def _layer(f):
+            return 0
+        SLOTS = {0: 75}
+    return url
+"""
+
+
+def read(rel):
+    return PIPELINE if rel == "engine/pipeline.py" else None
+
+
+def test_imported_names_must_exist_at_module_level_and_locals_get_a_precise_hint():
+    from maf_test_harness.skill_contracts import check_python_imports
+
+    files = ["engine/pipeline.py", "helpers.py"]
+    check_python_imports(
+        "from engine.pipeline import run_pipeline, Cache, MODULE_CONSTANT, util, os\n",
+        files,
+        "",
+        "t.py",
+        read,
+    )
+    with pytest.raises(ValueError, match=r"'_layer'.*only inside run_pipeline\(\).*cannot be imported"):
+        check_python_imports("from engine.pipeline import _layer, FILE_CAP, SLOTS\n", files, "", "t.py", read)
+    with pytest.raises(ValueError, match="'nope'.*no such module-level name"):
+        check_python_imports("from engine.pipeline import nope\n", files, "", "t.py", read)
+
+
+def test_modules_with_star_imports_or_getattr_are_not_second_guessed():
+    from maf_test_harness.skill_contracts import check_python_imports
+
+    for source in ("from os.path import *\n", "def __getattr__(name):\n    return 1\n"):
+        check_python_imports(
+            "from engine.pipeline import anything\n",
+            ["engine/pipeline.py"],
+            "",
+            "t.py",
+            lambda rel, src=source: src,
+        )
+
+
+def test_submodules_are_importable_names():
+    from maf_test_harness.skill_contracts import check_python_imports
+
+    check_python_imports(
+        "from engine import pipeline\n",
+        ["engine/__init__.py", "engine/pipeline.py"],
+        "",
+        "t.py",
+        lambda rel: "" if rel.endswith("__init__.py") else None,
+    )
+
+
+def test_modules_in_non_package_directories_are_importable_by_bare_name_because_the_runner_adds_the_directory():
+    from maf_test_harness.skill_contracts import check_python_imports, extra_import_roots
+
+    repo = ["skill-packages/03-agent-sdk-skill/reverse_engineer_agent.py", "engine/pipeline.py", "run.py"]
+    assert extra_import_roots(repo) == ["skill-packages/03-agent-sdk-skill"]  # engine/ is importable already
+    check_python_imports("from reverse_engineer_agent import ReverseEngineerAgent\n", repo, "", "t.py")
+    with pytest.raises(ValueError, match="does not match any repository path|not stdlib"):
+        check_python_imports("from other_module import X\n", repo, "", "t.py")

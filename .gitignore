@@ -22,3 +22,4 @@ test-results/
 # bulky/host-specific audit logs (summaries and XML/JSON evidence are kept)
 docs/audit/*.log
 docs/audit/execution-targets/
+.skill-audit/

@@ -104,7 +104,30 @@ never reported as pass).
 * Source is generated **one file per approved case**, validated (syntax, no placeholders/skips, import resolution) before you see it.
 * Skills are loaded through MAF's `SkillsProvider` and verified from a tool trace; see `verify-run`.
 
-## 7. Development
+## 7. Agent Skills
+
+Ten skills are configured as MAF Agent Skills (`SkillsProvider`, progressive disclosure); the host verifies every assigned skill was really loaded.
+Six come from [shivswami/awesome-agent-skills](https://github.com/shivswami/awesome-agent-skills) (pinned commit in `skills/SKILLS.lock.json`, audited offline
+with its own `evaluator-skill`: 0 security findings); four are local.
+
+| Stage | Skills loaded |
+|---|---|
+| requirements | `repository-requirements` (+ `api-contract-analyzer` if an OpenAPI/Swagger file exists) |
+| test planning | `test-planning` |
+| test design | `test-design-generator`, `test-data-generator` |
+| test generation | `generic-test-generator`, `test-data-generator` (+ `junit-generator` for Java/Kotlin, + `playwright-test-generator` for UI/E2E cases) |
+| QA (host) | `traceability-generator` and `coverage-analyzer` contracts, validated by the skills' own script/schema |
+
+Scripts follow a strict policy: only reviewed scripts recorded in the lock (name + SHA-256) may run; the agent may call one pure script
+(`test-data-generator/scripts/deterministic_helpers.py`) through MAF `run_skill_script`, the harness itself runs `validate_traceability.py`; all others are refused.
+
+```bash
+uv run maf-harness lint-skills                 # spec lint + lock verification (fails if a vendored file was edited)
+git clone https://github.com/shivswami/awesome-agent-skills.git /tmp/awesome-agent-skills
+uv run python scripts/vendor_skills.py --source /tmp/awesome-agent-skills    # re-vendor + re-audit + rewrite the lock
+```
+
+## 8. Development
 
 ```bash
 uv run ruff check src tests app.py scripts && uv run ruff format --check src tests app.py scripts
@@ -112,17 +135,18 @@ uv run pytest -q --ignore=tests/targets                    # unit + component (r
 HARNESS_BROWSER=1 PLAYWRIGHT_BROWSERS_PATH=$PWD/.browser-cache uv run pytest tests/targets/test_harness_browser.py -q   # UI in a real browser
 ```
 
-## 8. Troubleshooting
+## 9. Troubleshooting
 
 | Symptom | Cause / fix |
 |---|---|
+| "Vendored Agent Skill modified after review" | a vendored file differs from `SKILLS.lock.json`; restore it or re-vendor with `scripts/vendor_skills.py` |
 | "did not load the assigned Agent Skill" | the model skipped tool calls; retry, use a tool-capable model, or `HARNESS_SKILL_MODE=preloaded` (recorded as not using the provider) |
 | Environment step says a tool is missing | install it (hint shown), then *Re-check environment* |
 | `INCONCLUSIVE` with "not_executed" cases | build/collection failed; the report names the files and lines; use *Regenerate failing tests* |
 | "Workflow token budget of 2,000,000 tokens exhausted" | start a new run or reduce scope; this is the only limit |
 | UI tests need a live app | pass the running application URL; the harness does not start the system under test |
 
-## 9. Security notes
+## 10. Security notes
 
 Credentials are environment-only and never forwarded to install/test commands; commands are argv-only with timeouts and a plan hash checked after approval;
 npm lifecycle scripts are disabled during install; generated files never touch the clone. Execution is a local process, not a sandbox — see

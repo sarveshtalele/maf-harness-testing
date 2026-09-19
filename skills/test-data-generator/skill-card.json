@@ -1,0 +1,96 @@
+{
+  "skill_card": {
+    "starterkit_id": "test-data-generator",
+    "name": "Test Data Generator",
+    "description": "Generates deterministic positive, negative, boundary, and API fixture payloads from test cases, validation rules, and schema constraints with seed-based reproducibility.",
+    "origin": {
+      "BG": "BFSI",
+      "ISU": "APAC",
+      "Account": "NAB, CBA"
+    },
+    "maintainers": [
+      {
+        "name": "Shruti Talukder",
+        "contact": "shruti.talukder@tcs.com"
+      },
+      {
+        "name": "Tejus Ajit Manjrekar",
+        "contact": "tejus.manjrekar@tcs.com"
+      },
+      {
+        "name": "Shivprakash Swami",
+        "contact": "shivprakash.swami@tcs.com"
+      }
+    ],
+    "version": "1.2.0",
+    "status": "verified",
+    "technology": [
+      "Python",
+      "JSON Schema",
+      "YAML",
+      "Pydantic",
+      "Faker / Seeded Generators",
+      "UUID",
+      "Data Synthesis"
+    ],
+    "specialization": {
+      "primary": "synthetic_test_data_generation",
+      "domain_specific": [
+        "Deterministic Seeded Generation",
+        "Boundary Value Synthesis",
+        "Negative Constraint Violation",
+        "JSON Schema Composition (allOf/oneOf)",
+        "Relational Fixture Generation"
+      ]
+    },
+    "tasks": [
+      {
+        "name": "Evaluate schema constraints and validation rules",
+        "description": "Parses field constraints, regex patterns, formats, and JSON Schema composition keywords into test data generators.",
+        "input_schema": "Validation rules, API contracts, or schema definitions.",
+        "output_schema": "Generator constraints model.",
+        "async": true
+      },
+      {
+        "name": "Synthesize deterministic fixture datasets",
+        "description": "Generates positive, negative, boundary, and API request/response payloads with deterministic seeding.",
+        "input_schema": "Generator constraints and configuration settings.",
+        "output_schema": "Structured fixture collections conforming to template schemas.",
+        "async": true
+      },
+      {
+        "name": "Map traceability and generate gap report",
+        "description": "Attaches requirement/validation links to each fixture and records unresolvable references or skipped constraints.",
+        "input_schema": "Generated fixtures and source references.",
+        "output_schema": "Traceability links and fixture gaps report.",
+        "async": true
+      }
+    ],
+    "documentation": {
+      "readme": "README.md",
+      "howto": "QuickStart.md",
+      "changelog": "Initial verified release."
+    },
+    "supported_harness": [
+      "GitHub Copilot",
+      "Claude Code",
+      "Cursor",
+      "Antigravity",
+      "AMPCode",
+      "OpenCode",
+      "Kiro",
+      "Codex",
+      "Cline",
+      "Windsurf",
+      "Roo Code",
+      "Aider"
+    ],
+    "tested_harness": [
+      "GitHub Copilot",
+      "Claude Code",
+      "Cursor",
+      "Antigravity"
+    ]
+  }
+}
+
