@@ -17,6 +17,14 @@ compile) is answered by deterministic **central tools** instead of a model retry
 Full design: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) · roadmap: [docs/IMPLEMENTATION_PLAN.md](docs/IMPLEMENTATION_PLAN.md) ·
 defect register: [docs/audit/ERRORS.md](docs/audit/ERRORS.md) · live runs: [docs/audit/E2E_RESULTS.md](docs/audit/E2E_RESULTS.md) · observability: [docs/OBSERVABILITY.md](docs/OBSERVABILITY.md).
 
+## Learn the MAF building blocks
+
+For a focused walkthrough of **Agent Skills, function tools, middleware hooks, and the Agent Harness**, see
+[docs/AGENT_SKILLS_TOOLS_HOOKS_HARNESS.md](docs/AGENT_SKILLS_TOOLS_HOOKS_HARNESS.md).
+
+A small runnable reference using the same MAF primitives is in
+[examples/maf_agent_building_blocks](examples/maf_agent_building_blocks).
+
 ## 1. Prerequisites
 
 | Need | Why | Check |
