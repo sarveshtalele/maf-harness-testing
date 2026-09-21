@@ -12,7 +12,7 @@ from maf_test_harness.errors.taxonomy import CODES
 
 @pytest.mark.parametrize("case", CASES, ids=[c["name"] for c in CASES])
 def test_fixture_reaches_documented_diagnosis(case):
-    context = errors.Context(missing_packages=case.get("missing", []))
+    context = errors.Context(missing_packages=case.get("missing", []), conflicts=case.get("conflicts", []))
     if "result" in case:
         found = errors.classify_result(case["result"], case.get("text", ""), case["ecosystem"], context)
     else:

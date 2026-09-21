@@ -618,6 +618,10 @@ def execute_setup(
             if items:
                 installed, failed = _install_each(step, items[0], items[1], workspace, out_dir, index + 1)
                 entry["fallback"] = {"installed": installed, "failed": failed}
+                if len(installed) > 1 and failed:  # one resolution for what installed, so pins hold together
+                    entry["fallback"]["joint_reinstall"] = _joint_reinstall(
+                        step, items[0], installed, workspace, out_dir, index + 1
+                    )
                 report["warnings"].append(
                     f"'{step.name}': pip installs are all-or-nothing, so one unbuildable package blocked "
                     f"the rest; retried one by one -> {len(installed)} installed, {len(failed)} failed"
@@ -649,6 +653,37 @@ def execute_setup(
         steps[index] = action.step
         if action.rewind_to:
             index = next((i for i, s in enumerate(steps) if s.name == action.rewind_to), index)
+    if (
+        recover
+        and report["status"] == "ready"
+        and any("pip" in s.argv and "install" in s.argv for s in steps)
+    ):
+        pip_steps = [s for s in steps if "pip" in s.argv and "install" in s.argv]
+        declared_specs = [spec for s in pip_steps for spec in (_pip_items(s, workspace) or ([], []))[1]]
+        conflicts = repair_conflicts(
+            workspace, out_dir, declared_specs, env=_expand_env(pip_steps[0].env, workspace)
+        )
+        if conflicts["found"]:
+            report["dependency_conflicts"] = conflicts
+            fixed = not conflicts["remaining"]
+            names = ", ".join(sorted({c["dependency"] for c in conflicts["found"]}))
+            report["warnings"].append(
+                f"pip reported version conflicts ({names}); "
+                + (
+                    "repaired by reinstalling each at the range its dependent package requires"
+                    if fixed
+                    else "still inconsistent after repair"
+                )
+                + (
+                    ": "
+                    + "; ".join(
+                        f"{c['package']} needs {c['requirement']}, has {c['installed']}"
+                        for c in conflicts["remaining"][:3]
+                    )
+                    if not fixed
+                    else ""
+                )
+            )
     (out_dir / "report.json").write_text(json.dumps(report, indent=2), encoding="utf-8")
     return report
 
@@ -720,6 +755,81 @@ def _install_each(
         )
         (installed if result["status"] == "command_succeeded" else failed).append(spec)
     return installed, failed
+
+
+def _joint_reinstall(
+    step: Step, base: list[str], specs: list[str], workspace: Path, out_dir: Path, index: int
+) -> str:
+    """Install the specs that installed on their own in ONE pip run, so the resolver honours every pin together.
+
+    Installing requirements one at a time lets a later package pull a newer dependency than an earlier pin allows
+    (``streamlit`` bringing ``starlette 1.x`` next to ``fastapi==0.110.0``); a single resolution cannot.
+    """
+    result = run_command(
+        [*base, *specs],
+        (workspace / step.cwd).resolve(),
+        out_dir / f"{index:02d}-{step.name}-joint",
+        timeout=step.timeout,
+        env=_expand_env(step.env, workspace),
+        inherit_env=True,
+    )
+    return result["status"]
+
+
+MAX_CONFLICT_ROUNDS = 2
+
+
+def _spec_name(spec: str) -> str:
+    match = re.match(r"\s*([A-Za-z0-9][A-Za-z0-9._-]*)", spec)
+    return re.sub(r"[-_.]+", "-", match.group(1)).lower() if match else ""
+
+
+def repair_conflicts(
+    workspace: Path,
+    out_dir: Path,
+    specs: list[str] | None = None,
+    timeout: float = 600,
+    env: dict[str, str] | None = None,
+) -> dict:
+    """Make the installed set consistent again, with the requirements the repository itself declared.
+
+    Round 1 resolves **jointly**: every declared requirement that is installed, plus the ranges ``pip check`` says the
+    installed packages need, in one pip run. The resolver then backtracks to a set that satisfies all of them (for
+    ``fastapi==0.110.0`` next to ``streamlit>=1.32.0`` it picks an older streamlit that allows ``starlette<0.37``); no
+    pin of the repository is loosened. If that is not enough, round 2 reinstalls only the conflicting dependencies at
+    the reported ranges, unless that would repeat round 1. The ranges come from installed package metadata, not from a
+    guess; what remains is reported so tests and the human know the environment is inconsistent.
+    """
+    from . import env_check
+
+    workspace = Path(workspace).resolve()
+    python = platform_compat.venv_python(workspace / VENV_DIR)
+    found = env_check.dependency_conflicts(workspace)
+    summary: dict = {"found": [dict(c) for c in found], "repaired": [], "remaining": found}
+    if not found:
+        return summary
+    installed = env_check.installed_distributions(workspace) or set()
+    declared = [s for s in dict.fromkeys(specs or []) if _spec_name(s) in installed]
+    tried: list[list[str]] = []
+    for round_no in range(1, MAX_CONFLICT_ROUNDS + 1):
+        ranges = list(dict.fromkeys(c["requirement"] for c in summary["remaining"]))
+        wanted = [*declared, *ranges] if round_no == 1 else ranges
+        if not wanted or wanted in tried:
+            break
+        tried.append(wanted)
+        result = run_command(
+            [str(python), "-m", "pip", "install", "--disable-pip-version-check", "-q", *wanted],
+            workspace,
+            Path(out_dir) / f"conflict-repair-{round_no}",
+            timeout=timeout,
+            env=env,
+            inherit_env=True,
+        )
+        summary["repaired"].append({"round": round_no, "requirements": wanted, "status": result["status"]})
+        summary["remaining"] = env_check.dependency_conflicts(workspace)
+        if not summary["remaining"]:
+            break
+    return summary
 
 
 # ---------------------------------------------------------------- result parsers

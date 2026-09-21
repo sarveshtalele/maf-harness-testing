@@ -56,6 +56,20 @@ extensionless script), `create-venv` uses the interpreter the project asks for, 
 to each step. The build gate uses the same rewritten plan, so a generated Java test is compiled with the JDK the project
 needs. Required tools a toolchain covers are no longer reported as "not installed on the host".
 
+## 3.1 Consistency of the installed Python packages
+
+`pip install -r requirements.txt` is all-or-nothing, so when one package cannot be built (a C/C++ compiler is missing) the harness retries package
+by package. Installing one at a time loses the joint resolution: a later package can pull a newer dependency than an earlier pin allows. On a real
+run `streamlit>=1.32.0` brought `starlette 1.6.0` next to `fastapi==0.110.0` (which needs `starlette<0.37`), and every generated test that built
+the app failed with `TypeError: Router.__init__() got an unexpected keyword argument 'on_startup'`.
+
+Now, after the per-package retry, everything that installed is resolved **together in one pip run** (so the resolver backtracks, here to an older
+streamlit, without loosening any pin), and after all install steps the harness asks `pip check` (`envs/env_check.dependency_conflicts`). Conflicts are
+repaired by re-resolving the declared requirements plus the ranges pip reports (`envs/runners.repair_conflicts`, at most two rounds, never a repeat
+of the same install). The result is in the setup report (`dependency_conflicts`: found, repaired, remaining) and in a warning. What remains
+inconsistent is diagnosed as `ENV-PY-009`: an API-mismatch `TypeError`/`ImportError` in that environment is classified as environmental, so the
+build gate no longer spends generation retries on it. Agents see it through the `environment_gaps` central tool and `list_dependency_conflicts`.
+
 ## 4. Settings
 
 | Variable | Effect |

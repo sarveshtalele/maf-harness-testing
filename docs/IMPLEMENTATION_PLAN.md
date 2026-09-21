@@ -141,7 +141,7 @@ aborting a whole `pip install -r` (now retried package by package), declared-but
 cases (`envs/app_launcher.py`, `--start-app`). CI has a Windows leg.
 
 ### M12 — Error taxonomy and recovery playbook ✅
-`errors/`: 37 codes with category (environment / infra / test defect / app defect), autonomy (auto / auto_once / ask / manual) and recipes; classifiers for Python, Java, .NET and common
+`errors/`: 38 codes with category (environment / infra / test defect / app defect), autonomy (auto / auto_once / ask / manual) and recipes; classifiers for Python, Java, .NET and common
 failures; 56 recorded real logs as fixtures (`tests/error_cases.py`); wired into install, the build gate, the QA report and triage so an environment failure never costs generation retries.
 [ERROR_PLAYBOOK.md](ERROR_PLAYBOOK.md) is generated from the tables.
 

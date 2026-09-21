@@ -83,7 +83,7 @@ offered at `repo_analysis`, `environment_setup`, or `test_execution` (host-only 
 | `installed_packages` | Distributions actually present in the isolated environment — not merely declared | `tools.code_intel.installed_packages` | `requirements` |
 | `probe_tools` | Versions of `python3`, `java`, `mvn`, `node`, `npm` present on the host — never installs anything | `tools.code_intel.probe_tools` | *(available, not offered to any stage by default)* |
 | `try_build` | Compile/collect the candidate files in the prepared workspace (`pytest --collect-only` / `mvn test-compile`) without running any test body | `tools.build_gate.try_build` | `test_generation` |
-| `environment_gaps` | Declared dependencies that are **not** installed in the isolated environment (an install failed, e.g. a package needing a C++ compiler) — so tests stub them instead of importing them | `envs.env_check.missing_packages` | `test_generation` |
+| `environment_gaps` | Declared dependencies that are **not** installed in the isolated environment (an install failed, e.g. a package needing a C++ compiler) — so tests stub them instead of importing them; also `conflicts`: installed packages whose version requirements contradict each other (`pip check`), where a library `TypeError`/`ImportError` is not the test's fault | `envs.env_check.missing_packages`, `dependency_conflicts` | `test_generation` |
 | `app_launch_plan` | Whether and how the harness can start the application itself for ui/e2e (Playwright) cases — Streamlit, FastAPI, Flask or an npm `start`/`dev` script | `envs.app_launcher.detect_launch` | `test_design` |
 
 The host runs the exact same checks itself regardless of whether a model calls these tools — correctness never
@@ -106,6 +106,7 @@ arguments against a JSON schema and returns one envelope (`ok`, `code`, `categor
 | `diagnose_exec_error` | classify a test-run log (environment / test defect / application defect) | no | `test_execution` |
 | `read_file`, `list_dir` | read the repository or workspace; secret-looking files refused | no | `environment_setup`, `test_execution` |
 | `write_test_file`, `delete_file` | create/delete a generated test inside the writable root | yes: scoped | (registered, not offered to any agent) |
+| `list_dependency_conflicts` | installed packages whose version requirements conflict (`pip check`) | no | `environment_setup`, `test_execution`, diagnosis agent |
 | `plan_env_fix` | preview the automatic recovery for a failed command | no | diagnosis agent |
 | `check_skill_output` | run a reviewed validator of the stage's own skills on a draft | no | `test_design`, opt-in |
 

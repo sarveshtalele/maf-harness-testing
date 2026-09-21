@@ -129,6 +129,7 @@ def try_build(
         if eco == "python":
             result.update(tool="pytest --collect-only", status="ok")
             env_missing: list[str] = []  # filled lazily, only when a collection fails
+            conflicts: list[dict[str, str]] | None = None  # pip check result, asked at most once
             for index, item in enumerate(files):
                 if not item["path"].endswith(".py"):
                     continue
@@ -159,7 +160,13 @@ def try_build(
                             d for d in gap if d not in result["env_missing"]
                         )
                         continue
-                    diagnoses = classify(output, "python", Context([d for d in env_missing if d != "-"]))
+                    if (
+                        conflicts is None
+                    ):  # pip's own verdict on the installed set, asked once per build check
+                        conflicts = env_check.dependency_conflicts(workspace)
+                    diagnoses = classify(
+                        output, "python", Context([d for d in env_missing if d != "-"], conflicts)
+                    )
                     if is_environmental(
                         diagnoses
                     ):  # wrong interpreter, no network...: also not the test's fault

@@ -143,11 +143,13 @@ class HarnessToolbox:
 
         @tool(name="environment_gaps", approval_mode="never_require")
         async def environment_gaps() -> str:
-            """Declared dependencies that are NOT installed in the isolated environment: do not import them in tests, stub them."""
+            """Declared dependencies NOT installed (stub them, do not import them) and installed packages whose version requirements conflict (library calls may fail; not a test defect)."""
             workspace = ctx().workspace
             if workspace is None:
                 return _json({"missing": [], "note": "environment not created yet"})
-            return _json({"missing": await asyncio.to_thread(env_check.missing_packages, workspace)})
+            missing = await asyncio.to_thread(env_check.missing_packages, workspace)
+            conflicts = await asyncio.to_thread(env_check.dependency_conflicts, workspace)
+            return _json({"missing": missing, "conflicts": conflicts})
 
         @tool(name="app_launch_plan", approval_mode="never_require")
         async def app_launch_plan() -> str:

@@ -126,6 +126,7 @@ fields instead of parsing text:
 | `detect_toolchains` | which Python/JDK/Maven/Gradle/.NET the repository needs; found or would be downloaded | no |
 | `provision_toolchain` | download one toolchain into the harness cache | **yes**, only after the environment approval (`allow_downloads`); also gated by `download_consent` |
 | `list_missing_packages` | declared dependencies not installed in the isolated environment | no |
+| `list_dependency_conflicts` | installed packages whose version requirements conflict (`pip check`) | no |
 | `plan_env_fix` | preview which allow-listed recovery the harness would apply to a failed command (nothing is executed) | no |
 | `diagnose_env_error` | classify an install/build log: code, category, recipe, how far the agent may go alone | no |
 | `diagnose_exec_error` | classify a test-run log: environment problem, test defect (regenerate) or application defect (report) | no |

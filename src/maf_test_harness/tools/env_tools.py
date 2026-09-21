@@ -109,6 +109,33 @@ def plan_env_fix(ctx: ToolContext, args: dict[str, Any]) -> ToolResult:
     )
 
 
+def list_dependency_conflicts(ctx: ToolContext, args: dict[str, Any]) -> ToolResult:
+    """Installed packages whose requirements the installed set does not satisfy (pip check)."""
+    if ctx.workspace is None:
+        return ToolResult.failure("NO-WORKSPACE", "the isolated environment has not been created yet")
+    conflicts = env_check.dependency_conflicts(ctx.workspace)
+    return ToolResult(
+        True,
+        code="ENV-PY-009" if conflicts else "OK",
+        category=ENVIRONMENT if conflicts else "",
+        evidence=(
+            f"{len(conflicts)} version conflict(s): "
+            + "; ".join(
+                f"{c['package']} needs {c['requirement']}, has {c['installed']}" for c in conflicts[:3]
+            )
+            if conflicts
+            else "the installed packages are consistent"
+        ),
+        data={"conflicts": conflicts},
+        suggested_fixes=["the harness re-resolves them jointly with the declared requirements after install"]
+        if conflicts
+        else [],
+        next_actions=["do not blame a TypeError/ImportError from these libraries on the test"]
+        if conflicts
+        else [],
+    )
+
+
 def _diagnose(ctx: ToolContext, args: dict[str, Any], environment_only: bool) -> ToolResult:
     missing = env_check.missing_packages(ctx.workspace) if ctx.workspace is not None else []
     found = classify(args["log"], args.get("ecosystem") or ctx.ecosystem or None, Context(missing))
@@ -184,6 +211,11 @@ ENV_TOOLS = (
         list_missing_packages,
     ),
     ToolSpec(
+        "list_dependency_conflicts",
+        "Installed packages whose version requirements conflict (pip check). Such conflicts make library calls fail with TypeError/ImportError.",
+        list_dependency_conflicts,
+    ),
+    ToolSpec(
         "plan_env_fix",
         "Preview which allow-listed recovery the harness would apply automatically to a failed setup command (nothing is executed).",
         plan_env_fix,
@@ -214,6 +246,7 @@ __all__ = [
     "detect_toolchains",
     "diagnose_env_error",
     "diagnose_exec_error",
+    "list_dependency_conflicts",
     "list_missing_packages",
     "plan_env_fix",
     "provision_toolchain",

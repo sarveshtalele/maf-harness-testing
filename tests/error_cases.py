@@ -24,8 +24,48 @@ SRE = """  File "workspace\\Python\\pythoncore-3.14-64\\Lib\\re\\_compiler.py", 
 AssertionError: SRE module mismatch
 """
 
+CONFLICT = [
+    {
+        "package": "fastapi",
+        "version": "0.110.0",
+        "requirement": "starlette<0.37.0,>=0.36.3",
+        "dependency": "starlette",
+        "installed": "1.6.0",
+    }
+]
+
 CASES: list[dict] = [
     # ------------------------------------------------------------------------------------------- python
+    {
+        "name": "pip dependency conflict (per-package install pulled starlette 1.6 next to fastapi 0.110)",
+        "source": "recorded",
+        "ecosystem": "python",
+        "text": "ERROR: pip's dependency resolver does not currently take into account all the packages that are installed.\n"
+        "fastapi 0.110.0 requires starlette<0.37.0,>=0.36.3, but you have starlette 1.6.0 which is incompatible.\n",
+        "expect": "ENV-PY-009",
+    },
+    {
+        "name": "starlette 1.x removed Router on_startup (collection of a test that builds the app)",
+        "source": "recorded",
+        "ecosystem": "python",
+        "text": "E   TypeError: Router.__init__() got an unexpected keyword argument 'on_startup'\n",
+        "expect": "ENV-PY-009",
+    },
+    {
+        "name": "API-mismatch TypeError is environmental when pip check reports conflicts",
+        "source": "recorded",
+        "ecosystem": "python",
+        "text": "E   TypeError: FileIndex.__init__() got an unexpected keyword argument 'x'\n",
+        "conflicts": CONFLICT,
+        "expect": "ENV-PY-009",
+    },
+    {
+        "name": "the same TypeError without conflicts stays a test defect",
+        "source": "representative",
+        "ecosystem": "python",
+        "text": "E   TypeError: FileIndex.__init__() got an unexpected keyword argument 'x'\n",
+        "expect": "EXEC-102",
+    },
     {
         "name": "pip needs MSVC",
         "source": "recorded",

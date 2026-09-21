@@ -2,12 +2,18 @@
 
 from __future__ import annotations
 
+import re
 from dataclasses import asdict, dataclass, field
 from typing import Any
 
 from . import classifiers
 from .taxonomy import APP_DEFECT, CODES, ENVIRONMENT, INFRA, TEST_DEFECT, UNKNOWN
 
+_API_MISMATCH_CODES = {"EXEC-101", "EXEC-102"}
+_API_MISMATCH = re.compile(
+    r"unexpected keyword argument|got multiple values|cannot import name|has no attribute|takes \d+ positional|"
+    r"missing \d+ required"
+)
 _RANK = {ENVIRONMENT: 0, INFRA: 1, TEST_DEFECT: 2, APP_DEFECT: 3, UNKNOWN: 4}
 
 
@@ -17,6 +23,7 @@ class Context:
     a declared dependency that failed to install."""
 
     missing_packages: list[str] = field(default_factory=list)
+    conflicts: list[dict[str, str]] = field(default_factory=list)  # `pip check` version conflicts
 
 
 @dataclass
@@ -75,6 +82,15 @@ def classify(text: str, ecosystem: str | None = None, context: Context | None = 
 
 def _resolve(diagnosis: Diagnosis, context: Context | None) -> Diagnosis:
     """An import error of a declared-but-uninstalled package is the environment's fault, not the test's."""
+    if (
+        context
+        and context.conflicts
+        and diagnosis.code in _API_MISMATCH_CODES
+        and _API_MISMATCH.search(diagnosis.evidence)
+    ):
+        # the environment is inconsistent and the error is what an inconsistent library set produces
+        pkgs = ", ".join(sorted({c.get("dependency", "") for c in context.conflicts}))
+        return _diagnosis("ENV-PY-009", diagnosis.evidence, {"packages": pkgs})
     module = diagnosis.detail.get("module")
     if diagnosis.code == "EXEC-101" and module and context and context.missing_packages:
         from ..envs import env_check

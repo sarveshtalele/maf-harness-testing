@@ -41,7 +41,8 @@ Rules, all enforced in code and tested:
 | `retry-update` | `ENV-JAVA-003` dependencies cannot be resolved | Maven `-U` / Gradle `--refresh-dependencies` |
 | `retry-restore` | `ENV-DOTNET-003` NuGet feed | one more restore |
 | `recreate-venv` | `ENV-PY-004`, `ENV-PY-008` externally-managed / interpreter not found | deletes the harness venv (only `.harness-venv` inside the workspace) and restarts from `create-venv` |
-| `install-each-package` | a failed bulk `pip install` | already existed: retries package by package |
+| `install-each-package` | a failed bulk `pip install` | retries package by package, then resolves everything that installed together in one pip run so the repository's pins hold together |
+| `fix-conflicts` | `ENV-PY-009` (`pip check` reports version conflicts) | after the install steps: re-resolves the declared requirements that installed plus the ranges `pip check` reports, in one pip run (at most 2 rounds); leftovers are reported in `dependency_conflicts` |
 
 Every other recipe in the playbook (`provision-*`, `prefer-binary`, `relax-pin`, `add-test-dependency`, `install-browser`,
 `new-port`, `start-app`, `configure-mirror`, `use-wrapper`) is reported but not automated yet. `plan_env_fix` (typed tool)

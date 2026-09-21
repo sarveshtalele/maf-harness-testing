@@ -23,6 +23,10 @@ RECIPES: dict[str, Recipe] = {
     for r in (
         Recipe("install-each-package", "Retry a failed bulk install one package at a time (implemented)."),
         Recipe("prefer-binary", "Retry with --only-binary=:all: so pip never tries to compile."),
+        Recipe(
+            "fix-conflicts",
+            "Reinstall each conflicting dependency at the range pip check says its dependent package requires (implemented).",
+        ),
         Recipe("relax-pin", "Retry one package without its exact version pin."),
         Recipe("recreate-venv", "Delete and recreate the isolated venv with an absolute interpreter path."),
         Recipe(

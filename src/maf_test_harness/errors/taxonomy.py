@@ -114,6 +114,16 @@ _c(
     "with an absolute interpreter path.",
     ("recreate-venv",),
 )
+_c(
+    "ENV-PY-009",
+    ENVIRONMENT,
+    AUTO,
+    "Installed packages are mutually incompatible",
+    "pip reports installed packages whose requirements are not met (for example fastapi pinned below starlette 0.37 "
+    "next to starlette 1.x), so library calls fail with TypeError/ImportError. Reinstall the dependency at the range "
+    "the dependent package declares.",
+    ("fix-conflicts",),
+)
 # java
 _c(
     "ENV-JAVA-001",

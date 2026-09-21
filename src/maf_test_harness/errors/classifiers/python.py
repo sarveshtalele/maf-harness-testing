@@ -27,6 +27,11 @@ RULES = compile_rules(
             r"SRE module mismatch|Fatal Python error: init_fs_encoding|No module named 'encodings'",
         ),
         ("ENV-PY-008", r"\[WinError 2\] The system cannot find the file specified"),
+        (
+            "ENV-PY-009",
+            r"has requirement .+, but you have|which is incompatible|"
+            r"got an unexpected keyword argument 'on_(?:startup|shutdown)'",
+        ),
     ]
 )
 
