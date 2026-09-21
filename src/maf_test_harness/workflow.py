@@ -22,7 +22,7 @@ from agent_framework import (
 )
 from filelock import FileLock
 
-from . import env_check
+from . import app_launcher, env_check
 from .agent_tools import HarnessToolbox
 from .autofix import autofix_files
 from .build_gate import try_build
@@ -391,7 +391,7 @@ class Harness:
         self.save()
         return self.view
 
-    async def start(self, repo_url: str, app_url: str | None = None):
+    async def start(self, repo_url: str, app_url: str | None = None, start_app: bool = False):
         if self.view["status"] != "new":
             raise ValueError("Run already started. Resume its pending request.")
         _, _, _, ref = validate_github_url(repo_url, with_ref=True)
@@ -405,6 +405,7 @@ class Harness:
             "repo_url": repo_url.strip(),
             "repo_ref": ref,
             "app_url": app_url.strip() if app_url else None,
+            "launch_app": bool(start_app and not app_url),
             "stages": self.stages,
             "artifacts": {},
             "revisions": {},
@@ -419,6 +420,8 @@ class Harness:
                 "reported_tokens": 0,
             },
         }
+        if self.state["launch_app"]:  # the harness starts the app itself; UI/E2E levels become available
+            self.state["app_url"] = f"http://127.0.0.1:{app_launcher.free_port()}"
         result = await self.workflow.run(self.state)
         self._restored = True
         return await self._collect(result)
@@ -834,6 +837,15 @@ class Harness:
             timeout=EXECUTION_TIMEOUT_SECONDS,
             env_ready=env_ready,
         )
+        if state.get("launch_app") and not plan.blocked_reason:
+            state["app_url"] = f"http://127.0.0.1:{app_launcher.free_port()}"  # fresh port for every attempt
+            port = int(state["app_url"].rsplit(":", 1)[1])
+            plan.app = await asyncio.to_thread(app_launcher.detect_launch, workspace, port)
+            if plan.app is None:
+                plan.blocked_reason = (
+                    "The harness could not tell how to start this application (no Streamlit/FastAPI/Flask entry "
+                    "point or npm start script found). Start it yourself and supply its URL for UI/E2E cases."
+                )
         if state.get("app_url"):
             for step in plan.steps:
                 if step.kind == "test":
@@ -867,10 +879,26 @@ class Harness:
                 if env_ready
                 else "not prepared: setup steps included",
                 "steps": [
-                    {"name": st.name, "kind": st.kind, "command": shlex.join(st.argv)} for st in plan.steps
+                    *(
+                        [{"name": "start-app", "kind": "app", "command": shlex.join(plan.app["argv"])}]
+                        if plan.app
+                        else []
+                    ),
+                    *(
+                        {"name": st.name, "kind": st.kind, "command": shlex.join(st.argv)}
+                        for st in plan.steps
+                    ),
                 ],
                 "effects": (
-                    "Runs the generated tests as your user; repository code executes. Local process only, "
+                    (
+                        "Starts the application under test on "
+                        + str(state.get("app_url"))
+                        + " for the duration of "
+                        "the run, then stops it. "
+                        if plan.app
+                        else ""
+                    )
+                    + "Runs the generated tests as your user; repository code executes. Local process only, "
                     "NOT a security sandbox. Model credentials are not passed to these commands."
                 ),
             },
@@ -884,13 +912,14 @@ class Harness:
             adapter=info["plan"]["adapter"],
             steps=[Step(**st) for st in info["plan"]["steps"]],
             notes=info["plan"].get("notes", []),
+            app=info["plan"].get("app"),
         )
         out_dir = self.run_dir / "executions" / f"attempt-{info['attempt']}"
         self.audit(
             "execution_started", request_id=request["id"], adapter=plan.adapter, plan_hash=info["hash"]
         )
         report = await asyncio.to_thread(
-            execute_plan, plan, Path(info["workspace"]), out_dir, state.get("workspace_generated")
+            self._execute_with_app, plan, Path(info["workspace"]), out_dir, state, info
         )
         self.audit(
             "execution_completed",
@@ -899,6 +928,23 @@ class Harness:
             summary=report.get("summary"),
         )
         await self.review(EXECUTION_STAGE, self._execution_artifact(state, report), state, ctx)
+
+    def _execute_with_app(
+        self, plan: RunPlan, workspace: Path, out_dir: Path, state: dict, info: dict
+    ) -> dict:
+        generated = state.get("workspace_generated")
+        if not plan.app:
+            return execute_plan(plan, workspace, out_dir, generated)
+        log_dir = out_dir.with_name(out_dir.name + "-app")
+        try:
+            with app_launcher.running(plan.app, workspace, state["app_url"], log_dir):
+                self.audit("app_started", kind=plan.app["kind"], url=state["app_url"])
+                return execute_plan(plan, workspace, out_dir, generated)
+        except RuntimeError as exc:  # the application never came up: honest, inconclusive report
+            self.audit("app_failed", error=str(exc)[:600])
+            return execute_plan(
+                RunPlan(plan.adapter, [], blocked_reason=str(exc)), workspace, out_dir, generated
+            )
 
     async def heal(self, state: dict, feedback: str, ctx) -> None:
         """Human-approved regeneration of only the failing/unexecuted tests, with failure evidence."""

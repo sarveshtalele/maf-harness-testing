@@ -44,8 +44,8 @@ them the same way, but they never reach the model gateway.
 | 2 | `requirements` | Repository Requirements Analyst — reverse-engineering and testability specialist | yes | `repository-requirements` (+ `api-contract-analyzer` if an OpenAPI/Swagger file exists) | `find_symbol`, `module_api`, `read_source`, `list_routes`, `installed_packages` | review / revise |
 | 3 | `environment_setup` | Environment Provisioning Engineer (host, no model) — deterministic, isolated dependency installer | no | — | — | **tool approval (install)** → review; can skip |
 | 4 | `test_planning` | Principal Test Architect — cross-language test strategy architect | yes | `test-planning` | — | review / revise |
-| 5 | `test_design` | Senior Test Design Engineer — evidence-driven test case designer | yes | `test-design-generator` + `test-data-generator` | `find_symbol`, `module_api`, `list_routes` | review / revise; **generation cannot start before approval** |
-| 6 | `test_generation` | Polyglot Test Automation Engineer — native test source generator | yes | `generic-test-generator` + `test-data-generator` (+ `junit-generator` for Java/Kotlin, + `playwright-test-generator` for ui/e2e cases) | `module_api`, `find_symbol`, `read_source`, `resolve_import`, `check_test`, `list_routes`, `try_build` | review / revise |
+| 5 | `test_design` | Senior Test Design Engineer — evidence-driven test case designer | yes | `test-design-generator` + `test-data-generator` | `find_symbol`, `module_api`, `list_routes`, `app_launch_plan` | review / revise; **generation cannot start before approval** |
+| 6 | `test_generation` | Polyglot Test Automation Engineer — native test source generator | yes | `generic-test-generator` + `test-data-generator` (+ `junit-generator` for Java/Kotlin, + `playwright-test-generator` for ui/e2e cases) | `module_api`, `find_symbol`, `read_source`, `resolve_import`, `check_test`, `list_routes`, `try_build`, `environment_gaps` | review / revise |
 | 7 | `test_execution` | QA Execution Engineer (host, no model) — deterministic runner and reporter | no | — | — | **tool approval (run)** → review; regenerate failing tests (≤3 rounds) or skip |
 
 Every model persona shares seven **common rules** (`COMMON_RULES` in `personas.py`) before its stage-specific
@@ -56,9 +56,15 @@ directly (the host owns every side effect); return exactly the host's output sch
 
 `execute=False` (a generation-only workflow) drops stages 3 and 7 entirely.
 
+**Browser E2E (Playwright).** UI/E2E/accessibility cases need a running application. Either supply its URL, or tick
+*Start the application for me* (CLI: `--start-app`): the harness then picks a free local port, detects the start command
+from the repository (`app_launcher.detect_launch`), lists it as the first step of the *run the tests* approval (it is part
+of the approved plan hash), starts the app inside the isolated environment, waits until it answers HTTP, runs the
+Playwright specs with `BASE_URL` set, and always stops the whole process tree afterwards.
+
 ## 3. Central tools (what an agent can call)
 
-Nine deterministic MAF function tools (`agent_tools.py`, thin wrappers over `code_intel.py` / `build_gate.py`).
+Eleven deterministic MAF function tools (`agent_tools.py`, thin wrappers over `code_intel.py` / `build_gate.py`).
 They are read-only or scratch-only, cannot reach the network or any path outside the repository, and answer the
 same facts the host's own static gates use — so a model spends a call on test design, not on guessing a
 constructor or an import path. Which tools a stage gets is a fixed, small selection (`STAGE_TOOLS`); none are
@@ -75,6 +81,8 @@ offered at `repo_analysis`, `environment_setup`, or `test_execution` (host-only 
 | `installed_packages` | Distributions actually present in the isolated environment — not merely declared | `code_intel.installed_packages` | `requirements` |
 | `probe_tools` | Versions of `python3`, `java`, `mvn`, `node`, `npm` present on the host — never installs anything | `code_intel.probe_tools` | *(available, not offered to any stage by default)* |
 | `try_build` | Compile/collect the candidate files in the prepared workspace (`pytest --collect-only` / `mvn test-compile`) without running any test body | `build_gate.try_build` | `test_generation` |
+| `environment_gaps` | Declared dependencies that are **not** installed in the isolated environment (an install failed, e.g. a package needing a C++ compiler) — so tests stub them instead of importing them | `env_check.missing_packages` | `test_generation` |
+| `app_launch_plan` | Whether and how the harness can start the application itself for ui/e2e (Playwright) cases — Streamlit, FastAPI, Flask or an npm `start`/`dev` script | `app_launcher.detect_launch` | `test_design` |
 
 The host runs the exact same checks itself regardless of whether a model calls these tools — correctness never
 depends on an agent choosing to call one.
@@ -118,7 +126,7 @@ table per file.
 |---|---|---|
 | Orchestration | `workflow.py`, `cli.py` | The MAF workflow graph, stage prompts, repair loops (`workflow.py`); the headless CLI driver (`cli.py`) — `app.py` at the repo root is the Streamlit UI, both drive the same `Harness` |
 | Repository intake | `repo_analyzer.py`, `stack.py` | Clone + static analysis; framework/stack/ecosystem detection |
-| Environment | `environment.py`, `runners.py`, `execution.py`, `platform_compat.py` | Environment planning, isolated install, per-ecosystem run adapters, local-process execution, OS-specific decisions (Windows vs POSIX) centralized in one module |
+| Environment | `environment.py`, `runners.py`, `execution.py`, `platform_compat.py`, `env_check.py`, `app_launcher.py` | Environment planning, isolated install, per-ecosystem run adapters, local-process execution, OS-specific decisions (Windows vs POSIX) centralized in one module; declared-vs-installed dependency check (`env_check`); starting the app under test for Playwright E2E (`app_launcher`) |
 | Agent Skills | `skills_config.py`, `skills_registry.py`, `skill_contracts.py`, `skill_scripts.py`, `skill_reports.py` | Which skill a stage loads and why; spec/lock validation; contract enforcement on generated output; sandboxed script execution; host-run QA skill reports |
 | Central tools | `code_intel.py`, `autofix.py`, `build_gate.py`, `agent_tools.py` | The nine deterministic MAF function tools and the mechanical auto-fixers behind them |
 | Runtime | `maf_runtime.py`, `runtime_service.py` | MAF agent construction, `SkillsProvider` wiring, tool-trace middleware, `BudgetGuard` (`maf_runtime.py`); one asyncio event-loop-per-UI-session wrapper (`runtime_service.py`) |

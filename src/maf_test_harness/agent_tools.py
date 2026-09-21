@@ -15,7 +15,7 @@ from typing import Annotated, Any
 
 from agent_framework import FunctionTool, tool
 
-from . import code_intel
+from . import app_launcher, code_intel, env_check
 
 CENTRAL_TOOL_NAMES = (
     "resolve_import",
@@ -27,11 +27,13 @@ CENTRAL_TOOL_NAMES = (
     "installed_packages",
     "probe_tools",
     "try_build",
+    "environment_gaps",
+    "app_launch_plan",
 )
 # Requirements/design read code; generation additionally validates and builds what it writes.
 STAGE_TOOLS: dict[str, tuple[str, ...]] = {
     "requirements": ("find_symbol", "module_api", "read_source", "list_routes", "installed_packages"),
-    "test_design": ("find_symbol", "module_api", "list_routes"),
+    "test_design": ("find_symbol", "module_api", "list_routes", "app_launch_plan"),
     "test_generation": (
         "module_api",
         "find_symbol",
@@ -40,6 +42,7 @@ STAGE_TOOLS: dict[str, tuple[str, ...]] = {
         "check_test",
         "list_routes",
         "try_build",
+        "environment_gaps",
     ),
 }
 MAX_RESULT_CHARS = 6_000
@@ -137,6 +140,25 @@ class HarnessToolbox:
             report = await asyncio.to_thread(self._build, [{"path": path, "content": content}])
             return _json({k: report.get(k) for k in ("status", "tool", "errors", "reason", "seconds")})
 
+        @tool(name="environment_gaps", approval_mode="never_require")
+        async def environment_gaps() -> str:
+            """Declared dependencies that are NOT installed in the isolated environment: do not import them in tests, stub them."""
+            workspace = ctx().workspace
+            if workspace is None:
+                return _json({"missing": [], "note": "environment not created yet"})
+            return _json({"missing": await asyncio.to_thread(env_check.missing_packages, workspace)})
+
+        @tool(name="app_launch_plan", approval_mode="never_require")
+        async def app_launch_plan() -> str:
+            """How the harness would start the application for ui/e2e cases (kind, base URL), or why it cannot."""
+            workspace = ctx().workspace or ctx().root
+            spec = await asyncio.to_thread(app_launcher.detect_launch, workspace, 0)
+            return _json(
+                {"launchable": bool(spec), "kind": spec and spec["kind"], "base_url": ctx().app_url}
+                if spec
+                else {"launchable": False, "base_url": ctx().app_url}
+            )
+
         return {
             t.name: t
             for t in (
@@ -149,6 +171,8 @@ class HarnessToolbox:
                 installed_packages,
                 probe_tools,
                 try_build,
+                environment_gaps,
+                app_launch_plan,
             )
         }
 

@@ -43,6 +43,7 @@ class RunPlan:
     steps: list[Step]
     notes: list[str] = field(default_factory=list)
     blocked_reason: str | None = None
+    app: dict | None = None  # how to start the application under test (E2E), see app_launcher
 
     def to_dict(self) -> dict:
         return asdict(self)

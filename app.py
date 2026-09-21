@@ -351,6 +351,11 @@ if harness is None:
             placeholder="http://localhost:8080",
             help="Local URL of the started application. Enables UI/E2E/accessibility cases; tests read it as BASE_URL.",
         )
+        start_app = st.checkbox(
+            "Start the application for me (browser E2E with Playwright)",
+            help="The harness starts the app on a free local port during the approved run and stops it afterwards. "
+            "Enables ui/e2e cases; the exact start command is shown in the run approval. Ignored if a URL is given.",
+        )
         start = st.form_submit_button("Start autonomous review", type="primary")
     if start:
         try:
@@ -370,7 +375,7 @@ if harness is None:
                 runtime=runtime,
             )
             st.session_state.harness = harness
-            dispatch(harness.start(url, app_url.strip() or None))
+            dispatch(harness.start(url, app_url.strip() or None, start_app))
         except Exception as exc:
             st.error(str(exc))
     st.stop()

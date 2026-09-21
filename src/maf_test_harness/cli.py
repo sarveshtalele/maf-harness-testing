@@ -89,7 +89,9 @@ async def run(args) -> int:
     try:
         # An existing run directory resumes at its pending gate; a stopped or finished run is reported as it is.
         view = (
-            host.view if host.view.get("status") != "new" else await host.start(args.repo_url, args.app_url)
+            host.view
+            if host.view.get("status") != "new"
+            else await host.start(args.repo_url, args.app_url, args.start_app)
         )
         while view["status"] == "waiting":
             pending = view["pending"]
@@ -191,6 +193,11 @@ def main(argv: list[str] | None = None) -> int:
     runp.add_argument("repo_url", help="https://github.com/owner/repo[.git] or .../tree/<ref>")
     runp.add_argument(
         "--app-url", help="Local URL of the running application (enables ui/e2e/accessibility cases)"
+    )
+    runp.add_argument(
+        "--start-app",
+        action="store_true",
+        help="Let the harness start the application itself for ui/e2e (Playwright) cases; shown in the run approval",
     )
     runp.add_argument("--run-dir", help="Run directory (default .harness_runs/<id>)")
     runp.add_argument("--model", help=f"Model name (default {MODEL})")

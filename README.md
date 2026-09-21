@@ -134,7 +134,8 @@ Your model gateway may enforce its own, separate quota; when it answers HTTP 429
 ```bash
 uv run maf-harness run https://github.com/owner/repo                       # answer each gate in the terminal
 uv run maf-harness run https://github.com/owner/repo --auto-approve --auto-heal 2      # unattended; exit 0 pass / 1 fail / 2 inconclusive
-uv run maf-harness run https://github.com/owner/repo --app-url http://127.0.0.1:8080/app   # allow UI/E2E cases
+uv run maf-harness run https://github.com/owner/repo --app-url http://127.0.0.1:8080/app   # allow UI/E2E cases (you run the app)
+uv run maf-harness run https://github.com/owner/repo --start-app                             # harness starts the app: Playwright E2E
 uv run maf-harness verify-run .harness_runs/<run>     # evidence that MAF harness + Agent Skills were really used
 uv run maf-harness trace .harness_runs/<run>          # skills, tools, cost and traceability report (--format json, --out FILE)
 uv run maf-harness run <repo> --run-dir .harness_runs/<run>   # an existing run directory resumes at its pending gate

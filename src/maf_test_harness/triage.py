@@ -122,6 +122,29 @@ REMEDIES: list[tuple[re.Pattern[str], str]] = [
         "Import or define the name shown in the error (for example add the missing import at the top of the file).",
     ),
     (
+        re.compile(r"Executable doesn't exist|npx playwright install|browserType\.launch", re.I),
+        "The Playwright browser is not installed in this environment (an environment problem, not a test defect): "
+        "do not change the test; the host installs Chromium during setup.",
+    ),
+    (
+        re.compile(r"ERR_CONNECTION_REFUSED|ECONNREFUSED|Connection refused", re.I),
+        "Nothing answered at BASE_URL: read the target only from the BASE_URL environment variable "
+        "(never a hard-coded host or port); the host starts the application before ui/e2e tests run.",
+    ),
+    (
+        re.compile(r"SRE module mismatch|Microsoft Visual C\+\+ 14\.0"),
+        "Environment problem (a mixed interpreter or a package that needs a C/C++ compiler), not a test defect: "
+        "do not rewrite the test; call environment_gaps and stub packages that are not installed.",
+    ),
+    (
+        re.compile(
+            r"No module named '(?:fastapi|uvicorn|streamlit|flask|django|langchain\w*|chromadb|numpy|pandas)'"
+        ),
+        "This third-party package is not installed in the isolated environment (call environment_gaps). Do not import "
+        "it at module level: put a stub in sys.modules before importing the code under test, or test in-process "
+        "code that does not need it.",
+    ),
+    (
         re.compile(r"cannot import name|No module named|ImportError"),
         "Import only names defined at module level in target_source and modules listed in source_files / "
         "python_import_roots.",
