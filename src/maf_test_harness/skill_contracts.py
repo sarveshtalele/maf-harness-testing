@@ -387,7 +387,9 @@ def finalize_design(
             if allowed_levels is not None and case.get("level") not in allowed_levels:
                 raise ValueError(
                     f"test '{case.get('title')}' uses level {case.get('level')!r}, which is unavailable "
-                    f"(allowed: {sorted(allowed_levels)}). UI/E2E/accessibility levels need a running application."
+                    f"(allowed: {sorted(allowed_levels)}). UI/E2E/accessibility levels need a running application. "
+                    "Change this case's level to 'unit' or 'integration' and test the page/handler code in-process "
+                    "(for a Streamlit app use streamlit.testing.v1.AppTest); do not use a live-app level."
                 )
             known_actors = {a["name"].lower() for a in source.get("actors", [])} | {"system"}
             if source.get("actors") and str(case.get("actor", "")).lower() not in known_actors:
