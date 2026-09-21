@@ -16,7 +16,7 @@ import time
 from pathlib import Path, PurePosixPath
 from typing import Any
 
-from . import platform_compat
+from . import env_check, platform_compat
 from .execution import run_command, write_generated
 from .runners import VENV_DIR, Step, _expand_env, build_plan, resolve_ecosystem
 from .stack import StackProfile
@@ -76,6 +76,17 @@ def _maven_errors(output: str, generated: list[str]) -> list[dict[str, Any]]:
     return list(best.values())
 
 
+def _environment_gap(output: str, workspace: Path, cache: list[str]) -> list[str]:
+    """Missing declared distributions that explain every ``No module named`` in ``output`` (else empty)."""
+    modules = env_check.missing_module_names(output)
+    if not modules:
+        return []
+    if not cache:
+        cache.extend(env_check.missing_packages(workspace) or ["-"])
+    explained = [env_check.explained_by_missing(m, cache) for m in modules]
+    return [d for d in dict.fromkeys(explained) if d] if all(explained) else []
+
+
 def try_build(
     stack: StackProfile,
     workspace: Path,
@@ -105,6 +116,7 @@ def try_build(
         write_generated(workspace, files)
         if eco == "python":
             result.update(tool="pytest --collect-only", status="ok")
+            env_missing: list[str] = []  # filled lazily, only when a collection fails
             for index, item in enumerate(files):
                 if not item["path"].endswith(".py"):
                     continue
@@ -129,8 +141,21 @@ def try_build(
                 if run["status"] == "timeout":
                     return {**result, "status": "skipped", "reason": "collection timed out"}
                 if run["exit_code"] != 0:
+                    gap = _environment_gap(output, workspace, env_missing)
+                    if gap:  # a declared dependency that failed to install: not the candidate's fault
+                        result.setdefault("env_missing", []).extend(
+                            d for d in gap if d not in result["env_missing"]
+                        )
+                        continue
                     result["status"] = "failed"
                     result["errors"] += _python_errors(output, item["path"])
+            if result.get("env_missing") and result["status"] == "ok":
+                result.update(
+                    status="skipped",
+                    reason="environment lacks declared package(s) "
+                    + ", ".join(result["env_missing"])
+                    + " (install failed); this is not a test defect",
+                )
         else:
             argv = [*test_step.argv[: test_step.argv.index("test")], "-q", "test-compile"]
             run = run_command(

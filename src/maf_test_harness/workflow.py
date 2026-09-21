@@ -22,6 +22,7 @@ from agent_framework import (
 )
 from filelock import FileLock
 
+from . import env_check
 from .agent_tools import HarnessToolbox
 from .autofix import autofix_files
 from .build_gate import try_build
@@ -795,7 +796,20 @@ class Harness:
             self.run_dir / "environment" / f"attempt-{attempt}",
         )
         info["status"] = report["status"]
-        self.audit("environment_completed", status=report["status"], warnings=report.get("warnings"))
+        if report["status"] == "ready":
+            info["missing_packages"] = await asyncio.to_thread(env_check.missing_packages, self.workspace)
+            if info["missing_packages"]:
+                report.setdefault("warnings", []).append(
+                    "Declared dependencies NOT installed: "
+                    + ", ".join(info["missing_packages"])
+                    + ". Tests importing them cannot run until they are installed (build tools may be needed)."
+                )
+        self.audit(
+            "environment_completed",
+            status=report["status"],
+            warnings=report.get("warnings"),
+            missing_packages=info.get("missing_packages"),
+        )
         await self.review(ENV_STAGE, self._environment_artifact(state, report), state, ctx)
 
     async def plan_execution(self, state: dict, ctx) -> None:
