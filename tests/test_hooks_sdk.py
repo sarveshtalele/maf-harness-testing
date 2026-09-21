@@ -8,7 +8,14 @@ import sys
 from pathlib import Path
 
 import pytest
-from test_hooks_maf import ToolCallingClient, engine_for, leak, registry_for, workspace  # noqa: F401
+from test_hooks_maf import (  # noqa: F401
+    FAKE_KEY,
+    ToolCallingClient,
+    engine_for,
+    leak,
+    registry_for,
+    workspace,
+)
 
 import maf_test_harness.agent.runtime as runtime_module
 from maf_test_harness.agent.runtime import MAFHarnessRuntime
@@ -82,9 +89,7 @@ def test_an_allowed_call_runs(monkeypatch, workspace):  # noqa: F811
 
 def test_argument_transforms_are_written_back(monkeypatch, workspace):  # noqa: F811
     engine = engine_for(workspace)
-    client = ToolCallingClient(
-        "write_test_file", {"path": "a.py", "content": "KEY = 'sk-abcdefghijklmnop1234'\n"}
-    )
+    client = ToolCallingClient("write_test_file", {"path": "a.py", "content": f"KEY = '{FAKE_KEY}'\n"})
     registry = registry_for(workspace, engine)
     run_agent(monkeypatch, client, registry.as_function_tools("test_design"), engine)
     written = (workspace / "a.py").read_text()

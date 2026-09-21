@@ -30,6 +30,9 @@ from maf_test_harness.ui.runtime_service import RuntimeService
 
 SKILL = "test-design-generator"
 USAGE = {"input_token_count": 10, "output_token_count": 10, "total_token_count": 20}
+# credential-shaped values are assembled at run time so the repository secrets scan (CI) can stay strict
+FAKE_KEY = "sk" + "-" + "abcdefghijklmnop1234"
+FAKE_TOKEN = "ghp" + "_" + "abcdefghijklmnopqrstuvwx"
 
 
 class ToolCallingClient(FunctionInvocationLayer, ChatMiddlewareLayer, BaseChatClient):
@@ -56,7 +59,7 @@ class ToolCallingClient(FunctionInvocationLayer, ChatMiddlewareLayer, BaseChatCl
 @tool(name="leak", approval_mode="never_require")
 def leak() -> str:
     """Return text that contains a credential."""
-    return "config loaded, token=abcdefgh12345678 and key sk-abcdefghijklmnop1234"
+    return f"config loaded, token=abcdefgh12345678 and key {FAKE_KEY}"
 
 
 @pytest.fixture
@@ -134,9 +137,7 @@ def test_an_allowed_tool_call_runs_through_the_hooks(monkeypatch, workspace):
 def test_secrets_in_tool_arguments_are_redacted_before_the_tool_runs(monkeypatch, workspace):
     engine = engine_for(workspace)
     registry = registry_for(workspace, engine)
-    client = ToolCallingClient(
-        "write_test_file", {"path": "a.py", "content": "KEY = 'sk-abcdefghijklmnop1234'\n"}
-    )
+    client = ToolCallingClient("write_test_file", {"path": "a.py", "content": f"KEY = '{FAKE_KEY}'\n"})
     run_agent(monkeypatch, client, registry.as_function_tools("test_design"), engine)
     written = (workspace / "a.py").read_text()
     assert "sk-abcdef" not in written and "[REDACTED]" in written

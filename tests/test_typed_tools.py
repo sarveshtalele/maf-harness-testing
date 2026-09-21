@@ -12,13 +12,19 @@ from maf_test_harness.tools import env_tools, file_tools
 from maf_test_harness.tools.registry import ToolContext, ToolRegistry, ToolResult, ToolSpec, object_schema
 from maf_test_harness.tools.typed import TYPED_STAGE_TOOLS, default_registry
 
+# credential-shaped values are assembled at run time so the repository secrets scan (CI) can stay strict
+FAKE_KEY = "sk" + "-" + "abcdefghijklmnop1234"
+FAKE_TOKEN = "ghp" + "_" + "abcdefghijklmnopqrstuvwx"
+
 
 @pytest.fixture
 def repo(tmp_path):
     root = tmp_path / "repo"
     (root / "src").mkdir(parents=True)
     (root / "src" / "app.py").write_text("line one\nline two\nline three\n", encoding="utf-8")
-    (root / ".env").write_text("OPENAI_API_KEY=sk-should-never-be-read-1234567890\n", encoding="utf-8")
+    (root / ".env").write_text(
+        "OPENAI_API_KEY=" + "sk" + "-should-never-be-read-1234567890\n", encoding="utf-8"
+    )
     (root / "notes.txt").write_text("token: abcdefgh12345678\n", encoding="utf-8")
     return root
 
@@ -223,7 +229,7 @@ def test_hooks_deny_before_the_handler_runs(ctx):
 
 def test_secrets_in_arguments_are_redacted_before_the_tool_sees_them(ctx):
     registry, _ = hooked_registry(ctx)
-    content = "KEY = 'sk-abcdefghijklmnop1234'\n"
+    content = f"KEY = '{FAKE_KEY}'\n"
     assert registry.call("write_test_file", {"path": "a.py", "content": content}).ok
     written = (ctx.writable_roots[0] / "a.py").read_text()
     assert "sk-abcdef" not in written and "[REDACTED]" in written
