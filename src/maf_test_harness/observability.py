@@ -108,6 +108,46 @@ def _event_detail(event: dict[str, Any]) -> str:
     return ", ".join(parts)
 
 
+def _cache_report(chat: list[dict[str, Any]]) -> dict[str, Any]:
+    """Input tokens served from the provider's prompt cache, per stage and overall, plus prompt-prefix stability.
+
+    ``prefix_ratio`` is the share of each request that repeats the previous request of the same stage byte for byte:
+    the most a prefix cache could ever serve. ``hit_pct`` is what the provider actually reported as cached.
+    """
+    stages: dict[str, dict[str, Any]] = {}
+    for event in chat:
+        if event.get("status") != "ok":
+            continue
+        row = stages.setdefault(
+            event.get("stage") or "?",
+            {"calls": 0, "input": 0, "cached": 0, "chars": 0, "shared": 0, "reported": 0},
+        )
+        tokens = event.get("tokens") or {}
+        row["calls"] += 1
+        row["input"] += int(tokens.get("input") or 0)
+        if tokens.get("cached") is not None:
+            row["cached"] += int(tokens["cached"])
+            row["reported"] += 1
+        row["chars"] += int(event.get("prompt_chars") or 0)
+        row["shared"] += int(event.get("prefix_shared_chars") or 0)
+    for row in stages.values():
+        row["hit_pct"] = (
+            round(100 * row["cached"] / row["input"], 1) if row["input"] and row["reported"] else None
+        )
+        row["prefix_ratio"] = round(100 * row["shared"] / row["chars"], 1) if row["chars"] else None
+    total_input = sum(r["input"] for r in stages.values())
+    total_cached = sum(r["cached"] for r in stages.values())
+    reported = sum(r["reported"] for r in stages.values())
+    return {
+        "stages": stages,
+        "all": {
+            "input": total_input,
+            "cached": total_cached,
+            "hit_pct": round(100 * total_cached / total_input, 1) if total_input and reported else None,
+        },
+    }
+
+
 def build_report(run_dir: Path, skills_root: Path | None = None) -> dict[str, Any]:
     run_dir = Path(run_dir)
     view = _read_json(run_dir / "run.json")
@@ -355,10 +395,14 @@ def build_report(run_dir: Path, skills_root: Path | None = None) -> dict[str, An
     # ---- totals and integrity checks -------------------------------------------------------------------------
     categories = Counter(c["category"] for c in tool_calls)
     trace_tokens = sum(int((e.get("tokens") or {}).get("total") or 0) for e in chat)
+    cache = _cache_report(chat)
     tooling = state.get("tooling") or {}
     totals = {
         "provider_calls": budget.get("calls", 0),
         "tokens": budget.get("reported_tokens", 0),
+        "input_tokens": cache["all"]["input"],
+        "cached_input_tokens": cache["all"]["cached"],
+        "cache_hit_pct": cache["all"]["hit_pct"],
         "model_runs": len(model_runs),
         "tool_calls": len(tool_calls),
         "skill_loads": categories["skill_load"]
@@ -394,6 +438,7 @@ def build_report(run_dir: Path, skills_root: Path | None = None) -> dict[str, An
         },
         "trace_level": trace_level,
         "totals": totals,
+        "cache": cache,
         "stages": stage_rows,
         "skills": skills,
         "tool_calls": tool_calls,
@@ -630,6 +675,17 @@ def render_markdown(report: dict[str, Any]) -> str:
         "| Metric | Value |",
         "|---|---|",
         *(f"| {k.replace('_', ' ')} | {v} |" for k, v in totals.items()),
+        "",
+        "## Prompt cache",
+        "",
+        "| Stage | Calls | Input tokens | Cached | Hit % | Prompt prefix repeated % |",
+        "|---|---|---|---|---|---|",
+        *(
+            f"| {name} | {c['calls']} | {c['input']:,} | {c['cached']:,} | "
+            f"{c['hit_pct'] if c['hit_pct'] is not None else 'not reported'} | "
+            f"{c['prefix_ratio'] if c['prefix_ratio'] is not None else '—'} |"
+            for name, c in report.get("cache", {}).get("stages", {}).items()
+        ),
         "",
         "## Stages",
         "",

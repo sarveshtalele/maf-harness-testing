@@ -6,6 +6,7 @@ import ast
 import copy
 import hashlib
 import json
+import os
 import time
 from collections.abc import Callable
 from importlib.metadata import version
@@ -111,11 +112,16 @@ class BudgetGuard(ChatMiddleware):
     ):
         self.budget, self.persist, self.ledger = budget, persist, ledger
         self.emit = emit or (lambda *_a, **_k: None)
+        self._previous_prompt: str | None = None
 
     async def process(self, context, call_next):
         # Include message history AND tool schemas. Estimates are explicitly identified in the UI.
         serialized = json.dumps([m.to_dict() for m in context.messages], default=str)
         serialized += json.dumps(context.options or {}, default=str)
+        # Providers cache identical prompt *prefixes*; how much of this request repeats the previous one is the
+        # upper bound of what can be served from cache, so it is recorded per call (see docs/CACHING.md).
+        shared = len(os.path.commonprefix([self._previous_prompt or "", serialized]))
+        prompt_chars, self._previous_prompt = len(serialized), serialized
         estimate = max(1, (len(serialized.encode("utf-8")) + 2) // 3)
         output_limit = int((context.options or {}).get("max_output_tokens") or DEFAULT_MAX_OUTPUT_TOKENS)
         reservation = estimate + output_limit
@@ -144,6 +150,11 @@ class BudgetGuard(ChatMiddleware):
         actual = usage.get("total_token_count")
         if actual is None and usage.get("input_token_count") is not None:
             actual = usage["input_token_count"] + usage.get("output_token_count", output_limit)
+        cached = usage.get("cache_read_input_token_count")
+        if usage.get("input_token_count") is not None:
+            budget["input_tokens"] = budget.get("input_tokens", 0) + int(usage["input_token_count"])
+        if cached is not None:
+            budget["cached_tokens"] = budget.get("cached_tokens", 0) + int(cached)
         if actual is not None:
             self.ledger.settle(claim, int(actual))
             budget["charged"] += int(actual) - reservation
@@ -159,7 +170,10 @@ class BudgetGuard(ChatMiddleware):
                 "input": usage.get("input_token_count"),
                 "output": usage.get("output_token_count"),
                 "total": actual,
+                "cached": cached,
             },
+            prompt_chars=prompt_chars,
+            prefix_shared_chars=shared,
             token_source="provider" if actual is not None else "unreported",
             reserved_tokens=reservation,
         )

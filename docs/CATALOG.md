@@ -3,7 +3,7 @@
 A single reference for everything the harness is made of: what it does end to end, every stage persona (the
 "agents"), every central deterministic tool an agent can call, and every Agent Skill it loads. For the system
 diagrams and per-file guarantees, see [ARCHITECTURE.md](ARCHITECTURE.md); for tracing a specific run, see
-[OBSERVABILITY.md](OBSERVABILITY.md).
+[OBSERVABILITY.md](OBSERVABILITY.md); for token spend and prompt caching, see [CACHING.md](CACHING.md).
 
 ## 1. What the application is
 
