@@ -571,11 +571,61 @@ def execute_setup(steps: list[Step], workspace: Path, out_dir: Path) -> dict:
         if status not in {"command_succeeded", "passed"}:
             if step.continue_on_failure:
                 report["warnings"].append(f"optional step '{step.name}' failed ({status})")
+                items = _pip_items(step, workspace)
+                if items:
+                    installed, failed = _install_each(step, items[0], items[1], workspace, out_dir, index)
+                    report["steps"][-1]["fallback"] = {"installed": installed, "failed": failed}
+                    report["warnings"].append(
+                        f"'{step.name}': pip installs are all-or-nothing, so one unbuildable package blocked "
+                        f"the rest; retried one by one -> {len(installed)} installed, {len(failed)} failed"
+                        + (f" ({', '.join(failed)})" if failed else "")
+                        + ". A package that needs a C/C++ compiler (e.g. chroma-hnswlib) has no wheel on this "
+                        "platform: install the build tools or expect tests importing it to fail."
+                    )
             else:
                 report.update(status="setup_failed", error=f"Step '{step.name}' failed: {status}")
                 break
     (out_dir / "report.json").write_text(json.dumps(report, indent=2), encoding="utf-8")
     return report
+
+
+def _pip_items(step: Step, workspace: Path) -> tuple[list[str], list[str]] | None:
+    """(pip base argv, requirement specs) of a failed multi-package pip step, else None."""
+    argv = step.argv
+    if "pip" not in argv or "install" not in argv:
+        return None
+    if "-r" in argv:
+        at = argv.index("-r")
+        path = (workspace / step.cwd / argv[at + 1]).resolve()
+        if not path.is_file() or not path.is_relative_to(workspace.resolve()):
+            return None
+        lines = (
+            line.split(" #")[0].strip()
+            for line in path.read_text(encoding="utf-8", errors="replace").splitlines()
+        )
+        return argv[:at], [line for line in lines if line and not line.startswith(("#", "-"))]
+    base = argv[: argv.index("install") + 1]
+    tail = [a for a in argv[len(base) :] if not a.startswith("-")]
+    return (argv[: len(argv) - len(tail)], tail) if len(tail) > 1 else None
+
+
+def _install_each(
+    step: Step, base: list[str], specs: list[str], workspace: Path, out_dir: Path, index: int
+) -> tuple[list[str], list[str]]:
+    """Retry a failed bulk install package by package; only specs already in the approved step are installed."""
+    installed: list[str] = []
+    failed: list[str] = []
+    for n, spec in enumerate(specs, 1):
+        result = run_command(
+            [*base, spec],
+            (workspace / step.cwd).resolve(),
+            out_dir / f"{index:02d}-{step.name}-each-{n:02d}",
+            timeout=step.timeout,
+            env=_expand_env(step.env, workspace),
+            inherit_env=True,
+        )
+        (installed if result["status"] == "command_succeeded" else failed).append(spec)
+    return installed, failed
 
 
 # ---------------------------------------------------------------- result parsers
