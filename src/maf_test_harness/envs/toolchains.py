@@ -30,7 +30,7 @@ from urllib.parse import urlsplit, urlunsplit
 
 from filelock import FileLock
 
-from .. import platform_compat
+from . import platform_compat
 from .spec import at_least, version_tuple
 
 PINNED_MAVEN = {"3": "3.9.9", "3.9": "3.9.9", "3.8": "3.8.8", "3.6": "3.6.3"}

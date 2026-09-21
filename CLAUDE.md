@@ -53,12 +53,12 @@ events; state checkpoints to disk (`FileCheckpointStorage`) under `.harness_runs
 
 `execute=False` skips stages 3 and 7 (generation-only workflow).
 
-**Central deterministic tools over model guessing** (`code_intel.py`, `autofix.py`, `build_gate.py`,
-`agent_tools.py`): things the host can compute exactly — import resolution, class constructors, URL routes,
-whether a file compiles — are answered by these instead of asking the model again. `autofix.py` only applies
+**Central deterministic tools over model guessing** (`tools/code_intel.py`, `tools/autofix.py`, `tools/build_gate.py`,
+`tools/agent_tools.py`): things the host can compute exactly — import resolution, class constructors, URL routes,
+whether a file compiles — are answered by these instead of asking the model again. `tools/autofix.py` only applies
 fixes that cannot change what a test means (unambiguous missing import, correcting a module path). Static gates
 (imports, undefined names, mocked `sys.exit`, bad patch targets, unused setup, non-existent routes) always run;
-`build_gate.py` (`pytest --collect-only` / `mvn test-compile`) runs after the approved environment install.
+`tools/build_gate.py` (`pytest --collect-only` / `mvn test-compile`) runs after the approved environment install.
 
 **Generation pipeline** (stage 6, per batch): model call (temperature rises each retry) → normalize (canonical
 case IDs, `CASE_ID` markers) → `autofix` → `skill_contracts.validate_generated_files` (structure/placeholders/
@@ -82,23 +82,26 @@ machine — no per-run/per-call limits — enforced by `usage.DailyUsageLedger` 
 (`execution._child_env` is an allow-list with a fake `HOME`); install/run commands are argv-only with timeouts
 and a `plan_hash` re-checked after approval; npm lifecycle scripts are disabled during install; execution is a
 local process, not a sandboxed one — see `docs/ARCHITECTURE.md` §4 ("Guarantees and where they are enforced")
-before changing anything in `runners.py`, `execution.py`, or `environment.py`.
+before changing anything in `envs/runners.py`, `envs/execution.py`, or `envs/environment.py`.
 
 ## Module map (`src/maf_test_harness/`)
 
-Flat single-package layout, roughly in pipeline order:
+Subpackages by concern (`repo/`, `envs/`, `skills/`, `tools/`, `agent/`, `llm/`, `qa/`, `monitoring/`, `ui/`, plus the
+existing `errors/`); `workflow.py`, `cli.py`, `settings.py`, `models.py` stay at the top. The former flat module names
+(`maf_test_harness.runners`, `.skill_contracts`, `.maf_runtime`, …) remain as aliases of the same module object, so old
+imports and monkeypatches keep working; new code imports the subpackage path. Roughly in pipeline order:
 - `workflow.py` — the MAF workflow graph, stage orchestration, prompts, repair loops (the core file)
-- `repo_analyzer.py`, `stack.py` — clone + static analysis, framework/stack detection
-- `environment.py`, `runners.py`, `execution.py` — environment planning, isolated install, command execution
-- `platform_compat.py` — every OS-specific decision (Windows vs POSIX venv layout, tool resolution, process-tree
+- `repo/analyzer.py`, `repo/stack.py` — clone + static analysis, framework/stack detection
+- `envs/environment.py`, `envs/runners.py`, `envs/execution.py` — environment planning, isolated install, command execution
+- `envs/platform_compat.py` — every OS-specific decision (Windows vs POSIX venv layout, tool resolution, process-tree
   kill, fake-HOME isolation) centralized here; other modules never branch on `sys.platform` directly
-- `skills_config.py`, `skills_registry.py`, `skill_contracts.py`, `skill_scripts.py`, `skill_reports.py` — Agent
+- `skills/config.py`, `skills/registry.py`, `skills/contracts.py`, `skills/scripts.py`, `skills/reports.py` — Agent
   Skills loading, spec/lock validation, contract enforcement, sandboxed script execution
-- `code_intel.py`, `autofix.py`, `build_gate.py`, `agent_tools.py` — the deterministic central tools
-- `maf_runtime.py` — MAF agent construction, `SkillsProvider` wiring, tool-trace middleware, `BudgetGuard`
-- `qa_report.py`, `triage.py`, `packaging.py` — verdict computation, files-to-update, ZIP assembly
-- `observability.py`, `observability_ui.py`, `trace.py`, `telemetry.py` — run tracing and the Observability tab
-- `usage.py`, `settings.py`, `models.py`, `personas.py`, `routes.py` — token ledger, config, schemas, actor
+- `tools/code_intel.py`, `tools/autofix.py`, `tools/build_gate.py`, `tools/agent_tools.py` — the deterministic central tools
+- `agent/runtime.py` — MAF agent construction, `SkillsProvider` wiring, tool-trace middleware, `BudgetGuard`
+- `qa/report.py`, `qa/triage.py`, `qa/packaging.py` — verdict computation, files-to-update, ZIP assembly
+- `monitoring/report.py`, `monitoring/ui.py`, `monitoring/trace.py`, `monitoring/telemetry.py` — run tracing and the Observability tab
+- `llm/usage.py`, `settings.py`, `models.py`, `agent/personas.py`, `repo/routes.py` — token ledger, config, schemas, actor
   personas, app-route extraction
 - `cli.py` — `maf-harness` entry point; `app.py` (repo root) — Streamlit UI, drives the same `workflow.py`
 

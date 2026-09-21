@@ -32,14 +32,14 @@ flowchart LR
     R[run.json<br/>state: provenance, budget, artifacts]
     Q[qa_report.json]
   end
-  RT[maf_runtime.py<br/>BudgetGuard · ToolTraceMiddleware] --> T
+  RT[agent/runtime.py<br/>BudgetGuard · ToolTraceMiddleware] --> T
   WF[workflow.py] --> A
   WF --> R
   T --> B[observability.build_report]
   A --> B
   R --> B
   Q --> B
-  B --> UI[Observability tab · observability_ui.py]
+  B --> UI[Observability tab · monitoring/ui.py]
   B --> CLI[maf-harness trace]
   B --> MD[Markdown / JSON export]
 ```

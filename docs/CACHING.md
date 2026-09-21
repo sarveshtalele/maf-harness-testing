@@ -21,7 +21,7 @@ with the same bytes.
 
 ## 2. What is measured now
 
-`BudgetGuard` (`maf_runtime.py`) records for every provider call:
+`BudgetGuard` (`agent/runtime.py`) records for every provider call:
 
 | Field in `trace.jsonl` `chat_call` | Meaning |
 |---|---|

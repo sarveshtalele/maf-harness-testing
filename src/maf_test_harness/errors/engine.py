@@ -77,7 +77,7 @@ def _resolve(diagnosis: Diagnosis, context: Context | None) -> Diagnosis:
     """An import error of a declared-but-uninstalled package is the environment's fault, not the test's."""
     module = diagnosis.detail.get("module")
     if diagnosis.code == "EXEC-101" and module and context and context.missing_packages:
-        from .. import env_check  # imported here: env_check -> runners, and runners use this package
+        from ..envs import env_check
 
         dist = env_check.explained_by_missing(module.split(".")[0], context.missing_packages)
         if dist:

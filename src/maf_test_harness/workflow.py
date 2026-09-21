@@ -22,20 +22,19 @@ from agent_framework import (
 )
 from filelock import FileLock
 
-from . import app_launcher, env_check
-from .agent_tools import HarnessToolbox
-from .autofix import autofix_files
-from .build_gate import try_build
-from .code_intel import RepoContext, static_gate
-from .environment import build_environment_plan, steps_from_plan
-from .envs import Provisioned, ToolchainError, provision_for
+from .agent.personas import PERSONAS, persona_instructions
+from .envs import Provisioned, ToolchainError, app_launcher, env_check, provision_for
+from .envs.environment import build_environment_plan, steps_from_plan
+from .envs.execution import copy_repo, write_generated
+from .envs.runners import RunPlan, Step, build_plan, execute_plan, execute_setup
 from .envs.toolchains import apply_toolchains
-from .execution import copy_repo, write_generated
 from .models import GeneratedFilesDraft, RequirementsDraft, TestDesignDraft, TestPlan
-from .packaging import build_deliverable
-from .personas import PERSONAS, persona_instructions
-from .qa_report import build_qa_report, design_cases, render_markdown
-from .repo_analyzer import (
+from .monitoring.telemetry import configure_telemetry
+from .monitoring.trace import TraceRecorder
+from .qa.packaging import build_deliverable
+from .qa.report import build_qa_report, design_cases, render_markdown
+from .qa.triage import remedy_for
+from .repo.analyzer import (
     analyze_repository,
     build_repository_evidence,
     clone_repository,
@@ -44,8 +43,8 @@ from .repo_analyzer import (
     extract_target_sources,
     validate_github_url,
 )
-from .routes import extract_routes
-from .runners import RunPlan, Step, build_plan, execute_plan, execute_setup
+from .repo.routes import extract_routes
+from .repo.stack import detect_stack
 from .settings import (
     AGENT_TOOLS,
     AUTOFIX,
@@ -54,7 +53,8 @@ from .settings import (
     GENERATION_BATCH_SIZE,
     GENERATION_MAX_ATTEMPTS,
 )
-from .skill_contracts import (
+from .skills.config import skills_for
+from .skills.contracts import (
     ensure_generated_case_markers,
     expand_generated_lines,
     extra_import_roots,
@@ -64,12 +64,11 @@ from .skill_contracts import (
     resolve_id,
     validate_generated_files,
 )
-from .skill_reports import run_skill_checks
-from .skills_config import skills_for
-from .stack import detect_stack
-from .telemetry import configure_telemetry
-from .trace import TraceRecorder
-from .triage import remedy_for
+from .skills.reports import run_skill_checks
+from .tools.agent_tools import HarnessToolbox
+from .tools.autofix import autofix_files
+from .tools.build_gate import try_build
+from .tools.code_intel import RepoContext, static_gate
 
 CORE_STAGES = ["repo_analysis", "requirements", "test_planning", "test_design", "test_generation"]
 ENV_STAGE = "environment_setup"

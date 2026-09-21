@@ -12,7 +12,7 @@ import argparse
 import json
 from pathlib import Path
 
-from maf_test_harness.artifact_presenter import json_to_markdown
+from maf_test_harness.ui.artifact_presenter import json_to_markdown
 
 
 def main() -> int:

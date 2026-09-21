@@ -9,12 +9,12 @@ from uuid import uuid4
 
 import streamlit as st
 
-from maf_test_harness.artifact_presenter import artifact_downloads, humanize, render_json_ui
-from maf_test_harness.maf_runtime import MAFHarnessRuntime
-from maf_test_harness.personas import PERSONAS
-from maf_test_harness.runtime_service import RuntimeService
+from maf_test_harness.agent.personas import PERSONAS
+from maf_test_harness.agent.runtime import MAFHarnessRuntime
+from maf_test_harness.llm.usage import DailyUsageLedger
 from maf_test_harness.settings import API_KEY, BASE_URL, MODEL, validate_gateway_settings
-from maf_test_harness.usage import DailyUsageLedger
+from maf_test_harness.ui.artifact_presenter import artifact_downloads, humanize, render_json_ui
+from maf_test_harness.ui.runtime_service import RuntimeService
 from maf_test_harness.workflow import STAGES, Harness
 
 ROOT = Path(__file__).resolve().parent
@@ -359,7 +359,7 @@ if harness is None:
         start = st.form_submit_button("Start autonomous review", type="primary")
     if start:
         try:
-            from maf_test_harness.repo_analyzer import validate_github_url
+            from maf_test_harness.repo.analyzer import validate_github_url
 
             validate_github_url(url)
             validate_gateway_settings()
@@ -613,8 +613,8 @@ with tests_tab:
     )
 
 with observability_tab:
-    from maf_test_harness.observability import build_report  # pandas/altair load only once a run is open
-    from maf_test_harness.observability_ui import render_observability
+    from maf_test_harness.monitoring.report import build_report  # pandas/altair load only once a run is open
+    from maf_test_harness.monitoring.ui import render_observability
 
     try:
         render_observability(build_report(harness.run_dir, ROOT / "skills"), key_prefix="obs")
