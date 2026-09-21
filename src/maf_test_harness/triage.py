@@ -248,6 +248,11 @@ def build_updates(
             {"tool": t, "action": f"Install {t} on the host, then retry the environment stage."}
             for t in environment["missing_prerequisites"]
         ]
+    for d in (environment or {}).get(
+        "diagnoses", []
+    ):  # environment/infra errors found in the run's own output
+        if d["category"] in {"environment", "infra"}:
+            env.append({"tool": d["code"], "action": f"{d['title']}: {d['hint']}"})
     return {
         "generated_test_files_to_update": tests,
         "repository_files_to_review": sources,

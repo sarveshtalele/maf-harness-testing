@@ -17,6 +17,7 @@ from pathlib import Path, PurePosixPath
 from typing import Any
 
 from . import env_check, platform_compat
+from .errors import Context, classify, is_environmental
 from .execution import run_command, write_generated
 from .runners import VENV_DIR, Step, _expand_env, build_plan, resolve_ecosystem
 from .stack import StackProfile
@@ -147,14 +148,31 @@ def try_build(
                             d for d in gap if d not in result["env_missing"]
                         )
                         continue
+                    diagnoses = classify(output, "python", Context([d for d in env_missing if d != "-"]))
+                    if is_environmental(
+                        diagnoses
+                    ):  # wrong interpreter, no network...: also not the test's fault
+                        first = diagnoses[0]
+                        result.setdefault("environment_issues", []).append(
+                            {
+                                "file": item["path"],
+                                "code": first.code,
+                                "title": first.title,
+                                "hint": first.hint,
+                            }
+                        )
+                        continue
                     result["status"] = "failed"
                     result["errors"] += _python_errors(output, item["path"])
-            if result.get("env_missing") and result["status"] == "ok":
+            if (result.get("env_missing") or result.get("environment_issues")) and result["status"] == "ok":
+                reasons = []
+                if result.get("env_missing"):
+                    reasons.append(
+                        "environment lacks declared package(s) " + ", ".join(result["env_missing"])
+                    )
+                reasons += [f"{i['code']} {i['title']}" for i in result.get("environment_issues", [])[:2]]
                 result.update(
-                    status="skipped",
-                    reason="environment lacks declared package(s) "
-                    + ", ".join(result["env_missing"])
-                    + " (install failed); this is not a test defect",
+                    status="skipped", reason="; ".join(reasons) + " (install failed); not a test defect"
                 )
         else:
             argv = [*test_step.argv[: test_step.argv.index("test")], "-q", "test-compile"]

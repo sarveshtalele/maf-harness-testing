@@ -15,7 +15,7 @@ import xml.etree.ElementTree as ET
 from dataclasses import asdict, dataclass, field
 from pathlib import Path, PurePosixPath
 
-from . import platform_compat
+from . import errors, platform_compat
 from .execution import EXPORT_SKIP_DIRS, read_junit_cases, run_command
 from .skill_contracts import extra_import_roots
 from .stack import REQUIRED_TOOLS, StackProfile
@@ -570,8 +570,11 @@ def execute_setup(steps: list[Step], workspace: Path, out_dir: Path) -> dict:
             }
         )
         if status not in {"command_succeeded", "passed"}:
+            diagnoses = _diagnose_step(result, out_dir / f"{index:02d}-{step.name}", step.argv)
+            if diagnoses:
+                report["steps"][-1]["diagnoses"] = [d.to_dict() for d in diagnoses[:3]]
             if step.continue_on_failure:
-                report["warnings"].append(f"optional step '{step.name}' failed ({status})")
+                report["warnings"].append(f"optional step '{step.name}' failed ({status})" + _why(diagnoses))
                 items = _pip_items(step, workspace)
                 if items:
                     installed, failed = _install_each(step, items[0], items[1], workspace, out_dir, index)
@@ -584,10 +587,42 @@ def execute_setup(steps: list[Step], workspace: Path, out_dir: Path) -> dict:
                         "platform: install the build tools or expect tests importing it to fail."
                     )
             else:
-                report.update(status="setup_failed", error=f"Step '{step.name}' failed: {status}")
+                report.update(
+                    status="setup_failed", error=f"Step '{step.name}' failed: {status}" + _why(diagnoses)
+                )
                 break
     (out_dir / "report.json").write_text(json.dumps(report, indent=2), encoding="utf-8")
     return report
+
+
+def _ecosystem_of(argv: list[str]) -> str | None:
+    """Which toolchain a command belongs to, from its executable name (used to pick the right error tables)."""
+    exe = Path(argv[0]).name.lower() if argv else ""
+    for names, eco in (
+        (("python", "pip", "py", "uv"), "python"),
+        (("npm", "npx", "node"), "node"),
+        (("mvn", "mvnw", "gradle", "gradlew", "java"), "java"),
+        (("dotnet",), "dotnet"),
+        (("go",), "go"),
+    ):
+        if exe.split(".")[0] in names:
+            return eco
+    return None
+
+
+def _diagnose_step(result: dict, step_dir: Path, argv: list[str] | None = None) -> list:
+    """Known errors in a failed step's logs (see errors/): which code, whose fault, what to do."""
+    text = ""
+    for name in ("stdout.log", "stderr.log"):
+        try:
+            text += (step_dir / name).read_text(encoding="utf-8", errors="replace")[-20_000:] + chr(10)
+        except OSError:
+            pass
+    return errors.classify_result(result, text, _ecosystem_of(argv or []))
+
+
+def _why(diagnoses: list) -> str:
+    return f" [{diagnoses[0].code}: {diagnoses[0].title}. {diagnoses[0].hint}]" if diagnoses else ""
 
 
 def _pip_items(step: Step, workspace: Path) -> tuple[list[str], list[str]] | None:
@@ -851,14 +886,18 @@ def execute_plan(
             }
         )
         if result["status"] not in {"command_succeeded", "passed"}:
+            diagnoses = _diagnose_step(result, out_dir / label, step.argv)
+            if diagnoses:
+                report["steps"][-1]["diagnoses"] = [d.to_dict() for d in diagnoses[:3]]
             if step.continue_on_failure:
                 report.setdefault("warnings", []).append(
-                    f"setup step '{step.name}' failed ({result['status']})"
+                    f"setup step '{step.name}' failed ({result['status']})" + _why(diagnoses)
                 )
             else:
                 setup_failed = True
                 report.update(
-                    status="setup_failed", error=f"Setup step '{step.name}' failed: {result['status']}"
+                    status="setup_failed",
+                    error=f"Setup step '{step.name}' failed: {result['status']}" + _why(diagnoses),
                 )
                 break
     if not setup_failed:
@@ -867,6 +906,11 @@ def execute_plan(
             if last and last["status"] not in {"command_succeeded", "passed"} and not report["cases"]:
                 diagnostics += [ln for ln in _decisive_lines(last) if ln not in diagnostics]
             report["diagnostics"] = diagnostics[:400]
+            found = errors.classify(
+                chr(10).join(diagnostics), plan.adapter.split("-")[0] if plan.adapter else None
+            )
+            if found:
+                report["diagnoses"] = [d.to_dict() for d in found[:5]]
         counts = summarize(report["cases"])
         report["summary"] = counts
         if counts["tests"] == 0:

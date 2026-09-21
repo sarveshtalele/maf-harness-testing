@@ -110,6 +110,7 @@ def build_qa_report(
         r["id"]: r.get("source_files", [])
         for r in requirements.get("requirement_model", {}).get("requirements", [])
     }
+    environment = {**(environment or {}), "diagnoses": (execution or {}).get("diagnoses", [])}
     updates = build_updates(cases, files, repo.get("source_files", []), coverage, req_sources, environment)
     return {
         "generated_at": datetime.now(UTC).isoformat(),
