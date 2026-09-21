@@ -56,11 +56,26 @@ class RepoContext:
 
     @property
     def dependency_text(self) -> str:
+        """What the package files declare, as text to match library names against.
+
+        Only declarations count. A comment or a description that merely *mentions* a word ("The engine is pure
+        standard library") must not make that word a declared dependency, or an unresolvable ``import engine`` would
+        pass every gate and fail only at collection.
+        """
         if self._dependency_text is None:
             self._dependency_text = "\n".join(
-                self.read(rel) or "" for rel in self.package_files if (self.root / rel).is_file()
+                self._declared_text(rel) for rel in self.package_files if (self.root / rel).is_file()
             )
         return self._dependency_text
+
+    def _declared_text(self, rel: str) -> str:
+        text = self.read(rel) or ""
+        name = Path(rel).name.lower()
+        if name == "pyproject.toml":  # dependency names only: not the project description or classifiers
+            return "\n".join(declared_dependencies(self.root, [rel]))
+        if name.endswith((".txt", ".in", ".cfg")) or name in {"setup.py", "pipfile"}:
+            return _COMMENT.sub("", text)
+        return text
 
     @property
     def known_files(self) -> set[str]:
@@ -74,6 +89,9 @@ class RepoContext:
         if target.stat().st_size > MAX_FILE_BYTES:
             return None
         return target.read_text(encoding="utf-8", errors="replace")
+
+
+_COMMENT = re.compile(r"(?m)(?:^|\s)#.*$")  # a whole-line or trailing comment in requirements-style files
 
 
 def _normal(name: str) -> str:

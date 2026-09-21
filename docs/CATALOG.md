@@ -36,11 +36,13 @@ see [section 3](#3-central-tools-what-an-agent-can-call). Whatever a repository 
 There is one MAF harness agent; each stage gives it a different **persona** (`agent/personas.py`) — its own role, goal
 and rules — plus its own selection of skills and tools. Two stages (`environment_setup`, `test_execution`) are
 **host-only**: deterministic Python, no model call, described here as personas because the codebase documents
-them the same way, but they never reach the model gateway.
+them the same way, and they do not reach the model gateway. The one exception is opt-in: with `HARNESS_DIAGNOSIS_AGENT=on`, a
+failed environment step or an execution that produced no evidence gets an advisory note from the read-only
+[diagnosis agent](AUTOMATION.md#2-the-diagnosis-agent-agentdiagnosispy-off-by-default) (it changes nothing and never blocks a gate).
 
 | # | Stage | Persona (`agent/personas.py`) | Model? | Skills loaded | Tools available | Human gate |
 |---|---|---|---|---|---|---|
-| 1 | `repo_analysis` | *(host logic — `repo_analyzer`, `stack`; no persona)* | no | — | — | tool approval (clone) → review |
+| 1 | `repo_analysis` | *(host logic — `repo/analyzer`, `repo/stack`; no persona)* | no | — | — | tool approval (clone) → review |
 | 2 | `requirements` | Repository Requirements Analyst — reverse-engineering and testability specialist | yes | `repository-requirements` (+ `api-contract-analyzer` if an OpenAPI/Swagger file exists) | `find_symbol`, `module_api`, `read_source`, `list_routes`, `installed_packages` | review / revise |
 | 3 | `environment_setup` | Environment Provisioning Engineer (host, no model) — deterministic, isolated dependency installer | no | — | — | **tool approval (install)** → review; can skip |
 | 4 | `test_planning` | Principal Test Architect — cross-language test strategy architect | yes | `test-planning` | — | review / revise |
@@ -58,7 +60,7 @@ directly (the host owns every side effect); return exactly the host's output sch
 
 **Browser E2E (Playwright).** UI/E2E/accessibility cases need a running application. Either supply its URL, or tick
 *Start the application for me* (CLI: `--start-app`): the harness then picks a free local port, detects the start command
-from the repository (`app_launcher.detect_launch`), lists it as the first step of the *run the tests* approval (it is part
+from the repository (`envs.app_launcher.detect_launch`), lists it as the first step of the *run the tests* approval (it is part
 of the approved plan hash), starts the app inside the isolated environment, waits until it answers HTTP, runs the
 Playwright specs with `BASE_URL` set, and always stops the whole process tree afterwards.
 
@@ -72,17 +74,17 @@ offered at `repo_analysis`, `environment_setup`, or `test_execution` (host-only 
 
 | Tool | What it answers | Backed by | Offered to |
 |---|---|---|---|
-| `resolve_import` | Where a dotted Python module / Java FQCN actually comes from, or the one unambiguous suggestion if it does not resolve | `code_intel.resolve_import` | `test_generation` |
-| `module_api` | Real function/class signatures of one repository file — no guessing constructors | `code_intel.module_api` | `requirements`, `test_design`, `test_generation` |
-| `find_symbol` | Every definition of a name across repository source files | `code_intel.find_symbol` | `requirements`, `test_design`, `test_generation` |
-| `read_source` | Bounded, numbered lines of one repository file | `code_intel.read_source` | `requirements`, `test_generation` |
-| `check_test` | Runs the host's own static gates on a draft test (syntax, imports, undefined names, `sys.exit` mocks, patch targets, URL routes) before it is finalized | `code_intel.static_gate` | `test_generation` |
+| `resolve_import` | Where a dotted Python module / Java FQCN actually comes from, or the one unambiguous suggestion if it does not resolve | `tools.code_intel.resolve_import` | `test_generation` |
+| `module_api` | Real function/class signatures of one repository file — no guessing constructors | `tools.code_intel.module_api` | `requirements`, `test_design`, `test_generation` |
+| `find_symbol` | Every definition of a name across repository source files | `tools.code_intel.find_symbol` | `requirements`, `test_design`, `test_generation` |
+| `read_source` | Bounded, numbered lines of one repository file | `tools.code_intel.read_source` | `requirements`, `test_generation` |
+| `check_test` | Runs the host's own static gates on a draft test (syntax, imports, undefined names, `sys.exit` mocks, patch targets, URL routes) before it is finalized | `tools.code_intel.static_gate` | `test_generation` |
 | `list_routes` | The application's real HTTP routes and `BASE_URL`, for UI/E2E/API cases | `code_intel` route inventory | `requirements`, `test_design`, `test_generation` |
-| `installed_packages` | Distributions actually present in the isolated environment — not merely declared | `code_intel.installed_packages` | `requirements` |
-| `probe_tools` | Versions of `python3`, `java`, `mvn`, `node`, `npm` present on the host — never installs anything | `code_intel.probe_tools` | *(available, not offered to any stage by default)* |
-| `try_build` | Compile/collect the candidate files in the prepared workspace (`pytest --collect-only` / `mvn test-compile`) without running any test body | `build_gate.try_build` | `test_generation` |
-| `environment_gaps` | Declared dependencies that are **not** installed in the isolated environment (an install failed, e.g. a package needing a C++ compiler) — so tests stub them instead of importing them | `env_check.missing_packages` | `test_generation` |
-| `app_launch_plan` | Whether and how the harness can start the application itself for ui/e2e (Playwright) cases — Streamlit, FastAPI, Flask or an npm `start`/`dev` script | `app_launcher.detect_launch` | `test_design` |
+| `installed_packages` | Distributions actually present in the isolated environment — not merely declared | `tools.code_intel.installed_packages` | `requirements` |
+| `probe_tools` | Versions of `python3`, `java`, `mvn`, `node`, `npm` present on the host — never installs anything | `tools.code_intel.probe_tools` | *(available, not offered to any stage by default)* |
+| `try_build` | Compile/collect the candidate files in the prepared workspace (`pytest --collect-only` / `mvn test-compile`) without running any test body | `tools.build_gate.try_build` | `test_generation` |
+| `environment_gaps` | Declared dependencies that are **not** installed in the isolated environment (an install failed, e.g. a package needing a C++ compiler) — so tests stub them instead of importing them | `envs.env_check.missing_packages` | `test_generation` |
+| `app_launch_plan` | Whether and how the harness can start the application itself for ui/e2e (Playwright) cases — Streamlit, FastAPI, Flask or an npm `start`/`dev` script | `envs.app_launcher.detect_launch` | `test_design` |
 
 The host runs the exact same checks itself regardless of whether a model calls these tools — correctness never
 depends on an agent choosing to call one.
@@ -114,7 +116,7 @@ download consent, optional stage budget and audit, plus your own `.harness/hooks
 ## 4. Agent Skills
 
 Ten [Agent Skills](https://github.com/shivswami/awesome-agent-skills) power the model stages, loaded through
-MAF's `SkillsProvider` (progressive disclosure) and selected deterministically by `skills_config.skills_for`
+MAF's `SkillsProvider` (progressive disclosure) and selected deterministically by `skills.config.skills_for`
 (never a model decision). Six are vendored upstream (pinned commit + per-file SHA-256 in `skills/SKILLS.lock.json`,
 audited offline with their own `evaluator-skill`: 0 security findings); four are local to this project.
 
@@ -152,7 +154,7 @@ table per file.
 | Repository intake | `repo/analyzer.py`, `repo/stack.py` | Clone + static analysis; framework/stack/ecosystem detection |
 | Environment | `envs/environment.py`, `envs/runners.py`, `envs/execution.py`, `envs/platform_compat.py`, `envs/env_check.py`, `envs/app_launcher.py`, `envs/` (requirement detection and toolchain provisioning), `errors/` (error taxonomy and playbook) | Environment planning, isolated install, per-ecosystem run adapters, local-process execution, OS-specific decisions (Windows vs POSIX) centralized in one module; declared-vs-installed dependency check (`env_check`); starting the app under test for Playwright E2E (`app_launcher`) |
 | Agent Skills | `skills/config.py`, `skills/registry.py`, `skills/contracts.py`, `skills/scripts.py`, `skills/reports.py` | Which skill a stage loads and why; spec/lock validation; contract enforcement on generated output; sandboxed script execution; host-run QA skill reports |
-| Central tools | `tools/code_intel.py`, `tools/autofix.py`, `tools/build_gate.py`, `tools/agent_tools.py` | The nine deterministic MAF function tools and the mechanical auto-fixers behind them |
+| Central tools | `tools/code_intel.py`, `tools/autofix.py`, `tools/build_gate.py`, `tools/agent_tools.py` | The eleven deterministic MAF function tools and the mechanical auto-fixers behind them |
 | Typed tools | `tools/registry.py`, `tools/env_tools.py`, `tools/file_tools.py`, `tools/typed.py` | Schema-validated tools with one result envelope (`ToolResult`), hook-aware `ToolRegistry`, per-stage selection |
 | Hooks | `hooks/events.py`, `engine.py`, `builtin.py`, `config.py`, `maf_bridge.py`, `agent_hooks_bridge.py` | Events, verdict engine (fail-closed), built-in hooks, `.harness/hooks.json` loader, MAF middleware, optional AGENT-HOOKS-0.1 backend |
 | Automation | `envs/recovery.py`, `agent/diagnosis.py`, `llm/prompts.py`, `tools/skill_tools.py` | Bounded automatic recovery of setup failures, the opt-in diagnosis agent, stable-first prompt assembly, skill validators as a tool; see [AUTOMATION.md](AUTOMATION.md) |

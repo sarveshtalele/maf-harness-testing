@@ -30,7 +30,7 @@ with the same bytes.
 | `prompt_chars` | size of the serialized request (messages plus tool schemas) |
 | `prefix_shared_chars` | how many leading characters are identical to the previous request of the same stage |
 
-`observability.build_report` turns them into a `cache` section and three totals (`input_tokens`,
+`monitoring.report.build_report` turns them into a `cache` section and three totals (`input_tokens`,
 `cached_input_tokens`, `cache_hit_pct`). The Markdown export and `maf-harness trace` show a **Prompt cache** table per
 stage:
 
@@ -67,5 +67,5 @@ stages is at least 60% of input tokens served from cache.
 
 Stage prompts are built stable-first (`llm/prompts.py`): assignment, output schema and rules before the per-call content, so
 consecutive calls of a stage share the longest possible prefix. Measured on the fixture repository, the repeated share of a
-generation prompt went from 60.7 % to 82.2 %. What was deliberately not changed (session reuse, priming, compaction) and why:
+generation prompt went from 60.7 % to 82.2 %. On a real repository the effect is much smaller (8.3 % repeated prefix in a live run, because per-batch source and evidence dominate the prompt; see [audit/E2E_RESULTS.md](audit/E2E_RESULTS.md) §8). What was deliberately not changed (session reuse, priming, compaction) and why:
 [AUTOMATION.md](AUTOMATION.md#3-prompt-assembly-for-the-providers-prefix-cache).

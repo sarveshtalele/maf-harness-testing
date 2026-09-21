@@ -134,16 +134,52 @@ Per-run Observability tab and `maf-harness trace`, built on MAF middleware and t
 * older runs render at summary level; optional OpenTelemetry export (`HARNESS_OTEL`), message content never captured.
 **Exit:** rendered from the real `final5-reverse` run and from a real-MAF scripted run in the browser; tests in `test_observability.py` and the UI browser suite.
 
+### M11 — Windows and macOS ✅
+Every OS-specific decision lives in `envs/platform_compat.py` (venv layout, `.cmd`/`.exe` resolution, process-tree kill, fake-`HOME`, cache paths); `filelock` replaced `fcntl`.
+Found only by live runs on Windows and fixed: a bare `python3` opening the Python installer, a relative `argv[0]` resolved against the caller's directory, an unbuildable package
+aborting a whole `pip install -r` (now retried package by package), declared-but-uninstalled packages (`envs/env_check.py`), and the application under test never started for Playwright
+cases (`envs/app_launcher.py`, `--start-app`). CI has a Windows leg.
+
+### M12 — Error taxonomy and recovery playbook ✅
+`errors/`: 37 codes with category (environment / infra / test defect / app defect), autonomy (auto / auto_once / ask / manual) and recipes; classifiers for Python, Java, .NET and common
+failures; 56 recorded real logs as fixtures (`tests/error_cases.py`); wired into install, the build gate, the QA report and triage so an environment failure never costs generation retries.
+[ERROR_PLAYBOOK.md](ERROR_PLAYBOOK.md) is generated from the tables.
+
+### M13 — Toolchain provisioning ✅ (🟡 no live JDK download)
+`envs/spec.py` detects what a repository needs (Python, JDK, Maven/Gradle, .NET SDK); `envs/toolchains.py` finds it or, after the environment approval, downloads it into
+`~/.maf-harness/toolchains` (Temurin, Apache Maven, Gradle, Microsoft .NET, Python via `uv`) with checksum verification, path-escape refusal and a file lock. Verified offline against a local
+mirror and live for Maven; a 190 MB JDK download was not exercised. Not built: scaffolding a Java or .NET *test project* for generated tests. See [ENVIRONMENTS.md](ENVIRONMENTS.md).
+
+### M14 — Package structure ✅
+Modules grouped into `repo/ envs/ skills/ tools/ agent/ llm/ qa/ monitoring/ ui/ errors/ hooks/`; every old flat import path stays as an alias of the same module object
+(`tests/test_module_layout.py`), so imports and monkeypatches written against the old layout keep working.
+
+### M15 — Hooks and typed tools ✅
+`hooks/`: eight events, verdicts allow/deny/transform/ask, fail-closed on the enforcing ones, evaluate-only mode, command and Python hooks, built-ins (secret redaction, write scope,
+download consent, stage budget, audit), `.harness/hooks.json` with strict validation; wired into `Harness` (gates and failures) and the MAF agent loop. `tools/registry.py`: schema-validated
+tools with one result envelope. See [HOOKS.md](HOOKS.md).
+
+### M16 — Bounded recovery, diagnosis agent, prompt assembly ✅ (🟡 not measured on a large repository)
+`envs/recovery.py` applies allow-listed recipes to failed setup steps within fixed bounds; an opt-in diagnosis agent writes an advisory note after what recovery could not fix;
+stage prompts are assembled stable-first for the provider's prefix cache (60.7 % to 82.2 % shared prefix on the fixture repository, but only 8.3 % in a live run on a real repository); reviewed skill validators are available to the design
+stage as an opt-in tool. The agent loops are verified with a real MAF pipeline and a scripted transport. See [AUTOMATION.md](AUTOMATION.md).
+
+### M17 — AGENT-HOOKS backend and the Automation view ✅ (🟡 SDK is alpha)
+`HARNESS_HOOKS_BACKEND=sdk` enforces the same hook engine through MAF's AGENT-HOOKS-0.1 middleware (optional `agent-hooks-sdk`); the Observability report, its Markdown and the UI gain an
+*Automation* section (hook decisions, typed tool calls, recoveries including those left to a human, diagnosis notes).
+
 ### Next (⏭, in priority order)
 1. **Sandboxed execution** (container/VM adapter behind the existing `execute_plan` boundary) — required before any
    unattended or multi-tenant use. Local-process execution is explicitly *not* a sandbox.
-2. **Application lifecycle manager**: start/stop the system under test (compose/WildFly/npm start) with readiness
-   probes, so UI/E2E cases run without a hand-started app.
-3. **Build gate for more ecosystems**: Java and Python are covered; add C#/TS/Go compile checks, and Gradle.
-4. **Evidence retrieval beyond bounded excerpts** (symbol index / embeddings) for large repos; OpenAPI extraction.
-5. **Coverage and mutation feedback** into the heal loop (line coverage delta, mutation score).
-6. **Multi-user hosting**: job queue, tamper-evident approvals, quotas, per-tenant run storage.
-7. **Nightly qualification matrix** across model gateways with cost tracking.
+2. **Scaffold a Java/.NET test project** for generated tests (Maven/Gradle module, `.csproj` with the test SDK and runner) and verify a live JDK download.
+3. **Application lifecycle manager beyond Python/npm apps**: compose/WildFly, with readiness probes (Streamlit, FastAPI, Flask and npm apps are started today with `--start-app`).
+4. **More automatic recipes**: `prefer-binary`, `relax-pin`, `install-browser` and the `provision-*` recipes under an explicit approval, plus execution-phase recovery (a hung or port-blocked test run).
+5. **Measure the token effect** of stable-first prompts and the diagnosis agent on real, large repositories; only then consider session reuse or compaction.
+6. **Build gate for more ecosystems**: Java and Python are covered; add C#/TS/Go compile checks, and Gradle.
+7. **Evidence retrieval beyond bounded excerpts** (symbol index / embeddings) for large repos; OpenAPI extraction.
+8. **Coverage and mutation feedback** into the heal loop (line coverage delta, mutation score).
+9. **Multi-user hosting**: job queue, tamper-evident approvals, quotas, per-tenant run storage.
+10. **Nightly qualification matrix** across model gateways with cost tracking.
 
 ## 6. Test strategy for the harness itself
 
@@ -154,6 +190,7 @@ Per-run Observability tab and `maf-harness trace`, built on MAF middleware and t
 | Workflow e2e (real subprocess) | export → plan → run pytest → QA report → heal loop, tamper/skip paths | every push |
 | Browser e2e (Playwright) | Streamlit UI validation and QA rendering (`HARNESS_BROWSER=1`) | CI job |
 | Live model e2e | full CLI run against real repos through the gateway (`docs/audit/E2E_RESULTS.md`) | manual/nightly, key from env |
+| Real-subprocess recovery / hooks | recovery with real timeouts and venv rewinds, command hooks as real processes, hooks in a real MAF loop | every push |
 
 ## 7. Risk register
 
@@ -178,6 +215,9 @@ Per-run Observability tab and `maf-harness trace`, built on MAF middleware and t
 - [x] CI: lint + unit + component + workflow e2e
 - [x] Isolated dependency install behind a tool-call approval; ZIP deliverable; files-to-update report
 - [x] Deterministic import/build checks before any model retry (auto-fix, static gates, build gate)
+- [x] Windows, macOS and Linux (CI matrix includes Windows); every OS decision in one module
+- [x] Every environment/execution failure classified; environment failures never burn generation retries; safe recovery bounded and audited
+- [x] Fail-closed hooks around tools, model calls and gates; secrets redacted; agent writes confined to the workspace
 - [ ] Sandbox adapter (blocks unattended/multi-tenant use)
 - [ ] Live pass of the current code on both targets (Petstore blocked by gateway quota)
 - [ ] Nightly live qualification with budget alarms

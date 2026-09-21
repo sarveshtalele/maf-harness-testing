@@ -53,7 +53,7 @@ A hook returns one of `allow`, `deny` (with a reason), `transform` (with a paylo
 | `secret_redaction` | Pre/PostToolUse | replaces API keys (`sk-…`, `ghp_…`, `AKIA…`, `Bearer …`), values after `password=` / `token:` / `api_key` (JSON stays valid) and the values of `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `GITHUB_TOKEN`, `GH_TOKEN`, `AWS_SECRET_ACCESS_KEY` with `[REDACTED]`, in tool arguments and tool output |
 | `path_scope` | PreToolUse on `write_test_file`, `delete_file` (and the reserved name `apply_env_fix`) | the `path` must stay inside the run's writable roots (the workspace); `..` escapes and absolute paths elsewhere are denied; with no root configured every write is denied |
 | `download_consent` | PreToolUse on `provision_toolchain` | `ask` unless the environment approval has set `allow_downloads` |
-| `stage_budget` | PreModelCall | optional soft cap: deny a model call once the stage has used `per_stage_tokens` (off unless configured; the daily cap in `usage.py` is separate and always on) |
+| `stage_budget` | PreModelCall | optional soft cap: deny a model call once the stage has used `per_stage_tokens` (off unless configured; the daily cap in `llm/usage.py` is separate and always on) |
 | `audit` | StageGate, OnEnvError, OnExecError, Stop | writes `hook_event` records to `audit.jsonl` |
 
 The typed file tools enforce the same scope themselves. `path_scope` and the tool are two independent locks: turning hooks

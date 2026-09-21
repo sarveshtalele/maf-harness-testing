@@ -25,7 +25,7 @@ from agent_framework import (
 )
 from agent_framework.openai import OpenAIChatClient, OpenAIChatCompletionClient
 
-from ..hooks.agent_hooks_bridge import BACKENDS, hook_bundle
+from ..hooks.agent_hooks_bridge import BACKENDS, hook_bundle, sdk_available
 from ..hooks.maf_bridge import hook_middleware
 from ..llm.usage import DailyUsageLedger
 from ..monitoring.trace import TraceRecorder, summarize_arguments, tool_category
@@ -262,6 +262,11 @@ class MAFHarnessRuntime:
         self.hooks_backend = (hooks_backend or HOOKS_BACKEND).lower()
         if self.hooks_backend not in BACKENDS:
             raise ValueError("hooks_backend must be 'inhouse' or 'sdk'.")
+        if self.hooks_backend == "sdk" and not sdk_available():  # fail at start, not in the middle of a stage
+            raise ValueError(
+                "HARNESS_HOOKS_BACKEND=sdk needs the optional AGENT-HOOKS SDK: pip install 'maf-test-harness[hooks]' "
+                "(uv sync --extra hooks), or use HARNESS_HOOKS_BACKEND=inhouse."
+            )
         self._guards = {}
         self._tracers = {}
         self._primed = {}

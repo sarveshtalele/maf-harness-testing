@@ -70,8 +70,9 @@ unchanged, so nothing in the prompt's meaning or in the tests that read it chang
 
 Measured on the fixture repository (`tests/test_prompt_assembly.py`): the share of a generation prompt that repeats the
 previous batch's prompt byte for byte went from **60.7 % to 82.2 %**. On a real repository the per-batch tail (source and
-evidence) is larger, so the share is lower, but the schema and rules, the largest fixed part, are now always inside the
-prefix. The Observability report already shows the provider-reported cache hit and the `prefix_ratio` per stage
+evidence) is most of the prompt: a live run on requirement-analysis-skill repeated only 8.3 % of each generation request's prefix
+(provider-reported cache hit 16-27 %, see [audit/E2E_RESULTS.md](audit/E2E_RESULTS.md) §8), so the saving from ordering alone is small there. The
+schema and rules are always inside the prefix; making the per-batch evidence smaller or shared is the next lever. The Observability report already shows the provider-reported cache hit and the `prefix_ratio` per stage
 ([CACHING.md](CACHING.md)); compare a run before and after with those.
 
 Deliberately not done, and why: **session reuse across repair retries** (a retry already shares everything up to the repair

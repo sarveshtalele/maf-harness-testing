@@ -61,25 +61,25 @@ fixes that cannot change what a test means (unambiguous missing import, correcti
 `tools/build_gate.py` (`pytest --collect-only` / `mvn test-compile`) runs after the approved environment install.
 
 **Generation pipeline** (stage 6, per batch): model call (temperature rises each retry) → normalize (canonical
-case IDs, `CASE_ID` markers) → `autofix` → `skill_contracts.validate_generated_files` (structure/placeholders/
-syntax/compile) → `code_intel.static_gate` → `build_gate.try_build`. Failures produce a concrete remedy
-(`triage.remedy_for`) and loop back into the model; accepted batches are cached so retries/heals only regenerate
+case IDs, `CASE_ID` markers) → `autofix` → `skills.contracts.validate_generated_files` (structure/placeholders/
+syntax/compile) → `tools.code_intel.static_gate` → `tools.build_gate.try_build`. Failures produce a concrete remedy
+(`qa.triage.remedy_for`) and loop back into the model; accepted batches are cached so retries/heals only regenerate
 what failed.
 
 **Agent Skills**: loaded through MAF's `SkillsProvider` (progressive disclosure), one skill assignment per
 stage (table in `docs/ARCHITECTURE.md` §8). Vendored skills under `skills/` are pinned in
 `skills/SKILLS.lock.json` (SHA-256 per file) — `lint-skills` fails if a vendored file was hand-edited; re-vendor
 via `scripts/vendor_skills.py`. Only scripts recorded in the lock may execute
-(`skill_scripts.HarnessScriptRunner`: allow-list, SHA-256, argv-only, temp dir, sanitized env, timeout).
+(`skills.scripts.HarnessScriptRunner`: allow-list, SHA-256, argv-only, temp dir, sanitized env, timeout).
 `maf-harness verify-run` checks that every assigned skill was actually loaded via a tool-trace audit, not just
 claimed.
 
 **Budget**: a single daily token cap (`HARNESS_DAILY_TOKEN_LIMIT`, default 50,000,000) shared by all runs on the
-machine — no per-run/per-call limits — enforced by `usage.DailyUsageLedger` + `maf_runtime.BudgetGuard`
+machine — no per-run/per-call limits — enforced by `llm.usage.DailyUsageLedger` + `agent.runtime.BudgetGuard`
 (reserve → call → settle).
 
 **Safety boundary**: credentials come only from env/`.env`, never forwarded to install/test commands
-(`execution._child_env` is an allow-list with a fake `HOME`); install/run commands are argv-only with timeouts
+(`envs.execution._child_env` is an allow-list with a fake `HOME`); install/run commands are argv-only with timeouts
 and a `plan_hash` re-checked after approval; npm lifecycle scripts are disabled during install; execution is a
 local process, not a sandboxed one — see `docs/ARCHITECTURE.md` §4 ("Guarantees and where they are enforced")
 before changing anything in `envs/runners.py`, `envs/execution.py`, or `envs/environment.py`.

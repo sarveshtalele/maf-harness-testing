@@ -162,6 +162,27 @@ def render_observability(report: dict[str, Any], key_prefix: str = "obs") -> Non
                     index=[humanize(s["stage"]) for s in with_tokens],
                 )
             )
+        cache = report.get("cache", {}).get("stages", {})
+        if cache:
+            st.markdown(
+                "**Prompt cache**: input tokens the provider served from its prefix cache, and how much of each request "
+                "repeats the previous one of the same stage (the most a prefix cache could serve)"
+            )
+            _table(
+                [
+                    {
+                        "stage": humanize(name),
+                        "calls": c["calls"],
+                        "input tokens": c["input"],
+                        "cached": c["cached"],
+                        "hit %": c["hit_pct"] if c["hit_pct"] is not None else "not reported",
+                        "prompt prefix repeated %": c["prefix_ratio"]
+                        if c["prefix_ratio"] is not None
+                        else "-",
+                    }
+                    for name, c in cache.items()
+                ]
+            )
         st.markdown("**Model runs**")
         _table(
             [

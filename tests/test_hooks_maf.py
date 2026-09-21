@@ -298,3 +298,14 @@ def test_chat_middleware_tracks_stage_tokens_for_soft_caps():
     asyncio.run(middleware.process(ctx, call_next))
     asyncio.run(middleware.process(ctx, call_next))
     assert middleware.used_tokens == 84
+
+
+def test_the_sdk_backend_without_the_sdk_fails_at_construction_with_an_install_hint(monkeypatch):
+    import sys
+
+    monkeypatch.setitem(sys.modules, "agent_hooks", None)
+    with pytest.raises(ValueError, match=r"maf-test-harness\[hooks\]"):
+        MAFHarnessRuntime(api_key="k", model="m", skills_root=Path("skills"), hooks_backend="sdk")
+    MAFHarnessRuntime(
+        api_key="k", model="m", skills_root=Path("skills"), hooks_backend="inhouse"
+    )  # unaffected

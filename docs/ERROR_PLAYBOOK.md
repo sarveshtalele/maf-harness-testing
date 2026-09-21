@@ -21,13 +21,13 @@ downloads software) · `manual` only explain what to do.
 
 ## How it is used today
 
-* **Install steps** (`runners.execute_setup`): a failed step carries `diagnoses` in `report.json`; the warning or
+* **Install steps** (`envs.runners.execute_setup`): a failed step carries `diagnoses` in `report.json`; the warning or
   error text names the code and the hint (`[ENV-PY-001: Package needs a C/C++ compiler. ...]`). A failed bulk `pip
   install` is retried package by package (`install-each-package`).
-* **Build gate** (`build_gate.try_build`): a collection failure explained by a declared-but-uninstalled package
+* **Build gate** (`tools.build_gate.try_build`): a collection failure explained by a declared-but-uninstalled package
   (`ENV-PY-007`) or by any other `environment`/`infra` diagnosis is `skipped` with `environment_issues`, not a test
   failure, so it never burns a generation retry. A genuine test defect still fails as before.
-* **Execution** (`runners.execute_plan`): failed setup steps and builds that produced no tests add `diagnoses`;
+* **Execution** (`envs.runners.execute_plan`): failed setup steps and builds that produced no tests add `diagnoses`;
   `qa_report` turns environment/infra diagnoses into *Environment* actions.
 * **Context decides ambiguous errors**: `No module named 'X'` is `EXEC-101` (test defect) unless `X` belongs to a
   declared dependency whose install failed (`ENV-PY-007`, environment).
