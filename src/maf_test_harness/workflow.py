@@ -28,6 +28,15 @@ from .envs.environment import build_environment_plan, steps_from_plan
 from .envs.execution import copy_repo, write_generated
 from .envs.runners import RunPlan, Step, build_plan, execute_plan, execute_setup
 from .envs.toolchains import apply_toolchains
+from .hooks import (
+    ON_ENV_ERROR,
+    ON_EXEC_ERROR,
+    SESSION_START,
+    STAGE_GATE,
+    STOP,
+    HookEngine,
+    build_engine,
+)
 from .models import GeneratedFilesDraft, RequirementsDraft, TestDesignDraft, TestPlan
 from .monitoring.telemetry import configure_telemetry
 from .monitoring.trace import TraceRecorder
@@ -52,6 +61,7 @@ from .settings import (
     EXECUTION_TIMEOUT_SECONDS,
     GENERATION_BATCH_SIZE,
     GENERATION_MAX_ATTEMPTS,
+    HOOKS,
 )
 from .skills.config import skills_for
 from .skills.contracts import (
@@ -319,6 +329,7 @@ class Harness:
         runtime=None,
         execute: bool = True,
         cache_dir: Path | None = None,
+        hooks: HookEngine | None = None,
     ):
         self.stages = list(STAGES if execute else CORE_STAGES)
         self.cache_dir = (cache_dir or Path(run_dir).resolve().parent / ".harness_cache").resolve()
@@ -342,6 +353,15 @@ class Harness:
             }
         )
         self.state = self.view.get("state", {})
+        # Hooks: built-ins + .harness/hooks.json (see docs/HOOKS.md). A malformed config stops the run before it starts.
+        self.hooks = hooks or build_engine(
+            context={"writable_roots": [str(self.workspace)], "allow_downloads": False},
+            audit=self.audit,
+            setting=HOOKS,
+        )
+        if runtime is not None and getattr(runtime, "hooks", None) is None:
+            runtime.hooks = self.hooks
+        self.hooks.notify(SESSION_START, run=self.run_dir.name, resumed=bool(self.state))
         self.storage = FileCheckpointStorage(self.run_dir / "checkpoints")
         executors = [StageExecutor(stage, self) for stage in self.stages]
         builder = WorkflowBuilder(
@@ -389,6 +409,7 @@ class Harness:
             self.view["pending"] = None
             if self.view["status"] != "stopped":
                 self.view["status"] = "complete"
+                self.hooks.notify(STOP, reason="complete")
         self.save()
         return self.view
 
@@ -433,6 +454,16 @@ class Harness:
             pending = fresh.get("pending")
             if not pending or pending["id"] != request_id or request_id in fresh.get("consumed", []):
                 raise ValueError("Stale or already consumed approval request.")
+            gate = await asyncio.to_thread(
+                self.hooks.notify,
+                STAGE_GATE,
+                pending["stage"],
+                kind=pending["kind"],
+                decision=response.get("decision"),
+                request_id=request_id,
+            )
+            if gate.blocked:  # the approval stays pending; the human sees why and can change course
+                raise PermissionError(f"Blocked by hook ({gate.source}): {gate.reason}")
             self.view = fresh
             self.state = pending["state"]
             self.view["consumed"].append(request_id)
@@ -800,6 +831,7 @@ class Harness:
         if request["details"].get("plan_hash") != info["hash"]:
             raise ValueError("Environment plan changed after it was shown for approval.")
         attempt = state["environment_attempts"] = state.get("environment_attempts", 0) + 1
+        self.hooks.context["allow_downloads"] = True  # the approved plan lists every toolchain download
         self.audit("environment_started", request_id=request["id"], plan_hash=info["hash"])
         try:  # the approval covers downloading the toolchains listed in the plan
             provisioned = await asyncio.to_thread(
@@ -818,6 +850,15 @@ class Harness:
                 execute_setup, steps, self.workspace, self.run_dir / "environment" / f"attempt-{attempt}"
             )
         info["status"] = report["status"]
+        if report["status"] != "ready":
+            self.hooks.notify(
+                ON_ENV_ERROR,
+                ENV_STAGE,
+                status=report["status"],
+                error=str(report.get("error") or "")[:600],
+                diagnoses=[d for step in report.get("steps", []) for d in step.get("diagnoses", [])][:5],
+                attempt=attempt,
+            )
         if report["status"] == "ready":
             info["missing_packages"] = await asyncio.to_thread(env_check.missing_packages, self.workspace)
             if info["missing_packages"]:
@@ -953,6 +994,15 @@ class Harness:
             status=report["status"],
             summary=report.get("summary"),
         )
+        if report["status"] != "passed":
+            self.hooks.notify(
+                ON_EXEC_ERROR,
+                EXECUTION_STAGE,
+                status=report["status"],
+                summary=report.get("summary"),
+                diagnoses=(report.get("diagnoses") or [])[:5],
+                attempt=info["attempt"],
+            )
         await self.review(EXECUTION_STAGE, self._execution_artifact(state, report), state, ctx)
 
     def _execute_with_app(

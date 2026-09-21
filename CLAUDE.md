@@ -98,6 +98,10 @@ imports and monkeypatches keep working; new code imports the subpackage path. Ro
 - `skills/config.py`, `skills/registry.py`, `skills/contracts.py`, `skills/scripts.py`, `skills/reports.py` — Agent
   Skills loading, spec/lock validation, contract enforcement, sandboxed script execution
 - `tools/code_intel.py`, `tools/autofix.py`, `tools/build_gate.py`, `tools/agent_tools.py` — the deterministic central tools
+- `tools/registry.py`, `tools/env_tools.py`, `tools/file_tools.py`, `tools/typed.py` — typed tools: schema-validated
+  arguments, one `ToolResult` envelope, hook-aware `ToolRegistry` (see [docs/HOOKS.md](docs/HOOKS.md))
+- `hooks/` — hook events, the fail-closed verdict engine, built-in hooks (secret redaction, write scope, download
+  consent, audit), `.harness/hooks.json` loader, MAF middleware bridge; `HARNESS_HOOKS=enforce|evaluate_only|off`
 - `agent/runtime.py` — MAF agent construction, `SkillsProvider` wiring, tool-trace middleware, `BudgetGuard`
 - `qa/report.py`, `qa/triage.py`, `qa/packaging.py` — verdict computation, files-to-update, ZIP assembly
 - `monitoring/report.py`, `monitoring/ui.py`, `monitoring/trace.py`, `monitoring/telemetry.py` — run tracing and the Observability tab

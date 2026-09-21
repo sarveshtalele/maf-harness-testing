@@ -25,6 +25,7 @@ from agent_framework import (
 )
 from agent_framework.openai import OpenAIChatClient, OpenAIChatCompletionClient
 
+from ..hooks.maf_bridge import hook_middleware
 from ..llm.usage import DailyUsageLedger
 from ..monitoring.trace import TraceRecorder, summarize_arguments, tool_category
 from ..settings import (
@@ -236,6 +237,7 @@ class MAFHarnessRuntime:
         skill_mode: str = SKILL_MODE,
         usage_ledger: DailyUsageLedger | None = None,
         tool_provider: Callable[[str], list] | None = None,
+        hooks=None,
     ):
         if not api_key.strip() or not model.strip():
             raise ValueError("Model and API key are required before model stages.")
@@ -250,6 +252,7 @@ class MAFHarnessRuntime:
         self._agents = {}
         self._clients = []
         self.tool_provider = tool_provider
+        self.hooks = hooks  # hooks.HookEngine; set by the Harness when it is not passed in
         self._guards = {}
         self._tracers = {}
         self._primed = {}
@@ -336,6 +339,17 @@ class MAFHarnessRuntime:
         state.setdefault("skill_loading_mode", {})[stage] = mode
         persist()
 
+    def _middleware(self, stage: str) -> list:
+        """Order matters: the hook chat check runs before the budget guard (a denied call reserves nothing) and the
+        tool tracer wraps the hook function check (a denied tool call is still traced)."""
+        guard, tracer = self._guards[stage], self._tracers[stage]
+        if self.hooks is None:
+            return [guard, tracer]
+        chat_hook, function_hook = hook_middleware(
+            self.hooks, lambda: self._trace_context.get("stage", stage)
+        )
+        return [chat_hook, guard, tracer, function_hook]
+
     def _create_agent(self, stage: str, skills: list[str], persona: str, state: dict, persist):
         skill_name = skills[0]
         kwargs = {"model": self.model, "api_key": self.api_key}
@@ -377,7 +391,7 @@ class MAFHarnessRuntime:
             disable_mode=True,
             disable_compaction=True,
             max_output_tokens=DEFAULT_MAX_OUTPUT_TOKENS,
-            middleware=[self._guards[stage], self._tracers[stage]],
+            middleware=self._middleware(stage),
             default_options={"temperature": 0},
         )
         harness_tools = self.tool_provider(stage) if self.tool_provider else []

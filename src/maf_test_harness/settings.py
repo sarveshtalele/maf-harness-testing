@@ -69,6 +69,9 @@ BUILD_GATE = (
     os.getenv("HARNESS_BUILD_GATE", "on").strip().lower() != "off"
 )  # compile/collect after env install
 
+# Hooks (see docs/HOOKS.md): "enforce" (default), "evaluate_only" (record what would be blocked, never block) or "off".
+HOOKS = os.getenv("HARNESS_HOOKS", "enforce").strip().lower()
+
 # Provider response cap, not the total workflow budget.
 MAX_OUTPUT_TOKENS = int(os.getenv("HARNESS_MAX_OUTPUT_TOKENS", "16384"))
 

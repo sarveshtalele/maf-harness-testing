@@ -1,0 +1,25 @@
+{
+  "mode": "enforce",
+  "builtins": {
+    "stage_budget": {"per_stage_tokens": 2000000},
+    "audit": true
+  },
+  "hooks": [
+    {
+      "event": "PreToolUse",
+      "matcher": "^write_test_file$",
+      "command": ["python", "hooks/check_path.py"],
+      "timeout": 5,
+      "name": "no-shell-scripts"
+    },
+    {
+      "event": "StageGate",
+      "matcher": "^environment_setup$",
+      "python": "my_hooks:change_window"
+    },
+    {
+      "event": "OnExecError",
+      "command": ["python", "hooks/notify.py"]
+    }
+  ]
+}

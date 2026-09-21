@@ -87,6 +87,27 @@ offered at `repo_analysis`, `environment_setup`, or `test_execution` (host-only 
 The host runs the exact same checks itself regardless of whether a model calls these tools — correctness never
 depends on an agent choosing to call one.
 
+### 3.1 Typed tools and hooks (Phase 4)
+
+A second, typed catalogue (`tools/registry.py`, `env_tools.py`, `file_tools.py`, `typed.py`): every tool validates its
+arguments against a JSON schema and returns one envelope (`ok`, `code`, `category`, `evidence`, `data`,
+`suggested_fixes`, `next_actions`). They are for the agent loops of Phase 5; until then they are used directly.
+
+| Tool | Does | Changes anything? | Planned for |
+|---|---|---|---|
+| `detect_stack` | ecosystems, build files, test runner | no | `environment_setup` |
+| `detect_toolchains` | toolchains the repository needs, found or to download | no | `environment_setup` |
+| `provision_toolchain` | download one toolchain into the harness cache | yes: only after the environment approval | `environment_setup` |
+| `list_missing_packages` | declared dependencies not installed | no | `environment_setup`, `test_execution` |
+| `diagnose_env_error` | classify an install/build log (code, category, recipe, autonomy) | no | `environment_setup`, `test_execution` |
+| `diagnose_exec_error` | classify a test-run log (environment / test defect / application defect) | no | `test_execution` |
+| `read_file`, `list_dir` | read the repository or workspace; secret-looking files refused | no | `environment_setup`, `test_execution` |
+| `write_test_file`, `delete_file` | create/delete a generated test inside the writable root | yes: scoped | (registered, not yet offered) |
+
+Hooks run around every tool call, model call, gate response and failure: built-in secret redaction, write scope,
+download consent, optional stage budget and audit, plus your own `.harness/hooks.json`. Full reference:
+[HOOKS.md](HOOKS.md).
+
 ## 4. Agent Skills
 
 Ten [Agent Skills](https://github.com/shivswami/awesome-agent-skills) power the model stages, loaded through
@@ -129,6 +150,8 @@ table per file.
 | Environment | `envs/environment.py`, `envs/runners.py`, `envs/execution.py`, `envs/platform_compat.py`, `envs/env_check.py`, `envs/app_launcher.py`, `envs/` (requirement detection and toolchain provisioning), `errors/` (error taxonomy and playbook) | Environment planning, isolated install, per-ecosystem run adapters, local-process execution, OS-specific decisions (Windows vs POSIX) centralized in one module; declared-vs-installed dependency check (`env_check`); starting the app under test for Playwright E2E (`app_launcher`) |
 | Agent Skills | `skills/config.py`, `skills/registry.py`, `skills/contracts.py`, `skills/scripts.py`, `skills/reports.py` | Which skill a stage loads and why; spec/lock validation; contract enforcement on generated output; sandboxed script execution; host-run QA skill reports |
 | Central tools | `tools/code_intel.py`, `tools/autofix.py`, `tools/build_gate.py`, `tools/agent_tools.py` | The nine deterministic MAF function tools and the mechanical auto-fixers behind them |
+| Typed tools | `tools/registry.py`, `tools/env_tools.py`, `tools/file_tools.py`, `tools/typed.py` | Schema-validated tools with one result envelope (`ToolResult`), hook-aware `ToolRegistry`, per-stage selection |
+| Hooks | `hooks/events.py`, `engine.py`, `builtin.py`, `config.py`, `maf_bridge.py` | Events, verdict engine (fail-closed), built-in hooks, `.harness/hooks.json` loader, MAF middleware |
 | Runtime | `agent/runtime.py`, `ui/runtime_service.py` | MAF agent construction, `SkillsProvider` wiring, tool-trace middleware, `BudgetGuard` (`agent/runtime.py`); one asyncio event-loop-per-UI-session wrapper (`ui/runtime_service.py`) |
 | QA & delivery | `qa/report.py`, `qa/triage.py`, `qa/packaging.py` | Verdict computation, failure triage (files/lines to update), ZIP assembly |
 | Observability | `monitoring/report.py`, `monitoring/ui.py`, `monitoring/trace.py`, `monitoring/telemetry.py` | Run tracing, the Observability tab, OpenTelemetry export |

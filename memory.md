@@ -34,7 +34,7 @@ Repo: `https://github.com/sarveshtalele/maf-harness-testing` (private). Working 
 | 1 | Restructure into subpackages + import shims (no behaviour change) | **done** (30 modules moved, old names alias the same module object) | see log |
 | 2 | Error taxonomy, classifiers, playbook, 56 fixtures, wired into install/build gate/execution/QA | **done** | `6425f5b` |
 | 3 | `envs/` adapters + toolchain provisioning (JDK, Maven, Gradle, .NET SDK, Python) | **done** | see log |
-| 4 | Typed tool registry + hooks engine (in-house) + built-in hooks | **in progress**: `hooks/{events,engine,builtin}.py` written but untracked, unlinted-for-tests and not wired; `hooks/config.py`, `hooks/__init__.py`, `hooks/maf_bridge.py`, `tools/` registry, integration, tests, `docs/HOOKS.md` still to do | — |
+| 4 | Typed tool registry + hooks engine (in-house) + built-in hooks | **done** (see log; `docs/HOOKS.md`) | see log |
 | 5 | Agent runtime: per-stage loops, persistent sessions, todos/modes, compaction, skill-script evaluators, environment + diagnosis agents, stable-prefix `PromptAssembler` | pending | — |
 | 6 | MAF Agent Hooks bridge (optional SDK), UI panels, docs (`ENVIRONMENTS`, `HOOKS`, updated `CATALOG`/`ARCHITECTURE`) | pending | — |
 
@@ -55,13 +55,13 @@ name reach the real module. New code imports the subpackage path. `tests/` were 
 | `envs/` | `environment.py` (plan, probes), `runners.py` (`setup_steps`, `execute_setup`, `execute_plan`, pip per-package fallback), `execution.py`, `platform_compat.py`, `env_check.py`, `app_launcher.py`, and Phase 3: `spec.py`, `toolchains.py`, `{python,java,dotnet}_env.py` |
 | `errors/` | `taxonomy.py`, `engine.py`, `playbook.py`, `classifiers/{python,java,dotnet,common}.py`; `docs/ERROR_PLAYBOOK.md` is generated; fixtures in `tests/error_cases.py` |
 | `skills/` | `config.py`, `registry.py`, `contracts.py`, `scripts.py`, `reports.py`; the skill folders and `SKILLS.lock.json` stay at repo-root `skills/` |
-| `tools/` | `agent_tools.py` (11 tools), `code_intel.py`, `autofix.py`, `build_gate.py`; Phase 4 adds the typed registry here |
+| `tools/` | `agent_tools.py` (11 tools), `code_intel.py`, `autofix.py`, `build_gate.py`; Phase 4: `registry.py` (`ToolResult` envelope, `ToolRegistry`), `env_tools.py`, `file_tools.py`, `typed.py` |
 | `agent/` | `runtime.py` (`create_harness_agent`, `BudgetGuard`, `ToolTraceMiddleware`), `personas.py` |
 | `llm/` | `usage.py` (daily ledger); Phase 5 adds the prompt assembler |
 | `qa/` | `report.py`, `triage.py`, `packaging.py` |
 | `monitoring/` | `report.py` (incl. *Prompt cache* report), `ui.py`, `trace.py`, `telemetry.py` |
 | `ui/` | `artifact_presenter.py`, `runtime_service.py` |
-| `hooks/` | Phase 4 (in progress, untracked) |
+| `hooks/` | Phase 4: `events.py`, `engine.py` (fail-closed verdicts), `builtin.py`, `config.py` (`.harness/hooks.json`), `maf_bridge.py` (MAF middleware) |
 | Docs | `docs/ARCHITECTURE.md`, `CATALOG.md`, `CACHING.md`, `ERROR_PLAYBOOK.md`, `ENVIRONMENTS.md`, `OBSERVABILITY.md`, `CLAUDE.md` |
 
 Deliberate deviations from the plan: `workflow.py` stays a single top-level module (a `workflow/` package would clash with
@@ -98,7 +98,7 @@ modules used everywhere, and checkpoints reference the model classes by module p
 * Commit style: imperative subject, body explains *why*; end with `Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>`.
 * Do not commit `.env`, `.harness_runs/`, `agent-framework.pdf`.
 * The user prefers terse replies (caveman style) in chat; code, commits and docs are written normally.
-* Additive changes; existing behaviour and tests must stay green (currently 428 passed, 1 skipped).
+* Additive changes; existing behaviour and tests must stay green (currently 606 passed, 1 skipped).
 * CRLF-safe edit helper used in this session: a throwaway `.scratch_edit.py` (JSON pairs on stdin). It is not committed; recreate it if needed.
 
 ## 8. Log
@@ -107,6 +107,7 @@ modules used everywhere, and checkpoints reference the model classes by module p
 * Phase 2 — errors package, 41 codes, 56 fixtures, wiring into `runners`, `build_gate`, `qa_report`, `triage`.
 * Phase 3 — `envs/` package (`spec.py`, `toolchains.py`, `python_env.py`, `java_env.py`, `dotnet_env.py`), wired into `environment.build_environment_plan` (lists downloads, no longer blocks on provisionable tools), `workflow.run_environment` (provisions after approval, `state["toolchains"]`, audit `toolchains_ready`/`toolchains_failed`), `plan_execution` and `build_gate` (`apply_toolchains`). 30 offline tests (`tests/test_envs.py`, local mirror server). Live smoke on this machine: Temurin 17, .NET 8.0 and Gradle metadata resolve; Maven 3.9.9 really downloaded + checksum-verified and its real error output was classified `ENV-JAVA-002`. `docs/ENVIRONMENTS.md`.
 * Phase 1 — `git mv` of 30 modules into `repo/ envs/ skills/ tools/ agent/ llm/ qa/ monitoring/ ui/` with relative imports rewritten by a script and `sys.modules` alias shims at the old paths; 394 existing tests pass unchanged; `tests/test_module_layout.py` (34 tests) checks every alias, patching through an old name, every module importing, and the skills-root path (`monitoring/report.py` moved one level deeper: `parents[3]`). `app.py` and `scripts/` use the new paths. Docs updated (`CLAUDE.md` module map, `ARCHITECTURE.md`, `CATALOG.md`).
+* Phase 4 — `hooks/` (8 events, verdicts allow/deny/transform/ask, deny > ask > transform > allow, first enforced deny ends the event, crash/timeout/garbage = deny on enforcing events, evaluate-only mode, command hooks over stdin/stdout JSON with exit 2 = deny and a credential-free env, python hooks), built-ins (secret redaction that keeps JSON valid, write scope, download consent, optional stage budget, audit), `.harness/hooks.json` loader with strict validation (user file, then project file in the working directory, never the cloned repo), `HARNESS_HOOKS=enforce|evaluate_only|off`. Wiring: `Harness` builds the engine, fires SessionStart / StageGate (a veto leaves the approval pending) / OnEnvError / OnExecError / Stop and sets `allow_downloads` when the environment plan is approved; `MAFHarnessRuntime._middleware` orders `[HookChat, BudgetGuard, ToolTrace, HookFunction]`. MAF hands middleware tool results as `list[Content]`, not a string: the bridge rewrites text items only. Typed tools: `ToolResult` envelope, `ToolRegistry` (validate, hooks, handler, hooks; never raises), env tools (`detect_stack`, `detect_toolchains`, `provision_toolchain`, `list_missing_packages`, `diagnose_env_error`, `diagnose_exec_error`) and scoped file tools (`read_file`, `list_dir`, `write_test_file`, `delete_file`); not yet offered to any stage (Phase 5). Tests: `test_hooks*.py` (real MAF loop with a scripted transport, real subprocess hooks, real workflow gates), `test_typed_tools.py`; `tests/conftest.py` isolates the developer's real hooks files. Not done: `apply_env_fix` (recipes are descriptive data until the environment agent), the `agent_hooks` SDK bridge (Phase 6).
 * Phase 3 gaps (carry forward): no scaffolding of a Java/.NET *generated test project*; a JDK download was not exercised live (190 MB, network here was ~60 KB/s); Python provisioning depends on `uv`; Node/Go untouched; the approved plan shows bare `mvn`/`gradle`/`dotnet` and the harness rewrites them to absolute paths after provisioning (audit records it).
 
 ## 9. Phase 3 — design (implemented; kept for reference)
