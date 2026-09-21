@@ -14,7 +14,8 @@ repo URL ─► analyze ─► requirements ─► environment ─► test plan 
 Every model-authored artifact passes a human gate. Cloning, installing and running each need their own tool-call approval.
 Whatever the host can compute exactly (does this import resolve, what are this class's real constructors, which URL routes exist, does this file
 compile) is answered by deterministic **central tools** instead of a model retry — see [section 7](#7-central-tools-less-llm-guessing).
-Full design: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) · roadmap: [docs/IMPLEMENTATION_PLAN.md](docs/IMPLEMENTATION_PLAN.md) ·
+Full design: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) · every persona, tool and Agent Skill: [docs/CATALOG.md](docs/CATALOG.md) ·
+roadmap: [docs/IMPLEMENTATION_PLAN.md](docs/IMPLEMENTATION_PLAN.md) ·
 defect register: [docs/audit/ERRORS.md](docs/audit/ERRORS.md) · live runs: [docs/audit/E2E_RESULTS.md](docs/audit/E2E_RESULTS.md) · observability: [docs/OBSERVABILITY.md](docs/OBSERVABILITY.md).
 
 ## 1. Prerequisites

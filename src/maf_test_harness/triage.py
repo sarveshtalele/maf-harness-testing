@@ -43,16 +43,17 @@ def locations(text: str) -> list[tuple[str, int]]:
 
 def _match(path: str, candidates: list[str]) -> str | None:
     """Map a reported path (absolute, workspace-relative or bare file name) to a known repository path."""
+    normalized = path.replace("\\", "/")
     if any(
-        part in path
-        for part in ("site-packages", "node_modules", "/usr/lib", ".harness-venv", "/jdk", "/python3")
+        part in normalized
+        for part in ("site-packages", "node_modules", "/usr/lib", ".harness-venv", "jdk", "python3")
     ):
         return None
-    clean = path.split(".harness_runs/", 1)[-1]
+    clean = normalized.split(".harness_runs/", 1)[-1]
     for candidate in sorted(candidates, key=len, reverse=True):
-        if clean.endswith(candidate) or path.endswith(candidate):
+        if clean.endswith(candidate) or normalized.endswith(candidate):
             return candidate
-    name = PurePosixPath(path).name
+    name = PurePosixPath(normalized).name
     hits = [c for c in candidates if PurePosixPath(c).name == name]
     return hits[0] if len(hits) == 1 else None
 

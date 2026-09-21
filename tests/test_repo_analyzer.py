@@ -79,7 +79,10 @@ def test_evidence_never_follows_external_symlink(tmp_path):
     repo.mkdir()
     outside = tmp_path / "private.py"
     outside.write_text("secret_external_content")
-    (repo / "service.py").symlink_to(outside)
+    try:
+        (repo / "service.py").symlink_to(outside)
+    except OSError:
+        pytest.skip("creating symlinks needs elevated privilege or Developer Mode on this host")
     assert "secret_external_content" not in build_repository_evidence(repo)
     assert analyze_repository(repo, "https://github.com/acme/repo").source_file_count == 0
 

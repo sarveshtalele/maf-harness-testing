@@ -11,12 +11,12 @@ import hashlib
 import json
 import os
 import shutil
-import signal
 import subprocess
 import time
 import xml.etree.ElementTree as ET
 from pathlib import Path
 
+from . import platform_compat
 from .repo_analyzer import SENSITIVE_PATH
 
 EXPORT_SKIP_DIRS = {
@@ -30,14 +30,25 @@ EXPORT_SKIP_DIRS = {
     ".gradle",
     ".idea",
     ".vscode",
+    "Python",  # a stray Windows Python Install Manager download; never expected in a workspace
 }
 # Host variables forwarded to setup/test commands. Model/cloud credentials are deliberately absent.
 FORWARDED_ENV = (
     "PATH",
     "SYSTEMROOT",
+    "SYSTEMDRIVE",
+    "PROGRAMDATA",
+    "WINDIR",
+    "COMSPEC",
+    "USERPROFILE",
+    "APPDATA",
+    "LOCALAPPDATA",
+    "PATHEXT",
     "LANG",
     "LC_ALL",
     "TMPDIR",
+    "TEMP",
+    "TMP",
     "JAVA_HOME",
     "MAVEN_HOME",
     "GRADLE_HOME",
@@ -50,13 +61,13 @@ FORWARDED_ENV = (
     "SSL_CERT_FILE",
     "REQUESTS_CA_BUNDLE",
 )
-BASIC_ENV = ("PATH", "SYSTEMROOT", "LANG", "TMPDIR")
+BASIC_ENV = ("PATH", "SYSTEMROOT", "SYSTEMDRIVE", "LANG", "TMPDIR", "TEMP", "TMP")
 
 
 def _exportable(relative: Path, source: Path) -> bool:
     return (
         not source.is_symlink()
-        and not any(part in EXPORT_SKIP_DIRS for part in relative.parts)
+        and not any(part in EXPORT_SKIP_DIRS or part.startswith("%") for part in relative.parts)
         and not SENSITIVE_PATH.search(relative.as_posix())
     )
 
@@ -69,7 +80,9 @@ def copy_repo(repo: Path, destination: Path) -> Path:
     destination.mkdir(parents=True)
     for folder, dirs, names in os.walk(repo):
         folder_path = Path(folder)
-        dirs[:] = [d for d in dirs if d not in EXPORT_SKIP_DIRS]  # prune, do not descend
+        dirs[:] = [
+            d for d in dirs if d not in EXPORT_SKIP_DIRS and not d.startswith("%")
+        ]  # prune, do not descend
         for name in names:
             source = folder_path / name
             relative = source.relative_to(repo)
@@ -142,10 +155,8 @@ def _child_env(output_dir: Path, inherit_env: bool, extra: dict[str, str] | None
     names = FORWARDED_ENV if inherit_env else BASIC_ENV
     env = {key: os.environ[key] for key in names if key in os.environ}
     # No bytecode: a regenerated test with the same size and mtime second must never run from a stale .pyc.
-    env.update(
-        {"HOME": str(output_dir / "home"), "PYTHONUNBUFFERED": "1", "PYTHONDONTWRITEBYTECODE": "1", "CI": "1"}
-    )
-    (output_dir / "home").mkdir()
+    env.update(platform_compat.fake_home_env(output_dir / "home"))
+    env.update({"PYTHONUNBUFFERED": "1", "PYTHONDONTWRITEBYTECODE": "1", "CI": "1"})
     env.update(extra or {})
     return env
 
@@ -181,13 +192,18 @@ def run_command(
     with (output_dir / "stdout.log").open("w") as stdout, (output_dir / "stderr.log").open("w") as stderr:
         try:
             process = subprocess.Popen(
-                argv, cwd=cwd, env=child_env, stdout=stdout, stderr=stderr, start_new_session=True
+                argv,
+                cwd=cwd,
+                env=child_env,
+                stdout=stdout,
+                stderr=stderr,
+                **platform_compat.new_process_group_kwargs(),
             )
             try:
                 result["exit_code"] = process.wait(timeout=timeout)
                 result["status"] = "command_succeeded" if process.returncode == 0 else "failed"
             except subprocess.TimeoutExpired:
-                os.killpg(process.pid, signal.SIGKILL)
+                platform_compat.kill_process_tree(process)
                 process.wait()
                 result["status"] = "timeout"
         except OSError as exc:

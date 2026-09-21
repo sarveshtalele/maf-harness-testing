@@ -1,7 +1,8 @@
 # Architecture
 
 This document explains how the harness is built, what every file does, and where each guarantee is enforced.
-Companion documents: [README](../README.md) (setup and usage), [IMPLEMENTATION_PLAN](IMPLEMENTATION_PLAN.md) (design decisions,
+Companion documents: [README](../README.md) (setup and usage), [CATALOG](CATALOG.md) (every persona, central tool
+and Agent Skill), [IMPLEMENTATION_PLAN](IMPLEMENTATION_PLAN.md) (design decisions,
 roadmap), [audit/ERRORS.md](audit/ERRORS.md) (defect register), [audit/E2E_RESULTS.md](audit/E2E_RESULTS.md) (live runs), [OBSERVABILITY.md](OBSERVABILITY.md) (tracing and the Observability tab).
 
 ## 1. What the system does
@@ -44,7 +45,7 @@ flowchart LR
   WF -->|stage prompt + schema| RT[maf_runtime.py]
   RT -->|create_harness_agent + SkillsProvider| MAF[(Microsoft Agent Framework)]
   MAF -->|chat completions| GW[(OpenAI-compatible gateway)]
-  RT -. reads .-> SK[/skills/*/SKILL.md/]
+  RT -. reads .-> SK[/"skills/*/SKILL.md"/]
   AN -->|git clone| GH[(GitHub)]
   ENV -->|pip / npm / mvn ... in isolated env| WS[(run_dir/workspace)]
 ```
@@ -69,8 +70,8 @@ Seven stages, each a MAF `Executor`; gates are MAF `request_info` events; state 
 
 ```mermaid
 flowchart TD
-  P[prompt: approved cases, target_source, collaborator_signatures,\nroutes + base_url, forbidden_imports, declared_dependencies] --> M[model call<br/>temperature rises on every retry]
-  M --> N[normalize: lines[] → source, canonical case IDs, flatten deep with-chains, CASE_ID markers]
+  P["prompt: approved cases, target_source, collaborator_signatures,<br/>routes + base_url, forbidden_imports, declared_dependencies"] --> M[model call<br/>temperature rises on every retry]
+  M --> N["normalize: lines[] to source, canonical case IDs, flatten deep with-chains, CASE_ID markers"]
   N --> F[autofix: unambiguous missing imports, module paths]
   F --> V[validate_generated_files: one declaration per file, no skips/placeholders, syntax, compile]
   V --> S[static_gate: imports, undefined names, sys.exit mocks, patch targets, unused setup, routes, Arquillian]

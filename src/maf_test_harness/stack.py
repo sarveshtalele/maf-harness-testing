@@ -8,10 +8,10 @@ from __future__ import annotations
 
 import json
 import re
-import shutil
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
+from . import platform_compat
 from .repo_analyzer import _safe_read, _tracked_files
 
 # ecosystem -> executables that must exist on the host for the runner to work
@@ -155,7 +155,7 @@ def detect_stack(root: Path, languages: dict[str, int] | None = None) -> StackPr
     if languages and profile.primary == "unknown":
         profile.notes.append(f"No build manifest found; languages: {', '.join(languages)}")
     for tool in REQUIRED_TOOLS.get(profile.primary, ()):
-        if shutil.which(tool) is None:
+        if not platform_compat.tool_present(tool):
             profile.missing_tools.append(tool)
     if "pom.xml" in names and "mvnw" in names and "mvn" in profile.missing_tools:
         profile.notes.append("Maven wrapper present; system mvn not required.")

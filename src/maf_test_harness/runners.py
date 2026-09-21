@@ -9,13 +9,14 @@ from __future__ import annotations
 import json
 import os
 import re
-import shutil
+import sys
 import time
 import xml.etree.ElementTree as ET
 from dataclasses import asdict, dataclass, field
 from pathlib import Path, PurePosixPath
 
-from .execution import read_junit_cases, run_command
+from . import platform_compat
+from .execution import EXPORT_SKIP_DIRS, read_junit_cases, run_command
 from .skill_contracts import extra_import_roots
 from .stack import REQUIRED_TOOLS, StackProfile
 
@@ -51,10 +52,8 @@ def _playwright_browsers() -> dict[str, str]:
     """Browsers are cached under the real HOME, which command execution deliberately hides."""
     if os.environ.get("PLAYWRIGHT_BROWSERS_PATH"):
         return {"PLAYWRIGHT_BROWSERS_PATH": os.environ["PLAYWRIGHT_BROWSERS_PATH"]}
-    for candidate in (Path.home() / "Library/Caches/ms-playwright", Path.home() / ".cache/ms-playwright"):
-        if candidate.is_dir():
-            return {"PLAYWRIGHT_BROWSERS_PATH": str(candidate)}
-    return {}
+    candidate = platform_compat.playwright_cache_dir()
+    return {"PLAYWRIGHT_BROWSERS_PATH": str(candidate)} if candidate else {}
 
 
 # Third-party test helpers the python adapter may install (allow-list: never install arbitrary model-named packages).
@@ -78,14 +77,15 @@ def python_test_helpers(files: list[dict]) -> list[str]:
 
 
 def _python_import_roots(ws: Path) -> list[str]:
-    """Import roots for modules living in directories that are not valid package names (see skill_contracts)."""
+    """Import roots for modules living in directories that are not valid package names (see skill_contracts).
+
+    Shares its noise-directory list with EXPORT_SKIP_DIRS (execution.py): a directory that must never be
+    copied into a deliverable (a stray tool download, a venv) must equally never be walked here -- letting
+    its files leak into PYTHONPATH can shadow the interpreter's own stdlib with a mismatched one.
+    """
     found = []
     for folder, dirs, names in os.walk(ws):
-        dirs[:] = [
-            d
-            for d in dirs
-            if d not in {".git", "node_modules", ".harness-venv", "__pycache__", "venv", ".venv"}
-        ]
+        dirs[:] = [d for d in dirs if d not in EXPORT_SKIP_DIRS and not d.startswith("%")]
         found += [(Path(folder) / n).relative_to(ws).as_posix() for n in names if n.endswith(".py")]
     return extra_import_roots(found)
 
@@ -147,12 +147,19 @@ def setup_steps(
     helpers = helpers or []
     steps: list[Step] = []
     if eco == "python":
-        venv_py = f"{VENV_DIR}/bin/python"
-        pip = {"PIP_CACHE_DIR": f"{cache}/pip"}
+        # Absolute, not relative to VENV_DIR alone: a relative argv[0] resolves against the calling
+        # process's own directory on Windows (CreateProcess does not consult the child's cwd for exe
+        # lookup, unlike POSIX fork+chdir+exec), so it silently fails to find the interpreter when the
+        # workspace differs from the harness's own process directory.
+        venv_py = platform_compat.venv_python(ws / VENV_DIR)
+        pip = {"PIP_CACHE_DIR": platform_compat.cache_path(cache, "pip")}
         pip_cmd = [venv_py, "-m", "pip", "install", "--disable-pip-version-check", "-q"]
         if not env_ready:
             steps += [
-                Step("create-venv", ["python3", "-m", "venv", VENV_DIR], "setup", timeout=timeout),
+                # sys.executable (the interpreter already running the harness), never a bare "python3"/"python":
+                # on Windows those names can resolve to the Python Install Manager's App Execution Alias, which
+                # silently downloads and installs a whole interpreter over the network instead of erroring.
+                Step("create-venv", [sys.executable, "-m", "venv", VENV_DIR], "setup", timeout=timeout),
                 Step("install-pytest", [*pip_cmd, "pytest"], "setup", env=pip, timeout=timeout),
             ]
             if (ws / "requirements.txt").is_file():
@@ -204,13 +211,19 @@ def setup_steps(
                 Step("install-test-helpers", [*pip_cmd, *helpers], "setup", env=pip, timeout=timeout)
             )
     elif eco == "node":
-        npm = {"npm_config_cache": f"{cache}/npm"}
+        npm = {"npm_config_cache": platform_compat.cache_path(cache, "npm")}
         if not env_ready:
             command = "ci" if (ws / "package-lock.json").is_file() else "install"
             steps.append(
                 Step(
                     "npm-install",
-                    ["npm", command, "--no-audit", "--no-fund", "--ignore-scripts"],
+                    [
+                        *platform_compat.resolve_tool("npm"),
+                        command,
+                        "--no-audit",
+                        "--no-fund",
+                        "--ignore-scripts",
+                    ],
                     "setup",
                     env=npm,
                     timeout=timeout,
@@ -220,14 +233,27 @@ def setup_steps(
             steps += [
                 Step(
                     "install-playwright",
-                    ["npm", "install", "--no-save", "--no-audit", "--no-fund", "@playwright/test"],
+                    [
+                        *platform_compat.resolve_tool("npm"),
+                        "install",
+                        "--no-save",
+                        "--no-audit",
+                        "--no-fund",
+                        "@playwright/test",
+                    ],
                     "setup",
                     env=npm,
                     timeout=timeout,
                 ),
                 Step(
                     "install-browser",
-                    ["npx", "--no-install", "playwright", "install", "chromium"],
+                    [
+                        *platform_compat.resolve_tool("npx"),
+                        "--no-install",
+                        "playwright",
+                        "install",
+                        "chromium",
+                    ],
                     "setup",
                     env=_playwright_browsers(),
                     timeout=timeout,
@@ -236,24 +262,30 @@ def setup_steps(
             ]
     elif not env_ready:
         if eco == "maven":
-            mvn = "./mvnw" if (ws / "mvnw").exists() else "mvn"
+            mvn = platform_compat.resolve_wrapper(ws, "mvnw", "mvnw.cmd", "mvn")
             steps.append(
                 Step(
                     "resolve-dependencies",
-                    [mvn, "-B", "-ntp", f"-Dmaven.repo.local={cache}/m2", "dependency:go-offline"],
+                    [
+                        *mvn,
+                        "-B",
+                        "-ntp",
+                        f"-Dmaven.repo.local={platform_compat.cache_path(cache, 'm2')}",
+                        "dependency:go-offline",
+                    ],
                     "setup",
                     timeout=timeout,
                     continue_on_failure=True,
                 )
             )
         elif eco == "gradle":
-            gradle = "./gradlew" if (ws / "gradlew").exists() else "gradle"
+            gradle = platform_compat.resolve_wrapper(ws, "gradlew", "gradlew.bat", "gradle")
             steps.append(
                 Step(
                     "resolve-dependencies",
-                    [gradle, "--no-daemon", "dependencies"],
+                    [*gradle, "--no-daemon", "dependencies"],
                     "setup",
-                    env={"GRADLE_USER_HOME": f"{cache}/gradle"},
+                    env={"GRADLE_USER_HOME": platform_compat.cache_path(cache, "gradle")},
                     timeout=timeout,
                     continue_on_failure=True,
                 )
@@ -264,7 +296,10 @@ def setup_steps(
                     "download-modules",
                     ["go", "mod", "download"],
                     "setup",
-                    env={"GOMODCACHE": f"{cache}/go-mod", "GOFLAGS": "-mod=mod"},
+                    env={
+                        "GOMODCACHE": platform_compat.cache_path(cache, "go-mod"),
+                        "GOFLAGS": "-mod=mod",
+                    },
                     timeout=timeout,
                     continue_on_failure=True,
                 )
@@ -290,7 +325,7 @@ def build_plan(
     eco = resolve_ecosystem(stack, files)
     cache = str(Path(cache_dir).resolve())
     reports = ws / REPORT_DIR
-    missing = [t for t in REQUIRED_TOOLS.get(eco, ()) if shutil.which(t) is None]
+    missing = [t for t in REQUIRED_TOOLS.get(eco, ()) if not platform_compat.tool_present(t)]
     if missing and not (eco == "maven" and (ws / "mvnw").exists()):
         return RunPlan(
             eco, [], blocked_reason=f"Required tool(s) not installed on the host: {', '.join(missing)}"
@@ -309,7 +344,7 @@ def build_plan(
             Step(
                 "pytest",
                 [
-                    f"{VENV_DIR}/bin/python",
+                    platform_compat.venv_python(ws / VENV_DIR),
                     "-m",
                     "pytest",
                     "-p",
@@ -323,7 +358,7 @@ def build_plan(
                 ],
                 "test",
                 env={
-                    "PYTHONPATH": ":".join(
+                    "PYTHONPATH": platform_compat.pythonpath_join(
                         [str(ws), str(ws / "src"), *(str(ws / r) for r in _python_import_roots(ws))]
                     )
                 },
@@ -351,7 +386,14 @@ def build_plan(
             steps.append(
                 Step(
                     "playwright",
-                    ["npx", "--no-install", "playwright", "test", *paths, "--reporter=junit"],
+                    [
+                        *platform_compat.resolve_tool("npx"),
+                        "--no-install",
+                        "playwright",
+                        "test",
+                        *paths,
+                        "--reporter=junit",
+                    ],
                     "test",
                     parser="junit",
                     report_glob=f"{REPORT_DIR}/junit.xml",
@@ -367,7 +409,7 @@ def build_plan(
                 Step(
                     "vitest",
                     [
-                        "npx",
+                        *platform_compat.resolve_tool("npx"),
                         "--no-install",
                         "vitest",
                         "run",
@@ -386,7 +428,7 @@ def build_plan(
                 Step(
                     "jest",
                     [
-                        "npx",
+                        *platform_compat.resolve_tool("npx"),
                         "--no-install",
                         "jest",
                         "--ci",
@@ -404,16 +446,16 @@ def build_plan(
 
     steps = setup_steps(eco, ws, cache, timeout, env_ready=env_ready)
     if eco == "maven":
-        mvn = "./mvnw" if (ws / "mvnw").exists() else "mvn"
+        mvn = platform_compat.resolve_wrapper(ws, "mvnw", "mvnw.cmd", "mvn")
         classes = ",".join(_java_class(p) for p in _paths(files, (".java",)))
         steps.append(
             Step(
                 "mvn-test",
                 [
-                    mvn,
+                    *mvn,
                     "-B",
                     "-ntp",
-                    f"-Dmaven.repo.local={cache}/m2",
+                    f"-Dmaven.repo.local={platform_compat.cache_path(cache, 'm2')}",
                     "test",
                     f"-Dtest={classes}",
                     "-DfailIfNoTests=false",
@@ -428,17 +470,17 @@ def build_plan(
         )
         return RunPlan("java-maven", steps)
     if eco == "gradle":
-        gradle = "./gradlew" if (ws / "gradlew").exists() else "gradle"
+        gradle = platform_compat.resolve_wrapper(ws, "gradlew", "gradlew.bat", "gradle")
         filters = [arg for p in _paths(files, (".java", ".kt")) for arg in ("--tests", _java_class(p))]
         steps.append(
             Step(
                 "gradle-test",
-                [gradle, "test", "--no-daemon", *filters],
+                [*gradle, "test", "--no-daemon", *filters],
                 "test",
                 parser="junit",
                 report_glob="**/build/test-results/test/*.xml",
                 timeout=timeout,
-                env={"GRADLE_USER_HOME": f"{cache}/gradle"},
+                env={"GRADLE_USER_HOME": platform_compat.cache_path(cache, "gradle")},
             )
         )
         return RunPlan("java-gradle", steps)
@@ -458,7 +500,11 @@ def build_plan(
                 "test",
                 parser="go",
                 timeout=timeout,
-                env={"GOCACHE": f"{cache}/go-build", "GOMODCACHE": f"{cache}/go-mod", "GOFLAGS": "-mod=mod"},
+                env={
+                    "GOCACHE": platform_compat.cache_path(cache, "go-build"),
+                    "GOMODCACHE": platform_compat.cache_path(cache, "go-mod"),
+                    "GOFLAGS": "-mod=mod",
+                },
             )
         )
         return RunPlan("go-test", steps)
@@ -503,21 +549,30 @@ def execute_setup(steps: list[Step], workspace: Path, out_dir: Path) -> dict:
             env=_expand_env(step.env, workspace),
             inherit_env=True,
         )
+        status = result["status"]
+        if (
+            step.name == "create-venv"
+            and status in {"command_succeeded", "passed"}
+            and not Path(platform_compat.venv_python(workspace / VENV_DIR)).exists()
+        ):
+            # A zero exit code alone does not prove a venv was created (e.g. Windows can silently redirect
+            # this invocation through an App Execution Alias / install-manager stub); check the artifact too.
+            status = "blocked"
         report["steps"].append(
             {
                 "name": step.name,
                 "argv": step.argv,
-                "status": result["status"],
+                "status": status,
                 "exit_code": result.get("exit_code"),
                 "duration_seconds": result.get("duration_seconds"),
                 "stdout": str(out_dir / f"{index:02d}-{step.name}" / "stdout.log"),
             }
         )
-        if result["status"] not in {"command_succeeded", "passed"}:
+        if status not in {"command_succeeded", "passed"}:
             if step.continue_on_failure:
-                report["warnings"].append(f"optional step '{step.name}' failed ({result['status']})")
+                report["warnings"].append(f"optional step '{step.name}' failed ({status})")
             else:
-                report.update(status="setup_failed", error=f"Step '{step.name}' failed: {result['status']}")
+                report.update(status="setup_failed", error=f"Step '{step.name}' failed: {status}")
                 break
     (out_dir / "report.json").write_text(json.dumps(report, indent=2), encoding="utf-8")
     return report

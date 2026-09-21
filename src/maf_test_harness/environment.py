@@ -14,6 +14,7 @@ import shutil
 import subprocess
 from pathlib import Path
 
+from . import platform_compat
 from .runners import Step, resolve_ecosystem, setup_steps
 from .stack import REQUIRED_TOOLS, StackProfile
 
@@ -21,24 +22,41 @@ from .stack import REQUIRED_TOOLS, StackProfile
 TOOLS: dict[str, tuple[list[str], str]] = {
     "python3": (
         ["python3", "--version"],
-        "Install Python 3.10+ (macOS: brew install python; Debian/Ubuntu: apt install python3 python3-venv)",
+        "Install Python 3.10+ (macOS: brew install python; Debian/Ubuntu: apt install python3 python3-venv; "
+        "Windows: winget install Python.Python.3.12 or https://python.org/downloads)",
     ),
-    "node": (["node", "--version"], "Install Node.js LTS (macOS: brew install node; or https://nodejs.org)"),
+    "node": (
+        ["node", "--version"],
+        "Install Node.js LTS (macOS: brew install node; Windows: winget install OpenJS.NodeJS.LTS; "
+        "or https://nodejs.org)",
+    ),
     "npm": (["npm", "--version"], "npm ships with Node.js"),
     "mvn": (
         ["mvn", "-v"],
-        "Install Maven (macOS: brew install maven; Debian/Ubuntu: apt install maven) or use the repo's mvnw",
+        "Install Maven (macOS: brew install maven; Debian/Ubuntu: apt install maven; "
+        "Windows: winget install Apache.Maven) or use the repo's mvnw",
     ),
     "java": (
         ["java", "-version"],
-        "Install a JDK matching the repo (macOS: brew install openjdk@11; set JAVA_HOME)",
+        "Install a JDK matching the repo (macOS: brew install openjdk@11; "
+        "Windows: winget install EclipseAdoptium.Temurin.11.JDK; set JAVA_HOME)",
     ),
-    "go": (["go", "version"], "Install Go (macOS: brew install go; or https://go.dev/dl)"),
-    "dotnet": (["dotnet", "--version"], "Install the .NET SDK (https://dotnet.microsoft.com/download)"),
+    "go": (
+        ["go", "version"],
+        "Install Go (macOS: brew install go; Windows: winget install GoLang.Go; or https://go.dev/dl)",
+    ),
+    "dotnet": (
+        ["dotnet", "--version"],
+        "Install the .NET SDK (Windows: winget install Microsoft.DotNet.SDK.8; "
+        "or https://dotnet.microsoft.com/download)",
+    ),
 }
 
 ISOLATION = {
-    "python": "Virtual environment at <workspace>/.harness-venv (system Python is never modified)",
+    "python": (
+        "Virtual environment at <workspace>/.harness-venv (Scripts/ on Windows, bin/ on macOS/Linux); "
+        "system Python is never modified"
+    ),
     "node": "Project-local <workspace>/node_modules with lifecycle scripts disabled (--ignore-scripts)",
     "maven": "Dedicated Maven repository under the harness cache dir (-Dmaven.repo.local); ~/.m2 is untouched",
     "gradle": "Dedicated GRADLE_USER_HOME under the harness cache dir",
@@ -106,9 +124,13 @@ def documented_packages(needs: list[dict], root: Path, limit: int = 8) -> list[s
 
 def _probe(tool: str) -> dict:
     command, hint = TOOLS.get(tool, ([tool, "--version"], f"Install {tool}"))
-    path = shutil.which(tool)
+    # "python3" is a stable logical key (used by REQUIRED_TOOLS/messages/tests), but the executable to
+    # actually invoke may be named "python" (stock Windows Python ships no "python3").
+    exe = platform_compat.python_launcher() if tool == "python3" else tool
+    path = shutil.which(exe)
     entry = {"tool": tool, "present": path is not None, "version": "", "install_hint": hint}
     if path:
+        command = [exe, *command[1:]]
         try:
             proc = subprocess.run(command, capture_output=True, text=True, timeout=20, check=False)
             entry["version"] = ((proc.stdout or proc.stderr).strip().splitlines() or [""])[0][:120]

@@ -2,7 +2,6 @@
 
 # NOTE: no `from __future__ import annotations` here; MAF inspects handler annotations at runtime.
 import asyncio
-import fcntl
 import hashlib
 import json
 import os
@@ -21,6 +20,7 @@ from agent_framework import (
     handler,
     response_handler,
 )
+from filelock import FileLock
 
 from .agent_tools import HarnessToolbox
 from .autofix import autofix_files
@@ -423,8 +423,7 @@ class Harness:
         return await self._collect(result)
 
     async def respond(self, request_id: str, response: dict):
-        with (self.run_dir / "run.lock").open("a") as lock:
-            fcntl.flock(lock, fcntl.LOCK_EX)
+        with FileLock(str(self.run_dir / "run.lock")):
             fresh = json.loads(self.view_path.read_text())
             pending = fresh.get("pending")
             if not pending or pending["id"] != request_id or request_id in fresh.get("consumed", []):
