@@ -28,6 +28,8 @@ from .autofix import autofix_files
 from .build_gate import try_build
 from .code_intel import RepoContext, static_gate
 from .environment import build_environment_plan, steps_from_plan
+from .envs import Provisioned, ToolchainError, provision_for
+from .envs.toolchains import apply_toolchains
 from .execution import copy_repo, write_generated
 from .models import GeneratedFilesDraft, RequirementsDraft, TestDesignDraft, TestPlan
 from .packaging import build_deliverable
@@ -736,6 +738,7 @@ class Harness:
             "ecosystem": plan["ecosystem"],
             "isolation": plan["isolation"],
             "prerequisites": plan["prerequisites"],
+            "toolchains": state.get("toolchains") or plan.get("toolchains", []),
             "notes": plan["notes"],
             "report": report,
             "installed_steps": [s["name"] for s in report.get("steps", [])],
@@ -774,14 +777,21 @@ class Harness:
                 "isolation": plan["isolation"],
                 "workspace": str(self.workspace),
                 "prerequisites": plan["prerequisites"],
+                "toolchains": plan.get("toolchains", []),
                 "steps": [
                     {"name": st["name"], "kind": st["kind"], "command": shlex.join(st["argv"])}
                     for st in plan["steps"]
                 ],
                 "effects": (
                     "Downloads and installs the repository's dependencies into the isolated location above "
-                    "(network access; package installers run). System tools are never installed by the "
-                    "harness. Model credentials are not passed to these commands."
+                    "(network access; package installers run). "
+                    + (
+                        "Missing toolchains listed under 'toolchains' (status download) are fetched into the harness "
+                        "toolchain cache with checksum verification; nothing system-wide changes. "
+                        if plan.get("needs_download")
+                        else "System tools are never installed by the harness. "
+                    )
+                    + "Model credentials are not passed to these commands."
                 ),
             },
         )
@@ -792,12 +802,22 @@ class Harness:
             raise ValueError("Environment plan changed after it was shown for approval.")
         attempt = state["environment_attempts"] = state.get("environment_attempts", 0) + 1
         self.audit("environment_started", request_id=request["id"], plan_hash=info["hash"])
-        report = await asyncio.to_thread(
-            execute_setup,
-            steps_from_plan(info["plan"]),
-            self.workspace,
-            self.run_dir / "environment" / f"attempt-{attempt}",
-        )
+        try:  # the approval covers downloading the toolchains listed in the plan
+            provisioned = await asyncio.to_thread(
+                provision_for, self.workspace, info["plan"]["ecosystem"], allow_download=True
+            )
+        except ToolchainError as exc:
+            self.audit("toolchains_failed", error=str(exc)[:600])
+            provisioned = None
+            report = {"status": "setup_failed", "steps": [], "warnings": [], "error": str(exc)}
+        if provisioned is not None:
+            state["toolchains"] = provisioned.to_dicts()
+            self.audit("toolchains_ready", events=provisioned.events)
+            steps = steps_from_plan(info["plan"])
+            apply_toolchains(steps, provisioned)
+            report = await asyncio.to_thread(
+                execute_setup, steps, self.workspace, self.run_dir / "environment" / f"attempt-{attempt}"
+            )
         info["status"] = report["status"]
         if report["status"] == "ready":
             info["missing_packages"] = await asyncio.to_thread(env_check.missing_packages, self.workspace)
@@ -836,6 +856,11 @@ class Harness:
             cache_dir=self.cache_dir,
             timeout=EXECUTION_TIMEOUT_SECONDS,
             env_ready=env_ready,
+            **(
+                {"assume_present": covered}
+                if (covered := Provisioned.from_dicts(state.get("toolchains")).tools())
+                else {}
+            ),
         )
         if state.get("launch_app") and not plan.blocked_reason:
             state["app_url"] = f"http://127.0.0.1:{app_launcher.free_port()}"  # fresh port for every attempt
@@ -850,6 +875,8 @@ class Harness:
             for step in plan.steps:
                 if step.kind == "test":
                     step.env["BASE_URL"] = state["app_url"]
+        provisioned = Provisioned.from_dicts(state.get("toolchains"))
+        apply_toolchains(plan.steps, provisioned)
         plan_dict = plan.to_dict()
         state["execution_plan"] = {
             "workspace": str(workspace),
@@ -1426,6 +1453,7 @@ class Harness:
             files,
             cache_dir=self.cache_dir,
             out_root=self.run_dir / "build_checks" / uuid4().hex[:10],
+            provisioned=Provisioned.from_dicts(self.state.get("toolchains")),
         )
 
     async def _build_gate(self, candidate: dict, batch: int) -> None:

@@ -33,7 +33,7 @@ Repo: `https://github.com/sarveshtalele/maf-harness-testing` (private). Working 
 | 0 | Baseline: cached-token accounting, prefix stability metric, `docs/CACHING.md` | **done** | `2d31533` |
 | 1 | Restructure into subpackages + import shims (no behaviour change) | pending (deliberately after 2/3: churn is pointless before the new modules exist) | — |
 | 2 | Error taxonomy, classifiers, playbook, 56 fixtures, wired into install/build gate/execution/QA | **done** | `6425f5b` |
-| 3 | `envs/` adapters + toolchain provisioning (JDK, Maven, Gradle, .NET SDK, Python) | **in progress** | — |
+| 3 | `envs/` adapters + toolchain provisioning (JDK, Maven, Gradle, .NET SDK, Python) | **done** | see log |
 | 4 | Typed tool registry + hooks engine (in-house) + built-in hooks | pending | — |
 | 5 | Agent runtime: per-stage loops, persistent sessions, todos/modes, compaction, skill-script evaluators, environment + diagnosis agents, stable-prefix `PromptAssembler` | pending | — |
 | 6 | MAF Agent Hooks bridge (optional SDK), UI panels, docs (`ENVIRONMENTS`, `HOOKS`, updated `CATALOG`/`ARCHITECTURE`) | pending | — |
@@ -84,15 +84,17 @@ and `app_launch_plan` tools, mermaid fixes, `docs/CATALOG.md`, CI Windows leg.
 * Commit style: imperative subject, body explains *why*; end with `Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>`.
 * Do not commit `.env`, `.harness_runs/`, `agent-framework.pdf`.
 * The user prefers terse replies (caveman style) in chat; code, commits and docs are written normally.
-* Additive changes; existing behaviour and tests must stay green (currently 364 passed, 1 skipped).
+* Additive changes; existing behaviour and tests must stay green (currently 394 passed, 1 skipped).
+* CRLF-safe edit helper used in this session: a throwaway `.scratch_edit.py` (JSON pairs on stdin). It is not committed; recreate it if needed.
 
 ## 8. Log
 
 * Phase 0 — cached-token accounting in `BudgetGuard`, `_cache_report` in observability, `docs/CACHING.md`.
 * Phase 2 — errors package, 41 codes, 56 fixtures, wiring into `runners`, `build_gate`, `qa_report`, `triage`.
-* Phase 3 — started: see section 9.
+* Phase 3 — `envs/` package (`spec.py`, `toolchains.py`, `python_env.py`, `java_env.py`, `dotnet_env.py`), wired into `environment.build_environment_plan` (lists downloads, no longer blocks on provisionable tools), `workflow.run_environment` (provisions after approval, `state["toolchains"]`, audit `toolchains_ready`/`toolchains_failed`), `plan_execution` and `build_gate` (`apply_toolchains`). 30 offline tests (`tests/test_envs.py`, local mirror server). Live smoke on this machine: Temurin 17, .NET 8.0 and Gradle metadata resolve; Maven 3.9.9 really downloaded + checksum-verified and its real error output was classified `ENV-JAVA-002`. `docs/ENVIRONMENTS.md`.
+* Phase 3 gaps (carry forward): no scaffolding of a Java/.NET *generated test project*; a JDK download was not exercised live (190 MB, network here was ~60 KB/s); Python provisioning depends on `uv`; Node/Go untouched; the approved plan shows bare `mvn`/`gradle`/`dotnet` and the harness rewrites them to absolute paths after provisioning (audit records it).
 
-## 9. Phase 3 — design (in progress)
+## 9. Phase 3 — design (implemented; kept for reference)
 
 Goal: the harness detects which toolchain a repository needs and provisions it into a private cache when the system
 lacks it, so Java/.NET/Python runs stop failing on "wrong JDK / no SDK / wrong Python".

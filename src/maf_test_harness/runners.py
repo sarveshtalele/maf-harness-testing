@@ -320,13 +320,21 @@ def build_plan(
     cache_dir: Path,
     timeout: float = 900,
     env_ready: bool = False,
+    assume_present: frozenset[str] = frozenset(),
 ) -> RunPlan:
-    """Choose the adapter for the generated tests: (remaining) setup steps, then the test step."""
+    """Choose the adapter for the generated tests: (remaining) setup steps, then the test step.
+
+    ``assume_present`` names required tools a provisioned toolchain covers, so they are not reported missing.
+    """
     ws = Path(workspace)
     eco = resolve_ecosystem(stack, files)
     cache = str(Path(cache_dir).resolve())
     reports = ws / REPORT_DIR
-    missing = [t for t in REQUIRED_TOOLS.get(eco, ()) if not platform_compat.tool_present(t)]
+    missing = [
+        t
+        for t in REQUIRED_TOOLS.get(eco, ())
+        if t not in assume_present and not platform_compat.tool_present(t)
+    ]
     if missing and not (eco == "maven" and (ws / "mvnw").exists()):
         return RunPlan(
             eco, [], blocked_reason=f"Required tool(s) not installed on the host: {', '.join(missing)}"

@@ -17,6 +17,7 @@ from pathlib import Path, PurePosixPath
 from typing import Any
 
 from . import env_check, platform_compat
+from .envs import toolchains
 from .errors import Context, classify, is_environmental
 from .execution import run_command, write_generated
 from .runners import VENV_DIR, Step, _expand_env, build_plan, resolve_ecosystem
@@ -96,6 +97,7 @@ def try_build(
     cache_dir: Path,
     out_root: Path,
     timeout: float = BUILD_TIMEOUT_SECONDS,
+    provisioned: toolchains.Provisioned | None = None,
 ) -> dict[str, Any]:
     """``{"status": "ok" | "failed" | "skipped", "tool", "errors": [{file, line, message}], "seconds", "reason"}``."""
     started = time.time()
@@ -107,7 +109,17 @@ def try_build(
         return {**result, "reason": "isolated environment not installed"}
     if eco not in {"python", "maven"}:
         return {**result, "reason": f"no build check for ecosystem '{eco}'"}
-    plan = build_plan(stack, workspace, files, cache_dir=cache_dir, timeout=timeout, env_ready=True)
+    plan = build_plan(
+        stack,
+        workspace,
+        files,
+        cache_dir=cache_dir,
+        timeout=timeout,
+        env_ready=True,
+        assume_present=provisioned.tools() if provisioned else frozenset(),
+    )
+    if provisioned:
+        toolchains.apply_toolchains(plan.steps, provisioned)
     if plan.blocked_reason or not plan.steps:
         return {**result, "reason": plan.blocked_reason or "no test step"}
     test_step = plan.steps[-1]

@@ -3,7 +3,7 @@
 A single reference for everything the harness is made of: what it does end to end, every stage persona (the
 "agents"), every central deterministic tool an agent can call, and every Agent Skill it loads. For the system
 diagrams and per-file guarantees, see [ARCHITECTURE.md](ARCHITECTURE.md); for tracing a specific run, see
-[OBSERVABILITY.md](OBSERVABILITY.md); for token spend and prompt caching, see [CACHING.md](CACHING.md); for every recognised error and its recovery, see [ERROR_PLAYBOOK.md](ERROR_PLAYBOOK.md).
+[OBSERVABILITY.md](OBSERVABILITY.md); for token spend and prompt caching, see [CACHING.md](CACHING.md); for every recognised error and its recovery, see [ERROR_PLAYBOOK.md](ERROR_PLAYBOOK.md); for JDK/Maven/Gradle/.NET provisioning, see [ENVIRONMENTS.md](ENVIRONMENTS.md).
 
 ## 1. What the application is
 
@@ -126,7 +126,7 @@ table per file.
 |---|---|---|
 | Orchestration | `workflow.py`, `cli.py` | The MAF workflow graph, stage prompts, repair loops (`workflow.py`); the headless CLI driver (`cli.py`) — `app.py` at the repo root is the Streamlit UI, both drive the same `Harness` |
 | Repository intake | `repo_analyzer.py`, `stack.py` | Clone + static analysis; framework/stack/ecosystem detection |
-| Environment | `environment.py`, `runners.py`, `execution.py`, `platform_compat.py`, `env_check.py`, `app_launcher.py` | Environment planning, isolated install, per-ecosystem run adapters, local-process execution, OS-specific decisions (Windows vs POSIX) centralized in one module; declared-vs-installed dependency check (`env_check`); starting the app under test for Playwright E2E (`app_launcher`) |
+| Environment | `environment.py`, `runners.py`, `execution.py`, `platform_compat.py`, `env_check.py`, `app_launcher.py`, `envs/` (requirement detection and toolchain provisioning), `errors/` (error taxonomy and playbook) | Environment planning, isolated install, per-ecosystem run adapters, local-process execution, OS-specific decisions (Windows vs POSIX) centralized in one module; declared-vs-installed dependency check (`env_check`); starting the app under test for Playwright E2E (`app_launcher`) |
 | Agent Skills | `skills_config.py`, `skills_registry.py`, `skill_contracts.py`, `skill_scripts.py`, `skill_reports.py` | Which skill a stage loads and why; spec/lock validation; contract enforcement on generated output; sandboxed script execution; host-run QA skill reports |
 | Central tools | `code_intel.py`, `autofix.py`, `build_gate.py`, `agent_tools.py` | The nine deterministic MAF function tools and the mechanical auto-fixers behind them |
 | Runtime | `maf_runtime.py`, `runtime_service.py` | MAF agent construction, `SkillsProvider` wiring, tool-trace middleware, `BudgetGuard` (`maf_runtime.py`); one asyncio event-loop-per-UI-session wrapper (`runtime_service.py`) |

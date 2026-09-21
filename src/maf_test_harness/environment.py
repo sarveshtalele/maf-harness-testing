@@ -15,6 +15,7 @@ import subprocess
 from pathlib import Path
 
 from . import platform_compat
+from .envs import plan_toolchains
 from .runners import Step, resolve_ecosystem, setup_steps
 from .stack import REQUIRED_TOOLS, StackProfile
 
@@ -163,9 +164,21 @@ def build_environment_plan(
         extra_requirements=nested_requirements(root) if python else None,
         extra_packages=documented_packages(needs or [], root) if python else None,
     )
-    missing = [p["tool"] for p in prerequisites if not p["present"]]
+    toolchain_rows = plan_toolchains(root, eco)
+    coverable = {"jdk": "java", "maven": "mvn", "dotnet": "dotnet", "python": "python3"}
+    provisionable = {
+        coverable[r["kind"]]
+        for r in toolchain_rows
+        if r["status"] == "download" and r.get("can_provision", True)
+    }
+    for p in prerequisites:
+        p["provisionable"] = not p["present"] and p["tool"] in provisionable
+    missing = [p["tool"] for p in prerequisites if not p["present"] and not p["provisionable"]]
+    downloads = [r for r in toolchain_rows if r["status"] == "download" and r.get("can_provision", True)]
     return {
         "ecosystem": eco,
+        "toolchains": toolchain_rows,
+        "needs_download": bool(downloads),
         "isolation": ISOLATION.get(eco, "No adapter for this ecosystem yet; nothing will be installed."),
         "prerequisites": prerequisites,
         "missing_prerequisites": missing,
@@ -182,6 +195,14 @@ def build_environment_plan(
             for s in steps
         ],
         "notes": ([f"Install first (outside the harness): {', '.join(missing)}"] if missing else [])
+        + (
+            [
+                "Approving downloads into the harness toolchain cache (nothing system-wide is changed): "
+                + "; ".join(f"{r['kind']} {r['version']} from {r['source']}" for r in downloads)
+            ]
+            if downloads
+            else []
+        )
         + ([] if steps else ["No dependency installation is required or supported for this ecosystem."]),
     }
 
