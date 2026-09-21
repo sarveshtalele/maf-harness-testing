@@ -396,6 +396,31 @@ if busy:
     st.stop()
 if st.session_state.get("ui_error"):
     st.error(st.session_state.ui_error)
+    st.caption(
+        "If buttons stop responding after this, the background connection for this session may be wedged "
+        "(nothing on disk is lost -- every approved stage is checkpointed)."
+    )
+    if harness and st.button("Reconnect to this run", key="reconnect-run"):
+        run_dir_name = harness.run_dir.name
+        try:
+            validate_gateway_settings()
+            close_runtime()
+            runtime = MAFHarnessRuntime(
+                api_key=API_KEY,
+                model=MODEL,
+                base_url=BASE_URL,
+                skills_root=ROOT / "skills",
+            )
+            st.session_state.harness = Harness(
+                RUNS / run_dir_name,
+                skills_root=ROOT / "skills",
+                runtime=runtime,
+            )
+            st.session_state.pop("job", None)
+            st.session_state.pop("ui_error", None)
+            st.rerun()
+        except Exception as exc:
+            st.error(str(exc))
 
 view = harness.view
 pending = view.get("pending")

@@ -5,11 +5,15 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import shutil
 import stat
 import sys
+import sysconfig
+from pathlib import Path
 
 import pytest
 
+from maf_test_harness import platform_compat
 from maf_test_harness.agent_tools import CENTRAL_TOOL_NAMES, STAGE_TOOLS, HarnessToolbox, tool_instructions
 from maf_test_harness.autofix import autofix_files, fix_java, fix_python
 from maf_test_harness.build_gate import _maven_errors, try_build
@@ -61,7 +65,12 @@ def test_resolve_import_classifies_every_source_and_suggests_repairs(py_repo, tm
     assert resolve_import(py_repo, "rich.console")["status"] == "declared_dependency"
     wrong = resolve_import(py_repo, "app.engine.analysis")
     assert wrong["status"] == "unresolved" and wrong["suggestions"][0]["module"] == "engine.analysis"
-    site = tmp_path / "ws" / ".harness-venv" / "lib" / "python3.12" / "site-packages"
+    venv = tmp_path / "ws" / ".harness-venv"
+    site = (
+        venv / "Lib" / "site-packages"
+        if platform_compat.IS_WINDOWS
+        else venv / "lib" / "python3.12" / "site-packages"
+    )
     (site / "PyYAML-6.0.dist-info").mkdir(parents=True)
     (site / "PyYAML-6.0.dist-info" / "top_level.txt").write_text("yaml\n")
     py_repo.workspace = tmp_path / "ws"
@@ -186,10 +195,29 @@ def test_autofix_files_reports_every_applied_fix(py_repo):
 
 def _fake_venv(workspace):
     """A venv-shaped launcher that runs the interpreter that has pytest (no network in unit tests)."""
-    launcher = workspace / ".harness-venv" / "bin" / "python"
+    launcher = Path(platform_compat.venv_python(workspace / ".harness-venv"))
     launcher.parent.mkdir(parents=True)
-    launcher.write_text(f'#!/bin/sh\nexec "{sys.executable}" "$@"\n')
-    launcher.chmod(launcher.stat().st_mode | stat.S_IEXEC)
+    if platform_compat.IS_WINDOWS:
+        # A real venv python.exe is a binary launcher; CreateProcess can't parse a shebang script, so copy
+        # the actual interpreter binary rather than writing a text shim. A bare copy can't find its stdlib
+        # on its own -- a real venv's copied exe works because a sibling pyvenv.cfg points it at the base
+        # install's "home"; write the same file so this fake venv boots correctly too.
+        shutil.copy(sys.executable, launcher)
+        (workspace / ".harness-venv" / "pyvenv.cfg").write_text(
+            f"home = {Path(sys.executable).parent}\ninclude-system-site-packages = true\n", encoding="utf-8"
+        )
+        # pytest lives in *this* interpreter's own site-packages, which may itself be a venv nested under
+        # a deeper base install (as under `uv run`) -- include-system-site-packages only reaches the final
+        # base prefix, not an intermediate venv's site-packages. A .pth file is the portable way to add an
+        # arbitrary directory to sys.path regardless of how the venv chain resolves.
+        site_packages = workspace / ".harness-venv" / "Lib" / "site-packages"
+        site_packages.mkdir(parents=True, exist_ok=True)
+        (site_packages / "_fake_venv.pth").write_text(
+            sysconfig.get_paths()["purelib"] + "\n", encoding="utf-8"
+        )
+    else:
+        launcher.write_text(f'#!/bin/sh\nexec "{sys.executable}" "$@"\n')
+        launcher.chmod(launcher.stat().st_mode | stat.S_IEXEC)
 
 
 def test_build_gate_collects_candidates_reports_errors_and_leaves_no_trace(tmp_path):

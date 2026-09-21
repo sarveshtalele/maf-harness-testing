@@ -19,6 +19,7 @@ from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath
 from typing import Any
 
+from . import platform_compat
 from .environment import _probe
 from .repo_analyzer import declared_dependencies, java_signatures
 from .skill_contracts import (
@@ -87,7 +88,7 @@ def installed_packages(ctx: RepoContext, limit: int = 150) -> dict[str, Any]:
     workspace = ctx.workspace
     if workspace is None:
         return {"ecosystem": "unknown", "installed": [], "note": "environment not created yet"}
-    site = sorted((workspace / ".harness-venv" / "lib").glob("python*/site-packages"))
+    site = platform_compat.venv_site_packages_glob(workspace / ".harness-venv")
     if site:
         names: dict[str, list[str]] = {}
         for info in sorted(site[0].glob("*.dist-info")):

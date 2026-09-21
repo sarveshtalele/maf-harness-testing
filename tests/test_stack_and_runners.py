@@ -1,4 +1,5 @@
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -86,7 +87,7 @@ def test_generated_file_type_beats_repo_ecosystem(tmp_path):
 
 
 def test_missing_toolchain_is_reported_not_faked(tmp_path, monkeypatch):
-    monkeypatch.setattr(runners.shutil, "which", lambda name: None)
+    monkeypatch.setattr(runners.platform_compat, "tool_present", lambda name: False)
     plan = runners.build_plan(
         StackProfile(primary="go"), tmp_path, files("a_test.go"), cache_dir=tmp_path / "c"
     )
@@ -251,7 +252,7 @@ def test_node_adapter_bootstraps_package_json_for_specs_in_non_node_repos(tmp_pa
     if plan.blocked_reason:
         pytest.skip("node/npm not installed")
     assert json.loads((tmp_path / "package.json").read_text())["private"] is True
-    assert plan.steps[0].argv[:2] == ["npm", "install"]
+    assert Path(plan.steps[0].argv[0]).name.lower().startswith("npm") and plan.steps[0].argv[1] == "install"
 
 
 def test_build_failure_keeps_decisive_lines_and_qa_attributes_them_to_the_case(tmp_path):
@@ -353,5 +354,5 @@ def test_python_runner_adds_non_package_directories_to_the_import_path(tmp_path)
     plan = runners.build_plan(
         StackProfile(primary="python"), tmp_path, files("tests/test_a.py"), cache_dir=tmp_path / "c"
     )
-    path = plan.steps[-1].env["PYTHONPATH"].split(":")
+    path = plan.steps[-1].env["PYTHONPATH"].split(os.pathsep)
     assert str(tmp_path / "skill-packages" / "03-agent") in path and str(tmp_path / "engine") not in path

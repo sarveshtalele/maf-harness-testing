@@ -16,6 +16,7 @@ import time
 from pathlib import Path, PurePosixPath
 from typing import Any
 
+from . import platform_compat
 from .execution import run_command, write_generated
 from .runners import VENV_DIR, Step, _expand_env, build_plan, resolve_ecosystem
 from .stack import StackProfile
@@ -90,7 +91,7 @@ def try_build(
     generated = [f["path"] for f in files]
     eco = resolve_ecosystem(stack, files)
     result: dict[str, Any] = {"status": "skipped", "tool": None, "errors": [], "reason": ""}
-    if eco == "python" and not (workspace / VENV_DIR / "bin" / "python").exists():
+    if eco == "python" and not Path(platform_compat.venv_python(workspace / VENV_DIR)).exists():
         return {**result, "reason": "isolated environment not installed"}
     if eco not in {"python", "maven"}:
         return {**result, "reason": f"no build check for ecosystem '{eco}'"}

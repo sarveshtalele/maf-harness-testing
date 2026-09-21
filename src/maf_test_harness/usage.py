@@ -8,13 +8,14 @@ when this ledger is first written; earlier spend is not reconstructed.
 
 from __future__ import annotations
 
-import fcntl
 import json
 import os
 from collections.abc import Callable
 from contextlib import contextmanager
 from datetime import date
 from pathlib import Path
+
+from filelock import FileLock
 
 from .settings import DAILY_TOKEN_LIMIT
 
@@ -38,8 +39,7 @@ class DailyUsageLedger:
     @contextmanager
     def _locked(self):
         self.directory.mkdir(parents=True, exist_ok=True)
-        with (self.directory / ".lock").open("a") as lock:
-            fcntl.flock(lock, fcntl.LOCK_EX)
+        with FileLock(str(self.directory / ".lock")):
             yield
 
     def _path(self, day: str) -> Path:
