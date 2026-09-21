@@ -363,3 +363,37 @@ def test_maf_tool_path_does_not_run_registry_hooks_twice(ctx):
     assert calls == []  # the agent's hook middleware is what guards this path
     registry.call("list_dir", {})
     assert calls == ["list_dir"]
+
+
+def test_plan_env_fix_previews_the_recovery_without_running_it(ctx):
+    registry = default_registry(ctx)
+    result = registry.call(
+        "plan_env_fix",
+        {
+            "argv": ["mvn", "test-compile"],
+            "log": "Could not resolve dependencies for project x",
+            "ecosystem": "java",
+        },
+    )
+    assert result.ok and result.code == "ENV-JAVA-003" and result.category == "infra"
+    assert result.data["would_apply"]["recipe"] == "retry-update" and result.data["would_apply"]["argv"][
+        :2
+    ] == ["mvn", "-U"]
+    assert "applies 'retry-update' on its own" in result.next_actions[0]
+
+
+def test_plan_env_fix_says_when_only_a_human_can_help(ctx):
+    result = default_registry(ctx).call(
+        "plan_env_fix", {"argv": ["pip", "install", "x"], "log": "No space left on device"}
+    )
+    assert (
+        result.ok
+        and result.data["would_apply"] is None
+        and "nothing can be applied automatically" in result.next_actions[0]
+    )
+    unknown = default_registry(ctx).call("plan_env_fix", {"argv": ["x"], "log": "all fine"})
+    assert unknown.code == "UNKNOWN"
+
+
+def test_plan_env_fix_needs_an_argv(ctx):
+    assert default_registry(ctx).call("plan_env_fix", {"log": "x"}).code == "TOOL-ARGS"

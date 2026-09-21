@@ -30,6 +30,67 @@ def _table(
     st.dataframe(_frame(rows, columns), hide_index=True, width="stretch")
 
 
+def _render_automation(automation: dict[str, Any] | None) -> None:
+    """Hooks, automatic recovery, typed tools and the diagnosis agent: what acted on its own, and what it refused."""
+    if not automation:
+        st.info("No automation data for this run.")
+        return
+    hooks = automation["hooks"]
+    cols = st.columns(4)
+    cols[0].metric("Hooks", "disabled" if hooks["disabled"] else "active")
+    cols[1].metric("Enforced denies", hooks["enforced_denies"])
+    cols[2].metric("Would block (evaluate-only)", hooks["would_block"])
+    cols[3].metric("Hook errors", hooks["errors"])
+    st.markdown("**Hook decisions** (deny, transform, ask, errors; allowed calls are not listed)")
+    _table(
+        [
+            {
+                "event": d["event"],
+                "hook": d["hook"],
+                "tool / stage": d["tool"],
+                "verdict": d["verdict"],
+                "enforced": "yes" if d["enforced"] else "no",
+                "reason": d["reason"],
+            }
+            for d in hooks["decisions"]
+        ],
+        empty="No hook blocked, rewrote or asked about anything.",
+    )
+    st.markdown("**Automatic recovery**: recipes the harness applied, and those it left to a human")
+    _table(
+        [
+            {
+                "phase": r["phase"],
+                "attempt": r["attempt"],
+                "step": r.get("step"),
+                "recipe": r.get("recipe"),
+                "outcome": r.get("status") or "applied",
+                "note": r.get("note", ""),
+            }
+            for r in automation["recoveries"]
+        ],
+        empty="No recovery was needed.",
+    )
+    st.markdown("**Typed tool calls**")
+    _table(
+        automation["typed_tools"],
+        empty="No typed tool was called (they serve the diagnosis agent and opt-in evaluators).",
+    )
+    st.markdown("**Diagnosis agent notes** (advisory: the agent changes nothing)")
+    _table(
+        [
+            {
+                "phase": n["phase"],
+                "category": n.get("category", "-"),
+                "summary": n.get("summary") or n.get("error", ""),
+                "fixes": "; ".join(n.get("suggested_fixes", [])),
+            }
+            for n in automation["agent_diagnoses"]
+        ],
+        empty="The diagnosis agent did not run (HARNESS_DIAGNOSIS_AGENT is off, or nothing failed).",
+    )
+
+
 def render_observability(report: dict[str, Any], key_prefix: str = "obs") -> None:
     """One page per run: what ran, which skills and tools were invoked, what it cost, and how requirements trace to results."""
     run, totals = report["run"], report["totals"]
@@ -57,8 +118,17 @@ def render_observability(report: dict[str, Any], key_prefix: str = "obs") -> Non
     row2[2].metric("Human gates", totals["human_gates"])
     row2[3].metric("Auto-fixes / build checks", f"{totals['autofix']} / {totals['build_checks']}")
 
-    overview, skills, tools, timeline, trace, checks, export = st.tabs(
-        ["Overview", "Skills", "Tools", "Timeline", "Traceability", "Integrity checks", "Export"]
+    overview, skills, tools, automation, timeline, trace, checks, export = st.tabs(
+        [
+            "Overview",
+            "Skills",
+            "Tools",
+            "Automation",
+            "Timeline",
+            "Traceability",
+            "Integrity checks",
+            "Export",
+        ]
     )
 
     with overview:
@@ -201,6 +271,9 @@ def render_observability(report: dict[str, Any], key_prefix: str = "obs") -> Non
             ],
             empty="No tool calls match.",
         )
+
+    with automation:
+        _render_automation(report.get("automation"))
 
     with timeline:
         rows = report["timeline"]

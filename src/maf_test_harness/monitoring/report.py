@@ -24,6 +24,7 @@ from typing import Any
 
 from ..skills.config import SKILL_NAMES
 from ..tools.agent_tools import CENTRAL_TOOL_NAMES, STAGE_TOOLS
+from ..tools.typed import TYPED_TOOL_NAMES
 from .trace import read_trace, tool_category
 
 DEFAULT_SKILLS_ROOT = Path(__file__).resolve().parents[3] / "skills"
@@ -148,6 +149,63 @@ def _cache_report(chat: list[dict[str, Any]]) -> dict[str, Any]:
     }
 
 
+def _automation(run_dir: Path, audit: list[dict[str, Any]]) -> dict[str, Any]:
+    """What the hooks, the recovery engine, the typed tools and the diagnosis agent did in this run (audit + reports)."""
+    hook_events: dict[str, int] = {}
+    decisions = []
+    for event in audit:
+        kind = event.get("event")
+        if kind == "hook_event":
+            name = str(event.get("hook_event"))
+            hook_events[name] = hook_events.get(name, 0) + 1
+        elif kind in {"hook_decision", "hook_error"}:
+            decisions.append(
+                {
+                    "event": event.get("hook_event"),
+                    "hook": event.get("hook"),
+                    "tool": event.get("tool") or event.get("stage"),
+                    "verdict": event.get("verdict", "error"),
+                    "enforced": event.get("enforced", True) if kind == "hook_decision" else True,
+                    "reason": str(event.get("reason") or event.get("error") or "")[:200],
+                }
+            )
+    typed: dict[str, dict[str, Any]] = {}
+    for event in audit:
+        if event.get("event") == "typed_tool":
+            row = typed.setdefault(
+                str(event.get("tool")), {"tool": event.get("tool"), "calls": 0, "failures": 0}
+            )
+            row["calls"] += 1
+            row["failures"] += 0 if event.get("ok") else 1
+    recoveries, diagnoses = [], []
+    for kind, folder in (("setup", "environment"), ("execution", "executions")):
+        for path in sorted((run_dir / folder).glob("attempt-*/report.json")):
+            attempt = _read_json(path) or {}
+            for item in attempt.get("recoveries", []):
+                recoveries.append({"phase": kind, "attempt": path.parent.name, **item})
+            for step in attempt.get("steps", []):
+                for option in step.get("recovery", []):
+                    if option.get("status") in {"needs_approval", "manual", "not_automatable"}:
+                        recoveries.append(
+                            {"phase": kind, "attempt": path.parent.name, "step": step.get("name"), **option}
+                        )
+            if attempt.get("agent_diagnosis"):
+                diagnoses.append({"phase": kind, "attempt": path.parent.name, **attempt["agent_diagnosis"]})
+    return {
+        "hooks": {
+            "disabled": any(e.get("event") == "hooks_disabled" for e in audit),
+            "events": hook_events,
+            "decisions": decisions[-50:],
+            "enforced_denies": sum(1 for d in decisions if d["verdict"] == "deny" and d["enforced"]),
+            "would_block": sum(1 for d in decisions if not d["enforced"]),
+            "errors": sum(1 for d in decisions if d["verdict"] == "error"),
+        },
+        "typed_tools": sorted(typed.values(), key=lambda r: -r["calls"]),
+        "recoveries": recoveries,
+        "agent_diagnoses": diagnoses,
+    }
+
+
 def build_report(run_dir: Path, skills_root: Path | None = None) -> dict[str, Any]:
     run_dir = Path(run_dir)
     view = _read_json(run_dir / "run.json")
@@ -212,7 +270,7 @@ def build_report(run_dir: Path, skills_root: Path | None = None) -> dict[str, An
                         "stage": invocation.get("stage", ""),
                         "phase": "structured",
                         "name": name,
-                        "category": tool_category(name, CENTRAL_TOOL_NAMES),
+                        "category": tool_category(name, (*CENTRAL_TOOL_NAMES, *TYPED_TOOL_NAMES)),
                         "arguments": {},
                         "ok": True,
                         "duration_ms": None,
@@ -439,6 +497,7 @@ def build_report(run_dir: Path, skills_root: Path | None = None) -> dict[str, An
         "trace_level": trace_level,
         "totals": totals,
         "cache": cache,
+        "automation": _automation(run_dir, audit),
         "stages": stage_rows,
         "skills": skills,
         "tool_calls": tool_calls,
@@ -661,6 +720,30 @@ def _checks(
     ]
 
 
+def _automation_markdown(automation: dict[str, Any] | None) -> list[str]:
+    if not automation:
+        return []
+    hooks = automation["hooks"]
+    applied = sum(1 for r in automation["recoveries"] if "note" in r)
+    needs_human = sum(1 for r in automation["recoveries"] if r.get("status") in {"needs_approval", "manual"})
+    state = "**disabled** (HARNESS_HOOKS=off)" if hooks["disabled"] else "active"
+    observed = ", ".join(f"{k} x{v}" for k, v in hooks["events"].items()) or "none"
+    lines = [
+        "## Automation: hooks, recovery, typed tools",
+        "",
+        f"* Hooks: {state}; {hooks['enforced_denies']} enforced deny, {hooks['would_block']} would-block "
+        f"(evaluate-only), {hooks['errors']} hook errors; observed events: {observed}",
+        f"* Automatic recoveries applied: {applied}; recipes that need a human: {needs_human}",
+        f"* Diagnosis agent notes: {len(automation['agent_diagnoses'])}",
+        "",
+    ]
+    if automation["typed_tools"]:
+        lines += ["| Typed tool | Calls | Failures |", "|---|---|---|"]
+        lines += [f"| {t['tool']} | {t['calls']} | {t['failures']} |" for t in automation["typed_tools"]]
+        lines.append("")
+    return lines
+
+
 def render_markdown(report: dict[str, Any]) -> str:
     run, totals = report["run"], report["totals"]
     lines = [
@@ -687,6 +770,7 @@ def render_markdown(report: dict[str, Any]) -> str:
             for name, c in report.get("cache", {}).get("stages", {}).items()
         ),
         "",
+        *_automation_markdown(report.get("automation")),
         "## Stages",
         "",
         "| Stage | Actor | Assigned skills | Loaded | Model runs | Tool calls | Tokens | Repairs | Errors |",

@@ -51,7 +51,7 @@ A hook returns one of `allow`, `deny` (with a reason), `transform` (with a paylo
 | Hook | Event | What it does |
 |---|---|---|
 | `secret_redaction` | Pre/PostToolUse | replaces API keys (`sk-…`, `ghp_…`, `AKIA…`, `Bearer …`), values after `password=` / `token:` / `api_key` (JSON stays valid) and the values of `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `GITHUB_TOKEN`, `GH_TOKEN`, `AWS_SECRET_ACCESS_KEY` with `[REDACTED]`, in tool arguments and tool output |
-| `path_scope` | PreToolUse on `write_test_file`, `delete_file`, `apply_env_fix` | the `path` must stay inside the run's writable roots (the workspace); `..` escapes and absolute paths elsewhere are denied; with no root configured every write is denied |
+| `path_scope` | PreToolUse on `write_test_file`, `delete_file` (and the reserved name `apply_env_fix`) | the `path` must stay inside the run's writable roots (the workspace); `..` escapes and absolute paths elsewhere are denied; with no root configured every write is denied |
 | `download_consent` | PreToolUse on `provision_toolchain` | `ask` unless the environment approval has set `allow_downloads` |
 | `stage_budget` | PreModelCall | optional soft cap: deny a model call once the stage has used `per_stage_tokens` (off unless configured; the daily cap in `usage.py` is separate and always on) |
 | `audit` | StageGate, OnEnvError, OnExecError, Stop | writes `hook_event` records to `audit.jsonl` |
@@ -126,18 +126,20 @@ fields instead of parsing text:
 | `detect_toolchains` | which Python/JDK/Maven/Gradle/.NET the repository needs; found or would be downloaded | no |
 | `provision_toolchain` | download one toolchain into the harness cache | **yes**, only after the environment approval (`allow_downloads`); also gated by `download_consent` |
 | `list_missing_packages` | declared dependencies not installed in the isolated environment | no |
+| `plan_env_fix` | preview which allow-listed recovery the harness would apply to a failed command (nothing is executed) | no |
 | `diagnose_env_error` | classify an install/build log: code, category, recipe, how far the agent may go alone | no |
 | `diagnose_exec_error` | classify a test-run log: environment problem, test defect (regenerate) or application defect (report) | no |
 | `read_file`, `list_dir` | read the repository/workspace; secret-looking files (`.env`, keys) are refused and hidden | no |
 | `write_test_file`, `delete_file` | create or delete a generated test file inside the writable root | **yes**, scoped by the tool and by `path_scope` |
+| `check_skill_output` | run a reviewed validator script of one of the stage's own skills on a draft (opt-in, `HARNESS_SKILL_EVALUATORS=on`) | no (temp dir, hash-checked script) |
 
 `ToolRegistry.call` is validate → PreToolUse → handler → PostToolUse and never raises. `as_function_tools(stage)` exposes
 the same tools to a MAF agent; there the agent's hook middleware is what guards the call (the registry does not run the
 hooks a second time). The hooks' facts (`writable_roots`, `allow_downloads`) follow the tool context via `sync_hook_context()`.
 
-`apply_env_fix` (executing a recipe) and the per-stage agent loops that use these tools arrive with Phase 5; until then
-the stage agents still use the [central tools](CATALOG.md#3-central-tools-what-an-agent-can-call) and the registry is
-used directly.
+Recipes are executed by the harness itself, not by a tool an agent could misuse: see [AUTOMATION.md](AUTOMATION.md) (recovery
+engine, diagnosis agent). The model stages keep the [central tools](CATALOG.md#3-central-tools-what-an-agent-can-call); the
+typed tools serve the diagnosis agent and, opt-in, the design stage's skill validators.
 
 ## 6. Where hooks run in the harness
 
@@ -151,10 +153,18 @@ used directly.
 
 ## 7. Relation to MAF Agent Hooks
 
-MAF 1.18 ships `create_agent_hooks_middleware`, which needs the optional `agent_hooks` SDK (AGENT-HOOKS-0.1). That SDK is not
-installed by default, so the harness uses this in-house engine, which speaks the same verdict vocabulary
-(allow / deny / transform / ask, enforce / evaluate-only). A bridge that compiles `hooks.json` onto the SDK when it is
-present is planned for Phase 6; the configuration format does not change.
+MAF 1.18 ships `create_agent_hooks_middleware` (experimental), which needs the optional `agent-hooks-sdk` package
+(AGENT-HOOKS-0.1). The harness has two enforcement backends for the agent loop, with the same engine and the same rules:
+
+| `HARNESS_HOOKS_BACKEND` | Enforced by | Needs |
+|---|---|---|
+| `inhouse` (default) | `hooks/maf_bridge.py`: function + chat middleware | nothing |
+| `sdk` | `hooks/agent_hooks_bridge.py`: one `agent_hooks.Interceptor` whose verdicts come from the engine, installed as MAF's middleware bundle | `pip install maf-test-harness[hooks]` |
+
+The SDK backend additionally brackets the run input and final output, records signed interception records and gates durable
+history behind verdicts; the workflow events (`StageGate`, `OnEnvError`, `OnExecError`, `Stop`) stay with the `Harness` in both.
+The bundle sits outermost, so a tool call the hooks deny is never seen by the tool trace. The SDK is alpha (`0.1.0a5`) and
+MAF marks the feature experimental: that is why the in-house backend is the default. The configuration format is the same.
 
 ## 8. Not a sandbox
 

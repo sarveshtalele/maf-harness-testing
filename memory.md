@@ -31,12 +31,12 @@ Repo: `https://github.com/sarveshtalele/maf-harness-testing` (private). Working 
 | # | Phase | Status | Commit |
 |---|---|---|---|
 | 0 | Baseline: cached-token accounting, prefix stability metric, `docs/CACHING.md` | **done** | `2d31533` |
-| 1 | Restructure into subpackages + import shims (no behaviour change) | **done** (30 modules moved, old names alias the same module object) | see log |
+| 1 | Restructure into subpackages + import shims (no behaviour change) | **done** (30 modules moved, old names alias the same module object) | `a640453` |
 | 2 | Error taxonomy, classifiers, playbook, 56 fixtures, wired into install/build gate/execution/QA | **done** | `6425f5b` |
 | 3 | `envs/` adapters + toolchain provisioning (JDK, Maven, Gradle, .NET SDK, Python) | **done** | see log |
-| 4 | Typed tool registry + hooks engine (in-house) + built-in hooks | **done** (see log; `docs/HOOKS.md`) | see log |
-| 5 | Agent runtime: per-stage loops, persistent sessions, todos/modes, compaction, skill-script evaluators, environment + diagnosis agents, stable-prefix `PromptAssembler` | pending | — |
-| 6 | MAF Agent Hooks bridge (optional SDK), UI panels, docs (`ENVIRONMENTS`, `HOOKS`, updated `CATALOG`/`ARCHITECTURE`) | pending | — |
+| 4 | Typed tool registry + hooks engine (in-house) + built-in hooks | **done** (`docs/HOOKS.md`) | `16cad6b` |
+| 5 | Agent runtime: bounded recovery, diagnosis agent, stable-prefix prompts, skill validators as a tool | **done** (see log; `docs/AUTOMATION.md`); deviations listed there | see log |
+| 6 | AGENT-HOOKS-0.1 backend (optional SDK), Automation tab, docs | **done** (see log) | see log |
 
 Earlier work on the same branch (before the phases): Windows compatibility (`platform_compat.py`), pip per-package
 fallback, `env_check.py` (declared vs installed), `app_launcher.py` + `--start-app` for Playwright E2E, `environment_gaps`
@@ -55,13 +55,13 @@ name reach the real module. New code imports the subpackage path. `tests/` were 
 | `envs/` | `environment.py` (plan, probes), `runners.py` (`setup_steps`, `execute_setup`, `execute_plan`, pip per-package fallback), `execution.py`, `platform_compat.py`, `env_check.py`, `app_launcher.py`, and Phase 3: `spec.py`, `toolchains.py`, `{python,java,dotnet}_env.py` |
 | `errors/` | `taxonomy.py`, `engine.py`, `playbook.py`, `classifiers/{python,java,dotnet,common}.py`; `docs/ERROR_PLAYBOOK.md` is generated; fixtures in `tests/error_cases.py` |
 | `skills/` | `config.py`, `registry.py`, `contracts.py`, `scripts.py`, `reports.py`; the skill folders and `SKILLS.lock.json` stay at repo-root `skills/` |
-| `tools/` | `agent_tools.py` (11 tools), `code_intel.py`, `autofix.py`, `build_gate.py`; Phase 4: `registry.py` (`ToolResult` envelope, `ToolRegistry`), `env_tools.py`, `file_tools.py`, `typed.py` |
-| `agent/` | `runtime.py` (`create_harness_agent`, `BudgetGuard`, `ToolTraceMiddleware`), `personas.py` |
-| `llm/` | `usage.py` (daily ledger); Phase 5 adds the prompt assembler |
+| `tools/` | `agent_tools.py` (11 tools), `code_intel.py`, `autofix.py`, `build_gate.py`; Phase 4: `registry.py` (`ToolResult` envelope, `ToolRegistry`), `env_tools.py`, `file_tools.py`, `skill_tools.py`, `typed.py` |
+| `agent/` | `runtime.py` (`create_harness_agent`, `BudgetGuard`, `ToolTraceMiddleware`, `run_tool_agent`), `personas.py`, `diagnosis.py` |
+| `llm/` | `usage.py` (daily ledger), `prompts.py` (stable-first prompt assembly) |
 | `qa/` | `report.py`, `triage.py`, `packaging.py` |
 | `monitoring/` | `report.py` (incl. *Prompt cache* report), `ui.py`, `trace.py`, `telemetry.py` |
 | `ui/` | `artifact_presenter.py`, `runtime_service.py` |
-| `hooks/` | Phase 4: `events.py`, `engine.py` (fail-closed verdicts), `builtin.py`, `config.py` (`.harness/hooks.json`), `maf_bridge.py` (MAF middleware) |
+| `hooks/` | Phase 4/6: `events.py`, `engine.py` (fail-closed verdicts), `builtin.py`, `config.py` (`.harness/hooks.json`), `maf_bridge.py` (MAF middleware), `agent_hooks_bridge.py` (optional AGENT-HOOKS-0.1 backend) |
 | Docs | `docs/ARCHITECTURE.md`, `CATALOG.md`, `CACHING.md`, `ERROR_PLAYBOOK.md`, `ENVIRONMENTS.md`, `OBSERVABILITY.md`, `CLAUDE.md` |
 
 Deliberate deviations from the plan: `workflow.py` stays a single top-level module (a `workflow/` package would clash with
@@ -79,7 +79,7 @@ modules used everywhere, and checkpoints reference the model classes by module p
 * **Files use CRLF on this Windows checkout.** A Python `str.replace` with `"\n"` silently does nothing; `\n` inside a
   replacement string inside a heredoc becomes a real newline and breaks string literals. Prefer the Edit tool, or use
   `chr(10)`, or edit bytes with explicit `\r?\n` handling. Verify with `python -c "import ast; ast.parse(...)"`.
-* Bash heredocs containing apostrophes/`'EOF'` sometimes fail in this shell; use the Write tool for big files.
+* Bash heredocs containing apostrophes/`'EOF'` sometimes fail in this shell; use the Write tool for big files or scripts, and never put `\n` inside a non-raw triple-quoted Python string written from a heredoc (it becomes a real newline).
 * `uv run` python and system `python` differ; run tests with `uv run pytest -q --ignore=tests/targets`.
 * Windows: a relative `argv[0]` is resolved against the *caller's* directory, not the child's `cwd` — pass absolute
   interpreter paths. A bare `python3` can trigger the Python Install Manager and download an interpreter.
@@ -98,7 +98,7 @@ modules used everywhere, and checkpoints reference the model classes by module p
 * Commit style: imperative subject, body explains *why*; end with `Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>`.
 * Do not commit `.env`, `.harness_runs/`, `agent-framework.pdf`.
 * The user prefers terse replies (caveman style) in chat; code, commits and docs are written normally.
-* Additive changes; existing behaviour and tests must stay green (currently 606 passed, 1 skipped).
+* Additive changes; existing behaviour and tests must stay green (currently 677 passed, 1 skipped, with the optional SDK installed).
 * CRLF-safe edit helper used in this session: a throwaway `.scratch_edit.py` (JSON pairs on stdin). It is not committed; recreate it if needed.
 
 ## 8. Log
@@ -108,6 +108,8 @@ modules used everywhere, and checkpoints reference the model classes by module p
 * Phase 3 — `envs/` package (`spec.py`, `toolchains.py`, `python_env.py`, `java_env.py`, `dotnet_env.py`), wired into `environment.build_environment_plan` (lists downloads, no longer blocks on provisionable tools), `workflow.run_environment` (provisions after approval, `state["toolchains"]`, audit `toolchains_ready`/`toolchains_failed`), `plan_execution` and `build_gate` (`apply_toolchains`). 30 offline tests (`tests/test_envs.py`, local mirror server). Live smoke on this machine: Temurin 17, .NET 8.0 and Gradle metadata resolve; Maven 3.9.9 really downloaded + checksum-verified and its real error output was classified `ENV-JAVA-002`. `docs/ENVIRONMENTS.md`.
 * Phase 1 — `git mv` of 30 modules into `repo/ envs/ skills/ tools/ agent/ llm/ qa/ monitoring/ ui/` with relative imports rewritten by a script and `sys.modules` alias shims at the old paths; 394 existing tests pass unchanged; `tests/test_module_layout.py` (34 tests) checks every alias, patching through an old name, every module importing, and the skills-root path (`monitoring/report.py` moved one level deeper: `parents[3]`). `app.py` and `scripts/` use the new paths. Docs updated (`CLAUDE.md` module map, `ARCHITECTURE.md`, `CATALOG.md`).
 * Phase 4 — `hooks/` (8 events, verdicts allow/deny/transform/ask, deny > ask > transform > allow, first enforced deny ends the event, crash/timeout/garbage = deny on enforcing events, evaluate-only mode, command hooks over stdin/stdout JSON with exit 2 = deny and a credential-free env, python hooks), built-ins (secret redaction that keeps JSON valid, write scope, download consent, optional stage budget, audit), `.harness/hooks.json` loader with strict validation (user file, then project file in the working directory, never the cloned repo), `HARNESS_HOOKS=enforce|evaluate_only|off`. Wiring: `Harness` builds the engine, fires SessionStart / StageGate (a veto leaves the approval pending) / OnEnvError / OnExecError / Stop and sets `allow_downloads` when the environment plan is approved; `MAFHarnessRuntime._middleware` orders `[HookChat, BudgetGuard, ToolTrace, HookFunction]`. MAF hands middleware tool results as `list[Content]`, not a string: the bridge rewrites text items only. Typed tools: `ToolResult` envelope, `ToolRegistry` (validate, hooks, handler, hooks; never raises), env tools (`detect_stack`, `detect_toolchains`, `provision_toolchain`, `list_missing_packages`, `diagnose_env_error`, `diagnose_exec_error`) and scoped file tools (`read_file`, `list_dir`, `write_test_file`, `delete_file`); not yet offered to any stage (Phase 5). Tests: `test_hooks*.py` (real MAF loop with a scripted transport, real subprocess hooks, real workflow gates), `test_typed_tools.py`; `tests/conftest.py` isolates the developer's real hooks files. Not done: `apply_env_fix` (recipes are descriptive data until the environment agent), the `agent_hooks` SDK bridge (Phase 6).
+* Phase 5 — `envs/recovery.py`: bounded automatic recovery in `execute_setup` (autonomy auto/auto_once only, once per recipe per step, 4 per run, own evidence dir per attempt; recipes `retry-longer`, `retry-update`, `retry-restore`, `recreate-venv` with rewind to `create-venv`; ask/manual reported as `needs_approval`/`manual`); `plan_env_fix` typed tool. `MAFHarnessRuntime.run_tool_agent` + `agent/diagnosis.py`: opt-in (`HARNESS_DIAGNOSIS_AGENT=on`) read-only diagnosis agent with the todo provider, advisory note in the review artifact, never blocks a gate. `llm/prompts.py`: stable-first key order for stage and generation prompts (prefix share 60.7% -> 82.2% on the fixture repo). `tools/skill_tools.py`: `check_skill_output` (reviewed scripts of the stage's own skills, lock policy unchanged), opt-in `HARNESS_SKILL_EVALUATORS=on`. Deviations from the original plan, all documented in `docs/AUTOMATION.md`: no session reuse across retries, no skill-priming removal, no compaction, no per-stage agent loops for the model stages (they stay one structured call with central tools), no plan/execute mode; the agent loops are only verified with a scripted transport, never against a live model.
+* Phase 6 — optional AGENT-HOOKS-0.1 backend: `hooks/agent_hooks_bridge.py` (`EngineInterceptor` + `hook_bundle`, `HARNESS_HOOKS_BACKEND=sdk`, extra `hooks` = `agent-hooks-sdk` 0.1.0a5, alpha and native; tests skip without it and CI installs only `dev`). Observability: `automation` section in the report (hook decisions/denies/would-block/errors, typed tool calls, recoveries incl. those left to a human, diagnosis notes), markdown section and an Automation tab. `docs/AUTOMATION.md`, `docs/HOOKS.md` updated.
 * Phase 3 gaps (carry forward): no scaffolding of a Java/.NET *generated test project*; a JDK download was not exercised live (190 MB, network here was ~60 KB/s); Python provisioning depends on `uv`; Node/Go untouched; the approved plan shows bare `mvn`/`gradle`/`dotnet` and the harness rewrites them to absolute paths after provisioning (audit records it).
 
 ## 9. Phase 3 — design (implemented; kept for reference)

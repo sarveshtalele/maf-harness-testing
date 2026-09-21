@@ -81,6 +81,10 @@ class ToolContext:
     writable_roots: list[Path] = field(default_factory=list)  # where write tools may create files
     ecosystem: str = ""
     allow_downloads: bool = False  # set by the environment approval; provisioning is refused without it
+    skills_root: Path | None = None  # where the vendored Agent Skills live (check_skill_output)
+    allowed_skills: tuple[
+        str, ...
+    ] = ()  # the skills of the current stage: the only ones whose scripts may be run
 
     def read_roots(self) -> list[Path]:
         return [p.resolve() for p in (self.workspace, self.repo_root) if p]

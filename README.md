@@ -95,6 +95,8 @@ Optional switches (defaults shown, all listed in `.env.example`):
 |---|---|---|
 | `HARNESS_DAILY_TOKEN_LIMIT` | `50000000` | the harness's daily token cap, shared by all runs on this machine |
 | `HARNESS_AGENT_TOOLS` / `HARNESS_AUTOFIX` / `HARNESS_BUILD_GATE` | `on` | central agent tools / mechanical import repairs / compile-collect gate (`off` for A/B comparison) |
+| `HARNESS_DIAGNOSIS_AGENT` / `HARNESS_SKILL_EVALUATORS` | `off` | LLM diagnosis note after unrecovered failures / skill validators as a design-stage tool; see [docs/AUTOMATION.md](docs/AUTOMATION.md) |
+| `HARNESS_HOOKS_BACKEND` | `inhouse` | `sdk` enforces hooks through MAF's AGENT-HOOKS-0.1 middleware (`pip install maf-test-harness[hooks]`) |
 | `HARNESS_HOOKS` | `enforce` | hooks (secret redaction, write scope, download consent, audit and your `.harness/hooks.json`): `enforce`, `evaluate_only` or `off`; see [docs/HOOKS.md](docs/HOOKS.md) |
 | `HARNESS_SKILL_MODE` | `progressive` | MAF `SkillsProvider`, or `preloaded` for models that cannot call tools |
 | `HARNESS_GENERATION_BATCH_SIZE`, `HARNESS_GENERATION_MAX_ATTEMPTS` | `3`, `3` | cases per model call, repair attempts per batch |

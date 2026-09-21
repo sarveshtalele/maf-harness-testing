@@ -84,6 +84,31 @@ def list_missing_packages(ctx: ToolContext, args: dict[str, Any]) -> ToolResult:
     )
 
 
+def plan_env_fix(ctx: ToolContext, args: dict[str, Any]) -> ToolResult:
+    """What automatic recovery would do for a failed command, without doing it."""
+    from ..envs import recovery
+
+    plan = recovery.preview(
+        args["argv"], args["log"], args.get("ecosystem") or ctx.ecosystem or None, ctx.workspace
+    )
+    if plan["diagnosis"] is None:
+        return ToolResult(True, code="UNKNOWN", evidence="no known error pattern matched", data=plan)
+    would = plan["would_apply"]
+    return ToolResult(
+        True,
+        code=plan["diagnosis"]["code"],
+        category=plan["diagnosis"]["category"],
+        evidence=plan["diagnosis"]["evidence"],
+        data=plan,
+        next_actions=[f"the harness applies '{would['recipe']}' on its own: {would['note']}"]
+        if would
+        else [
+            "nothing can be applied automatically: "
+            + "; ".join(f"{c['recipe'] or 'no recipe'} ({c['status']})" for c in plan["considered"])
+        ],
+    )
+
+
 def _diagnose(ctx: ToolContext, args: dict[str, Any], environment_only: bool) -> ToolResult:
     missing = env_check.missing_packages(ctx.workspace) if ctx.workspace is not None else []
     found = classify(args["log"], args.get("ecosystem") or ctx.ecosystem or None, Context(missing))
@@ -159,6 +184,17 @@ ENV_TOOLS = (
         list_missing_packages,
     ),
     ToolSpec(
+        "plan_env_fix",
+        "Preview which allow-listed recovery the harness would apply automatically to a failed setup command (nothing is executed).",
+        plan_env_fix,
+        object_schema(
+            ["argv", "log"],
+            argv={"type": "array", "items": {"type": "string"}, "minItems": 1, "maxItems": 40},
+            log=_LOG,
+            ecosystem=_ECOSYSTEM,
+        ),
+    ),
+    ToolSpec(
         "diagnose_env_error",
         "Classify an install/build log: which environment problem it is, the recipe that fixes it and how far you may go alone.",
         diagnose_env_error,
@@ -179,5 +215,6 @@ __all__ = [
     "diagnose_env_error",
     "diagnose_exec_error",
     "list_missing_packages",
+    "plan_env_fix",
     "provision_toolchain",
 ]

@@ -16,6 +16,20 @@ class ScriptedStageRuntime:
         self.calls = []
         self.test_body = test_body
         self.extra_cases = list(extra_cases)
+        self.tool_agent_calls = []
+        self.tool_agent_note = {
+            "summary": "pip could not build a dependency",
+            "likely_cause": "no C compiler",
+            "category": "environment",
+            "suggested_fixes": ["install build tools"],
+            "needs_human": True,
+        }
+
+    async def run_tool_agent(self, *, stage, persona, prompt, tools, state, persist, **kwargs):
+        self.tool_agent_calls.append({"stage": stage, "tools": [t.name for t in tools], "prompt": prompt})
+        if isinstance(self.tool_agent_note, Exception):
+            raise self.tool_agent_note
+        return self.tool_agent_note
 
     async def run_stage(self, *, stage, state, **kwargs):
         self.calls.append(stage)

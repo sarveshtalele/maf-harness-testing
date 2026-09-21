@@ -101,7 +101,11 @@ imports and monkeypatches keep working; new code imports the subpackage path. Ro
 - `tools/registry.py`, `tools/env_tools.py`, `tools/file_tools.py`, `tools/typed.py` — typed tools: schema-validated
   arguments, one `ToolResult` envelope, hook-aware `ToolRegistry` (see [docs/HOOKS.md](docs/HOOKS.md))
 - `hooks/` — hook events, the fail-closed verdict engine, built-in hooks (secret redaction, write scope, download
-  consent, audit), `.harness/hooks.json` loader, MAF middleware bridge; `HARNESS_HOOKS=enforce|evaluate_only|off`
+  consent, audit), `.harness/hooks.json` loader, MAF middleware bridge, optional AGENT-HOOKS-0.1 backend;
+  `HARNESS_HOOKS=enforce|evaluate_only|off`, `HARNESS_HOOKS_BACKEND=inhouse|sdk`
+- `envs/recovery.py` — bounded automatic recovery of failed setup steps (allow-listed recipes, see
+  [docs/AUTOMATION.md](docs/AUTOMATION.md)); `agent/diagnosis.py` — opt-in read-only diagnosis agent;
+  `llm/prompts.py` — stable-first prompt assembly for the provider's prefix cache; `tools/skill_tools.py` — skill validators as a tool
 - `agent/runtime.py` — MAF agent construction, `SkillsProvider` wiring, tool-trace middleware, `BudgetGuard`
 - `qa/report.py`, `qa/triage.py`, `qa/packaging.py` — verdict computation, files-to-update, ZIP assembly
 - `monitoring/report.py`, `monitoring/ui.py`, `monitoring/trace.py`, `monitoring/telemetry.py` — run tracing and the Observability tab

@@ -91,7 +91,8 @@ depends on an agent choosing to call one.
 
 A second, typed catalogue (`tools/registry.py`, `env_tools.py`, `file_tools.py`, `typed.py`): every tool validates its
 arguments against a JSON schema and returns one envelope (`ok`, `code`, `category`, `evidence`, `data`,
-`suggested_fixes`, `next_actions`). They are for the agent loops of Phase 5; until then they are used directly.
+`suggested_fixes`, `next_actions`). They serve the [diagnosis agent](AUTOMATION.md#2-the-diagnosis-agent-agentdiagnosispy-off-by-default)
+(read-only subset) and, opt-in, the design stage's skill validators.
 
 | Tool | Does | Changes anything? | Planned for |
 |---|---|---|---|
@@ -102,7 +103,9 @@ arguments against a JSON schema and returns one envelope (`ok`, `code`, `categor
 | `diagnose_env_error` | classify an install/build log (code, category, recipe, autonomy) | no | `environment_setup`, `test_execution` |
 | `diagnose_exec_error` | classify a test-run log (environment / test defect / application defect) | no | `test_execution` |
 | `read_file`, `list_dir` | read the repository or workspace; secret-looking files refused | no | `environment_setup`, `test_execution` |
-| `write_test_file`, `delete_file` | create/delete a generated test inside the writable root | yes: scoped | (registered, not yet offered) |
+| `write_test_file`, `delete_file` | create/delete a generated test inside the writable root | yes: scoped | (registered, not offered to any agent) |
+| `plan_env_fix` | preview the automatic recovery for a failed command | no | diagnosis agent |
+| `check_skill_output` | run a reviewed validator of the stage's own skills on a draft | no | `test_design`, opt-in |
 
 Hooks run around every tool call, model call, gate response and failure: built-in secret redaction, write scope,
 download consent, optional stage budget and audit, plus your own `.harness/hooks.json`. Full reference:
@@ -151,7 +154,8 @@ table per file.
 | Agent Skills | `skills/config.py`, `skills/registry.py`, `skills/contracts.py`, `skills/scripts.py`, `skills/reports.py` | Which skill a stage loads and why; spec/lock validation; contract enforcement on generated output; sandboxed script execution; host-run QA skill reports |
 | Central tools | `tools/code_intel.py`, `tools/autofix.py`, `tools/build_gate.py`, `tools/agent_tools.py` | The nine deterministic MAF function tools and the mechanical auto-fixers behind them |
 | Typed tools | `tools/registry.py`, `tools/env_tools.py`, `tools/file_tools.py`, `tools/typed.py` | Schema-validated tools with one result envelope (`ToolResult`), hook-aware `ToolRegistry`, per-stage selection |
-| Hooks | `hooks/events.py`, `engine.py`, `builtin.py`, `config.py`, `maf_bridge.py` | Events, verdict engine (fail-closed), built-in hooks, `.harness/hooks.json` loader, MAF middleware |
+| Hooks | `hooks/events.py`, `engine.py`, `builtin.py`, `config.py`, `maf_bridge.py`, `agent_hooks_bridge.py` | Events, verdict engine (fail-closed), built-in hooks, `.harness/hooks.json` loader, MAF middleware, optional AGENT-HOOKS-0.1 backend |
+| Automation | `envs/recovery.py`, `agent/diagnosis.py`, `llm/prompts.py`, `tools/skill_tools.py` | Bounded automatic recovery of setup failures, the opt-in diagnosis agent, stable-first prompt assembly, skill validators as a tool; see [AUTOMATION.md](AUTOMATION.md) |
 | Runtime | `agent/runtime.py`, `ui/runtime_service.py` | MAF agent construction, `SkillsProvider` wiring, tool-trace middleware, `BudgetGuard` (`agent/runtime.py`); one asyncio event-loop-per-UI-session wrapper (`ui/runtime_service.py`) |
 | QA & delivery | `qa/report.py`, `qa/triage.py`, `qa/packaging.py` | Verdict computation, failure triage (files/lines to update), ZIP assembly |
 | Observability | `monitoring/report.py`, `monitoring/ui.py`, `monitoring/trace.py`, `monitoring/telemetry.py` | Run tracing, the Observability tab, OpenTelemetry export |

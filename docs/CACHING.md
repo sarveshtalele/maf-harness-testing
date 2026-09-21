@@ -62,3 +62,10 @@ uv run maf-harness trace .harness_runs/<run>          # Prompt cache table per s
 
 Compare `Hit %` and `Prompt prefix repeated %` per stage with the baseline above. The planned target for generation
 stages is at least 60% of input tokens served from cache.
+
+## Prompt assembly (Phase 5)
+
+Stage prompts are built stable-first (`llm/prompts.py`): assignment, output schema and rules before the per-call content, so
+consecutive calls of a stage share the longest possible prefix. Measured on the fixture repository, the repeated share of a
+generation prompt went from 60.7 % to 82.2 %. What was deliberately not changed (session reuse, priming, compaction) and why:
+[AUTOMATION.md](AUTOMATION.md#3-prompt-assembly-for-the-providers-prefix-cache).

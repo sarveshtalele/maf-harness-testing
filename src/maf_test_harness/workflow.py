@@ -22,6 +22,7 @@ from agent_framework import (
 )
 from filelock import FileLock
 
+from .agent import diagnosis
 from .agent.personas import PERSONAS, persona_instructions
 from .envs import Provisioned, ToolchainError, app_launcher, env_check, provision_for
 from .envs.environment import build_environment_plan, steps_from_plan
@@ -37,6 +38,7 @@ from .hooks import (
     HookEngine,
     build_engine,
 )
+from .llm.prompts import build_prompt, generation_prompt
 from .models import GeneratedFilesDraft, RequirementsDraft, TestDesignDraft, TestPlan
 from .monitoring.telemetry import configure_telemetry
 from .monitoring.trace import TraceRecorder
@@ -58,10 +60,12 @@ from .settings import (
     AGENT_TOOLS,
     AUTOFIX,
     BUILD_GATE,
+    DIAGNOSIS_AGENT,
     EXECUTION_TIMEOUT_SECONDS,
     GENERATION_BATCH_SIZE,
     GENERATION_MAX_ATTEMPTS,
     HOOKS,
+    SKILL_EVALUATORS,
 )
 from .skills.config import skills_for
 from .skills.contracts import (
@@ -79,6 +83,8 @@ from .tools.agent_tools import HarnessToolbox
 from .tools.autofix import autofix_files
 from .tools.build_gate import try_build
 from .tools.code_intel import RepoContext, static_gate
+from .tools.registry import ToolContext
+from .tools.typed import default_registry
 
 CORE_STAGES = ["repo_analysis", "requirements", "test_planning", "test_design", "test_generation"]
 ENV_STAGE = "environment_setup"
@@ -337,8 +343,9 @@ class Harness:
         self.run_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
         self.skills_root = skills_root.resolve()
         self.runtime = runtime
+        self._toolbox = HarnessToolbox(self._repo_context, self._build_files)
         if AGENT_TOOLS and runtime is not None and getattr(runtime, "tool_provider", None) is None:
-            runtime.tool_provider = HarnessToolbox(self._repo_context, self._build_files).tools_for
+            runtime.tool_provider = self._stage_tools
         if runtime is not None and getattr(runtime, "recorder", None) is None:
             runtime.recorder = TraceRecorder(self.run_dir / "trace.jsonl")
         self.view_path = self.run_dir / "run.json"
@@ -361,6 +368,16 @@ class Harness:
         )
         if runtime is not None and getattr(runtime, "hooks", None) is None:
             runtime.hooks = self.hooks
+        self.typed = default_registry(
+            ToolContext(
+                repo_root=self.run_dir / "repo",
+                workspace=self.workspace,
+                writable_roots=[self.workspace],
+                skills_root=self.skills_root,
+            ),
+            self.hooks,
+            self.audit,
+        )
         self.hooks.notify(SESSION_START, run=self.run_dir.name, resumed=bool(self.state))
         self.storage = FileCheckpointStorage(self.run_dir / "checkpoints")
         executors = [StageExecutor(stage, self) for stage in self.stages]
@@ -373,6 +390,14 @@ class Harness:
             builder.add_edge(executors[-1], executors[self.stages.index("test_generation")])
         self.workflow = builder.build()
         self._restored = False
+
+    def _stage_tools(self, stage: str) -> list:
+        """Tools an agent gets for a stage: the central tools, plus (opt-in) the skill validators of its own skills."""
+        tools = self._toolbox.tools_for(stage)
+        if SKILL_EVALUATORS and self.typed.names(stage):
+            self.typed.context.allowed_skills = tuple(skills_for(stage, self.state).all)
+            tools = [*tools, *self.typed.as_function_tools(stage)]
+        return tools
 
     def save(self):
         self.view["state"] = self.state
@@ -761,6 +786,39 @@ class Harness:
             await asyncio.to_thread(copy_repo, self.run_dir / "repo", self.workspace)
         return self.workspace
 
+    async def _agent_diagnosis(self, kind: str, state: dict, report: dict, ecosystem: str) -> dict | None:
+        """Advisory note from the diagnosis agent for a failure recovery could not fix (opt-in, never blocks a gate)."""
+        if not DIAGNOSIS_AGENT or self.runtime is None or not hasattr(self.runtime, "run_tool_agent"):
+            return None
+        failing = next(
+            (
+                s
+                for s in reversed(report.get("steps", []))
+                if s.get("status") not in {"command_succeeded", "passed"}
+            ),
+            {},
+        )
+        stdout = failing.get("stdout")
+        log = diagnosis.log_tail([str(stdout), str(Path(stdout).with_name("stderr.log"))] if stdout else [])
+        self.typed.context.ecosystem = ecosystem
+        self.audit("agent_diagnosis_started", kind=kind, step=failing.get("name"))
+        note = await diagnosis.diagnose(
+            self.runtime,
+            self.typed.as_function_tools(diagnosis.AGENT_NAME),
+            kind=kind,
+            failing={
+                k: failing.get(k) for k in ("name", "argv", "status", "exit_code", "diagnoses", "recovery")
+            },
+            log=log,
+            deterministic=list(failing.get("diagnoses") or []),
+            state=state,
+            persist=self.save,
+        )
+        self.audit(
+            "agent_diagnosis_completed", kind=kind, ok="error" not in note, category=note.get("category")
+        )
+        return note
+
     def _environment_artifact(self, state: dict, report: dict) -> dict:
         plan = state["environment"]["plan"]
         return {
@@ -849,6 +907,10 @@ class Harness:
             report = await asyncio.to_thread(
                 execute_setup, steps, self.workspace, self.run_dir / "environment" / f"attempt-{attempt}"
             )
+        if report["status"] == "setup_failed":
+            note = await self._agent_diagnosis("setup", state, report, info["plan"]["ecosystem"])
+            if note is not None:
+                report["agent_diagnosis"] = note
         info["status"] = report["status"]
         if report["status"] != "ready":
             self.hooks.notify(
@@ -994,6 +1056,11 @@ class Harness:
             status=report["status"],
             summary=report.get("summary"),
         )
+        if report["status"] in {"blocked", "no_test_evidence", "setup_failed"}:
+            eco = state.get("environment", {}).get("plan", {}).get("ecosystem", "")
+            note = await self._agent_diagnosis("execution", state, report, eco)
+            if note is not None:
+                report["agent_diagnosis"] = note
         if report["status"] != "passed":
             self.hooks.notify(
                 ON_EXEC_ERROR,
@@ -1089,7 +1156,7 @@ class Harness:
         evidence_paths = re.findall(r"--- FILE: (.*?) ---", state.get("evidence", ""))
         repair = ""
         for attempt in range(1, MODEL_REPAIR_ATTEMPTS + 1):
-            prompt = json.dumps(
+            prompt = build_prompt(
                 {
                     "assignment": assignment,
                     "repository": state["artifacts"]["repo_analysis"],
@@ -1111,8 +1178,7 @@ class Harness:
                         "respect_schema_limits": True,
                         "manual_questions": False,
                     },
-                },
-                separators=(",", ":"),
+                }
             )
             skillset = skills_for(stage, state)
             result = await self.runtime.run_stage(
@@ -1241,7 +1307,7 @@ class Harness:
             for attempt in range(1, 1 if accepted is not None else TEST_GENERATION_MAX_ATTEMPTS + 1):
                 # A deterministic model repeats a rejected answer verbatim: vary the sampling on every retry.
                 retry_temperature = min(0.8, 0.3 * (attempt - 1) + 0.25 * rounds.get(str(batch_index), 0))
-                prompt = json.dumps(
+                prompt = generation_prompt(
                     {
                         "assignment": (
                             "Generate executable test source ONLY for this approved batch. Generate exactly one file per "
@@ -1277,8 +1343,7 @@ class Harness:
                             "respect_schema_limits": True,
                             "manual_questions": False,
                         },
-                    },
-                    separators=(",", ":"),
+                    }
                 )
                 try:
                     generation_skills = skills_for("test_generation", state)

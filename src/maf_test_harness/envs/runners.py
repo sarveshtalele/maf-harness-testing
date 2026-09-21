@@ -540,21 +540,48 @@ def build_plan(
     return RunPlan(eco, [], blocked_reason=f"No runner adapter for ecosystem '{eco}' yet.")
 
 
-def execute_setup(steps: list[Step], workspace: Path, out_dir: Path) -> dict:
-    """Run installation steps only; ``ready`` means every non-optional step succeeded."""
+MAX_RECOVERIES = 4  # automatic recovery actions per setup run, across all steps
+
+
+def execute_setup(
+    steps: list[Step],
+    workspace: Path,
+    out_dir: Path,
+    *,
+    recover: bool = True,
+    allow_downloads: bool = False,
+) -> dict:
+    """Run installation steps only; ``ready`` means every non-optional step succeeded.
+
+    A failed required step is diagnosed (see ``errors/``); when the playbook allows an automatic recipe (see
+    ``recovery.py``) it is applied and the step runs again, at most ``MAX_RECOVERIES`` times per run and once per recipe
+    per step. Every attempt keeps its own evidence directory and the report records what was tried and why.
+    """
+    from . import recovery  # imported here: recovery uses Step, which lives in this module
+
     workspace, out_dir = Path(workspace).resolve(), Path(out_dir).resolve()
     out_dir.mkdir(parents=True, exist_ok=False)
+    steps = list(steps)
     report: dict = {
         "status": "ready",
         "steps": [],
         "warnings": [],
+        "recoveries": [],
         "isolation": "local-process-not-security-sandbox",
     }
-    for index, step in enumerate(steps, 1):
+    tried: dict[str, list[str]] = {}
+    runs: dict[str, int] = {}
+    index = 0
+    while index < len(steps):
+        step = steps[index]
+        runs[step.name] = runs.get(step.name, 0) + 1
+        label = f"{index + 1:02d}-{step.name}" + (
+            f"-retry{runs[step.name] - 1}" if runs[step.name] > 1 else ""
+        )
         result = run_command(
             step.argv,
             (workspace / step.cwd).resolve(),
-            out_dir / f"{index:02d}-{step.name}",
+            out_dir / label,
             timeout=step.timeout,
             env=_expand_env(step.env, workspace),
             inherit_env=True,
@@ -568,38 +595,60 @@ def execute_setup(steps: list[Step], workspace: Path, out_dir: Path) -> dict:
             # A zero exit code alone does not prove a venv was created (e.g. Windows can silently redirect
             # this invocation through an App Execution Alias / install-manager stub); check the artifact too.
             status = "blocked"
-        report["steps"].append(
-            {
-                "name": step.name,
-                "argv": step.argv,
-                "status": status,
-                "exit_code": result.get("exit_code"),
-                "duration_seconds": result.get("duration_seconds"),
-                "stdout": str(out_dir / f"{index:02d}-{step.name}" / "stdout.log"),
-            }
-        )
-        if status not in {"command_succeeded", "passed"}:
-            diagnoses = _diagnose_step(result, out_dir / f"{index:02d}-{step.name}", step.argv)
-            if diagnoses:
-                report["steps"][-1]["diagnoses"] = [d.to_dict() for d in diagnoses[:3]]
-            if step.continue_on_failure:
-                report["warnings"].append(f"optional step '{step.name}' failed ({status})" + _why(diagnoses))
-                items = _pip_items(step, workspace)
-                if items:
-                    installed, failed = _install_each(step, items[0], items[1], workspace, out_dir, index)
-                    report["steps"][-1]["fallback"] = {"installed": installed, "failed": failed}
-                    report["warnings"].append(
-                        f"'{step.name}': pip installs are all-or-nothing, so one unbuildable package blocked "
-                        f"the rest; retried one by one -> {len(installed)} installed, {len(failed)} failed"
-                        + (f" ({', '.join(failed)})" if failed else "")
-                        + ". A package that needs a C/C++ compiler (e.g. chroma-hnswlib) has no wheel on this "
-                        "platform: install the build tools or expect tests importing it to fail."
-                    )
-            else:
-                report.update(
-                    status="setup_failed", error=f"Step '{step.name}' failed: {status}" + _why(diagnoses)
+        entry = {
+            "name": step.name,
+            "argv": step.argv,
+            "status": status,
+            "exit_code": result.get("exit_code"),
+            "duration_seconds": result.get("duration_seconds"),
+            "stdout": str(out_dir / label / "stdout.log"),
+        }
+        if runs[step.name] > 1:
+            entry["attempt"] = runs[step.name]
+        report["steps"].append(entry)
+        if status in {"command_succeeded", "passed"}:
+            index += 1
+            continue
+        diagnoses = _diagnose_step(result, out_dir / label, step.argv)
+        if diagnoses:
+            entry["diagnoses"] = [d.to_dict() for d in diagnoses[:3]]
+        if step.continue_on_failure:
+            report["warnings"].append(f"optional step '{step.name}' failed ({status})" + _why(diagnoses))
+            items = _pip_items(step, workspace)
+            if items:
+                installed, failed = _install_each(step, items[0], items[1], workspace, out_dir, index + 1)
+                entry["fallback"] = {"installed": installed, "failed": failed}
+                report["warnings"].append(
+                    f"'{step.name}': pip installs are all-or-nothing, so one unbuildable package blocked "
+                    f"the rest; retried one by one -> {len(installed)} installed, {len(failed)} failed"
+                    + (f" ({', '.join(failed)})" if failed else "")
+                    + ". A package that needs a C/C++ compiler (e.g. chroma-hnswlib) has no wheel on this "
+                    "platform: install the build tools or expect tests importing it to fail."
                 )
-                break
+            index += 1
+            continue
+        action = None
+        if recover and len(report["recoveries"]) < MAX_RECOVERIES:
+            action, considered = recovery.choose(
+                step, diagnoses, tried.setdefault(step.name, []), workspace, allow_downloads=allow_downloads
+            )
+            if considered:
+                entry["recovery"] = considered
+        if action is None:
+            report.update(
+                status="setup_failed", error=f"Step '{step.name}' failed: {status}" + _why(diagnoses)
+            )
+            break
+        tried[step.name].append(action.recipe)
+        report["recoveries"].append({"step": step.name, "recipe": action.recipe, "note": action.note})
+        report["warnings"].append(
+            f"step '{step.name}' failed ({diagnoses[0].code}); applied recovery '{action.recipe}': {action.note}"
+        )
+        if action.prepare:
+            action.prepare()
+        steps[index] = action.step
+        if action.rewind_to:
+            index = next((i for i, s in enumerate(steps) if s.name == action.rewind_to), index)
     (out_dir / "report.json").write_text(json.dumps(report, indent=2), encoding="utf-8")
     return report
 
