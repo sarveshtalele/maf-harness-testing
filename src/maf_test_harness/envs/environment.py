@@ -145,6 +145,7 @@ def build_environment_plan(
     cache_dir: Path,
     timeout: float = 900,
     needs: list[dict] | None = None,
+    python_override: str | None = None,
 ) -> dict:
     """Prerequisites, isolation strategy and the exact install steps for the primary ecosystem.
 
@@ -163,7 +164,7 @@ def build_environment_plan(
         extra_requirements=nested_requirements(root) if python else None,
         extra_packages=documented_packages(needs or [], root) if python else None,
     )
-    toolchain_rows = plan_toolchains(root, eco)
+    toolchain_rows = plan_toolchains(root, eco, python_override=python_override)
     coverable = {"jdk": "java", "maven": "mvn", "dotnet": "dotnet", "python": "python3"}
     provisionable = {
         coverable[r["kind"]]

@@ -230,9 +230,11 @@ def test_a_failed_install_gets_an_agent_note_at_the_review_gate_when_enabled(dri
     monkeypatch.setattr(wf, "DIAGNOSIS_AGENT", True)
     runtime = ScriptedStageRuntime()
     host = drive(runtime)
-    artifact = host.view["pending"]["details"]["artifact"]
-    assert artifact["status"] == "setup_failed"
-    note = artifact["report"]["agent_diagnosis"]
+    pending = host.view["pending"]
+    assert (
+        pending["kind"] == "error" and pending["stage"] == "environment_setup"
+    )  # the strict guardrail blocks
+    note = pending["details"]["agent_diagnosis"]
     assert note["category"] == "environment" and note["source"] == "agent" and note["needs_human"] is True
     call = runtime.tool_agent_calls[0]
     assert call["stage"] == "diagnosis_setup"
@@ -247,7 +249,7 @@ def test_a_failed_install_gets_an_agent_note_at_the_review_gate_when_enabled(dri
 def test_the_agent_is_off_by_default(drive):
     runtime = ScriptedStageRuntime()
     host = drive(runtime)
-    assert "agent_diagnosis" not in host.view["pending"]["details"]["artifact"]["report"]
+    assert host.view["pending"]["details"]["agent_diagnosis"] is None
     assert runtime.tool_agent_calls == []
 
 
@@ -256,6 +258,6 @@ def test_a_failing_agent_never_blocks_the_gate(drive, monkeypatch):
     runtime = ScriptedStageRuntime()
     runtime.tool_agent_note = RuntimeError("model gateway unreachable")
     host = drive(runtime)
-    report = host.view["pending"]["details"]["artifact"]["report"]
-    assert host.view["pending"]["kind"] == "review"
-    assert "unreachable" in report["agent_diagnosis"]["error"]
+    pending = host.view["pending"]
+    assert pending["kind"] == "error"  # the gate still appears, with the failed note attached
+    assert "unreachable" in pending["details"]["agent_diagnosis"]["error"]

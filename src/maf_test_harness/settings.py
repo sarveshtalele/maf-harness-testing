@@ -69,6 +69,10 @@ BUILD_GATE = (
     os.getenv("HARNESS_BUILD_GATE", "on").strip().lower() != "off"
 )  # compile/collect after env install
 
+# STRICT GUARDRAIL (default on): environment_setup must install every declared requirement, consistently, before any
+# later stage starts. "off" restores the old behaviour (warn, then let the reviewer proceed). See docs/ENVIRONMENTS.md.
+STRICT_ENV = os.getenv("HARNESS_STRICT_ENV", "on").strip().lower() != "off"
+
 # Hooks (see docs/HOOKS.md): "enforce" (default), "evaluate_only" (record what would be blocked, never block) or "off".
 HOOKS = os.getenv("HARNESS_HOOKS", "enforce").strip().lower()
 # Who enforces hooks inside the agent loop: "inhouse" (default, no extra package) or "sdk" (MAF AGENT-HOOKS-0.1 middleware,

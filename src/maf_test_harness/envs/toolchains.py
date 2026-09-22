@@ -217,11 +217,13 @@ DETECTORS: dict[str, Callable[[], list[Toolchain]]] = {
 }
 
 
-def satisfies(kind: str, have: str, want: str) -> bool:
-    """Is an installed ``have`` good enough for a requirement of ``want``?"""
+def satisfies(kind: str, have: str, want: str, exact: bool = False) -> bool:
+    """Is an installed ``have`` good enough for a requirement of ``want`` (``exact``: the same major.minor)?"""
     have_v, want_v = version_tuple(have), version_tuple(want)
     if not have_v or not want_v:
         return False
+    if exact:
+        return have_v[:2] == want_v[:2]
     if kind in {"jdk", "gradle", "maven"}:
         return at_least(have, want) if kind == "jdk" else have_v[: len(want_v)] >= want_v
     if kind == "python":
@@ -251,7 +253,7 @@ def _home_in(kind: str, folder: Path) -> Path | None:
     return mac_home
 
 
-def cached(kind: str, want: str, root: Path | None = None) -> Toolchain | None:
+def cached(kind: str, want: str, root: Path | None = None, exact: bool = False) -> Toolchain | None:
     root = root or cache_root()
     base = root / kind
     best: Toolchain | None = None
@@ -260,19 +262,19 @@ def cached(kind: str, want: str, root: Path | None = None) -> Toolchain | None:
         if entry.name != _dir_for(kind, version, root).name or not (entry / ".complete").is_file():
             continue
         home = _home_in(kind, entry)
-        if home and satisfies(kind, version, want):
+        if home and satisfies(kind, version, want, exact):
             candidate = Toolchain(kind, version, home, "cache")
             if best is None or version_tuple(version) < version_tuple(best.version):  # closest fit
                 best = candidate
     return best
 
 
-def find(kind: str, want: str, root: Path | None = None) -> Toolchain | None:
+def find(kind: str, want: str, root: Path | None = None, exact: bool = False) -> Toolchain | None:
     """A toolchain that already satisfies ``want``: the system's first, then the cache."""
     for candidate in DETECTORS[kind]():
-        if satisfies(kind, candidate.version, want):
+        if satisfies(kind, candidate.version, want, exact):
             return candidate
-    return cached(kind, want, root) if kind != "python" else None
+    return cached(kind, want, root, exact) if kind != "python" else None
 
 
 # ---------------------------------------------------------------------------------------------- network
@@ -544,7 +546,7 @@ def ensure(
     """Make every requirement available: reuse what exists, download the rest only when ``allow_download``."""
     result = Provisioned()
     for req in requirements:
-        have = find(req.kind, req.version, root)
+        have = find(req.kind, req.version, root, req.exact)
         if have:
             result.toolchains.append(have)
             result.events.append(

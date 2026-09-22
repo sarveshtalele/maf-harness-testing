@@ -107,6 +107,7 @@ Optional switches (defaults shown, all listed in `.env.example`):
 | `HARNESS_DAILY_TOKEN_LIMIT` | `50000000` | the harness's daily token cap, shared by all runs on this machine |
 | `HARNESS_AGENT_TOOLS` / `HARNESS_AUTOFIX` / `HARNESS_BUILD_GATE` | `on` | central agent tools / mechanical import repairs / compile-collect gate (`off` for A/B comparison) |
 | `HARNESS_DIAGNOSIS_AGENT` / `HARNESS_SKILL_EVALUATORS` | `off` | LLM diagnosis note after unrecovered failures / skill validators as a design-stage tool; see [docs/AUTOMATION.md](docs/AUTOMATION.md) |
+| `HARNESS_STRICT_ENV` | `on` | **strict guardrail**: nothing after environment setup starts until every declared requirement is installed and consistent; an incomplete environment is a blocking gate that proposes another Python when that would fix it (see [docs/ENVIRONMENTS.md](docs/ENVIRONMENTS.md)) |
 | `HARNESS_HOOKS_BACKEND` | `inhouse` | `sdk` enforces hooks through MAF's AGENT-HOOKS-0.1 middleware (`pip install maf-test-harness[hooks]`) |
 | `HARNESS_HOOKS` | `enforce` | hooks (secret redaction, write scope, download consent, audit and your `.harness/hooks.json`): `enforce`, `evaluate_only` or `off`; see [docs/HOOKS.md](docs/HOOKS.md) |
 | `HARNESS_SKILL_MODE` | `progressive` | MAF `SkillsProvider`, or `preloaded` for models that cannot call tools |
@@ -193,7 +194,7 @@ Import and build errors are facts, so the harness answers them itself before ask
 |---|---|---|
 | Agent tools (MAF function tools) | `resolve_import`, `module_api`, `find_symbol`, `read_source`, `check_test`, `list_routes`, `installed_packages`, `probe_tools`, `try_build`, `environment_gaps`, `app_launch_plan` — small per-stage selection, read-only or scratch-only | `HARNESS_AGENT_TOOLS` |
 | Auto-fix | adds an unambiguous missing import (stdlib, mock, JDK, unique repository class, JUnit) or corrects a module path to the one repository module with that name; every fix is audited | `HARNESS_AUTOFIX` |
-| Static gates | syntax, imports, undefined names, mocked `sys.exit`, patch targets, URL paths | always on |
+| Static gates | syntax, imports, undefined names, mocked `sys.exit`, patch targets, URL paths, and known run-time pitfalls (`@asynccontextmanager` driven as a generator, `autospec` on `app.state`, a MagicMock LLM in a real LangChain chain, Streamlit HTML read as a UI test, a literal path given to a function that checks it exists) | always on |
 | Build gate | `pytest --collect-only` / `mvn test-compile` in the prepared workspace, after the approved environment install; reports `file:line` and symbol detail | `HARNESS_BUILD_GATE` |
 
 Prompts also carry the facts a model would otherwise guess: the application's routes and the real `BASE_URL` (which already contains the context path),
@@ -257,6 +258,7 @@ HARNESS_BROWSER=1 PLAYWRIGHT_BROWSERS_PATH=$PWD/.browser-cache uv run pytest tes
 | "hook ... malformed" / `HookConfigError` at start | `.harness/hooks.json` (in the directory you started from, or `~/.maf-harness/`) failed validation; the message names the file and entry |
 | Environment step: "toolchain ... not installed and downloading was not approved" / a download failed | approve the environment plan (it lists the downloads), check network/proxy, or set `HARNESS_TOOLCHAIN_MIRROR`; provisioned tools are cached in `~/.maf-harness/toolchains` |
 | A step shows `attempt 2` / "applied recovery" | the harness retried it automatically (longer timeout, dependency refresh, venv recreated); the report lists each attempt and why |
+| "Environment incomplete: the strict guardrail blocks the next stage" | a declared requirement did not install (often a package that must be compiled and has no wheel for your Python). The message lists the reasons; *Retry* uses the proposed Python (you approve the download in the next plan), or install the platform build tools and retry |
 | `TypeError: ... unexpected keyword argument` / `ImportError` from a *library* (e.g. `Router.__init__() ... 'on_startup'`) in generated tests | the installed packages contradict each other (`ENV-PY-009`); the harness re-resolves them after install and reports what is left in the setup report (`dependency_conflicts`); see [docs/ENVIRONMENTS.md](docs/ENVIRONMENTS.md) |
 | `ModuleNotFoundError` for a declared dependency in generated tests | its install failed (often a package that needs a C/C++ compiler); the review lists `missing_packages`, tests are told to stub them, and the QA report classifies the failure as environmental, not a test defect |
 | Windows: a step opens the Python installer or fails to find `python3` | the harness passes absolute interpreter paths and never relies on the `python3` alias; if you still see it, run from a shell where `python --version` works and report the step |

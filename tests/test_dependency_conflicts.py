@@ -31,6 +31,10 @@ CONFLICT = {
 TYPE_ERROR = "E   TypeError: Router.__init__() got an unexpected keyword argument 'on_startup'\n"
 
 
+def problems(conflicts, unmet=()):
+    return {"conflicts": list(conflicts), "unmet": list(unmet)}
+
+
 def workspace_with_venv(tmp_path):
     ws = tmp_path / "ws"
     python = Path(platform_compat.venv_python(ws / ".harness-venv"))
@@ -143,7 +147,7 @@ def test_repair_resolves_jointly_with_the_declared_requirements_in_one_round(tmp
         return {"status": "command_succeeded", "exit_code": 0}
 
     monkeypatch.setattr(runners, "run_command", run)
-    monkeypatch.setattr(env_check, "dependency_conflicts", lambda workspace: list(state["conflicts"]))
+    monkeypatch.setattr(env_check, "dependency_problems", lambda workspace: problems(state["conflicts"]))
     monkeypatch.setattr(
         env_check, "installed_distributions", lambda workspace: {"fastapi", "streamlit", "uvicorn"}
     )
@@ -168,7 +172,9 @@ def test_repair_never_loosens_a_pin_and_never_repeats_itself(tmp_path, monkeypat
         "run_command",
         lambda argv, cwd, out, **k: ran.append(argv) or {"status": "command_succeeded"},
     )
-    monkeypatch.setattr(env_check, "dependency_conflicts", lambda workspace: [CONFLICT])  # nothing can fix it
+    monkeypatch.setattr(
+        env_check, "dependency_problems", lambda workspace: problems([CONFLICT])
+    )  # nothing can fix it
     monkeypatch.setattr(env_check, "installed_distributions", lambda workspace: set())
     summary = runners.repair_conflicts(ws, tmp_path / "out", [])
     assert summary["remaining"] == [CONFLICT]
@@ -176,7 +182,7 @@ def test_repair_never_loosens_a_pin_and_never_repeats_itself(tmp_path, monkeypat
 
 
 def test_repair_is_a_noop_on_a_consistent_environment(tmp_path, monkeypatch):
-    monkeypatch.setattr(env_check, "dependency_conflicts", lambda workspace: [])
+    monkeypatch.setattr(env_check, "dependency_problems", lambda workspace: problems([]))
     monkeypatch.setattr(
         runners, "run_command", lambda *a, **k: (_ for _ in ()).throw(AssertionError("must not run"))
     )
@@ -209,7 +215,7 @@ def test_a_failed_bulk_install_is_followed_by_one_joint_resolution_and_a_conflic
 
     monkeypatch.setattr(runners, "run_command", run)
     conflicts = iter([[CONFLICT], []])
-    monkeypatch.setattr(env_check, "dependency_conflicts", lambda workspace: next(conflicts))
+    monkeypatch.setattr(env_check, "dependency_problems", lambda workspace: problems(next(conflicts)))
     monkeypatch.setattr(env_check, "installed_distributions", lambda workspace: {"fastapi", "streamlit"})
     py = str(platform_compat.venv_python(ws / ".harness-venv"))
     step = Step(
@@ -234,7 +240,7 @@ def test_a_failed_bulk_install_is_followed_by_one_joint_resolution_and_a_conflic
 def test_a_clean_install_reports_no_conflicts(tmp_path, monkeypatch):
     ws = workspace_with_venv(tmp_path)
     monkeypatch.setattr(runners, "run_command", fake_run("", 0, "command_succeeded"))
-    monkeypatch.setattr(env_check, "dependency_conflicts", lambda workspace: [])
+    monkeypatch.setattr(env_check, "dependency_problems", lambda workspace: problems([]))
     py = str(platform_compat.venv_python(ws / ".harness-venv"))
     report = runners.execute_setup(
         [Step("install-x", [py, "-m", "pip", "install", "x"], "setup")], ws, tmp_path / "out"
@@ -246,13 +252,13 @@ def test_a_clean_install_reports_no_conflicts(tmp_path, monkeypatch):
 
 
 def test_the_typed_tool_reports_conflicts_with_the_error_code(tmp_path, monkeypatch):
-    monkeypatch.setattr(env_check, "dependency_conflicts", lambda workspace: [CONFLICT])
+    monkeypatch.setattr(env_check, "dependency_problems", lambda workspace: problems([CONFLICT]))
     registry = default_registry(ToolContext(workspace=tmp_path))
     result = registry.call("list_dependency_conflicts", {})
     assert result.ok and result.code == "ENV-PY-009" and result.category == "environment"
     assert "fastapi needs starlette<0.37.0,>=0.36.3, has 1.6.0" in result.evidence
     assert registry.call("list_dependency_conflicts", {}).data["conflicts"] == [CONFLICT]
-    monkeypatch.setattr(env_check, "dependency_conflicts", lambda workspace: [])
+    monkeypatch.setattr(env_check, "dependency_problems", lambda workspace: problems([]))
     assert registry.call("list_dependency_conflicts", {}).code == "OK"
     assert default_registry(ToolContext()).call("list_dependency_conflicts", {}).code == "NO-WORKSPACE"
 

@@ -19,6 +19,7 @@ from .runners import VENV_DIR
 
 _NAME = re.compile(r"^\s*([A-Za-z0-9][A-Za-z0-9._-]*)")
 _MODULE_NOT_FOUND = re.compile(r"No module named '([\w.]+)'")
+_COULD_NOT_IMPORT = re.compile(r"Could not import ([A-Za-z0-9_.-]+) python package")
 # `pip check`: "fastapi 0.110.0 has requirement starlette<0.37.0,>=0.36.3, but you have starlette 1.6.0."
 _CONFLICT = re.compile(
     r"^(?P<package>\S+) (?P<version>\S+) has requirement (?P<requirement>.+?), but you have "
@@ -82,6 +83,57 @@ def missing_packages(workspace: Path) -> list[str]:
     return [name for name in declared_requirements(workspace) if name not in installed]
 
 
+def venv_python_version(workspace: Path) -> str | None:
+    """``major.minor`` of the interpreter the workspace venv was built with (from pyvenv.cfg), if it exists."""
+    cfg = Path(workspace) / VENV_DIR / "pyvenv.cfg"
+    try:
+        match = re.search(r"(?m)^version(?:_info)?\s*=\s*(\d+\.\d+)", cfg.read_text(encoding="utf-8"))
+    except OSError:
+        return None
+    return match.group(1) if match else None
+
+
+def ui_tooling(workspace: Path) -> dict[str, bool] | None:
+    """Which UI test tools the Python environment really has (None when it cannot be asked).
+
+    ``playwright``: a browser can be driven; ``streamlit``: in-process UI tests are possible (``streamlit.testing.v1.AppTest``).
+    """
+    installed = installed_distributions(workspace)
+    if installed is None:
+        return None
+    return {"playwright": "playwright" in installed, "streamlit": "streamlit" in installed}
+
+
+_UNMET = re.compile(
+    r"^(?P<package>\S+) (?P<version>\S+) requires (?P<requirement>.+?), which is not installed\.?$"
+)
+
+
+def parse_pip_unmet(output: str) -> list[dict[str, str]]:
+    """Dependencies of installed packages that are not installed themselves (pip check: "X requires Y, which is not installed")."""
+    found = []
+    for line in (output or "").splitlines():
+        match = _UNMET.match(line.strip())
+        if match:
+            row = match.groupdict()
+            name = re.match(r"[A-Za-z0-9][A-Za-z0-9._-]*", row["requirement"])
+            found.append(
+                {
+                    **row,
+                    "dependency": name.group(0) if name else row["requirement"],
+                    "installed": "not installed",
+                }
+            )
+    return found
+
+
+def describe_conflict(item: dict[str, str]) -> str:
+    """One readable line for a conflict or an unmet dependency."""
+    if item.get("installed") == "not installed":
+        return f"{item['package']} needs {item['requirement']}, which is not installed"
+    return f"{item['package']} needs {item['requirement']}, has {item['installed']}"
+
+
 def parse_pip_check(output: str) -> list[dict[str, str]]:
     """Version conflicts from ``pip check`` output: which installed package wants which range of which dependency.
 
@@ -96,16 +148,11 @@ def parse_pip_check(output: str) -> list[dict[str, str]]:
     return conflicts
 
 
-def dependency_conflicts(workspace: Path, timeout: float = 60) -> list[dict[str, str]]:
-    """Installed packages whose declared requirements the environment does not satisfy (empty when unknown).
-
-    Installing requirements one at a time, or letting a newer package pull a newer dependency, can leave a set that
-    pip itself calls inconsistent (``fastapi 0.110.0`` next to ``starlette 1.6.0``). Code then fails at import or call
-    time with ``TypeError: ... unexpected keyword argument``: an environment fact, not a test defect.
-    """
+def dependency_problems(workspace: Path, timeout: float = 60) -> dict[str, list[dict[str, str]]]:
+    """Everything ``pip check`` reports, from one run: version ``conflicts`` and ``unmet`` (not installed) dependencies."""
     python = Path(platform_compat.venv_python(Path(workspace) / VENV_DIR))
     if not python.is_file():
-        return []
+        return {"conflicts": [], "unmet": []}
     try:
         proc = subprocess.run(
             [str(python), "-m", "pip", "check", "--disable-pip-version-check"],
@@ -115,13 +162,31 @@ def dependency_conflicts(workspace: Path, timeout: float = 60) -> list[dict[str,
             check=False,
         )
     except (OSError, subprocess.TimeoutExpired):
-        return []
-    return parse_pip_check(proc.stdout + "\n" + proc.stderr)
+        return {"conflicts": [], "unmet": []}
+    text = proc.stdout + "\n" + proc.stderr
+    return {"conflicts": parse_pip_check(text), "unmet": parse_pip_unmet(text)}
+
+
+def dependency_conflicts(workspace: Path, timeout: float = 60) -> list[dict[str, str]]:
+    """Installed packages whose declared version requirements the environment does not satisfy (empty when unknown).
+
+    Installing requirements one at a time, or letting a newer package pull a newer dependency, can leave a set that
+    pip itself calls inconsistent (``fastapi 0.110.0`` next to ``starlette 1.6.0``). Code then fails at import or call
+    time with ``TypeError: ... unexpected keyword argument``: an environment fact, not a test defect.
+    """
+    return dependency_problems(workspace, timeout)["conflicts"]
 
 
 def missing_module_names(output: str) -> list[str]:
-    """Top-level module names a collection/run output says it could not import."""
-    return list(dict.fromkeys(m.split(".")[0] for m in _MODULE_NOT_FOUND.findall(output or "")))
+    """Top-level module names a collection/run output says it could not import.
+
+    Also the wrapper wording libraries use instead of ``ModuleNotFoundError`` (LangChain: "Could not import chromadb python
+    package. Please install it with `pip install chromadb`").
+    """
+    text = output or ""
+    names = [m.split(".")[0] for m in _MODULE_NOT_FOUND.findall(text)]
+    names += [m.split(".")[0] for m in _COULD_NOT_IMPORT.findall(text)]
+    return list(dict.fromkeys(names))
 
 
 def explained_by_missing(module: str, missing: list[str]) -> str | None:

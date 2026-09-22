@@ -56,6 +56,26 @@ extensionless script), `create-venv` uses the interpreter the project asks for, 
 to each step. The build gate uses the same rewritten plan, so a generated Java test is compiled with the JDK the project
 needs. Required tools a toolchain covers are no longer reported as "not installed on the host".
 
+## 3.0 Strict guardrail: install everything, then proceed
+
+`HARNESS_STRICT_ENV` (default `on`). After the install steps the harness checks three things: no step failed, no *declared* package is
+missing (`envs/env_check.missing_packages`), and no version conflict remains (`pip check`, section 3.1). If any check fails the run does
+**not** reach a review it could approve: the environment gate becomes an error gate (`Environment incomplete: the strict guardrail
+blocks the next stage`) that lists the reasons and offers only *Retry* or *Stop*. `Harness.enter` independently refuses to start any
+later stage while the environment status is `incomplete`. Skipping the install stays possible, as the reviewer's explicit *Skip*.
+
+Some failures are fixed by another interpreter, not by retrying: a pinned package that must be compiled or has no wheel for the current
+Python (on the run that motivated this: `chromadb==0.4.24` needs `chroma-hnswlib==0.7.3`, which has no wheel for Python 3.12). For
+`ENV-PY-001/002/003` the gate proposes the next interpreter from 3.11, 3.10, 3.12 that is installed or that `uv` can install
+(`envs/recovery.python_fallback`). *Retry* then deletes the harness venv, records the choice (`env_python`, `env_python_tried`) and shows a
+new install plan in which that Python is listed as a download (`exact` requirement, `envs/spec.detect_spec(python_override=...)`); you approve it like
+any toolchain, and the venv is rebuilt with it. Each interpreter is tried once. With no candidate the gate says what to install (Microsoft
+C++ Build Tools, `xcode-select --install`, `build-essential`, or a Python that has wheels).
+
+The model is told the truth about the environment: the generation prompt carries `environment` (Python version, `unavailable_packages`,
+`ui_tooling`), and live UI levels are offered only when the environment can run them (Playwright installed for `e2e`/`accessibility`;
+Streamlit's in-process `AppTest` for `ui`).
+
 ## 3.1 Consistency of the installed Python packages
 
 `pip install -r requirements.txt` is all-or-nothing, so when one package cannot be built (a C/C++ compiler is missing) the harness retries package

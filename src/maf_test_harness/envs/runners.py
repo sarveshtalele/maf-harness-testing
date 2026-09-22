@@ -658,6 +658,8 @@ def execute_setup(
         and report["status"] == "ready"
         and any("pip" in s.argv and "install" in s.argv for s in steps)
     ):
+        from . import env_check
+
         pip_steps = [s for s in steps if "pip" in s.argv and "install" in s.argv]
         declared_specs = [spec for s in pip_steps for spec in (_pip_items(s, workspace) or ([], []))[1]]
         conflicts = repair_conflicts(
@@ -668,18 +670,14 @@ def execute_setup(
             fixed = not conflicts["remaining"]
             names = ", ".join(sorted({c["dependency"] for c in conflicts["found"]}))
             report["warnings"].append(
-                f"pip reported version conflicts ({names}); "
+                f"pip check reported problems ({names}); "
                 + (
                     "repaired by reinstalling each at the range its dependent package requires"
                     if fixed
                     else "still inconsistent after repair"
                 )
                 + (
-                    ": "
-                    + "; ".join(
-                        f"{c['package']} needs {c['requirement']}, has {c['installed']}"
-                        for c in conflicts["remaining"][:3]
-                    )
+                    ": " + "; ".join(env_check.describe_conflict(c) for c in conflicts["remaining"][:3])
                     if not fixed
                     else ""
                 )
@@ -804,7 +802,14 @@ def repair_conflicts(
 
     workspace = Path(workspace).resolve()
     python = platform_compat.venv_python(workspace / VENV_DIR)
-    found = env_check.dependency_conflicts(workspace)
+
+    def problems() -> list[dict[str, str]]:
+        both = env_check.dependency_problems(
+            workspace
+        )  # version conflicts, then dependencies that are not installed
+        return [*both["conflicts"], *both["unmet"]]
+
+    found = problems()
     summary: dict = {"found": [dict(c) for c in found], "repaired": [], "remaining": found}
     if not found:
         return summary
@@ -826,7 +831,7 @@ def repair_conflicts(
             inherit_env=True,
         )
         summary["repaired"].append({"round": round_no, "requirements": wanted, "status": result["status"]})
-        summary["remaining"] = env_check.dependency_conflicts(workspace)
+        summary["remaining"] = problems()
         if not summary["remaining"]:
             break
     return summary

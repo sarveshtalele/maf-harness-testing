@@ -18,6 +18,7 @@ venv and restart from ``create-venv``). Every other recipe is reported as not au
 from __future__ import annotations
 
 import shutil
+import sys
 from collections.abc import Callable
 from dataclasses import dataclass, replace
 from pathlib import Path
@@ -129,6 +130,49 @@ def choose(
         considered.append({**entry, "status": "applied", "note": action.note})
         return action, considered
     return None, considered
+
+
+FALLBACK_CODES = frozenset(
+    {"ENV-PY-001", "ENV-PY-002", "ENV-PY-003"}
+)  # compile needed / no matching dist / wrong Python
+FALLBACK_MINORS = ("3.11", "3.10", "3.12")  # older interpreters first: wheels exist for them longest
+
+
+def wipe_venv(workspace: Path) -> bool:
+    """Delete the harness venv (and only that) so it can be rebuilt with another interpreter."""
+    venv = (Path(workspace) / VENV_DIR).resolve()
+    if venv.name != VENV_DIR or not venv.is_relative_to(Path(workspace).resolve()) or not venv.exists():
+        return False
+    shutil.rmtree(venv, ignore_errors=True)
+    return not venv.exists()
+
+
+def python_fallback(
+    report: dict[str, Any],
+    workspace: Path,
+    tried: list[str] | tuple[str, ...] = (),
+    *,
+    current: str | None = None,
+    available: Callable[[str], bool] | None = None,
+) -> str | None:
+    """Another Python minor to rebuild the environment with, when the install failed for a reason another interpreter fixes.
+
+    Only for a package that must be compiled, has no matching distribution or wants another Python (the codes in
+    ``FALLBACK_CODES``); never the interpreter that just failed, never one already tried, and only one that is installed
+    or that ``uv`` can install. The caller shows it in an approval: a download is never done silently.
+    """
+    from . import env_check, toolchains
+
+    codes = {d.get("code") for step in report.get("steps", []) for d in step.get("diagnoses", [])}
+    if not codes & FALLBACK_CODES:
+        return None
+    current = current or env_check.venv_python_version(workspace) or ".".join(map(str, sys.version_info[:2]))
+    uv = shutil.which("uv") is not None
+    can = available or (lambda v: uv or toolchains.find("python", v, exact=True) is not None)
+    for candidate in FALLBACK_MINORS:
+        if candidate != current and candidate not in tried and can(candidate):
+            return candidate
+    return None
 
 
 def preview(

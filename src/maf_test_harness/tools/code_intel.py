@@ -34,6 +34,7 @@ from ..skills.contracts import (
     check_python_test_hygiene,
     check_route_literals,
 )
+from .mock_pitfalls import check_mock_pitfalls
 
 MAX_FILE_BYTES = 512_000
 READ_LINE_LIMIT = 160
@@ -327,6 +328,7 @@ def static_gate(ctx: RepoContext, path: str, content: str) -> None:
         if ctx.source_files:
             check_python_imports(content, ctx.source_files, ctx.dependency_text, path, read_source=ctx.read)
         check_python_test_hygiene(content, path, ctx.source_files, read_source=ctx.read)
+        check_mock_pitfalls(content, path, ctx)
     elif path.endswith((".java", ".kt")):
         if problem := _native_syntax_check(path, content):
             raise ValueError(f"{path}: {problem}")

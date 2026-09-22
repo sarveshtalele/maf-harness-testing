@@ -21,6 +21,7 @@ class ToolRequirement:
     kind: str  # python | jdk | maven | gradle | dotnet
     version: str  # minimum: "3.11", "17", "3.9.9", "8.0"
     reason: str = ""  # the repository file (or default) that decided it
+    exact: bool = False  # this exact major.minor, not "at least" (a fallback interpreter)
 
 
 @dataclass
@@ -232,8 +233,12 @@ def dotnet_spec(ws: Path) -> EnvSpec:
 
 
 # --------------------------------------------------------------------------------------------------- entry
-def detect_spec(ws: Path, ecosystem: str) -> EnvSpec:
-    """The toolchains ``ecosystem`` needs for the repository in ``ws``."""
+def detect_spec(ws: Path, ecosystem: str, python_override: str | None = None) -> EnvSpec:
+    """The toolchains ``ecosystem`` needs for the repository in ``ws``.
+
+    ``python_override`` replaces the project's Python requirement with exactly that minor version: the fallback the strict
+    environment guardrail proposes when a pinned package has no wheel for the current interpreter.
+    """
     ws = Path(ws)
     if ecosystem in {"maven", "gradle", "java"}:
         return java_spec(ws, ecosystem)
@@ -241,7 +246,16 @@ def detect_spec(ws: Path, ecosystem: str) -> EnvSpec:
         return dotnet_spec(ws)
     if ecosystem == "python":
         spec = EnvSpec("python", build_tool="pip")
-        if req := python_requirement(ws):
+        if python_override:
+            spec.requirements.append(
+                ToolRequirement(
+                    "python",
+                    python_override,
+                    "fallback interpreter: a pinned package has no wheel for the current Python",
+                    exact=True,
+                )
+            )
+        elif req := python_requirement(ws):
             spec.requirements.append(req)
         return spec
     return EnvSpec(ecosystem)

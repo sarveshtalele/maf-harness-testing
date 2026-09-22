@@ -8,6 +8,7 @@ import os
 import re
 import shlex
 import traceback
+from functools import partial
 from pathlib import Path
 from typing import Any
 from uuid import uuid4
@@ -25,6 +26,7 @@ from filelock import FileLock
 from .agent import diagnosis
 from .agent.personas import PERSONAS, persona_instructions
 from .envs import Provisioned, ToolchainError, app_launcher, env_check, provision_for
+from .envs import recovery as env_recovery
 from .envs.environment import build_environment_plan, steps_from_plan
 from .envs.execution import copy_repo, write_generated
 from .envs.runners import RunPlan, Step, build_plan, execute_plan, execute_setup
@@ -66,6 +68,7 @@ from .settings import (
     GENERATION_MAX_ATTEMPTS,
     HOOKS,
     SKILL_EVALUATORS,
+    STRICT_ENV,
 )
 from .skills.config import skills_for
 from .skills.contracts import (
@@ -166,7 +169,20 @@ def _plan_summary(plan: dict[str, Any]) -> dict[str, Any]:
 
 def _allowed_levels(state: dict[str, Any]) -> set[str]:
     base = {"unit", "integration", "api", "cli", "security", "performance"}
-    return base | (LIVE_APP_LEVELS if state.get("app_url") else set())
+    if not state.get("app_url"):
+        return base
+    live = set(LIVE_APP_LEVELS)
+    tooling = (state.get("environment") or {}).get("ui_tooling")
+    # A Python environment without a browser driver cannot run browser tests: offer only what it can execute.
+    if (
+        tooling is not None
+        and (state.get("stack") or {}).get("primary") == "python"
+        and not tooling.get("playwright")
+    ):
+        live -= {"e2e", "accessibility"}
+        if not tooling.get("streamlit"):
+            live -= {"ui"}
+    return base | live
 
 
 def _compact_requirements(source: dict[str, Any]) -> dict[str, Any]:
@@ -247,6 +263,16 @@ def _generation_policy(repo: dict[str, Any], state: dict[str, Any] | None = None
         "stack": {
             k: stack.get(k) for k in ("primary", "test_runner", "web_ui", "http_service") if k in stack
         },
+        "environment": {
+            "python": (state.get("environment") or {}).get("python_version"),
+            "unavailable_packages": (state.get("environment") or {}).get("missing_packages") or [],
+            "ui_tooling": (state.get("environment") or {}).get("ui_tooling"),
+            "rule": (
+                "The tests run in the isolated environment described here. Every declared dependency is installed unless "
+                "listed in unavailable_packages (then: never import it; patch the code that needs it, or stub it in "
+                "sys.modules before the import). Do not add sys.path hacks or install steps."
+            ),
+        },
         "live_app": {
             "available": bool(state.get("app_url")),
             "base_url_env_var": "BASE_URL",
@@ -272,7 +298,11 @@ def _generation_policy(repo: dict[str, Any], state: dict[str, Any] | None = None
                 "instantiate. If a case cannot be tested without a container, test the nearest plain-Java behavior instead."
             ),
             "python": "Never nest more than 5 `with` blocks (CPython allows 20): use @patch decorators or contextlib.ExitStack.",
-            "ui/e2e/accessibility": "Only with live_app.available; existing browser framework first, else Playwright.",
+            "ui/e2e/accessibility": (
+                "Only with live_app.available and only the levels in allowed_test_levels. A Streamlit UI is tested in-process "
+                "with `streamlit.testing.v1.AppTest` (never by fetching the server's HTML: it is an empty JavaScript shell); "
+                "a browser (Playwright) only when environment.ui_tooling.playwright is true."
+            ),
             "security": "Assert rejection/sanitization paths that the source shows.",
         },
         "framework_selection_rule": "Prefer detected test framework; otherwise choose a mainstream native framework compatible with the dominant stack.",
@@ -553,6 +583,11 @@ class Harness:
                 },
             )
             return
+        if STRICT_ENV and stage != ENV_STAGE and state.get("environment", {}).get("status") == "incomplete":
+            raise ValueError(
+                "Strict environment guardrail: the environment is incomplete (a declared requirement is not installed or "
+                "conflicts), so this stage cannot start. Retry environment setup."
+            )
         state["active_stage"] = stage
         self.state = state
         self.save()
@@ -649,6 +684,13 @@ class Harness:
                     raise ValueError("Choose retry or stop.")
                 state["sessions"].pop(stage, None)
                 state["model_requests"].pop(stage, None)
+                if stage == ENV_STAGE and (version := state.pop("env_python_proposal", None)):
+                    state["env_python"] = version
+                    state.setdefault("env_python_tried", []).append(version)
+                    await asyncio.to_thread(
+                        env_recovery.wipe_venv, self.workspace
+                    )  # rebuilt with the other interpreter
+                    self.audit("environment_python_fallback", version=version)
                 await self.enter(stage, state, ctx)
                 return
 
@@ -748,7 +790,10 @@ class Harness:
             generation=arts["test_generation"],
             execution=report,
             stack=state.get("stack"),
-            environment=state.get("environment", {}).get("plan"),
+            environment={
+                **(state.get("environment", {}).get("plan") or {}),
+                "missing_packages": state.get("environment", {}).get("missing_packages") or [],
+            },
             provenance={
                 "runtime": state.get("runtime_provenance"),
                 "skills": state.get("skill_provenance"),
@@ -843,6 +888,7 @@ class Harness:
             self.cache_dir,
             EXECUTION_TIMEOUT_SECONDS,
             state["artifacts"].get("requirements", {}).get("environment_needs"),
+            *([state["env_python"]] if state.get("env_python") else []),  # only after a fallback was approved
         )
         state["environment"] = {"plan": plan, "hash": digest(plan), "status": "planned"}
         if (
@@ -893,7 +939,13 @@ class Harness:
         self.audit("environment_started", request_id=request["id"], plan_hash=info["hash"])
         try:  # the approval covers downloading the toolchains listed in the plan
             provisioned = await asyncio.to_thread(
-                provision_for, self.workspace, info["plan"]["ecosystem"], allow_download=True
+                partial(
+                    provision_for,
+                    self.workspace,
+                    info["plan"]["ecosystem"],
+                    allow_download=True,
+                    python_override=state.get("env_python"),
+                )
             )
         except ToolchainError as exc:
             self.audit("toolchains_failed", error=str(exc)[:600])
@@ -923,6 +975,8 @@ class Harness:
             )
         if report["status"] == "ready":
             info["missing_packages"] = await asyncio.to_thread(env_check.missing_packages, self.workspace)
+            info["ui_tooling"] = await asyncio.to_thread(env_check.ui_tooling, self.workspace)
+            info["python_version"] = env_check.venv_python_version(self.workspace)
             if info["missing_packages"]:
                 report.setdefault("warnings", []).append(
                     "Declared dependencies NOT installed: "
@@ -935,7 +989,76 @@ class Harness:
             warnings=report.get("warnings"),
             missing_packages=info.get("missing_packages"),
         )
+        reasons = self._environment_shortfalls(info, report)
+        if STRICT_ENV and reasons:
+            await self._block_incomplete_environment(state, report, reasons, ctx)
+            return
+        state.pop("env_python_proposal", None)
         await self.review(ENV_STAGE, self._environment_artifact(state, report), state, ctx)
+
+    @staticmethod
+    def _environment_shortfalls(info: dict, report: dict) -> list[str]:
+        """Why the environment is NOT complete: a failed step, declared packages missing, unresolved version conflicts."""
+        reasons = []
+        if report.get("status") == "setup_failed":
+            reasons.append(str(report.get("error") or "an install step failed"))
+        if info.get("missing_packages"):
+            reasons.append("declared packages not installed: " + ", ".join(info["missing_packages"]))
+        remaining = (report.get("dependency_conflicts") or {}).get("remaining") or []
+        if remaining:
+            reasons.append(
+                "installed packages are inconsistent: "
+                + "; ".join(env_check.describe_conflict(c) for c in remaining[:3])
+            )
+        return reasons
+
+    async def _block_incomplete_environment(self, state: dict, report: dict, reasons: list[str], ctx) -> None:
+        """STRICT GUARDRAIL: nothing after environment_setup starts until every requirement is installed and consistent.
+
+        The reviewer can only retry or stop. When another Python would fix it (a package with no wheel for this one), the
+        retry proposes it: the next plan lists the download and needs its own approval.
+        """
+        info = state["environment"]
+        info["status"] = "incomplete"
+        proposal = await asyncio.to_thread(
+            env_recovery.python_fallback, report, self.workspace, state.get("env_python_tried", [])
+        )
+        if proposal:
+            state["env_python_proposal"] = proposal
+        else:
+            state.pop("env_python_proposal", None)
+        self.audit("environment_incomplete", reasons=reasons, python_fallback=proposal)
+        if report.get("status") == "ready":  # a failed step already fired OnEnvError
+            self.hooks.notify(
+                ON_ENV_ERROR,
+                ENV_STAGE,
+                status="incomplete",
+                error="; ".join(reasons)[:600],
+                attempt=state.get("environment_attempts", 0),
+            )
+        how = (
+            f"Retry rebuilds the environment with Python {proposal}: the new install plan lists that download and you approve it."
+            if proposal
+            else "Install the missing build tools (Windows: Microsoft C++ Build Tools; macOS: xcode-select --install; Linux: build-essential) "
+            "or a Python version that has wheels for the pinned packages, then Retry."
+        )
+        await self.ask(
+            ENV_STAGE,
+            "error",
+            state,
+            ctx,
+            title="Environment incomplete: the strict guardrail blocks the next stage",
+            details={
+                "reasons": reasons,
+                "python_fallback": proposal,
+                "warnings": report.get("warnings", []),
+                "agent_diagnosis": report.get("agent_diagnosis"),
+            },
+            error="Not every requirement is installed, so no later stage will start. "
+            + " ".join(reasons)
+            + " "
+            + how,
+        )
 
     async def plan_execution(self, state: dict, ctx) -> None:
         arts = state["artifacts"]

@@ -35,6 +35,21 @@ HARNESS_BROWSER=1 PLAYWRIGHT_BROWSERS_PATH=$PWD/.browser-cache uv run pytest tes
 `.env` (copy from `.env.example`) holds `OPENAI_API_KEY` / `OPENAI_BASE_URL` / `OPENAI_MODEL` for the model
 gateway — git-ignored, read at startup, shell env wins over the file. Tests run without network or a model.
 
+## Guardrails (strict, do not weaken)
+
+1. **Install every requirement, then proceed.** `environment_setup` must install every declared requirement and leave the
+   installed set consistent (`pip check` clean) before *any* later stage starts (`HARNESS_STRICT_ENV`, default on). An incomplete
+   environment is a blocking error gate (retry or stop), never a warning the reviewer can approve past; `Harness.enter` refuses to
+   start a later stage while `state["environment"]["status"] == "incomplete"`. Do not add a way around it. Skipping the install is
+   only ever the reviewer's explicit *Skip* decision.
+2. **Fix the environment, not the tests.** When a pinned package cannot be installed on the current Python, the harness proposes
+   another interpreter (`envs.recovery.python_fallback`); the download is listed in the next install plan and needs its own approval.
+   Never loosen a repository pin, never install under a different name, never let generated tests stub a declared dependency to
+   hide an environment failure.
+3. **When working on this repository:** run the live checks (real repositories, real installs) with every requirement of the target
+   installed first; do not start test generation or report results from a half-installed environment.
+4. **Same rule for development:** `uv sync --extra dev` (and `--extra hooks` for the SDK tests) before running the gate.
+
 ## Architecture
 
 The harness is a **checkpointed MAF workflow** (`src/maf_test_harness/workflow.py`) of seven `Executor` stages,

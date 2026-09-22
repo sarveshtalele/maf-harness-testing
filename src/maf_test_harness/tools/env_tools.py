@@ -113,16 +113,15 @@ def list_dependency_conflicts(ctx: ToolContext, args: dict[str, Any]) -> ToolRes
     """Installed packages whose requirements the installed set does not satisfy (pip check)."""
     if ctx.workspace is None:
         return ToolResult.failure("NO-WORKSPACE", "the isolated environment has not been created yet")
-    conflicts = env_check.dependency_conflicts(ctx.workspace)
+    both = env_check.dependency_problems(ctx.workspace)
+    conflicts = [*both["conflicts"], *both["unmet"]]
     return ToolResult(
         True,
         code="ENV-PY-009" if conflicts else "OK",
         category=ENVIRONMENT if conflicts else "",
         evidence=(
             f"{len(conflicts)} version conflict(s): "
-            + "; ".join(
-                f"{c['package']} needs {c['requirement']}, has {c['installed']}" for c in conflicts[:3]
-            )
+            + "; ".join(env_check.describe_conflict(c) for c in conflicts[:3])
             if conflicts
             else "the installed packages are consistent"
         ),

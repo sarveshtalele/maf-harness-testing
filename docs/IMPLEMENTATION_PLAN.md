@@ -216,6 +216,7 @@ stage as an opt-in tool. The agent loops are verified with a real MAF pipeline a
 - [x] Isolated dependency install behind a tool-call approval; ZIP deliverable; files-to-update report
 - [x] Deterministic import/build checks before any model retry (auto-fix, static gates, build gate)
 - [x] Windows, macOS and Linux (CI matrix includes Windows); every OS decision in one module
+- [x] **Strict guardrail**: nothing after environment setup starts with a missing or conflicting requirement; a fallback Python is proposed and approved as a download
 - [x] Every environment/execution failure classified; environment failures never burn generation retries; safe recovery bounded and audited
 - [x] Fail-closed hooks around tools, model calls and gates; secrets redacted; agent writes confined to the workspace
 - [ ] Sandbox adapter (blocks unattended/multi-tenant use)

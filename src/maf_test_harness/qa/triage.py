@@ -132,6 +132,25 @@ REMEDIES: list[tuple[re.Pattern[str], str]] = [
         "(never a hard-coded host or port); the host starts the application before ui/e2e tests run.",
     ),
     (
+        re.compile(r"_AsyncGeneratorContextManager|_GeneratorContextManager.*(?:__anext__|__next__)"),
+        "The target is decorated with @asynccontextmanager/@contextmanager: use `async with target(app):` (or `with`), "
+        "not `.__anext__()`.",
+    ),
+    (
+        re.compile(r"InvalidSpecError|already been mocked out"),
+        "Do not autospec an attribute that may already be a mock (app.state values are plain): assign a MagicMock in a "
+        "fixture that restores the previous value.",
+    ),
+    (
+        re.compile(r"instance of Runnable expected"),
+        "A MagicMock is not a LangChain Runnable: use langchain_core.language_models.fake.FakeListLLM(responses=[...]) or "
+        "patch the chain builder.",
+    ),
+    (
+        re.compile(r"Missing '[^']+' (?:radio|button|option)|<div id=\"root\">"),
+        "Streamlit's HTML is an empty JavaScript shell: test the UI in-process with streamlit.testing.v1.AppTest.",
+    ),
+    (
         re.compile(r"SRE module mismatch|Microsoft Visual C\+\+ 14\.0"),
         "Environment problem (a mixed interpreter or a package that needs a C/C++ compiler), not a test defect: "
         "do not rewrite the test; call environment_gaps and stub packages that are not installed.",
@@ -243,6 +262,15 @@ def build_updates(
                 }
             )
     env = []
+    for package in (environment or {}).get("missing_packages") or []:
+        env.append(
+            {
+                "tool": package,
+                "action": f"Declared package '{package}' is not installed, so tests that need it cannot pass: install the "
+                "platform build tools or use a Python version that has wheels for the pinned version (the strict "
+                "environment guardrail proposes one), then run again.",
+            }
+        )
     if environment and environment.get("missing_prerequisites"):
         env = [
             {"tool": t, "action": f"Install {t} on the host, then retry the environment stage."}

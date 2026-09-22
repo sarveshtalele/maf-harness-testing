@@ -41,6 +41,7 @@ EXEC_RULES = compile_rules(
             "EXEC-101",
             r"(?:\w*Error: )?No module named '(?P<module>[\w.]+)'|ImportError: cannot import name|ModuleNotFoundError",
         ),
+        ("EXEC-101", r"Could not import (?P<module>[\w-]+) python package"),
         ("EXEC-104", r"\bSyntaxError\b|\bIndentationError\b|\bTabError\b"),
         ("EXEC-105", r"fixture '[^']+' not found|ScopeMismatch"),
         ("EXEC-107", r"reading from stdin|EOF when reading a line"),
