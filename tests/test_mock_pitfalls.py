@@ -183,6 +183,75 @@ def test_a_magicmock_llm_inside_a_real_chain_is_rejected_a_fake_llm_passes(ctx):
     gate(ctx, "def test_x(mocker):\n    mocker.patch('app.data_ingestion.Ollama')\n    assert True\n")
 
 
+# --- hand-written stand-in for PromptTemplate inside a real chain ----------------------------------------------------
+
+PROMPT_BAD = """
+from unittest.mock import patch
+from app.rag_pipeline import get_chain
+
+def test_x():
+    captured = None
+
+    class MockPromptTemplate:
+        def __init__(self, template, input_variables):
+            nonlocal captured
+            captured = template
+
+    with patch("app.rag_pipeline.PromptTemplate", MockPromptTemplate):
+        get_chain()
+    assert captured
+"""
+PROMPT_GOOD = """
+from unittest.mock import patch, MagicMock
+from langchain_core.prompts import PromptTemplate
+from app.rag_pipeline import get_chain
+
+def test_x():
+    spy = MagicMock(wraps=PromptTemplate)
+    with patch("app.rag_pipeline.PromptTemplate", spy):
+        get_chain()
+    assert spy.called
+"""
+
+
+@pytest.fixture
+def prompt_ctx(tmp_path):
+    rag_with_prompt = RAG.replace(
+        "from langchain_community.vectorstores import Chroma\n",
+        "from langchain_community.vectorstores import Chroma\nfrom langchain_core.prompts import PromptTemplate\n",
+    ).replace(
+        "return RetrievalQA.from_chain_type(llm=llm, retriever=None)",
+        'prompt = PromptTemplate(template="x", input_variables=["context"])\n'
+        '    return RetrievalQA.from_chain_type(llm=llm, retriever=None, chain_type_kwargs={"prompt": prompt})',
+    )
+    ingest_with_prompt = (
+        "from langchain_core.prompts import PromptTemplate\n" + INGEST
+    )  # module-level, no chain built
+    sources = {**SOURCES, "app/rag_pipeline.py": rag_with_prompt, "app/data_ingestion.py": ingest_with_prompt}
+    for rel, text in sources.items():
+        target = tmp_path / rel
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(text, encoding="utf-8")
+    (tmp_path / "requirements.txt").write_text(
+        "fastapi\nstreamlit\nlangchain\nlangchain-core\nlangchain-community\npytest-mock\nplaywright\n"
+        "pytest-asyncio\nhttpx\n",
+        encoding="utf-8",
+    )
+    return RepoContext(root=tmp_path, source_files=list(sources), package_files=["requirements.txt"])
+
+
+def test_a_hand_written_prompt_template_stand_in_inside_a_real_chain_is_rejected_a_spy_passes(prompt_ctx):
+    with pytest.raises(ValueError, match=r"BasePromptTemplate|pydantic"):
+        gate(prompt_ctx, PROMPT_BAD)
+    gate(prompt_ctx, PROMPT_GOOD)
+    # patching the class name in a module that builds no chain is harmless
+    harmless = (
+        "class MockPromptTemplate:\n    pass\n\n"
+        "def test_x(mocker):\n    mocker.patch('app.data_ingestion.PromptTemplate', MockPromptTemplate)\n    assert True\n"
+    )
+    gate(prompt_ctx, harmless)
+
+
 # --- Streamlit HTML ---------------------------------------------------------------------------------------------------
 
 STREAMLIT_BAD = """

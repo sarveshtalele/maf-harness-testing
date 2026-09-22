@@ -326,7 +326,15 @@ def static_gate(ctx: RepoContext, path: str, content: str) -> None:
         except SyntaxError as exc:
             raise ValueError(f"{path} line {exc.lineno}: SyntaxError: {exc.msg}") from exc
         if ctx.source_files:
-            check_python_imports(content, ctx.source_files, ctx.dependency_text, path, read_source=ctx.read)
+            installed = frozenset(_installed_python_modules(ctx)) if ctx.workspace else None
+            check_python_imports(
+                content,
+                ctx.source_files,
+                ctx.dependency_text,
+                path,
+                read_source=ctx.read,
+                installed=installed,
+            )
         check_python_test_hygiene(content, path, ctx.source_files, read_source=ctx.read)
         check_mock_pitfalls(content, path, ctx)
     elif path.endswith((".java", ".kt")):

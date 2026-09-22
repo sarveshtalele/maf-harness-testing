@@ -110,6 +110,21 @@ def test_static_gate_reports_the_first_defect_for_a_draft_test(py_repo):
         static_gate(py_repo, "tests/t.py", "def test_a(:\n    pass\n")
 
 
+def test_static_gate_accepts_an_installed_transitive_dependency_not_directly_declared(py_repo, tmp_path):
+    """`langchain` is declared; `langchain_core` is only pulled in transitively, but it really is importable."""
+    venv = tmp_path / "ws" / ".harness-venv"
+    site = (
+        venv / "Lib" / "site-packages"
+        if platform_compat.IS_WINDOWS
+        else venv / "lib" / "python3.12" / "site-packages"
+    )
+    (site / "langchain_core-0.1.0.dist-info").mkdir(parents=True)
+    (site / "langchain_core-0.1.0.dist-info" / "top_level.txt").write_text("langchain_core\n")
+    py_repo.workspace = tmp_path / "ws"
+    code = "from langchain_core.language_models.fake import FakeListLLM\n\ndef test_a():\n    assert FakeListLLM\n"
+    static_gate(py_repo, "tests/t.py", code)  # would raise "not a declared dependency" without the fix
+
+
 def test_python_autofix_adds_only_unambiguous_imports_in_the_right_place(py_repo):
     code = '"""doc"""\n# CASE_ID: TC-1\ndef test_a(tmp_path):\n    assert os.sep and json.dumps({}) and MagicMock() and datetime\n'
     fixed, fixes = fix_python(py_repo, "tests/t.py", code)

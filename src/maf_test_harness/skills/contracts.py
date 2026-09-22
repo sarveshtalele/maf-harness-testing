@@ -929,7 +929,7 @@ def _module_symbols(source: str) -> tuple[set[str], dict[str, tuple[str, int]]] 
 
     if not visit(tree.body) or "__getattr__" in names:
         return None
-    local: dict[str, tuple[str, int]] = {}
+    local: dict[str, tuple[str, int, str | None]] = {}
     for func in ast.walk(tree):
         if isinstance(func, ast.FunctionDef | ast.AsyncFunctionDef):
             for node in ast.walk(func):
@@ -945,8 +945,16 @@ def _module_symbols(source: str) -> tuple[set[str], dict[str, tuple[str, int]]] 
                     if isinstance(node, ast.Assign)
                     else []
                 )
+                # A single-target `x = pkg.Class.method(...)` names the real thing to patch instead of `x`.
+                call_target = (
+                    _call_name(node.value)
+                    if isinstance(node, ast.Assign)
+                    and len(node.targets) == 1
+                    and isinstance(node.value, ast.Call)
+                    else None
+                )
                 for name in inner:
-                    local.setdefault(name, (func.name, getattr(node, "lineno", func.lineno)))
+                    local.setdefault(name, (func.name, getattr(node, "lineno", func.lineno), call_target))
     return names, local
 
 
@@ -995,11 +1003,16 @@ def check_python_imports(
     dependency_text: str,
     path: str = "",
     read_source: Callable[[str], str | None] | None = None,
+    installed: frozenset[str] | None = None,
 ) -> None:
-    """Reject imports that cannot resolve: not stdlib, not a repository module, not a declared dependency.
+    """Reject imports that cannot resolve: not stdlib, not a repository module, not declared or installed.
 
     Catches the most common model failures (guessing an import path, importing a name that does not exist at module
-    level) before a run is wasted on them. With ``read_source`` the imported *names* are verified too.
+    level) before a run is wasted on them. With ``read_source`` the imported *names* are verified too. ``installed``
+    (normalized distribution/top-level-module names actually present in the isolated environment, when it exists) is
+    checked alongside ``dependency_text``: a package the repository does not pin directly but a declared dependency
+    pulls in transitively (``langchain`` -> ``langchain_core``) is real and importable, not a hallucinated import —
+    rejecting it would send the model back to the mock/mistake ``dependency_text`` alone rejected it for.
     """
     try:
         tree = ast.parse(content)
@@ -1056,6 +1069,8 @@ def check_python_imports(
                     f"(top-level '{top}' exists; check the sub-module against source_files)"
                 )
             if top.lower().replace("_", "-") in dependencies:
+                continue
+            if installed and top.lower().replace("_", "-") in installed:
                 continue
             leaf = name.split(".")[-1]
             if path_aware and leaf in stems:
@@ -1231,13 +1246,19 @@ def check_python_test_hygiene(
                     break  # a submodule, or a builtin (mock.patch creates those on module targets)
                 if parsed is not None and attribute not in parsed[0]:
                     local = parsed[1].get(attribute)
+                    call_target = local[2] if local else None
                     hint = (
-                        f" It is only imported/assigned inside {local[0]}(), so it does not exist on the module: patch "
-                        f"`sys.modules` with a stub before calling {local[0]}(), or patch a module-level name."
-                        if local
+                        f" It is only assigned inside {local[0]}() as `{attribute} = {call_target}(...)`: patch "
+                        f"`{'.'.join(parts[:cut])}.{call_target}` instead, the call that actually produces it."
+                        if local and call_target
                         else (
-                            " Patch only module-level names shown in target_source; if it is a package the module imports "
-                            "lazily inside a function, patch `sys.modules` with a stub instead."
+                            f" It is only imported/assigned inside {local[0]}(), so it does not exist on the module: patch "
+                            f"`sys.modules` with a stub before calling {local[0]}(), or patch a module-level name."
+                            if local
+                            else (
+                                " Patch only module-level names shown in target_source; if it is a package the module imports "
+                                "lazily inside a function, patch `sys.modules` with a stub instead."
+                            )
                         )
                     )
                     raise ValueError(

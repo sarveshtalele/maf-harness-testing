@@ -49,6 +49,14 @@ gateway — git-ignored, read at startup, shell env wins over the file. Tests ru
 3. **When working on this repository:** run the live checks (real repositories, real installs) with every requirement of the target
    installed first; do not start test generation or report results from a half-installed environment.
 4. **Same rule for development:** `uv sync --extra dev` (and `--extra hooks` for the SDK tests) before running the gate.
+5. **Static gates must know the real environment, not just the declared one.** Once `environment_setup` is `ready`, the installed
+   set is guaranteed complete (rule 1), so `tools.code_intel.static_gate` trusts it: `check_python_imports` accepts an import that
+   resolves against the packages actually installed (`tools.code_intel._installed_python_modules`), not only ones the repository
+   pins directly — a declared package's transitive dependency (`langchain` -> `langchain_core`) is real and must not be rejected as
+   "not a declared dependency" (that previously blocked the harness's own remedy for the mocked-LLM pitfall and produced the exact
+   repeated failure this rule exists to stop). Every hint a static gate gives for a rejected pattern must name the concrete fix
+   (e.g. `skills.contracts.check_python_test_hygiene` naming the constructor call to patch instead of a local variable it assigns),
+   not a generic pointer — a vague hint is what makes the model guess again and hit the same gate on the next attempt.
 
 ## Architecture
 

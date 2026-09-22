@@ -167,6 +167,16 @@ def test_unresolvable_python_imports_fail_with_a_hint(code, needle):
         check_python_imports(code, REPO, "requests\n")
 
 
+def test_installed_transitive_module_of_a_declared_dependency_resolves():
+    """`langchain` is declared; `langchain_core` is only its transitive dependency, but it is really installed."""
+    from maf_test_harness.skill_contracts import check_python_imports
+
+    code = "from langchain_core.language_models.fake import FakeListLLM\n"
+    with pytest.raises(ValueError, match="not a declared dependency"):
+        check_python_imports(code, REPO, "langchain==0.1.20\n")
+    check_python_imports(code, REPO, "langchain==0.1.20\n", installed=frozenset({"langchain-core"}))
+
+
 def test_non_importable_module_paths_get_actionable_guidance_and_path_aware_tests_pass():
     from maf_test_harness.skill_contracts import check_python_imports
 

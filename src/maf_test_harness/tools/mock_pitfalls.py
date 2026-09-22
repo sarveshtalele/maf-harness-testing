@@ -7,6 +7,8 @@ never opens the file gets them wrong and the failure surfaces one execution late
   ``'_AsyncGeneratorContextManager' object has no attribute '__anext__'``;
 * ``patch.object(app.state, "x", autospec=True)``: ``app.state`` attributes are plain values (often a mock from another test);
 * a ``MagicMock`` standing in for a LangChain LLM inside a real chain: chains need a ``Runnable``;
+* a hand-written stand-in class patched in for ``PromptTemplate``/``ChatPromptTemplate`` inside a real chain: LangChain
+  validates it as a pydantic ``BasePromptTemplate`` and rejects a plain duck-typed object;
 * a "UI test" that starts Streamlit and reads the server's HTML: it is an empty JavaScript shell, the widgets are not in it;
 * a function called with a literal path that its first statement checks with ``os.path.exists``, while the test mocks
   everything else.
@@ -47,6 +49,7 @@ CHAIN_BUILDERS = {
     "create_retrieval_chain",
     "ConversationalRetrievalChain",
 }
+PROMPT_CLASSES = {"PromptTemplate", "ChatPromptTemplate", "FewShotPromptTemplate", "PipelinePromptTemplate"}
 _MAX_SOURCE_BYTES = 200_000
 
 
@@ -185,6 +188,49 @@ def _string_targets(tree: ast.AST) -> list[str]:
     return out
 
 
+def _local_class_names(tree: ast.AST) -> set[str]:
+    """Classes defined in this file (a stand-in the model wrote itself, not something imported for real)."""
+    return {node.name for node in ast.walk(tree) if isinstance(node, ast.ClassDef)}
+
+
+def _patch_replacement_targets(tree: ast.AST, replacements: set[str]) -> list[str]:
+    """String target of every ``patch(target, replacement)`` whose second argument is one of ``replacements``."""
+    out = []
+    for node in ast.walk(tree):
+        if (
+            isinstance(node, ast.Call)
+            and _name(node.func) in {"patch", "object"}
+            and len(node.args) >= 2
+            and isinstance(node.args[0], ast.Constant)
+            and isinstance(node.args[0].value, str)
+            and isinstance(node.args[1], ast.Name)
+            and node.args[1].id in replacements
+        ):
+            out.append(node.args[0].value)
+    return out
+
+
+def _check_mock_prompt_template_in_chain(tree: ast.AST, path: str, ctx: RepoContext) -> None:
+    local_classes = _local_class_names(tree)
+    if not local_classes:
+        return
+    for target in _patch_replacement_targets(tree, local_classes):
+        module, _, attr = target.rpartition(".")
+        if attr not in PROMPT_CLASSES or not module:
+            continue
+        rel = module.replace(".", "/") + ".py"
+        source = ctx.read(rel) or ctx.read(f"src/{rel}") or ""
+        if CHAIN_MARKERS.search(source):
+            raise ValueError(
+                f"{path}: patching `{target}` with a hand-written stand-in class puts a plain object where a real chain "
+                f"expects a `{attr}` (LangChain validates it as a pydantic `BasePromptTemplate` and raises `value is not a "
+                f"valid dict`). Capture the call without breaking validation: import the real `{attr}` (the same class "
+                f"`{module}` imports it from) and use `patch('{target}', MagicMock(wraps=real_{attr.lower()}_class))` — the "
+                "mock calls through to the real constructor and returns a genuine instance, while still recording the call "
+                "args to assert on."
+            )
+
+
 def _check_mock_llm_in_chain(tree: ast.AST, path: str, content: str, ctx: RepoContext) -> None:
     if re.search(r"Fake\w*(?:LLM|ChatModel)|RunnableLambda|GenericFakeChatModel", content):
         return
@@ -277,6 +323,7 @@ def check_mock_pitfalls(content: str, path: str, ctx: RepoContext) -> None:
     _check_context_manager_misuse(tree, path, functions)
     _check_autospec_on_state(tree, path)
     _check_mock_llm_in_chain(tree, path, content, ctx)
+    _check_mock_prompt_template_in_chain(tree, path, ctx)
     _check_streamlit_html(content, path)
     _check_existence_guard(tree, path, content, functions)
 
