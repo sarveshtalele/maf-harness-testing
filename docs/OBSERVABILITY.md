@@ -14,7 +14,7 @@ The plan follows the "Observability" material in the MAF documentation (`agent-f
 
 | MAF guidance | What the harness does |
 |---|---|
-| Agents, chat clients, tools and workflows are instrumented by default and emit spans following the OpenTelemetry **GenAI semantic conventions**; the application owns providers and exporters (`configure_otel_providers()` or the standard `OTEL_*` variables) | `telemetry.configure_telemetry()` (`HARNESS_OTEL` = `off` (default), `console` or `otlp`) calls `configure_otel_providers` once per process when asked, and degrades to a recorded reason when the OpenTelemetry SDK is not installed. Nothing else is required for the tab. |
+| Agents, chat clients, tools and workflows are instrumented by default and emit spans following the OpenTelemetry **GenAI semantic conventions**; the application owns providers and exporters (`configure_otel_providers()` or the standard `OTEL_*` variables) | `monitoring.telemetry.configure_telemetry()` (`HARNESS_OTEL` = `off` (default), `console` or `otlp`) calls `configure_otel_providers` once per process when asked, and degrades to a recorded reason when the OpenTelemetry SDK is not installed. Nothing else is required for the tab. |
 | Telemetry contains **metadata only** by default; capturing prompts, responses and tool arguments (`ENABLE_SENSITIVE_DATA`, `OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT`) is an explicit opt-in for exporters with an appropriate retention policy | Sensitive-data capture is **always off**. The harness's own trace stores summarised, redacted arguments and hashes; never prompts, model responses or complete generated files. |
 | Do not instrument the same client twice (duplicate spans) | The harness adds no second instrumentation layer to the harness agent; its recorder is MAF **middleware** (`ChatMiddleware`, `FunctionMiddleware`) beside the framework's spans. |
 | Use middleware for passive tracing, metrics and logs without changing execution | `BudgetGuard` (provider calls) and `ToolTraceMiddleware` (tool calls) emit events; they do not alter results. |
@@ -32,14 +32,14 @@ flowchart LR
     R[run.json<br/>state: provenance, budget, artifacts]
     Q[qa_report.json]
   end
-  RT[maf_runtime.py<br/>BudgetGuard · ToolTraceMiddleware] --> T
+  RT[agent/runtime.py<br/>BudgetGuard · ToolTraceMiddleware] --> T
   WF[workflow.py] --> A
   WF --> R
-  T --> B[observability.build_report]
+  T --> B[monitoring.report.build_report]
   A --> B
   R --> B
   Q --> B
-  B --> UI[Observability tab · observability_ui.py]
+  B --> UI[Observability tab · monitoring/ui.py]
   B --> CLI[maf-harness trace]
   B --> MD[Markdown / JSON export]
 ```
@@ -58,9 +58,10 @@ Runs made before this file existed still render: tools come from the recorded mo
 
 | Sub-tab | Shows |
 |---|---|
-| **Overview** | Stage table (actor, assigned vs verified-loaded skills, model runs, tool calls, tokens, repairs, errors, approval), tokens-by-stage chart, every model run |
+| **Overview** | Stage table (actor, assigned vs verified-loaded skills, model runs, tool calls, tokens, repairs, errors, approval), tokens-by-stage chart, every model run; the *Prompt cache* table (provider-reported hit and repeated-prefix share per stage; also in the exports as `cache`), see [CACHING.md](CACHING.md) |
 | **Skills** | Each skill (origin: upstream/local, role, stages, loads, scripts run, package hash) and every skill-tool call |
 | **Tools** | Usage by tool name including harness tools with **0 calls**, plus a filterable call log (stage, category, failures only) |
+| **Automation** | What acted on its own: hook decisions (enforced denies, would-block in evaluate-only mode, hook errors, whether hooks were disabled), typed-tool calls, automatic recoveries (applied, and those left to a human as `needs_approval`/`manual`) and diagnosis-agent notes. Rebuilt from `audit.jsonl` and the `environment/`/`executions/` reports; see [HOOKS.md](HOOKS.md) and [AUTOMATION.md](AUTOMATION.md) |
 | **Timeline** | Human gates, host actions, model runs, skill and tool calls in time order, on lanes, with a scatter view |
 | **Traceability** | requirement → case → generated file → result, filterable by requirement state, with the skills that produced each link; warns about requirements without cases and cases without requirements |
 | **Integrity checks** | Every assigned skill loaded via MAF · no unexpected tools · tool and provider calls succeeded · reviewed-script policy · trace tokens equal the ledger-accounted tokens · OpenTelemetry mode |
@@ -71,7 +72,7 @@ Command line: `maf-harness trace .harness_runs/<run> [--format md|json] [--out F
 ## 4. Interpreting it
 
 * **Skills loaded ≠ skills obeyed.** The check proves the framework executed `load_skill` for every assigned skill; it cannot prove the model followed the skill text.
-* **Unused harness tools are a finding about the model, not a defect.** In the measured run the agents called none of the nine central tools; the host applies the same checks itself.
+* **Unused harness tools are a finding about the model, not a defect.** In the measured run the agents called none of the eleven central tools; the host applies the same checks itself.
 * **A partial trace fails the token check on purpose.** If a run was resumed across the introduction of tracing, trace tokens will not equal the ledger's; the check names both numbers.
 * **The token check compares provider-reported usage** (`reported_tokens`); calls without provider usage are marked `token_source = unreported`.
 

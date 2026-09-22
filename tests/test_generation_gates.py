@@ -63,6 +63,25 @@ def test_patching_a_lazily_imported_package_is_rejected_with_a_precise_hint():
         check_python_test_hygiene(code, "tests/t.py", files, read_source=sources.get)
 
 
+def test_patching_a_locally_assigned_name_hints_the_call_that_produces_it():
+    """`vectordb = Chroma.from_documents(...)` is a local: patch the constructor, not the local name it lands in."""
+    files = ["app/data_ingestion.py"]
+    source = (
+        "from langchain_community.vectorstores import Chroma\n\n\n"
+        "def load_pdf(path):\n"
+        "    vectordb = Chroma.from_documents(documents=[], embedding=None)\n"
+        "    vectordb.persist()\n"
+    )
+    code = (
+        "from unittest.mock import patch\n\ndef test_x():\n"
+        '    with patch("app.data_ingestion.vectordb"):\n        pass\n'
+    )
+    with pytest.raises(ValueError, match=r"patch `app\.data_ingestion\.Chroma\.from_documents` instead"):
+        check_python_test_hygiene(
+            code, "tests/t.py", files, read_source={"app/data_ingestion.py": source}.get
+        )
+
+
 def test_patching_module_level_names_submodules_and_third_parties_is_allowed():
     files = ["engine/ai_analysis.py", "engine/__init__.py"]
     sources = {"engine/ai_analysis.py": APP, "engine/__init__.py": ""}

@@ -169,3 +169,16 @@ uv run maf-harness run https://github.com/agoncal/agoncal-application-petstore-e
 uv run maf-harness verify-run .harness_runs/<run>
 # an existing --run-dir resumes at its pending gate (a run ended by a Stop decision cannot be resumed)
 ```
+
+## 8. requirement-analysis-skill (stdlib-only Python, `scripts/engine/` package, no tests), Windows
+
+Two real CLI runs (`maf-harness run <url> --auto-approve --auto-heal 2`, gateway model `deepseek-v4-flash-global`). Both were stopped by the operator, so neither is a completed run; what they showed is what counts.
+
+| Run | Outcome | What it exposed |
+|---|---|---|
+| `ras-e2e` (before the fix) | stopped at an error gate in test generation, batch 2 of 12, after 22 provider calls / 438k tokens | every generated test imported `from engine.requirement_parser import ...` (the real module path is `scripts.engine.requirement_parser`). The import gate should have said so but accepted it: it substring-matched "engine" against the free text of `assets/requirements.txt` ("The engine is pure Python standard library"). The build gate caught it (`ModuleNotFoundError: No module named 'engine'`) only after three model attempts per batch. Defect H15, fixed in `tools/code_intel.py`. |
+| `ras-e2e2` (with the fix) | reached the test-execution review: **FAIL, 16 passed / 3 failed of 19 cases**, 22 provider calls / 443k tokens; heal round 1 had started when the run was stopped | **no generation repair and no stage error**; the design stage needed two repairs (an actor without a case, then one uncovered requirement), as before. The 3 failures are test-authoring defects and a test asserting on a temp-path string, shown in the QA report with `file:line`. |
+
+Environment on this run: venv created, `pytest` installed, `assets/requirements.txt` (comments only) handled; no toolchain download and no recovery were needed. Hooks were active (StageGate recorded 8 times, 0 denies).
+
+Prompt cache on these runs (the report's *Prompt cache* table): provider-reported cache hit 27.2 % of input tokens in `ras-e2e` and 16.2 % in `ras-e2e2`; in `ras-e2e2` the generation stage repeated only **8.3 %** of each request's prefix (57.1 % in `ras-e2e`, where repair retries re-send nearly the same prompt). Reading: the stable-first ordering guarantees the schema and rules are in the prefix, but on a real repository the per-batch source and evidence are most of each prompt, so the saving from ordering alone is small. The fixture-repository figure in [../AUTOMATION.md](../AUTOMATION.md) (60.7 % to 82.2 %) does not carry over. Next lever: make the per-batch evidence and source smaller or shared across batches ([../IMPLEMENTATION_PLAN.md](../IMPLEMENTATION_PLAN.md) *Next* 5).

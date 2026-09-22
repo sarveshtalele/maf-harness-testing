@@ -1,9 +1,11 @@
 # Architecture
 
 This document explains how the harness is built, what every file does, and where each guarantee is enforced.
-Companion documents: [README](../README.md) (setup and usage), [CATALOG](CATALOG.md) (every persona, central tool
-and Agent Skill), [IMPLEMENTATION_PLAN](IMPLEMENTATION_PLAN.md) (design decisions,
-roadmap), [audit/ERRORS.md](audit/ERRORS.md) (defect register), [audit/E2E_RESULTS.md](audit/E2E_RESULTS.md) (live runs), [OBSERVABILITY.md](OBSERVABILITY.md) (tracing and the Observability tab).
+Companion documents: [README](../README.md) (setup and usage), [CATALOG](CATALOG.md) (every persona, tool and Agent Skill),
+[ENVIRONMENTS](ENVIRONMENTS.md) (Python/Java/.NET isolation and toolchains), [ERROR_PLAYBOOK](ERROR_PLAYBOOK.md) (every known error, whose fault, what to do),
+[AUTOMATION](AUTOMATION.md) (bounded recovery, diagnosis agent, prompt assembly), [HOOKS](HOOKS.md) (hooks and typed tools), [CACHING](CACHING.md) (token/prefix-cache metrics),
+[IMPLEMENTATION_PLAN](IMPLEMENTATION_PLAN.md) (decisions, roadmap), [audit/ERRORS.md](audit/ERRORS.md) (defect register), [audit/E2E_RESULTS.md](audit/E2E_RESULTS.md) (live runs),
+[OBSERVABILITY.md](OBSERVABILITY.md) (tracing and the Observability tab). The project's own working notes: [../memory.md](../memory.md).
 
 ## 1. What the system does
 
@@ -11,7 +13,7 @@ Given a public GitHub repository, the harness produces an **executed, traceable 
 
 1. clone and statically analyze the repository (host),
 2. infer requirements, actors and the environment needed to run the repo (agent + Agent Skill),
-3. install dependencies into an **isolated environment** after a tool-call approval (host),
+3. install dependencies into an **isolated environment** after a tool-call approval (host): a venv for Python, private caches for Maven/Gradle/NuGet, and, when the machine lacks the right JDK, Maven, Gradle, .NET SDK or Python, a checksum-verified toolchain in `~/.maf-harness/toolchains` (listed in the same approval); a failed step is classified and, where the playbook allows, retried automatically within fixed bounds,
 4. plan tests, design test cases per actor (agents + Agent Skills), and — only after the design is approved — generate test source,
 5. run the tests after a second tool-call approval, and report per case / per requirement, with the **files and lines to update** (host),
 6. hand back a **ZIP** with the complete repository, all generated and executed tests, and the evidence.
@@ -20,7 +22,8 @@ Every model-authored artifact passes a human review gate. Anything that touches 
 
 Facts the host can compute exactly (does this import resolve, what are this class's real constructors, which routes exist, does this file
 compile) are **not left to the model**: a central set of deterministic tools (`code_intel`, `autofix`, `build_gate`, `agent_tools`) answers them,
-so generation calls are spent on test design, not on guessing.
+so generation calls are spent on test design, not on guessing. Around every tool call, model call and gate a fail-closed **hook engine** applies secret
+redaction, a write scope and download consent, plus any user hooks ([HOOKS.md](HOOKS.md)). Works on Windows, macOS and Linux (every OS-specific decision lives in `envs/platform_compat.py`).
 
 ## 2. System context
 
@@ -32,17 +35,23 @@ flowchart LR
   CLI --> WF
   subgraph HOST[Deterministic host]
     WF[Checkpointed MAF workflow · workflow.py]
-    AN[repo_analyzer · stack]
-    ENV[environment · runners]
-    QA[qa_report · triage · packaging]
-    CT[central tools · code_intel · autofix · build_gate]
+    AN["repo/analyzer · repo/stack"]
+    ENV["envs: environment · runners · toolchains · recovery"]
+    QA["qa: report · triage · packaging"]
+    CT["central + typed tools · code_intel · autofix · build_gate"]
+    ER["errors: taxonomy · classifiers · playbook"]
+    HK["hooks: verdict engine · built-ins · hooks.json"]
   end
   WF --> AN
   WF --> ENV
   WF --> QA
   WF --> CT
+  ENV --> ER
+  WF --> HK
+  HK -. guards .-> CT
+  HK -. guards .-> RT
   CT -. FunctionTools .-> RT
-  WF -->|stage prompt + schema| RT[maf_runtime.py]
+  WF -->|stage prompt + schema| RT[agent/runtime.py]
   RT -->|create_harness_agent + SkillsProvider| MAF[(Microsoft Agent Framework)]
   MAF -->|chat completions| GW[(OpenAI-compatible gateway)]
   RT -. reads .-> SK[/"skills/*/SKILL.md"/]
@@ -56,13 +65,13 @@ Seven stages, each a MAF `Executor`; gates are MAF `request_info` events; state 
 
 | # | Stage | Actor | Consumes | Produces | Human gate | Code |
 |---|---|---|---|---|---|---|
-| 1 | `repo_analysis` | host | URL | clone, inventory, frameworks, stack profile, evidence | tool approval (clone) → review | `workflow.answer`, `repo_analyzer`, `stack` |
-| 2 | `requirements` | agent · `repository-requirements` (+ `api-contract-analyzer` when an OpenAPI/Swagger file exists) | analysis, evidence | actors, requirements, acceptance criteria, rules, API contracts, **environment needs** + deterministic environment plan | review / revise | `workflow.model`, `skill_contracts.finalize_discovered_requirements` |
-| 3 | `environment_setup` | host | requirements, stack | isolated environment with dependencies installed | **tool approval (install)** → review; can skip | `workflow.plan_environment/run_environment`, `environment`, `runners.setup_steps/execute_setup` |
+| 1 | `repo_analysis` | host | URL | clone, inventory, frameworks, stack profile, evidence | tool approval (clone) → review | `workflow.answer`, `repo.analyzer`, `repo.stack` |
+| 2 | `requirements` | agent · `repository-requirements` (+ `api-contract-analyzer` when an OpenAPI/Swagger file exists) | analysis, evidence | actors, requirements, acceptance criteria, rules, API contracts, **environment needs** + deterministic environment plan | review / revise | `workflow.model`, `skills.contracts.finalize_discovered_requirements` |
+| 3 | `environment_setup` | host | requirements, stack | isolated environment with dependencies installed | **tool approval (install)** → review; can skip | `workflow.plan_environment/run_environment`, `environment`, `envs.runners.setup_steps/execute_setup` |
 | 4 | `test_planning` | agent · `test-planning` | requirements | levels, frameworks, risks, order | review / revise | `workflow.model` |
-| 5 | `test_design` | agent · `test-design-generator` + `test-data-generator` | requirements, plan | cases with level/actor/target, traceability, coverage | review / revise; **generation cannot start before approval** | `skill_contracts.finalize_design`, `workflow._require_coverage_or_reason` |
-| 6 | `test_generation` | agent · `generic-test-generator` + `test-data-generator` (+ `junit-generator` for Java/Kotlin, + `playwright-test-generator` for ui/e2e cases) | approved cases, evidence | one test file per case (validated) | review / revise | `workflow._generate_tests_batched`, `skill_contracts.validate_generated_files` |
-| 7 | `test_execution` | host | generated files, environment | results, QA report, files to update, skill-contract reports (`traceability-generator`, `coverage-analyzer`), ZIP | **tool approval (run)** → review; regenerate failing tests (≤3 rounds) or skip | `workflow.plan_execution/run_execution/heal`, `runners.execute_plan`, `qa_report`, `triage`, `packaging` |
+| 5 | `test_design` | agent · `test-design-generator` + `test-data-generator` | requirements, plan | cases with level/actor/target, traceability, coverage | review / revise; **generation cannot start before approval** | `skills.contracts.finalize_design`, `workflow._require_coverage_or_reason` |
+| 6 | `test_generation` | agent · `generic-test-generator` + `test-data-generator` (+ `junit-generator` for Java/Kotlin, + `playwright-test-generator` for ui/e2e cases) | approved cases, evidence | one test file per case (validated) | review / revise | `workflow._generate_tests_batched`, `skills.contracts.validate_generated_files` |
+| 7 | `test_execution` | host | generated files, environment | results, QA report, files to update, skill-contract reports (`traceability-generator`, `coverage-analyzer`), ZIP | **tool approval (run)** → review; regenerate failing tests (≤3 rounds) or skip | `workflow.plan_execution/run_execution/heal`, `envs.runners.execute_plan`, `qa.report`, `qa.triage`, `qa.packaging` |
 
 `execute=False` removes stages 3 and 7 (generation-only workflow).
 
@@ -83,7 +92,7 @@ flowchart TD
   R --> M
 ```
 
-Errors carry a concrete remedy (`triage.remedy_for`); after `GENERATION_MAX_ATTEMPTS` failures the batch surfaces a retry/stop gate and the next round
+Errors carry a concrete remedy (`qa.triage.remedy_for`); after `GENERATION_MAX_ATTEMPTS` failures the batch surfaces a retry/stop gate and the next round
 starts at a higher temperature (a deterministic model otherwise repeats a rejected answer verbatim). Accepted batches are cached, so a retry or a
 heal round regenerates only what failed.
 
@@ -122,23 +131,32 @@ sequenceDiagram
 
 | Guarantee | Enforcement point |
 |---|---|
-| The assigned Agent Skill was loaded through MAF's `load_skill` | `maf_runtime.ToolTraceMiddleware` + `_verify_skill_loaded`; audited by `maf-harness verify-run` |
-| Skills follow the Agent Skills spec and vendored upstream skills are unmodified | `skills_registry.lint_skill`, `verify_lock` against `skills/SKILLS.lock.json` (per-file SHA-256), both inside `require_valid` before each stage |
-| Skill scripts run only if reviewed and unchanged | `skill_scripts.HarnessScriptRunner` (allow-list + SHA-256 per run, argv-only, temp dir, sanitized env, timeout); MAF `run_skill_script` is auto-approved only for model-tier scripts (`script_approval_rule`) |
-| Only a daily cap of 50,000,000 tokens (all runs on the machine); no per-run, per-call or call-count limits | `usage.DailyUsageLedger` (locked JSON file per local day), `maf_runtime.BudgetGuard` (reserve → call → settle), `settings.DAILY_TOKEN_LIMIT` |
+| The assigned Agent Skill was loaded through MAF's `load_skill` | `agent.runtime.ToolTraceMiddleware` + `_verify_skill_loaded`; audited by `maf-harness verify-run` |
+| Skills follow the Agent Skills spec and vendored upstream skills are unmodified | `skills.registry.lint_skill`, `verify_lock` against `skills/SKILLS.lock.json` (per-file SHA-256), both inside `require_valid` before each stage |
+| Skill scripts run only if reviewed and unchanged | `skills.scripts.HarnessScriptRunner` (allow-list + SHA-256 per run, argv-only, temp dir, sanitized env, timeout); MAF `run_skill_script` is auto-approved only for model-tier scripts (`script_approval_rule`) |
+| Only a daily cap of 50,000,000 tokens (all runs on the machine); no per-run, per-call or call-count limits | `llm.usage.DailyUsageLedger` (locked JSON file per local day), `agent.runtime.BudgetGuard` (reserve → call → settle), `settings.DAILY_TOKEN_LIMIT` |
 | Design cases exist at unit level, per actor, and per requirement (or the gap is explained) | `workflow._require_coverage_or_reason` (repair loop, last attempt reaches the human with the gap recorded) |
 | Test source only after the design is approved | graph edge `test_design → test_generation` only fires on approve; `state.approved` hash checked; `tests/test_policies.py` |
-| Generated source is structurally sound | `skill_contracts.validate_generated_files`: paths, markers, one declaration per file, no placeholders/skips, syntax (Python AST + `compile()`; javac/node/gofmt or brace balance) |
-| Generated tests cannot fail for reasons the host can see in advance | `code_intel.static_gate`: import resolution (Python names and modules, Java libraries), undefined names, mocked `sys.exit`, patch targets that do not exist, setup collections never used, URL paths that are not application routes, Arquillian; then `build_gate.try_build` (collect/compile) after the approved install |
-| Mechanical mistakes are repaired, not re-asked, and every repair is visible | `autofix.autofix_files` (only fixes that cannot change what a test means); `autofix` events in `audit.jsonl`, counters in `state.tooling` |
-| A rejected answer is not repeated verbatim | retry temperature schedule in `workflow._generate_tests_batched`, `forbidden_imports` in the generation policy, actionable feedback (`triage.remedy_for`, named extra test methods) |
+| Generated source is structurally sound | `skills.contracts.validate_generated_files`: paths, markers, one declaration per file, no placeholders/skips, syntax (Python AST + `compile()`; javac/node/gofmt or brace balance) |
+| Generated tests cannot fail for reasons the host can see in advance | `tools.code_intel.static_gate`: import resolution (Python names and modules, Java libraries), undefined names, mocked `sys.exit`, patch targets that do not exist, setup collections never used, URL paths that are not application routes, Arquillian; then `tools.build_gate.try_build` (collect/compile) after the approved install |
+| Mechanical mistakes are repaired, not re-asked, and every repair is visible | `tools.autofix.autofix_files` (only fixes that cannot change what a test means); `autofix` events in `audit.jsonl`, counters in `state.tooling` |
+| A rejected answer is not repeated verbatim | retry temperature schedule in `workflow._generate_tests_batched`, `forbidden_imports` in the generation policy, actionable feedback (`qa.triage.remedy_for`, named extra test methods) |
 | Provider limits are reported as such | `workflow.friendly_error` (HTTP 429 → "the provider's limit, not the harness's daily cap"); never worked around |
 | Nothing is installed or run without approval; plan cannot change after approval | `workflow.ask` (tool gate) + `plan_hash` comparison in `run_environment` / `run_execution` |
-| Install is isolated | `runners.setup_steps` (venv, project `node_modules`, cache-dir repositories); system tools only reported (`environment.TOOLS` hints) |
-| Secrets never reach installed/test code | `execution._child_env` allow-list, fake `HOME` |
-| Every skill and tool invocation of a run can be inspected afterwards, and the trace is checked against the run's own accounting | `trace.jsonl` written from MAF middleware; `observability.build_report` integrity checks (skills loaded, no unexpected tools, trace tokens = ledger tokens) |
-| A green verdict means something | `runners.execute_plan` (fresh reports only), `qa_report.verdict_for` |
-| Every failure names the files/lines to change | `triage.build_updates` → `qa_report["updates"]` |
+| Install is isolated | `envs.runners.setup_steps` (venv, project `node_modules`, cache-dir repositories); system tools only reported (`envs.environment.TOOLS` hints) |
+| Secrets never reach installed/test code | `envs.execution._child_env` allow-list, fake `HOME` |
+| Secrets are removed from what a model sees and what a tool receives | `hooks.builtin.secret_redaction` (PreToolUse arguments, PostToolUse results), also for MAF `list[Content]` results (`hooks.maf_bridge`) |
+| An agent can only write inside the workspace, and only read non-secret repository files | `tools.file_tools` resolves every path against its roots (independent of hooks) and `hooks.builtin.path_scope` denies write tools that escape; secret-looking files (`.env`, keys) are refused and hidden |
+| A hook that fails does not fail open | `hooks.engine.HookEngine.fire`: crash, timeout or garbage on PreToolUse / PreModelCall / StageGate is a deny; a veto at a gate leaves the approval pending and unconsumed (`workflow.Harness.respond`) |
+| A toolchain download is consented to, verified and contained | listed in the environment approval (`envs.plan_toolchains`), `hooks.builtin.download_consent`, SHA-256/512 check before extraction, archive path-escape refusal, file lock, private cache (`envs.toolchains`) |
+| **Strict environment guardrail**: no stage after `environment_setup` starts with a missing or conflicting requirement | `workflow.Harness._environment_shortfalls` + `_block_incomplete_environment` (error gate, retry/stop only), `Harness.enter` refuses later stages while `environment.status == incomplete`; `envs.recovery.python_fallback` proposes another interpreter (approved as a download in the next plan); `settings.STRICT_ENV` |
+| Generated tests do not repeat known run-time mistakes | `tools.mock_pitfalls.check_mock_pitfalls` in `code_intel.static_gate`: `@asynccontextmanager` driven as a generator, `autospec` on `app.state`, a MagicMock LLM in a real LangChain chain, Streamlit HTML fetched as a UI test, a literal path passed to a function that checks it exists |
+| The installed Python packages are mutually consistent | `envs.runners.execute_setup` re-resolves what installed in one pip run after a per-package fallback, then `envs.env_check.dependency_conflicts` (`pip check`) and `envs.runners.repair_conflicts` (joint resolution with the declared requirements, at most 2 rounds); leftovers are reported and make an API-mismatch `TypeError` environmental (`ENV-PY-009`), not a test defect |
+| Automatic recovery is bounded | `envs.recovery.choose` (autonomy auto/auto_once only, each recipe once per step, 4 per run, never a download without consent) applied by `envs.runners.execute_setup` |
+| Every environment or execution failure is classified, not guessed | `errors.classify` (38 codes: category, autonomy, recipes) used by `execute_setup`, `tools.build_gate`, `qa.report`, `qa.triage` |
+| Every skill and tool invocation of a run can be inspected afterwards, and the trace is checked against the run's own accounting | `trace.jsonl` written from MAF middleware; `monitoring.report.build_report` integrity checks (skills loaded, no unexpected tools, trace tokens = ledger tokens) |
+| A green verdict means something | `envs.runners.execute_plan` (fresh reports only), `qa.report.verdict_for` |
+| Every failure names the files/lines to change | `qa.triage.build_updates` → `qa_report["updates"]` |
 
 ## 5. Run directory (`.harness_runs/<run>/`)
 
@@ -146,11 +164,11 @@ sequenceDiagram
 |---|---|
 | `run.json` | view + full state (artifacts, approvals, provenance, budget, `routes`, `tooling` counters, `generation_rounds`) |
 | `checkpoints/` | MAF `FileCheckpointStorage` |
-| `audit.jsonl` | every request, response, tool start/finish, repair, heal, `autofix` and `build_gate` event |
+| `audit.jsonl` | every request, response, tool start/finish, repair, heal, `autofix` and `build_gate` event; `hook_decision` / `hook_error` / `hook_event` records; `toolchains_ready` / `toolchains_failed`; `typed_tool` calls; `agent_diagnosis_*` |
 | `trace.jsonl` | MAF-middleware trace: `model_run`, `chat_call` (tokens, duration) and `tool_call` (category, summarised arguments, duration) events |
 | `repo/` | shallow clone (never modified) |
 | `workspace/` | repository copy + isolated env + generated tests (what actually ran) |
-| `environment/attempt-N/` | install step logs + `report.json` (immutable) |
+| `environment/attempt-N/` | install step logs + `report.json` (immutable): steps (a recovery retry keeps its own `NN-<step>-retryK` directory), `recoveries`, per-step `recovery` (what was considered and why), `agent_diagnosis` when the opt-in agent ran |
 | `executions/attempt-N/` | test step logs + `report.json` (immutable) |
 | `generation_attempts/` | every raw model attempt for test generation |
 | `build_checks/` | per-attempt `pytest --collect-only` / `mvn test-compile` output of the build gate |
@@ -161,39 +179,57 @@ sequenceDiagram
 
 ### 6.1 Application package `src/maf_test_harness/`
 
+Modules are grouped in subpackages: `repo/` (intake), `envs/` (environment, execution, toolchains), `skills/` (Agent Skills),
+`tools/` (central tools), `agent/` (MAF runtime, personas), `llm/` (token ledger), `qa/` (report, triage, packaging),
+`monitoring/` (trace, report, telemetry), `ui/` (Streamlit helpers) and `errors/` (taxonomy and playbook). The old flat
+module names are compatibility aliases of the same module objects (`sys.modules` aliasing, see `tests/test_module_layout.py`).
+
 | File | Responsibility | Key contents | Notes |
 |---|---|---|---|
 | `__init__.py` | Package marker | exports `RepoAnalysis`, `TestPlan` | — |
 | `settings.py` | Single source of configuration | `load_dotenv` (git-ignored `.env`, never overrides the shell, reads only `OPENAI_*`/`LLM_MODEL`/`HARNESS_*`), gateway env vars (`OPENAI_MODEL`, alias `LLM_MODEL`), `DAILY_TOKEN_LIMIT` (default 50,000,000, env `HARNESS_DAILY_TOKEN_LIMIT`), `AGENT_TOOLS` / `AUTOFIX` / `BUILD_GATE` switches, batch/attempt sizes, timeouts, `SKILL_MODE` | Credentials are read from the environment or the git-ignored `.env` only |
 | `models.py` | Pydantic contracts for model output | `RequirementsDraft` (actors, requirements, criteria, rules, contracts, environment needs), `TestPlan`, `TestDesignDraft`/`TestDesignCaseDraft` (level/actor/target), `GeneratedFilesDraft` (source as `lines[]`), `RepoAnalysis` | `extra="forbid"` + bounded lists so structured output is enforceable and cannot run away |
-| `personas.py` | Role, goal and rules per stage | `PERSONAS` for the 5 agent stages + 2 host stages, `persona_instructions()` | Host stages appear so the UI/audit list every stage uniformly |
-| `repo_analyzer.py` | Repository intake (incl. `declared_dependencies`, `extract_target_sources`, `collaborator_signatures`, `java_signatures`) | `validate_github_url` (page or clone URL, optional `/tree/<ref>`), `clone_repository` (no prompts, no hooks), `analyze_repository`, `_detect_frameworks`, `build_repository_evidence` (source-first, line-numbered, bounded, secrets redacted) | Only tracked files are analyzed |
-| `code_intel.py` | Central deterministic tools | `RepoContext`, `resolve_import`, `module_api`, `find_symbol`, `read_source`, `installed_packages`, `list_routes`, `probe_tools`, `static_gate` (all static gates for one file), `undefined_python_names` | One implementation serves the host pre-check, the auto-fixers and the agent tools; read-only and bounded |
-| `autofix.py` | Mechanical repairs before any model retry | `fix_python` (missing stdlib/mock imports, unresolvable module path → the one repository module with that leaf), `fix_java` (JDK, unique repository class and JUnit imports, static assertion imports), `autofix_files` | Only fixes that cannot change what a test means; every fix is audited (`autofix` events, `state.tooling`) |
-| `build_gate.py` | Compile/collect candidates in the prepared workspace | `try_build` (`pytest --collect-only` per file, `mvn test-compile`), `_maven_errors` (file:line + symbol detail, de-duplicated) | Runs only after the approved environment install; never runs test bodies; candidates and their classes are removed afterwards |
-| `agent_tools.py` | The central tools as MAF `FunctionTool`s | `HarnessToolbox`, `STAGE_TOOLS`, `tool_instructions` | Small per-stage selection; calls appear in `skill_tool_trace[stage].harness_tool_calls` |
-| `routes.py` | Route inventory | `extract_routes` (JAX-RS, Spring, Flask/FastAPI, Express), `route_prefixes` | Shown to generation and used by `check_route_literals`; best effort, empty inventory disables the URL gate |
-| `stack.py` | Deterministic stack profile | `detect_stack` → ecosystems, primary, test runner, web UI/service hints, OpenAPI/CI/container files, missing tools | Drives runner and environment plan |
-| `environment.py` | Environment plan | `build_environment_plan` (prerequisites with versions and install hints, isolation strategy, exact install steps incl. nested `requirements*.txt` and evidence-backed documented packages), `nested_requirements`, `documented_packages`, `steps_from_plan` | System tools are reported, never installed |
-| `runners.py` | Per-ecosystem adapters and execution | `setup_steps`, `build_plan`, `execute_setup`, `execute_plan` (fresh evidence only, compile-error quarantine), result parsers (JUnit/Jest/Go/TRX), `map_results_to_cases`, allow-listed pytest helpers | Python, Node (jest/vitest/Playwright), Maven, Gradle, Go, .NET |
-| `execution.py` | Safe process execution + workspace | `run_command` (argv only, process-group timeout, sanitized env, immutable result dir), `copy_repo`, `write_generated`, JUnit reader | Local process — **not a sandbox** |
-| `skill_contracts.py` | Deterministic adapters around skill contracts (incl. `resolve_id`, `flatten_nested_with`, import gates, `check_python_test_hygiene`, `check_route_literals`) | ID assignment, `finalize_discovered_requirements`, `finalize_design` (traceability matrix, coverage, gaps, schema check), `validate_generated_files`, syntax/import gates | The "trust boundary" between model text and accepted artifacts |
-| `skills_registry.py` | Agent Skills spec lint + supply-chain lock | `lint_skill`, `lint_all`, `load_lock`, `verify_lock`, `reviewed_scripts`, `require_valid`, `tree_sha256` | Package hash goes into provenance; tampering with a vendored skill is refused |
-| `skills_config.py` | Which skills each stage loads | `SKILL_NAMES`, `COMPANION_PURPOSE`, `skills_for(stage, state)` → primary + companions | Deterministic over the stack profile and the approved design |
-| `skill_scripts.py` | Reviewed-script execution | `HarnessScriptRunner` (MAF `SkillScriptRunner` + host executor), `script_approval_rule`, `ScriptRefused` | Two tiers: model-callable and host-only |
-| `skill_reports.py` | Skill-contract QA reports | `build_traceability`, `build_coverage`, `run_skill_checks` | Validated by the upstream `validate_traceability.py` and `coverage_templates.yaml` |
-| `maf_runtime.py` | MAF integration | `MAFHarnessRuntime` (per-stage `create_harness_agent`, `SkillsProvider`, central tools via `tool_provider`, priming, verification, per-call `temperature`), `ToolTraceMiddleware`, `BudgetGuard`, `extract_json_object` | See §7 |
-| `runtime_service.py` | One asyncio loop thread | `RuntimeService.submit/close` | Keeps MAF clients on one loop for the Streamlit UI |
+| `agent/personas.py` | Role, goal and rules per stage | `PERSONAS` for the 5 agent stages + 2 host stages, `persona_instructions()` | Host stages appear so the UI/audit list every stage uniformly |
+| `repo/analyzer.py` | Repository intake (incl. `declared_dependencies`, `extract_target_sources`, `collaborator_signatures`, `java_signatures`) | `validate_github_url` (page or clone URL, optional `/tree/<ref>`), `clone_repository` (no prompts, no hooks), `analyze_repository`, `_detect_frameworks`, `build_repository_evidence` (source-first, line-numbered, bounded, secrets redacted) | Only tracked files are analyzed |
+| `tools/code_intel.py` | Central deterministic tools | `RepoContext`, `resolve_import`, `module_api`, `find_symbol`, `read_source`, `installed_packages`, `list_routes`, `probe_tools`, `static_gate` (all static gates for one file), `undefined_python_names` | One implementation serves the host pre-check, the auto-fixers and the agent tools; read-only and bounded |
+| `tools/autofix.py` | Mechanical repairs before any model retry | `fix_python` (missing stdlib/mock imports, unresolvable module path → the one repository module with that leaf), `fix_java` (JDK, unique repository class and JUnit imports, static assertion imports), `autofix_files` | Only fixes that cannot change what a test means; every fix is audited (`autofix` events, `state.tooling`) |
+| `tools/build_gate.py` | Compile/collect candidates in the prepared workspace | `try_build` (`pytest --collect-only` per file, `mvn test-compile`), `_maven_errors` (file:line + symbol detail, de-duplicated) | Runs only after the approved environment install; never runs test bodies; candidates and their classes are removed afterwards |
+| `hooks/` | Hooks | `HookEngine` (deny > ask > transform > allow, fail-closed), built-ins, `.harness/hooks.json` loader, `HookFunctionMiddleware` / `HookChatMiddleware` | Enforcing events: PreToolUse, PreModelCall, StageGate; see [HOOKS.md](HOOKS.md) |
+| `envs/recovery.py` | Bounded recovery | `choose` (allow-listed action for a diagnosed failure), `preview`; applied by `execute_setup` | Max 4 recoveries per run, once per recipe per step; see [AUTOMATION.md](AUTOMATION.md) |
+| `agent/diagnosis.py` | Diagnosis agent (opt-in) | `DiagnosisNote`, `diagnose`; runs through `MAFHarnessRuntime.run_tool_agent` | Read-only tools, advisory only |
+| `llm/prompts.py` | Prompt assembly | `build_prompt`, `generation_prompt`, `prefix_ratio` | Stable content first for the provider's prefix cache |
+| `tools/mock_pitfalls.py` | Run-time pitfalls, found statically | `check_mock_pitfalls` (called by `static_gate`) | Narrow heuristics with the fix in the message; false positive = one repair round |
+| `tools/registry.py` + `env_tools.py`, `file_tools.py`, `skill_tools.py`, `typed.py` | Typed tools | `ToolRegistry.call` (validate → hooks → handler → hooks), `ToolResult` envelope, scoped file tools, diagnosis tools | Used by the diagnosis agent and opt-in evaluators; see [HOOKS.md](HOOKS.md) |
+| `tools/agent_tools.py` | The central tools as MAF `FunctionTool`s | `HarnessToolbox`, `STAGE_TOOLS`, `tool_instructions` | Small per-stage selection; calls appear in `skill_tool_trace[stage].harness_tool_calls` |
+| `repo/routes.py` | Route inventory | `extract_routes` (JAX-RS, Spring, Flask/FastAPI, Express), `route_prefixes` | Shown to generation and used by `check_route_literals`; best effort, empty inventory disables the URL gate |
+| `repo/stack.py` | Deterministic stack profile | `detect_stack` → ecosystems, primary, test runner, web UI/service hints, OpenAPI/CI/container files, missing tools | Drives runner and environment plan |
+| `envs/environment.py` | Environment plan | `build_environment_plan` (prerequisites with versions and install hints, isolation strategy, exact install steps incl. nested `requirements*.txt` and evidence-backed documented packages), `nested_requirements`, `documented_packages`, `steps_from_plan` | System tools are reported, never installed |
+| `envs/runners.py` | Per-ecosystem adapters and execution | `setup_steps`, `build_plan`, `execute_setup`, `execute_plan` (fresh evidence only, compile-error quarantine), result parsers (JUnit/Jest/Go/TRX), `map_results_to_cases`, allow-listed pytest helpers | Python, Node (jest/vitest/Playwright), Maven, Gradle, Go, .NET |
+| `envs/execution.py` | Safe process execution + workspace | `run_command` (argv only, process-group timeout, sanitized env, immutable result dir), `copy_repo`, `write_generated`, JUnit reader | Local process — **not a sandbox** |
+| `envs/platform_compat.py` | Every OS-specific decision | venv layout (`Scripts` vs `bin`), tool resolution (`.cmd`/`.exe` on Windows, never an extensionless script), process-tree kill, fake-`HOME` isolation, cache paths | No other module branches on `sys.platform`; a relative `argv[0]` is never passed to a child (Windows resolves it against the caller) |
+| `envs/env_check.py` | Declared vs installed | `declared_requirements`, `installed_distributions`, `missing_packages` | Turns a failed bulk install into a named list, so tests stub what could not be installed instead of failing on it |
+| `envs/app_launcher.py` | Start the application under test | `detect_launch` (Streamlit, FastAPI, Flask, npm `start`/`dev`), `free_port`, `running` (context manager that starts the app and waits until it answers) | For UI/E2E (Playwright) cases with `--start-app`; shown in the run approval |
+| `envs/spec.py` | What a repository needs | `detect_spec` (Python from `requires-python`/`.python-version`; JDK from pom/Gradle/`.sdkmanrc`; .NET from `global.json`/`TargetFramework`; Maven/Gradle wrapper) | No network |
+| `envs/toolchains.py` | Find or provision a toolchain | `find`, `ensure`, `resolve_download`, `provision`, `apply_toolchains` (Temurin JDK, Maven, Gradle, .NET SDK, Python via `uv`) | Checksum before extraction, path-escape refusal, file lock, private cache `~/.maf-harness/toolchains`; downloads only after the environment approval |
+| `envs/python_env.py`, `java_env.py`, `dotnet_env.py` | Per-language adapters | environment variables (`JAVA_HOME`, `DOTNET_ROOT`, isolated `NUGET_PACKAGES`, ...) for a provisioned toolchain | |
+| `errors/` | Error taxonomy and playbook | `taxonomy.CODES` (38 codes), `classifiers/{python,java,dotnet,common}.py`, `engine.classify`, `playbook.RECIPES` | Category (environment / infra / test defect / app defect), autonomy (auto / auto_once / ask / manual), recipes; generates [ERROR_PLAYBOOK.md](ERROR_PLAYBOOK.md) |
+| `skills/contracts.py` | Deterministic adapters around skill contracts (incl. `resolve_id`, `flatten_nested_with`, import gates, `check_python_test_hygiene`, `check_route_literals`) | ID assignment, `finalize_discovered_requirements`, `finalize_design` (traceability matrix, coverage, gaps, schema check), `validate_generated_files`, syntax/import gates | The "trust boundary" between model text and accepted artifacts |
+| `skills/registry.py` | Agent Skills spec lint + supply-chain lock | `lint_skill`, `lint_all`, `load_lock`, `verify_lock`, `reviewed_scripts`, `require_valid`, `tree_sha256` | Package hash goes into provenance; tampering with a vendored skill is refused |
+| `skills/config.py` | Which skills each stage loads | `SKILL_NAMES`, `COMPANION_PURPOSE`, `skills_for(stage, state)` → primary + companions | Deterministic over the stack profile and the approved design |
+| `skills/scripts.py` | Reviewed-script execution | `HarnessScriptRunner` (MAF `SkillScriptRunner` + host executor), `script_approval_rule`, `ScriptRefused` | Two tiers: model-callable and host-only |
+| `skills/reports.py` | Skill-contract QA reports | `build_traceability`, `build_coverage`, `run_skill_checks` | Validated by the upstream `validate_traceability.py` and `coverage_templates.yaml` |
+| `agent/runtime.py` | MAF integration | `MAFHarnessRuntime` (per-stage `create_harness_agent`, `SkillsProvider`, central tools via `tool_provider`, priming, verification, per-call `temperature`), `ToolTraceMiddleware`, `BudgetGuard`, `extract_json_object` | See §7 |
+| `ui/runtime_service.py` | One asyncio loop thread | `RuntimeService.submit/close` | Keeps MAF clients on one loop for the Streamlit UI |
 | `workflow.py` | Checkpointed workflow | `Harness` (stages, gates, repair loops, heal loop, environment/execution stages), `StageExecutor`, batched generation with caching and the autofix → gate → build-gate pipeline (`_generate_tests_batched`, `_repo_context`, `_build_gate`), `_generation_policy`, `friendly_error` | Central orchestration |
-| `qa_report.py` | QA report | `build_qa_report`, `verdict_for`, `render_markdown` | requirement → case → file → result |
-| `triage.py` | Files/lines to update | `locations`, `classify`, `build_updates`, `REMEDIES` / `remedy_for` (concrete fix per failure pattern) | Test-defect vs application-first classification; remedies feed regeneration and the QA report |
-| `packaging.py` | Deliverable ZIP | `build_deliverable`, `run_instructions` | Repo + generated tests + `harness-report/` |
-| `artifact_presenter.py` | JSON → readable UI/Markdown | `json_to_markdown`, `render_json_ui`, `artifact_downloads`, `humanize` | Shared by UI and `scripts/json_to_markdown.py` |
-| `trace.py` | Run trace recorder | `TraceRecorder` (thread-safe JSON Lines), `read_trace`, `summarize_arguments` / `redact`, `tool_category` | Never stores prompts, responses or complete files |
-| `observability.py` | Observability and traceability report | `build_report` (from `trace.jsonl`, `audit.jsonl`, `run.json`, `qa_report.json`), `render_markdown` | Works for runs made before tracing existed (summary level); integrity checks |
-| `observability_ui.py` | Streamlit page for the report | `render_observability` (Overview, Skills, Tools, Timeline, Traceability, Integrity checks, Export) | Imported lazily by `app.py` |
-| `telemetry.py` | Optional OpenTelemetry export | `configure_telemetry` (`HARNESS_OTEL` = off, console or otlp; sensitive data always off) | See OBSERVABILITY.md §5 |
-| `usage.py` | Daily token ledger | `DailyUsageLedger` (`reserve`, `settle`, `snapshot`), `DailyLimitError` | File lock makes concurrent runs safe |
+| `qa/report.py` | QA report | `build_qa_report`, `verdict_for`, `render_markdown` | requirement → case → file → result |
+| `qa/triage.py` | Files/lines to update | `locations`, `classify`, `build_updates`, `REMEDIES` / `remedy_for` (concrete fix per failure pattern) | Test-defect vs application-first classification; remedies feed regeneration and the QA report |
+| `qa/packaging.py` | Deliverable ZIP | `build_deliverable`, `run_instructions` | Repo + generated tests + `harness-report/` |
+| `ui/artifact_presenter.py` | JSON → readable UI/Markdown | `json_to_markdown`, `render_json_ui`, `artifact_downloads`, `humanize` | Shared by UI and `scripts/json_to_markdown.py` |
+| `monitoring/trace.py` | Run trace recorder | `TraceRecorder` (thread-safe JSON Lines), `read_trace`, `summarize_arguments` / `redact`, `tool_category` | Never stores prompts, responses or complete files |
+| `monitoring/report.py` | Observability and traceability report | `build_report` (from `trace.jsonl`, `audit.jsonl`, `run.json`, `qa_report.json`), `render_markdown` | Works for runs made before tracing existed (summary level); integrity checks |
+| `monitoring/ui.py` | Streamlit page for the report | `render_observability` (Overview, Skills, Tools, Timeline, Traceability, Integrity checks, Export) | Imported lazily by `app.py` |
+| `monitoring/telemetry.py` | Optional OpenTelemetry export | `configure_telemetry` (`HARNESS_OTEL` = off, console or otlp; sensitive data always off) | See OBSERVABILITY.md §5 |
+| `llm/usage.py` | Daily token ledger | `DailyUsageLedger` (`reserve`, `settle`, `snapshot`), `DailyLimitError` | File lock makes concurrent runs safe |
 | `cli.py` | Headless driver | `run` (resumes an existing `--run-dir` at its pending gate), `verify-run`, `trace`, `lint-skills` | Exit codes 0 pass, 1 fail, 2 inconclusive/error |
 
 ### 6.2 Entry points and scripts
@@ -257,6 +293,15 @@ its own artifacts. Everything else is refused, and every run is recorded in `sta
 | `test_repo_analyzer.py` | Analysis and evidence selection |
 | `test_skills_registry.py`, `test_personas.py`, `test_cli.py` | Skill lint, persona contracts, `verify-run` |
 | `test_harness_gates.py`, `test_recovery.py`, `test_attempt_audit.py`, `test_runtime_utils.py`, `test_artifact_presenter.py` | Approval replay guards, retry gates, attempt retention, runtime loop, presenters |
+| `test_module_layout.py` | every old flat import path is an alias of the same module object, patching through it works, every module imports |
+| `test_platform_compat.py`, `test_env_check.py`, `test_app_launcher.py` | Windows/POSIX venv layout, tool resolution, process-tree kill, declared-vs-installed packages, starting the app under test |
+| `test_errors.py`, `test_errors_wiring.py` (+ `error_cases.py`) | 56 recorded error logs classified to the right code, playbook consistency, wiring into install/build/QA |
+| `test_envs.py` | requirement detection (Python/Java/.NET), toolchain find/download/verify/extract against a local mirror, plan rewriting |
+| `test_env_recovery.py` | recovery chooser (pure) and `execute_setup` with real subprocesses (timeout retry, venv rewind, caps), plus a full workflow run |
+| `test_hooks.py`, `test_hooks_builtin.py`, `test_hooks_config.py` | verdict combination, fail-closed, evaluate-only, command/python hooks with real subprocesses, redaction, write scope, consent, `hooks.json` validation |
+| `test_hooks_maf.py`, `test_hooks_sdk.py`, `test_hooks_workflow.py` | hooks in a real MAF loop (in-house and AGENT-HOOKS backends; the SDK file skips without the extra) and in the real workflow gates |
+| `test_typed_tools.py`, `test_skill_tools.py`, `test_diagnosis_agent.py` | typed tool envelope/registry/scopes, reviewed-script validators as a tool, the diagnosis agent in a real MAF loop |
+| `test_prompt_assembly.py`, `test_cache_metrics.py`, `test_automation_report.py` | stable-first prompts and the measured prefix share, cached-token accounting, the Automation report and tab |
 | `targets/test_harness_browser.py` | Streamlit UI in a real browser (`HARNESS_BROWSER=1`) |
 | `targets/test_reverse_engineering.py`, `targets/test_petstore_browser.py` | Opt-in acceptance suites for the two qualification targets |
 
@@ -267,30 +312,39 @@ its own artifacts. Everything else is refused, and every run is recorded in `sta
 | `docs/ARCHITECTURE.md` | This document |
 | `docs/IMPLEMENTATION_PLAN.md` | Decisions, MS Learn alignment, milestones, risks |
 | `docs/OBSERVABILITY.md` | Observability design (from the MAF guide), data model, tab, CLI, OpenTelemetry |
+| `docs/ENVIRONMENTS.md`, `docs/ERROR_PLAYBOOK.md` | Python/Java/.NET isolation and toolchain provisioning; every known error code (generated) |
+| `docs/HOOKS.md`, `docs/AUTOMATION.md`, `docs/CACHING.md` | hooks and typed tools; recovery, diagnosis agent, prompt assembly; prompt-cache metrics |
+| `../memory.md` | working notes for whoever continues the project: decisions, status, gotchas |
 | `docs/audit/ERRORS.md` | Defect register with fixes |
 | `docs/audit/E2E_RESULTS.md` | Live end-to-end results and analysis of the original failing runs |
 | `docs/audit/*-e2e.xml`, `screenshots/` | Test evidence for defects found in the target applications |
 | `patches/*.patch` | Upstream fixes for those target defects |
 
-## 7. MAF integration in detail (`maf_runtime.py`, `skills_config.py`, `skill_scripts.py`)
+## 7. MAF integration in detail (`agent/runtime.py`, `skills/config.py`, `skills/scripts.py`)
 
+* **Two agent shapes.** Model stages use one harness agent per stage and skill set (below). `MAFHarnessRuntime.run_tool_agent` builds a short bounded loop with typed tools and no skills (the opt-in diagnosis agent, [AUTOMATION.md](AUTOMATION.md)). Both get the same middleware, ordered `[HookChat, BudgetGuard, ToolTrace, HookFunction]` (or `[AGENT-HOOKS bundle, BudgetGuard, ToolTrace]` with `HARNESS_HOOKS_BACKEND=sdk`).
 * **One harness agent per stage and skill set**: `create_harness_agent(client=…, skills_provider=…, auto_approval_rules=[read-only rule, script rule], middleware=[BudgetGuard, ToolTraceMiddleware])`. Web search, todos, modes, file memory and compaction are disabled; the tools are the skill tools plus the small per-stage selection of central tools.
 * **Skill selection**: `skills_for(stage, state)` returns the primary skill plus companions chosen from the stack profile (OpenAPI file present) and the approved design (Java/Kotlin, ui/e2e levels). The instructions name the primary skill as the task contract and state what each companion is for.
 * **Skill provider**: `SkillsProvider(DeduplicatingSkillsSource(FilteringSkillsSource(FileSkillsSource(skills_dir, script_runner=HarnessScriptRunner, script_filter=model-tier allow-list))))`, filtered to exactly the assigned skills.
 * **Priming**: a tool-only turn ("call `load_skill` once for each of …, then reply READY", up to 5 attempts) runs first because some gateways skip tool calls when structured output is requested in the same turn. The primed session snapshot is copied for every later call of that stage.
 * **Verification**: `ToolTraceMiddleware` records each real tool invocation; output is rejected unless `load_skill` succeeded for **every** assigned skill. Provenance (`skill_provenance` with companions, `skill_tool_trace`, `runtime_provenance`, `skill_script_runs`, per-call hashes) is stored in `run.json`; `maf-harness verify-run` re-checks it and the lock.
 * **Budget**: `BudgetGuard` reserves estimate + max output against the daily ledger before each call (raising `DailyLimitError` before any provider call) and settles to the provider-reported usage afterwards; failed calls are refunded. The only refusal is exceeding the daily cap (default 50,000,000 tokens for the local day). The model gateway may enforce its own, separate quota; a provider 429 is reported as such and is never worked around.
-* **Central tools** (`agent_tools.py`, `code_intel.py`): nine deterministic tools are registered as MAF function tools (`approval_mode="never_require"`, read-only or scratch-only): `resolve_import`, `module_api`, `find_symbol`, `read_source`, `check_test`, `list_routes`, `installed_packages`, `probe_tools`, `try_build`. Each stage gets a small selection (`STAGE_TOOLS`), and the instructions tell the agent to use them sparingly. The host applies the same functions itself on every candidate (autofix → static gates → build gate), so correctness never depends on the agent choosing to call them.
+* **Central tools** (`tools/agent_tools.py`, `tools/code_intel.py`): eleven deterministic tools are registered as MAF function tools (`approval_mode="never_require"`, read-only or scratch-only): `resolve_import`, `module_api`, `find_symbol`, `read_source`, `check_test`, `list_routes`, `installed_packages`, `probe_tools`, `try_build`. Each stage gets a small selection (`STAGE_TOOLS`), and the instructions tell the agent to use them sparingly. The host applies the same functions itself on every candidate (autofix → static gates → build gate), so correctness never depends on the agent choosing to call them.
 * **Fallback**: `HARNESS_SKILL_MODE=preloaded` injects all assigned skill texts into instructions and is recorded as `uses_maf_skills_provider: false`.
 
 ## 8. Extending
 
 | To add | Do this |
 |---|---|
-| An ecosystem | `stack.detect_stack` (signals) → `stack.REQUIRED_TOOLS` → `environment.TOOLS/ISOLATION` → `runners.setup_steps` and `build_plan` (+ a result parser) → tests in `test_stack_and_runners.py` |
+| An ecosystem | `repo.stack.detect_stack` (signals) → `repo.stack.REQUIRED_TOOLS` → `envs.environment.TOOLS/ISOLATION` → `envs.runners.setup_steps` and `build_plan` (+ a result parser) → tests in `test_stack_and_runners.py` |
 | A stage | add an `Executor` name to `workflow.STAGES`, a persona, and either a model stage (schema in `models.py`, skill in `skills/`, entry in `SKILL_NAMES`) or a host stage (`enter` branch) |
-| A skill | add it to `SELECTED` in `scripts/vendor_skills.py` (upstream) or create `skills/<name>/SKILL.md` (local), reference it in `skills_config.skills_for`, review any script and list it in `REVIEWED_SCRIPTS`; `maf-harness lint-skills` must pass |
-| A sandbox | replace `execution.run_command` behind the same signature (container/VM); everything above it is unchanged |
+| A skill | add it to `SELECTED` in `scripts/vendor_skills.py` (upstream) or create `skills/<name>/SKILL.md` (local), reference it in `skills.config.skills_for`, review any script and list it in `REVIEWED_SCRIPTS`; `maf-harness lint-skills` must pass |
+| A hook | add a built-in in `hooks/builtin.py` (register it in `build_builtins`), or a `.harness/hooks.json` entry; test with `tests/test_hooks*.py` ([HOOKS.md](HOOKS.md)) |
+| A recovery recipe | add a builder in `envs/recovery.py` (`_BUILDERS`) for a recipe id that exists in `errors/playbook.py`; the code's autonomy must be `auto`/`auto_once`; test in `tests/test_env_recovery.py` |
+| An error code | add rules under `errors/classifiers/`, a code in `errors/taxonomy.py`, a recorded log in `tests/error_cases.py`; regenerate `docs/ERROR_PLAYBOOK.md` |
+| A typed tool | a handler `(ToolContext, args) -> ToolResult` and a `ToolSpec` with a JSON schema in `tools/`; register it in `tools/typed.py` and its stage list |
+| A toolchain | `envs/toolchains.py` (`resolve_download`, `_home_in`, detection) and the requirement in `envs/spec.py` |
+| A sandbox | replace `envs.execution.run_command` behind the same signature (container/VM); everything above it is unchanged |
 
 ## 9. Configuration reference
 
@@ -305,3 +359,8 @@ its own artifacts. Everything else is refused, and every run is recorded in `sta
 | `HARNESS_MAX_OUTPUT_TOKENS` | env | 16384 | per-response cap (not a workflow limit) |
 | `HARNESS_EXECUTION_TIMEOUT` | env | 900 s | per install/test command |
 | `HARNESS_RUNS_DIR` | env | `.harness_runs` | run storage for the UI |
+| `HARNESS_HOOKS` / `HARNESS_HOOKS_BACKEND` | env | `enforce` / `inhouse` | hooks on, evaluate-only or off / in-house or AGENT-HOOKS-0.1 middleware (`[hooks]` extra) |
+| `HARNESS_DIAGNOSIS_AGENT` / `HARNESS_SKILL_EVALUATORS` | env | `off` | opt-in diagnosis agent / skill validators as a design-stage tool |
+| `HARNESS_TOOLCHAIN_DIR` / `HARNESS_TOOLCHAIN_MIRROR` | env | `~/.maf-harness/toolchains` / — | where provisioned JDK/Maven/Gradle/.NET/Python live / a mirror serving the same download paths |
+| `HARNESS_OTEL` | env | `off` | `console` or `otlp` OpenTelemetry export (content never captured) |
+| `.harness/hooks.json`, `~/.maf-harness/hooks.json` | files | none | user hooks and built-in options ([HOOKS.md](HOOKS.md)) |

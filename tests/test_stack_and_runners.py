@@ -356,3 +356,27 @@ def test_python_runner_adds_non_package_directories_to_the_import_path(tmp_path)
     )
     path = plan.steps[-1].env["PYTHONPATH"].split(os.pathsep)
     assert str(tmp_path / "skill-packages" / "03-agent") in path and str(tmp_path / "engine") not in path
+
+
+def test_failed_bulk_pip_install_is_retried_per_package(tmp_path, monkeypatch):
+    (tmp_path / "requirements.txt").write_text("fastapi==1\n# comment\nchromadb==2  # native\n\n-e .\n")
+    py = str(tmp_path / "py")
+    bulk = runners.Step(
+        "install-requirements",
+        [py, "-m", "pip", "install", "--disable-pip-version-check", "-q", "-r", "requirements.txt"],
+        "setup",
+        continue_on_failure=True,
+    )
+    calls = []
+
+    def fake_run(argv, cwd, out, **kwargs):
+        calls.append(argv)
+        out.mkdir(parents=True)
+        ok = "-r" not in argv and "chromadb==2" not in argv
+        return {"status": "command_succeeded" if ok else "failed", "exit_code": 0 if ok else 1}
+
+    monkeypatch.setattr(runners, "run_command", fake_run)
+    report = runners.execute_setup([bulk], tmp_path, tmp_path / "out")
+    assert [c[-1] for c in calls[1:]] == ["fastapi==1", "chromadb==2"]
+    assert report["steps"][0]["fallback"] == {"installed": ["fastapi==1"], "failed": ["chromadb==2"]}
+    assert any("1 installed, 1 failed (chromadb==2)" in w for w in report["warnings"])

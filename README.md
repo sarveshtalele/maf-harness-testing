@@ -4,6 +4,8 @@ A human-approved, evidence-driven **test-engineering harness** built on [Microso
 and Agent Skills. Give it a public GitHub repository. It analyzes the code, works out what must be installed (and installs it into an **isolated
 environment after your approval**), designs tests per user persona, generates them in the repository's native framework, **runs them**, and hands
 back a **ZIP with the complete repository, all generated and executed tests, and a QA report that lists the files and lines to update**.
+Runs on **Windows, macOS and Linux**; prepares isolated environments for **Python, Java (Maven and Gradle) and .NET** (and Node/Go), downloading a missing JDK, Maven, Gradle, .NET SDK or Python
+into a private cache after you approve it; classifies environment and test-run errors and retries what is safe automatically; and puts a fail-closed **hook engine** around every tool call, model call and gate.
 
 ```text
 repo URL ─► analyze ─► requirements ─► environment ─► test plan ─► test design ─► test generation ─► run ─► QA report + ZIP
@@ -14,9 +16,18 @@ repo URL ─► analyze ─► requirements ─► environment ─► test plan 
 Every model-authored artifact passes a human gate. Cloning, installing and running each need their own tool-call approval.
 Whatever the host can compute exactly (does this import resolve, what are this class's real constructors, which URL routes exist, does this file
 compile) is answered by deterministic **central tools** instead of a model retry — see [section 7](#7-central-tools-less-llm-guessing).
-Full design: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) · every persona, tool and Agent Skill: [docs/CATALOG.md](docs/CATALOG.md) ·
-roadmap: [docs/IMPLEMENTATION_PLAN.md](docs/IMPLEMENTATION_PLAN.md) ·
-defect register: [docs/audit/ERRORS.md](docs/audit/ERRORS.md) · live runs: [docs/audit/E2E_RESULTS.md](docs/audit/E2E_RESULTS.md) · observability: [docs/OBSERVABILITY.md](docs/OBSERVABILITY.md).
+
+| Document | What it covers |
+|---|---|
+| [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | design, every file, where each guarantee is enforced |
+| [docs/CATALOG.md](docs/CATALOG.md) | every stage persona, tool and Agent Skill |
+| [docs/ENVIRONMENTS.md](docs/ENVIRONMENTS.md) | isolation and toolchains for Python, Java, .NET |
+| [docs/ERROR_PLAYBOOK.md](docs/ERROR_PLAYBOOK.md) | every known error: code, whose fault, what may be done |
+| [docs/AUTOMATION.md](docs/AUTOMATION.md) | bounded recovery, diagnosis agent, prompt assembly, skill validators |
+| [docs/HOOKS.md](docs/HOOKS.md) | hooks (`.harness/hooks.json`), typed tools, the AGENT-HOOKS backend |
+| [docs/CACHING.md](docs/CACHING.md), [docs/OBSERVABILITY.md](docs/OBSERVABILITY.md) | token and prompt-cache metrics; tracing and the Observability tab |
+| [docs/IMPLEMENTATION_PLAN.md](docs/IMPLEMENTATION_PLAN.md), [docs/audit/](docs/audit/ERRORS.md) | roadmap; defect register and live-run results |
+| [memory.md](memory.md) | working notes for whoever continues the project |
 
 ## 1. Prerequisites
 
@@ -25,9 +36,9 @@ defect register: [docs/audit/ERRORS.md](docs/audit/ERRORS.md) · live runs: [doc
 | Python 3.11+ and [`uv`](https://docs.astral.sh/uv/) | run the harness | `python3 --version`, `uv --version` |
 | `git` | clone the target | `git --version` |
 | An OpenAI-compatible chat gateway and key (tool-calling model) | the agents | your provider |
-| Toolchain of the repository you test | the harness reports what is missing and how to install it, but never installs system tools | shown at the environment step |
+| Toolchain of the repository you test | a missing JDK, Maven, Gradle, .NET SDK or Python is listed in the environment approval and, if you approve, downloaded (checksum-verified) into `~/.maf-harness/toolchains`; nothing on the system PATH or registry changes. Other tools (Node, Go, ...) are reported with an install hint | shown at the environment step |
 
-Optional: Playwright browsers (`uv run playwright install chromium`) only if you run the UI browser tests.
+Optional: Playwright browsers (`uv run playwright install chromium`) only if you run the UI browser tests; the `hooks` extra (`uv sync --extra dev --extra hooks`) only for `HARNESS_HOOKS_BACKEND=sdk`.
 
 ## 2. Setup
 
@@ -95,9 +106,14 @@ Optional switches (defaults shown, all listed in `.env.example`):
 |---|---|---|
 | `HARNESS_DAILY_TOKEN_LIMIT` | `50000000` | the harness's daily token cap, shared by all runs on this machine |
 | `HARNESS_AGENT_TOOLS` / `HARNESS_AUTOFIX` / `HARNESS_BUILD_GATE` | `on` | central agent tools / mechanical import repairs / compile-collect gate (`off` for A/B comparison) |
+| `HARNESS_DIAGNOSIS_AGENT` / `HARNESS_SKILL_EVALUATORS` | `off` | LLM diagnosis note after unrecovered failures / skill validators as a design-stage tool; see [docs/AUTOMATION.md](docs/AUTOMATION.md) |
+| `HARNESS_STRICT_ENV` | `on` | **strict guardrail**: nothing after environment setup starts until every declared requirement is installed and consistent; an incomplete environment is a blocking gate that proposes another Python when that would fix it (see [docs/ENVIRONMENTS.md](docs/ENVIRONMENTS.md)) |
+| `HARNESS_HOOKS_BACKEND` | `inhouse` | `sdk` enforces hooks through MAF's AGENT-HOOKS-0.1 middleware (`pip install maf-test-harness[hooks]`) |
+| `HARNESS_HOOKS` | `enforce` | hooks (secret redaction, write scope, download consent, audit and your `.harness/hooks.json`): `enforce`, `evaluate_only` or `off`; see [docs/HOOKS.md](docs/HOOKS.md) |
 | `HARNESS_SKILL_MODE` | `progressive` | MAF `SkillsProvider`, or `preloaded` for models that cannot call tools |
 | `HARNESS_GENERATION_BATCH_SIZE`, `HARNESS_GENERATION_MAX_ATTEMPTS` | `3`, `3` | cases per model call, repair attempts per batch |
 | `HARNESS_EXECUTION_TIMEOUT` | `900` | seconds per install/test command |
+| `HARNESS_TOOLCHAIN_DIR`, `HARNESS_TOOLCHAIN_MIRROR` | `~/.maf-harness/toolchains`, unset | where provisioned toolchains live; a mirror that serves the same download paths (proxies, offline machines); see [docs/ENVIRONMENTS.md](docs/ENVIRONMENTS.md) |
 | `HARNESS_OTEL` | `off` | also export MAF's OpenTelemetry spans: `console` or `otlp` (needs `opentelemetry-sdk`); message content is never captured |
 
 ## 3. Run the application and open it in the browser
@@ -117,14 +133,16 @@ Walk-through:
    **environment plan** (prerequisites with versions and install hints, isolation strategy, exact install commands — including nested `requirements*.txt`
    files and packages that the repository's own files document).
 4. **Environment setup** is a tool-call approval: nothing is installed until you click *Install in isolated env* (or *Skip*). Libraries go into a venv,
-   the project's `node_modules`, or harness cache directories — never the system interpreter. Missing system tools (JDK, Node, Maven…) are reported with
-   install hints; install them and press *Re-check environment*.
+   the project's `node_modules`, or harness cache directories — never the system interpreter. The approval also lists each **toolchain** the repository needs
+   (Python version, JDK, Maven/Gradle, .NET SDK), whether it was found or would be downloaded, and from where. A failed step is classified ([error playbook](docs/ERROR_PLAYBOOK.md));
+   safe fixes (a longer timeout, forced dependency refresh, recreating the venv) are retried automatically, a few at most, and the review shows what was tried.
+   Tools the harness does not provision (Node, Go...) are reported with install hints; install them and press *Re-check environment*.
 5. Review **test plan**, then **test design** (cases per actor, with level, target and preconditions; unit cases are required). **Test source is generated only after you approve the design.**
 6. Review the generated tests, then approve **Run the tests here** (you see every command first).
 7. The **QA report** shows the verdict, per-case and per-requirement results, and **Files to update** (generated test files with line numbers, repository files
    with `file:line`, requirements still lacking a passing test). *Regenerate failing tests* sends only the failing cases back (≤3 rounds).
 8. On completion, download the **ZIP** (repository + generated tests + reports).
-9. Open the **Observability** tab of any run (also for saved runs) to see which skills and tools were invoked, what each stage cost, a timeline, and the requirement → case → file → result chain ([details](docs/OBSERVABILITY.md)).
+9. Open the **Observability** tab of any run (also for saved runs) to see which skills and tools were invoked, what each stage cost (with the provider's prompt-cache hit), a timeline, what the hooks blocked or rewrote and what recovery did (*Automation*), and the requirement → case → file → result chain ([details](docs/OBSERVABILITY.md)).
 
 The sidebar shows the token meter: **a daily cap of 50,000,000 tokens (shared by all runs on this machine, resetting at local midnight) is the only harness limit** — no per-run, per-call or call-count limits. The ledger lives in `~/.maf-harness/usage` (override with `HARNESS_USAGE_DIR`); counting starts when it is first written.
 Your model gateway may enforce its own, separate quota; when it answers HTTP 429 the UI says so and retrying will not help until it resets (the harness never works around a provider limit).
@@ -134,7 +152,8 @@ Your model gateway may enforce its own, separate quota; when it answers HTTP 429
 ```bash
 uv run maf-harness run https://github.com/owner/repo                       # answer each gate in the terminal
 uv run maf-harness run https://github.com/owner/repo --auto-approve --auto-heal 2      # unattended; exit 0 pass / 1 fail / 2 inconclusive
-uv run maf-harness run https://github.com/owner/repo --app-url http://127.0.0.1:8080/app   # allow UI/E2E cases
+uv run maf-harness run https://github.com/owner/repo --app-url http://127.0.0.1:8080/app   # allow UI/E2E cases (you run the app)
+uv run maf-harness run https://github.com/owner/repo --start-app                             # harness starts the app: Playwright E2E
 uv run maf-harness verify-run .harness_runs/<run>     # evidence that MAF harness + Agent Skills were really used
 uv run maf-harness trace .harness_runs/<run>          # skills, tools, cost and traceability report (--format json, --out FILE)
 uv run maf-harness run <repo> --run-dir .harness_runs/<run>   # an existing run directory resumes at its pending gate
@@ -173,15 +192,20 @@ Import and build errors are facts, so the harness answers them itself before ask
 
 | Layer | What it does | Switch |
 |---|---|---|
-| Agent tools (MAF function tools) | `resolve_import`, `module_api`, `find_symbol`, `read_source`, `check_test`, `list_routes`, `installed_packages`, `probe_tools`, `try_build` — small per-stage selection, read-only or scratch-only | `HARNESS_AGENT_TOOLS` |
+| Agent tools (MAF function tools) | `resolve_import`, `module_api`, `find_symbol`, `read_source`, `check_test`, `list_routes`, `installed_packages`, `probe_tools`, `try_build`, `environment_gaps`, `app_launch_plan` — small per-stage selection, read-only or scratch-only | `HARNESS_AGENT_TOOLS` |
 | Auto-fix | adds an unambiguous missing import (stdlib, mock, JDK, unique repository class, JUnit) or corrects a module path to the one repository module with that name; every fix is audited | `HARNESS_AUTOFIX` |
-| Static gates | syntax, imports, undefined names, mocked `sys.exit`, patch targets, URL paths | always on |
+| Static gates | syntax, imports, undefined names, mocked `sys.exit`, patch targets, URL paths, and known run-time pitfalls (`@asynccontextmanager` driven as a generator, `autospec` on `app.state`, a MagicMock LLM in a real LangChain chain, Streamlit HTML read as a UI test, a literal path given to a function that checks it exists) | always on |
 | Build gate | `pytest --collect-only` / `mvn test-compile` in the prepared workspace, after the approved environment install; reports `file:line` and symbol detail | `HARNESS_BUILD_GATE` |
 
 Prompts also carry the facts a model would otherwise guess: the application's routes and the real `BASE_URL` (which already contains the context path),
 constructor/method signatures of the classes the code under test uses, declared and *forbidden* libraries. Retries raise the sampling temperature and
 name the exact defect (for example the extra test methods), because a deterministic model otherwise repeats a rejected answer.
 The host applies every check itself, so correctness never depends on an agent choosing to call a tool (in the measured run the agents called none).
+
+**Typed tools, hooks and recovery.** A second, schema-validated tool set (`detect_toolchains`, `diagnose_env_error`, `plan_env_fix`, `read_file`, ...) returns one result envelope
+(`ok`, `code`, `category`, `evidence`, `suggested_fixes`, `next_actions`) and serves the opt-in diagnosis agent. Hooks run around every tool and model call and every gate: secret redaction,
+a write scope, download consent, plus your own rules in `.harness/hooks.json` (a hook that fails denies; `HARNESS_HOOKS=evaluate_only` records without blocking). See
+[docs/HOOKS.md](docs/HOOKS.md) and [docs/AUTOMATION.md](docs/AUTOMATION.md).
 
 ## 8. Agent Skills
 
@@ -210,7 +234,8 @@ uv run python scripts/vendor_skills.py --source /tmp/awesome-agent-skills    # r
 
 ```bash
 uv run ruff check src tests app.py scripts && uv run ruff format --check src tests app.py scripts
-uv run pytest -q --ignore=tests/targets                    # unit + component (real MAF) + workflow e2e; no network, no model
+uv run pytest -q --ignore=tests/targets                    # unit + component (real MAF) + workflow e2e; no network, no model (about 680 tests)
+uv run maf-harness lint-skills                             # Agent Skills spec lint + lock verification
 HARNESS_BROWSER=1 PLAYWRIGHT_BROWSERS_PATH=$PWD/.browser-cache uv run pytest tests/targets/test_harness_browser.py -q   # UI in a real browser
 ```
 
@@ -228,10 +253,19 @@ HARNESS_BROWSER=1 PLAYWRIGHT_BROWSERS_PATH=$PWD/.browser-cache uv run pytest tes
 | "Daily token cap of 50,000,000 reached" | wait for local midnight or raise `HARNESS_DAILY_TOKEN_LIMIT`; all runs on this machine share the cap (`maf-harness run` prints today's usage) |
 | "The model gateway refused the request (HTTP 429)" | the provider's own quota is exhausted; nothing in the harness can lift it. Choose *Retry* at the error gate after it resets (a *Stop* cannot be resumed) |
 | A batch keeps failing generation | the audit log (`audit.jsonl`, `generation_attempts/`) names the gate; retries vary the temperature, and the error text says what to fix |
-| UI tests need a live app | pass the running application URL; the harness does not start the system under test |
+| UI/E2E cases are not offered | pass the running application's URL with `--app-url`, or let the harness start it with `--start-app` (Streamlit, FastAPI, Flask, npm `start`/`dev`) |
+| "Blocked by hook (...)" | a hook denied the action: the message names it. Look at `hook_decision` in `audit.jsonl` or the Observability *Automation* tab; adjust `.harness/hooks.json`, or try `HARNESS_HOOKS=evaluate_only` |
+| "hook ... malformed" / `HookConfigError` at start | `.harness/hooks.json` (in the directory you started from, or `~/.maf-harness/`) failed validation; the message names the file and entry |
+| Environment step: "toolchain ... not installed and downloading was not approved" / a download failed | approve the environment plan (it lists the downloads), check network/proxy, or set `HARNESS_TOOLCHAIN_MIRROR`; provisioned tools are cached in `~/.maf-harness/toolchains` |
+| A step shows `attempt 2` / "applied recovery" | the harness retried it automatically (longer timeout, dependency refresh, venv recreated); the report lists each attempt and why |
+| "Environment incomplete: the strict guardrail blocks the next stage" | a declared requirement did not install (often a package that must be compiled and has no wheel for your Python). The message lists the reasons; *Retry* uses the proposed Python (you approve the download in the next plan), or install the platform build tools and retry |
+| `TypeError: ... unexpected keyword argument` / `ImportError` from a *library* (e.g. `Router.__init__() ... 'on_startup'`) in generated tests | the installed packages contradict each other (`ENV-PY-009`); the harness re-resolves them after install and reports what is left in the setup report (`dependency_conflicts`); see [docs/ENVIRONMENTS.md](docs/ENVIRONMENTS.md) |
+| `ModuleNotFoundError` for a declared dependency in generated tests | its install failed (often a package that needs a C/C++ compiler); the review lists `missing_packages`, tests are told to stub them, and the QA report classifies the failure as environmental, not a test defect |
+| Windows: a step opens the Python installer or fails to find `python3` | the harness passes absolute interpreter paths and never relies on the `python3` alias; if you still see it, run from a shell where `python --version` works and report the step |
 
 ## 11. Security notes
 
 Credentials come from the environment or the git-ignored `.env` and are never forwarded to install/test commands; commands are argv-only with timeouts and a plan hash checked after approval;
-npm lifecycle scripts are disabled during install; generated files never touch the clone. Execution is a local process, not a sandbox — see
+npm lifecycle scripts are disabled during install; generated files never touch the clone; secrets are redacted from what tools receive and return; agent file tools are confined to the workspace; toolchain downloads are consented to, checksum-verified and contained.
+A cloned repository cannot install hooks (only `~/.maf-harness/hooks.json` and the working directory's `.harness/hooks.json` are read). Execution is a local process, not a sandbox — see
 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md#4-guarantees-and-where-they-are-enforced).

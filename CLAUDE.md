@@ -35,6 +35,29 @@ HARNESS_BROWSER=1 PLAYWRIGHT_BROWSERS_PATH=$PWD/.browser-cache uv run pytest tes
 `.env` (copy from `.env.example`) holds `OPENAI_API_KEY` / `OPENAI_BASE_URL` / `OPENAI_MODEL` for the model
 gateway — git-ignored, read at startup, shell env wins over the file. Tests run without network or a model.
 
+## Guardrails (strict, do not weaken)
+
+1. **Install every requirement, then proceed.** `environment_setup` must install every declared requirement and leave the
+   installed set consistent (`pip check` clean) before *any* later stage starts (`HARNESS_STRICT_ENV`, default on). An incomplete
+   environment is a blocking error gate (retry or stop), never a warning the reviewer can approve past; `Harness.enter` refuses to
+   start a later stage while `state["environment"]["status"] == "incomplete"`. Do not add a way around it. Skipping the install is
+   only ever the reviewer's explicit *Skip* decision.
+2. **Fix the environment, not the tests.** When a pinned package cannot be installed on the current Python, the harness proposes
+   another interpreter (`envs.recovery.python_fallback`); the download is listed in the next install plan and needs its own approval.
+   Never loosen a repository pin, never install under a different name, never let generated tests stub a declared dependency to
+   hide an environment failure.
+3. **When working on this repository:** run the live checks (real repositories, real installs) with every requirement of the target
+   installed first; do not start test generation or report results from a half-installed environment.
+4. **Same rule for development:** `uv sync --extra dev` (and `--extra hooks` for the SDK tests) before running the gate.
+5. **Static gates must know the real environment, not just the declared one.** Once `environment_setup` is `ready`, the installed
+   set is guaranteed complete (rule 1), so `tools.code_intel.static_gate` trusts it: `check_python_imports` accepts an import that
+   resolves against the packages actually installed (`tools.code_intel._installed_python_modules`), not only ones the repository
+   pins directly — a declared package's transitive dependency (`langchain` -> `langchain_core`) is real and must not be rejected as
+   "not a declared dependency" (that previously blocked the harness's own remedy for the mocked-LLM pitfall and produced the exact
+   repeated failure this rule exists to stop). Every hint a static gate gives for a rejected pattern must name the concrete fix
+   (e.g. `skills.contracts.check_python_test_hygiene` naming the constructor call to patch instead of a local variable it assigns),
+   not a generic pointer — a vague hint is what makes the model guess again and hit the same gate on the next attempt.
+
 ## Architecture
 
 The harness is a **checkpointed MAF workflow** (`src/maf_test_harness/workflow.py`) of seven `Executor` stages,
@@ -53,52 +76,63 @@ events; state checkpoints to disk (`FileCheckpointStorage`) under `.harness_runs
 
 `execute=False` skips stages 3 and 7 (generation-only workflow).
 
-**Central deterministic tools over model guessing** (`code_intel.py`, `autofix.py`, `build_gate.py`,
-`agent_tools.py`): things the host can compute exactly — import resolution, class constructors, URL routes,
-whether a file compiles — are answered by these instead of asking the model again. `autofix.py` only applies
+**Central deterministic tools over model guessing** (`tools/code_intel.py`, `tools/autofix.py`, `tools/build_gate.py`,
+`tools/agent_tools.py`): things the host can compute exactly — import resolution, class constructors, URL routes,
+whether a file compiles — are answered by these instead of asking the model again. `tools/autofix.py` only applies
 fixes that cannot change what a test means (unambiguous missing import, correcting a module path). Static gates
 (imports, undefined names, mocked `sys.exit`, bad patch targets, unused setup, non-existent routes) always run;
-`build_gate.py` (`pytest --collect-only` / `mvn test-compile`) runs after the approved environment install.
+`tools/build_gate.py` (`pytest --collect-only` / `mvn test-compile`) runs after the approved environment install.
 
 **Generation pipeline** (stage 6, per batch): model call (temperature rises each retry) → normalize (canonical
-case IDs, `CASE_ID` markers) → `autofix` → `skill_contracts.validate_generated_files` (structure/placeholders/
-syntax/compile) → `code_intel.static_gate` → `build_gate.try_build`. Failures produce a concrete remedy
-(`triage.remedy_for`) and loop back into the model; accepted batches are cached so retries/heals only regenerate
+case IDs, `CASE_ID` markers) → `autofix` → `skills.contracts.validate_generated_files` (structure/placeholders/
+syntax/compile) → `tools.code_intel.static_gate` → `tools.build_gate.try_build`. Failures produce a concrete remedy
+(`qa.triage.remedy_for`) and loop back into the model; accepted batches are cached so retries/heals only regenerate
 what failed.
 
 **Agent Skills**: loaded through MAF's `SkillsProvider` (progressive disclosure), one skill assignment per
 stage (table in `docs/ARCHITECTURE.md` §8). Vendored skills under `skills/` are pinned in
 `skills/SKILLS.lock.json` (SHA-256 per file) — `lint-skills` fails if a vendored file was hand-edited; re-vendor
 via `scripts/vendor_skills.py`. Only scripts recorded in the lock may execute
-(`skill_scripts.HarnessScriptRunner`: allow-list, SHA-256, argv-only, temp dir, sanitized env, timeout).
+(`skills.scripts.HarnessScriptRunner`: allow-list, SHA-256, argv-only, temp dir, sanitized env, timeout).
 `maf-harness verify-run` checks that every assigned skill was actually loaded via a tool-trace audit, not just
 claimed.
 
 **Budget**: a single daily token cap (`HARNESS_DAILY_TOKEN_LIMIT`, default 50,000,000) shared by all runs on the
-machine — no per-run/per-call limits — enforced by `usage.DailyUsageLedger` + `maf_runtime.BudgetGuard`
+machine — no per-run/per-call limits — enforced by `llm.usage.DailyUsageLedger` + `agent.runtime.BudgetGuard`
 (reserve → call → settle).
 
 **Safety boundary**: credentials come only from env/`.env`, never forwarded to install/test commands
-(`execution._child_env` is an allow-list with a fake `HOME`); install/run commands are argv-only with timeouts
+(`envs.execution._child_env` is an allow-list with a fake `HOME`); install/run commands are argv-only with timeouts
 and a `plan_hash` re-checked after approval; npm lifecycle scripts are disabled during install; execution is a
 local process, not a sandboxed one — see `docs/ARCHITECTURE.md` §4 ("Guarantees and where they are enforced")
-before changing anything in `runners.py`, `execution.py`, or `environment.py`.
+before changing anything in `envs/runners.py`, `envs/execution.py`, or `envs/environment.py`.
 
 ## Module map (`src/maf_test_harness/`)
 
-Flat single-package layout, roughly in pipeline order:
+Subpackages by concern (`repo/`, `envs/`, `skills/`, `tools/`, `agent/`, `llm/`, `qa/`, `monitoring/`, `ui/`, plus the
+existing `errors/`); `workflow.py`, `cli.py`, `settings.py`, `models.py` stay at the top. The former flat module names
+(`maf_test_harness.runners`, `.skill_contracts`, `.maf_runtime`, …) remain as aliases of the same module object, so old
+imports and monkeypatches keep working; new code imports the subpackage path. Roughly in pipeline order:
 - `workflow.py` — the MAF workflow graph, stage orchestration, prompts, repair loops (the core file)
-- `repo_analyzer.py`, `stack.py` — clone + static analysis, framework/stack detection
-- `environment.py`, `runners.py`, `execution.py` — environment planning, isolated install, command execution
-- `platform_compat.py` — every OS-specific decision (Windows vs POSIX venv layout, tool resolution, process-tree
+- `repo/analyzer.py`, `repo/stack.py` — clone + static analysis, framework/stack detection
+- `envs/environment.py`, `envs/runners.py`, `envs/execution.py` — environment planning, isolated install, command execution
+- `envs/platform_compat.py` — every OS-specific decision (Windows vs POSIX venv layout, tool resolution, process-tree
   kill, fake-HOME isolation) centralized here; other modules never branch on `sys.platform` directly
-- `skills_config.py`, `skills_registry.py`, `skill_contracts.py`, `skill_scripts.py`, `skill_reports.py` — Agent
+- `skills/config.py`, `skills/registry.py`, `skills/contracts.py`, `skills/scripts.py`, `skills/reports.py` — Agent
   Skills loading, spec/lock validation, contract enforcement, sandboxed script execution
-- `code_intel.py`, `autofix.py`, `build_gate.py`, `agent_tools.py` — the deterministic central tools
-- `maf_runtime.py` — MAF agent construction, `SkillsProvider` wiring, tool-trace middleware, `BudgetGuard`
-- `qa_report.py`, `triage.py`, `packaging.py` — verdict computation, files-to-update, ZIP assembly
-- `observability.py`, `observability_ui.py`, `trace.py`, `telemetry.py` — run tracing and the Observability tab
-- `usage.py`, `settings.py`, `models.py`, `personas.py`, `routes.py` — token ledger, config, schemas, actor
+- `tools/code_intel.py`, `tools/autofix.py`, `tools/build_gate.py`, `tools/agent_tools.py` — the deterministic central tools
+- `tools/registry.py`, `tools/env_tools.py`, `tools/file_tools.py`, `tools/typed.py` — typed tools: schema-validated
+  arguments, one `ToolResult` envelope, hook-aware `ToolRegistry` (see [docs/HOOKS.md](docs/HOOKS.md))
+- `hooks/` — hook events, the fail-closed verdict engine, built-in hooks (secret redaction, write scope, download
+  consent, audit), `.harness/hooks.json` loader, MAF middleware bridge, optional AGENT-HOOKS-0.1 backend;
+  `HARNESS_HOOKS=enforce|evaluate_only|off`, `HARNESS_HOOKS_BACKEND=inhouse|sdk`
+- `envs/recovery.py` — bounded automatic recovery of failed setup steps (allow-listed recipes, see
+  [docs/AUTOMATION.md](docs/AUTOMATION.md)); `agent/diagnosis.py` — opt-in read-only diagnosis agent;
+  `llm/prompts.py` — stable-first prompt assembly for the provider's prefix cache; `tools/skill_tools.py` — skill validators as a tool
+- `agent/runtime.py` — MAF agent construction, `SkillsProvider` wiring, tool-trace middleware, `BudgetGuard`
+- `qa/report.py`, `qa/triage.py`, `qa/packaging.py` — verdict computation, files-to-update, ZIP assembly
+- `monitoring/report.py`, `monitoring/ui.py`, `monitoring/trace.py`, `monitoring/telemetry.py` — run tracing and the Observability tab
+- `llm/usage.py`, `settings.py`, `models.py`, `agent/personas.py`, `repo/routes.py` — token ledger, config, schemas, actor
   personas, app-route extraction
 - `cli.py` — `maf-harness` entry point; `app.py` (repo root) — Streamlit UI, drives the same `workflow.py`
 

@@ -69,6 +69,22 @@ BUILD_GATE = (
     os.getenv("HARNESS_BUILD_GATE", "on").strip().lower() != "off"
 )  # compile/collect after env install
 
+# STRICT GUARDRAIL (default on): environment_setup must install every declared requirement, consistently, before any
+# later stage starts. "off" restores the old behaviour (warn, then let the reviewer proceed). See docs/ENVIRONMENTS.md.
+STRICT_ENV = os.getenv("HARNESS_STRICT_ENV", "on").strip().lower() != "off"
+
+# Hooks (see docs/HOOKS.md): "enforce" (default), "evaluate_only" (record what would be blocked, never block) or "off".
+HOOKS = os.getenv("HARNESS_HOOKS", "enforce").strip().lower()
+# Who enforces hooks inside the agent loop: "inhouse" (default, no extra package) or "sdk" (MAF AGENT-HOOKS-0.1 middleware,
+# needs `pip install maf-test-harness[hooks]`).
+HOOKS_BACKEND = os.getenv("HARNESS_HOOKS_BACKEND", "inhouse").strip().lower()
+
+# Agent Skill validators as an in-loop tool for the design stage (off: each tool schema is resent with every call).
+SKILL_EVALUATORS = os.getenv("HARNESS_SKILL_EVALUATORS", "off").strip().lower() == "on"
+
+# An LLM diagnosis agent (typed tools, hooks, todo list) for setup failures the deterministic recovery cannot fix.
+DIAGNOSIS_AGENT = os.getenv("HARNESS_DIAGNOSIS_AGENT", "off").strip().lower() == "on"
+
 # Provider response cap, not the total workflow budget.
 MAX_OUTPUT_TOKENS = int(os.getenv("HARNESS_MAX_OUTPUT_TOKENS", "16384"))
 

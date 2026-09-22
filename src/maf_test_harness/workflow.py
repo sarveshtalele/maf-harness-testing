@@ -8,6 +8,7 @@ import os
 import re
 import shlex
 import traceback
+from functools import partial
 from pathlib import Path
 from typing import Any
 from uuid import uuid4
@@ -22,17 +23,31 @@ from agent_framework import (
 )
 from filelock import FileLock
 
-from .agent_tools import HarnessToolbox
-from .autofix import autofix_files
-from .build_gate import try_build
-from .code_intel import RepoContext, static_gate
-from .environment import build_environment_plan, steps_from_plan
-from .execution import copy_repo, write_generated
+from .agent import diagnosis
+from .agent.personas import PERSONAS, persona_instructions
+from .envs import Provisioned, ToolchainError, app_launcher, env_check, provision_for
+from .envs import recovery as env_recovery
+from .envs.environment import build_environment_plan, steps_from_plan
+from .envs.execution import copy_repo, write_generated
+from .envs.runners import RunPlan, Step, build_plan, execute_plan, execute_setup
+from .envs.toolchains import apply_toolchains
+from .hooks import (
+    ON_ENV_ERROR,
+    ON_EXEC_ERROR,
+    SESSION_START,
+    STAGE_GATE,
+    STOP,
+    HookEngine,
+    build_engine,
+)
+from .llm.prompts import build_prompt, generation_prompt
 from .models import GeneratedFilesDraft, RequirementsDraft, TestDesignDraft, TestPlan
-from .packaging import build_deliverable
-from .personas import PERSONAS, persona_instructions
-from .qa_report import build_qa_report, design_cases, render_markdown
-from .repo_analyzer import (
+from .monitoring.telemetry import configure_telemetry
+from .monitoring.trace import TraceRecorder
+from .qa.packaging import build_deliverable
+from .qa.report import build_qa_report, design_cases, render_markdown
+from .qa.triage import remedy_for
+from .repo.analyzer import (
     analyze_repository,
     build_repository_evidence,
     clone_repository,
@@ -41,17 +56,22 @@ from .repo_analyzer import (
     extract_target_sources,
     validate_github_url,
 )
-from .routes import extract_routes
-from .runners import RunPlan, Step, build_plan, execute_plan, execute_setup
+from .repo.routes import extract_routes
+from .repo.stack import detect_stack
 from .settings import (
     AGENT_TOOLS,
     AUTOFIX,
     BUILD_GATE,
+    DIAGNOSIS_AGENT,
     EXECUTION_TIMEOUT_SECONDS,
     GENERATION_BATCH_SIZE,
     GENERATION_MAX_ATTEMPTS,
+    HOOKS,
+    SKILL_EVALUATORS,
+    STRICT_ENV,
 )
-from .skill_contracts import (
+from .skills.config import skills_for
+from .skills.contracts import (
     ensure_generated_case_markers,
     expand_generated_lines,
     extra_import_roots,
@@ -61,12 +81,13 @@ from .skill_contracts import (
     resolve_id,
     validate_generated_files,
 )
-from .skill_reports import run_skill_checks
-from .skills_config import skills_for
-from .stack import detect_stack
-from .telemetry import configure_telemetry
-from .trace import TraceRecorder
-from .triage import remedy_for
+from .skills.reports import run_skill_checks
+from .tools.agent_tools import HarnessToolbox
+from .tools.autofix import autofix_files
+from .tools.build_gate import try_build
+from .tools.code_intel import RepoContext, static_gate
+from .tools.registry import ToolContext
+from .tools.typed import default_registry
 
 CORE_STAGES = ["repo_analysis", "requirements", "test_planning", "test_design", "test_generation"]
 ENV_STAGE = "environment_setup"
@@ -148,7 +169,20 @@ def _plan_summary(plan: dict[str, Any]) -> dict[str, Any]:
 
 def _allowed_levels(state: dict[str, Any]) -> set[str]:
     base = {"unit", "integration", "api", "cli", "security", "performance"}
-    return base | (LIVE_APP_LEVELS if state.get("app_url") else set())
+    if not state.get("app_url"):
+        return base
+    live = set(LIVE_APP_LEVELS)
+    tooling = (state.get("environment") or {}).get("ui_tooling")
+    # A Python environment without a browser driver cannot run browser tests: offer only what it can execute.
+    if (
+        tooling is not None
+        and (state.get("stack") or {}).get("primary") == "python"
+        and not tooling.get("playwright")
+    ):
+        live -= {"e2e", "accessibility"}
+        if not tooling.get("streamlit"):
+            live -= {"ui"}
+    return base | live
 
 
 def _compact_requirements(source: dict[str, Any]) -> dict[str, Any]:
@@ -229,6 +263,16 @@ def _generation_policy(repo: dict[str, Any], state: dict[str, Any] | None = None
         "stack": {
             k: stack.get(k) for k in ("primary", "test_runner", "web_ui", "http_service") if k in stack
         },
+        "environment": {
+            "python": (state.get("environment") or {}).get("python_version"),
+            "unavailable_packages": (state.get("environment") or {}).get("missing_packages") or [],
+            "ui_tooling": (state.get("environment") or {}).get("ui_tooling"),
+            "rule": (
+                "The tests run in the isolated environment described here. Every declared dependency is installed unless "
+                "listed in unavailable_packages (then: never import it; patch the code that needs it, or stub it in "
+                "sys.modules before the import). Do not add sys.path hacks or install steps."
+            ),
+        },
         "live_app": {
             "available": bool(state.get("app_url")),
             "base_url_env_var": "BASE_URL",
@@ -254,7 +298,11 @@ def _generation_policy(repo: dict[str, Any], state: dict[str, Any] | None = None
                 "instantiate. If a case cannot be tested without a container, test the nearest plain-Java behavior instead."
             ),
             "python": "Never nest more than 5 `with` blocks (CPython allows 20): use @patch decorators or contextlib.ExitStack.",
-            "ui/e2e/accessibility": "Only with live_app.available; existing browser framework first, else Playwright.",
+            "ui/e2e/accessibility": (
+                "Only with live_app.available and only the levels in allowed_test_levels. A Streamlit UI is tested in-process "
+                "with `streamlit.testing.v1.AppTest` (never by fetching the server's HTML: it is an empty JavaScript shell); "
+                "a browser (Playwright) only when environment.ui_tooling.playwright is true."
+            ),
             "security": "Assert rejection/sanitization paths that the source shows.",
         },
         "framework_selection_rule": "Prefer detected test framework; otherwise choose a mainstream native framework compatible with the dominant stack.",
@@ -317,6 +365,7 @@ class Harness:
         runtime=None,
         execute: bool = True,
         cache_dir: Path | None = None,
+        hooks: HookEngine | None = None,
     ):
         self.stages = list(STAGES if execute else CORE_STAGES)
         self.cache_dir = (cache_dir or Path(run_dir).resolve().parent / ".harness_cache").resolve()
@@ -324,8 +373,9 @@ class Harness:
         self.run_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
         self.skills_root = skills_root.resolve()
         self.runtime = runtime
+        self._toolbox = HarnessToolbox(self._repo_context, self._build_files)
         if AGENT_TOOLS and runtime is not None and getattr(runtime, "tool_provider", None) is None:
-            runtime.tool_provider = HarnessToolbox(self._repo_context, self._build_files).tools_for
+            runtime.tool_provider = self._stage_tools
         if runtime is not None and getattr(runtime, "recorder", None) is None:
             runtime.recorder = TraceRecorder(self.run_dir / "trace.jsonl")
         self.view_path = self.run_dir / "run.json"
@@ -340,6 +390,25 @@ class Harness:
             }
         )
         self.state = self.view.get("state", {})
+        # Hooks: built-ins + .harness/hooks.json (see docs/HOOKS.md). A malformed config stops the run before it starts.
+        self.hooks = hooks or build_engine(
+            context={"writable_roots": [str(self.workspace)], "allow_downloads": False},
+            audit=self.audit,
+            setting=HOOKS,
+        )
+        if runtime is not None and getattr(runtime, "hooks", None) is None:
+            runtime.hooks = self.hooks
+        self.typed = default_registry(
+            ToolContext(
+                repo_root=self.run_dir / "repo",
+                workspace=self.workspace,
+                writable_roots=[self.workspace],
+                skills_root=self.skills_root,
+            ),
+            self.hooks,
+            self.audit,
+        )
+        self.hooks.notify(SESSION_START, run=self.run_dir.name, resumed=bool(self.state))
         self.storage = FileCheckpointStorage(self.run_dir / "checkpoints")
         executors = [StageExecutor(stage, self) for stage in self.stages]
         builder = WorkflowBuilder(
@@ -351,6 +420,14 @@ class Harness:
             builder.add_edge(executors[-1], executors[self.stages.index("test_generation")])
         self.workflow = builder.build()
         self._restored = False
+
+    def _stage_tools(self, stage: str) -> list:
+        """Tools an agent gets for a stage: the central tools, plus (opt-in) the skill validators of its own skills."""
+        tools = self._toolbox.tools_for(stage)
+        if SKILL_EVALUATORS and self.typed.names(stage):
+            self.typed.context.allowed_skills = tuple(skills_for(stage, self.state).all)
+            tools = [*tools, *self.typed.as_function_tools(stage)]
+        return tools
 
     def save(self):
         self.view["state"] = self.state
@@ -387,10 +464,11 @@ class Harness:
             self.view["pending"] = None
             if self.view["status"] != "stopped":
                 self.view["status"] = "complete"
+                self.hooks.notify(STOP, reason="complete")
         self.save()
         return self.view
 
-    async def start(self, repo_url: str, app_url: str | None = None):
+    async def start(self, repo_url: str, app_url: str | None = None, start_app: bool = False):
         if self.view["status"] != "new":
             raise ValueError("Run already started. Resume its pending request.")
         _, _, _, ref = validate_github_url(repo_url, with_ref=True)
@@ -404,6 +482,7 @@ class Harness:
             "repo_url": repo_url.strip(),
             "repo_ref": ref,
             "app_url": app_url.strip() if app_url else None,
+            "launch_app": bool(start_app and not app_url),
             "stages": self.stages,
             "artifacts": {},
             "revisions": {},
@@ -418,6 +497,8 @@ class Harness:
                 "reported_tokens": 0,
             },
         }
+        if self.state["launch_app"]:  # the harness starts the app itself; UI/E2E levels become available
+            self.state["app_url"] = f"http://127.0.0.1:{app_launcher.free_port()}"
         result = await self.workflow.run(self.state)
         self._restored = True
         return await self._collect(result)
@@ -428,6 +509,16 @@ class Harness:
             pending = fresh.get("pending")
             if not pending or pending["id"] != request_id or request_id in fresh.get("consumed", []):
                 raise ValueError("Stale or already consumed approval request.")
+            gate = await asyncio.to_thread(
+                self.hooks.notify,
+                STAGE_GATE,
+                pending["stage"],
+                kind=pending["kind"],
+                decision=response.get("decision"),
+                request_id=request_id,
+            )
+            if gate.blocked:  # the approval stays pending; the human sees why and can change course
+                raise PermissionError(f"Blocked by hook ({gate.source}): {gate.reason}")
             self.view = fresh
             self.state = pending["state"]
             self.view["consumed"].append(request_id)
@@ -492,6 +583,11 @@ class Harness:
                 },
             )
             return
+        if STRICT_ENV and stage != ENV_STAGE and state.get("environment", {}).get("status") == "incomplete":
+            raise ValueError(
+                "Strict environment guardrail: the environment is incomplete (a declared requirement is not installed or "
+                "conflicts), so this stage cannot start. Retry environment setup."
+            )
         state["active_stage"] = stage
         self.state = state
         self.save()
@@ -588,6 +684,13 @@ class Harness:
                     raise ValueError("Choose retry or stop.")
                 state["sessions"].pop(stage, None)
                 state["model_requests"].pop(stage, None)
+                if stage == ENV_STAGE and (version := state.pop("env_python_proposal", None)):
+                    state["env_python"] = version
+                    state.setdefault("env_python_tried", []).append(version)
+                    await asyncio.to_thread(
+                        env_recovery.wipe_venv, self.workspace
+                    )  # rebuilt with the other interpreter
+                    self.audit("environment_python_fallback", version=version)
                 await self.enter(stage, state, ctx)
                 return
 
@@ -687,7 +790,10 @@ class Harness:
             generation=arts["test_generation"],
             execution=report,
             stack=state.get("stack"),
-            environment=state.get("environment", {}).get("plan"),
+            environment={
+                **(state.get("environment", {}).get("plan") or {}),
+                "missing_packages": state.get("environment", {}).get("missing_packages") or [],
+            },
             provenance={
                 "runtime": state.get("runtime_provenance"),
                 "skills": state.get("skill_provenance"),
@@ -725,6 +831,39 @@ class Harness:
             await asyncio.to_thread(copy_repo, self.run_dir / "repo", self.workspace)
         return self.workspace
 
+    async def _agent_diagnosis(self, kind: str, state: dict, report: dict, ecosystem: str) -> dict | None:
+        """Advisory note from the diagnosis agent for a failure recovery could not fix (opt-in, never blocks a gate)."""
+        if not DIAGNOSIS_AGENT or self.runtime is None or not hasattr(self.runtime, "run_tool_agent"):
+            return None
+        failing = next(
+            (
+                s
+                for s in reversed(report.get("steps", []))
+                if s.get("status") not in {"command_succeeded", "passed"}
+            ),
+            {},
+        )
+        stdout = failing.get("stdout")
+        log = diagnosis.log_tail([str(stdout), str(Path(stdout).with_name("stderr.log"))] if stdout else [])
+        self.typed.context.ecosystem = ecosystem
+        self.audit("agent_diagnosis_started", kind=kind, step=failing.get("name"))
+        note = await diagnosis.diagnose(
+            self.runtime,
+            self.typed.as_function_tools(diagnosis.AGENT_NAME),
+            kind=kind,
+            failing={
+                k: failing.get(k) for k in ("name", "argv", "status", "exit_code", "diagnoses", "recovery")
+            },
+            log=log,
+            deterministic=list(failing.get("diagnoses") or []),
+            state=state,
+            persist=self.save,
+        )
+        self.audit(
+            "agent_diagnosis_completed", kind=kind, ok="error" not in note, category=note.get("category")
+        )
+        return note
+
     def _environment_artifact(self, state: dict, report: dict) -> dict:
         plan = state["environment"]["plan"]
         return {
@@ -732,6 +871,7 @@ class Harness:
             "ecosystem": plan["ecosystem"],
             "isolation": plan["isolation"],
             "prerequisites": plan["prerequisites"],
+            "toolchains": state.get("toolchains") or plan.get("toolchains", []),
             "notes": plan["notes"],
             "report": report,
             "installed_steps": [s["name"] for s in report.get("steps", [])],
@@ -748,6 +888,7 @@ class Harness:
             self.cache_dir,
             EXECUTION_TIMEOUT_SECONDS,
             state["artifacts"].get("requirements", {}).get("environment_needs"),
+            *([state["env_python"]] if state.get("env_python") else []),  # only after a fallback was approved
         )
         state["environment"] = {"plan": plan, "hash": digest(plan), "status": "planned"}
         if (
@@ -770,14 +911,21 @@ class Harness:
                 "isolation": plan["isolation"],
                 "workspace": str(self.workspace),
                 "prerequisites": plan["prerequisites"],
+                "toolchains": plan.get("toolchains", []),
                 "steps": [
                     {"name": st["name"], "kind": st["kind"], "command": shlex.join(st["argv"])}
                     for st in plan["steps"]
                 ],
                 "effects": (
                     "Downloads and installs the repository's dependencies into the isolated location above "
-                    "(network access; package installers run). System tools are never installed by the "
-                    "harness. Model credentials are not passed to these commands."
+                    "(network access; package installers run). "
+                    + (
+                        "Missing toolchains listed under 'toolchains' (status download) are fetched into the harness "
+                        "toolchain cache with checksum verification; nothing system-wide changes. "
+                        if plan.get("needs_download")
+                        else "System tools are never installed by the harness. "
+                    )
+                    + "Model credentials are not passed to these commands."
                 ),
             },
         )
@@ -787,16 +935,130 @@ class Harness:
         if request["details"].get("plan_hash") != info["hash"]:
             raise ValueError("Environment plan changed after it was shown for approval.")
         attempt = state["environment_attempts"] = state.get("environment_attempts", 0) + 1
+        self.hooks.context["allow_downloads"] = True  # the approved plan lists every toolchain download
         self.audit("environment_started", request_id=request["id"], plan_hash=info["hash"])
-        report = await asyncio.to_thread(
-            execute_setup,
-            steps_from_plan(info["plan"]),
-            self.workspace,
-            self.run_dir / "environment" / f"attempt-{attempt}",
-        )
+        try:  # the approval covers downloading the toolchains listed in the plan
+            provisioned = await asyncio.to_thread(
+                partial(
+                    provision_for,
+                    self.workspace,
+                    info["plan"]["ecosystem"],
+                    allow_download=True,
+                    python_override=state.get("env_python"),
+                )
+            )
+        except ToolchainError as exc:
+            self.audit("toolchains_failed", error=str(exc)[:600])
+            provisioned = None
+            report = {"status": "setup_failed", "steps": [], "warnings": [], "error": str(exc)}
+        if provisioned is not None:
+            state["toolchains"] = provisioned.to_dicts()
+            self.audit("toolchains_ready", events=provisioned.events)
+            steps = steps_from_plan(info["plan"])
+            apply_toolchains(steps, provisioned)
+            report = await asyncio.to_thread(
+                execute_setup, steps, self.workspace, self.run_dir / "environment" / f"attempt-{attempt}"
+            )
+        if report["status"] == "setup_failed":
+            note = await self._agent_diagnosis("setup", state, report, info["plan"]["ecosystem"])
+            if note is not None:
+                report["agent_diagnosis"] = note
         info["status"] = report["status"]
-        self.audit("environment_completed", status=report["status"], warnings=report.get("warnings"))
+        if report["status"] != "ready":
+            self.hooks.notify(
+                ON_ENV_ERROR,
+                ENV_STAGE,
+                status=report["status"],
+                error=str(report.get("error") or "")[:600],
+                diagnoses=[d for step in report.get("steps", []) for d in step.get("diagnoses", [])][:5],
+                attempt=attempt,
+            )
+        if report["status"] == "ready":
+            info["missing_packages"] = await asyncio.to_thread(env_check.missing_packages, self.workspace)
+            info["ui_tooling"] = await asyncio.to_thread(env_check.ui_tooling, self.workspace)
+            info["python_version"] = env_check.venv_python_version(self.workspace)
+            if info["missing_packages"]:
+                report.setdefault("warnings", []).append(
+                    "Declared dependencies NOT installed: "
+                    + ", ".join(info["missing_packages"])
+                    + ". Tests importing them cannot run until they are installed (build tools may be needed)."
+                )
+        self.audit(
+            "environment_completed",
+            status=report["status"],
+            warnings=report.get("warnings"),
+            missing_packages=info.get("missing_packages"),
+        )
+        reasons = self._environment_shortfalls(info, report)
+        if STRICT_ENV and reasons:
+            await self._block_incomplete_environment(state, report, reasons, ctx)
+            return
+        state.pop("env_python_proposal", None)
         await self.review(ENV_STAGE, self._environment_artifact(state, report), state, ctx)
+
+    @staticmethod
+    def _environment_shortfalls(info: dict, report: dict) -> list[str]:
+        """Why the environment is NOT complete: a failed step, declared packages missing, unresolved version conflicts."""
+        reasons = []
+        if report.get("status") == "setup_failed":
+            reasons.append(str(report.get("error") or "an install step failed"))
+        if info.get("missing_packages"):
+            reasons.append("declared packages not installed: " + ", ".join(info["missing_packages"]))
+        remaining = (report.get("dependency_conflicts") or {}).get("remaining") or []
+        if remaining:
+            reasons.append(
+                "installed packages are inconsistent: "
+                + "; ".join(env_check.describe_conflict(c) for c in remaining[:3])
+            )
+        return reasons
+
+    async def _block_incomplete_environment(self, state: dict, report: dict, reasons: list[str], ctx) -> None:
+        """STRICT GUARDRAIL: nothing after environment_setup starts until every requirement is installed and consistent.
+
+        The reviewer can only retry or stop. When another Python would fix it (a package with no wheel for this one), the
+        retry proposes it: the next plan lists the download and needs its own approval.
+        """
+        info = state["environment"]
+        info["status"] = "incomplete"
+        proposal = await asyncio.to_thread(
+            env_recovery.python_fallback, report, self.workspace, state.get("env_python_tried", [])
+        )
+        if proposal:
+            state["env_python_proposal"] = proposal
+        else:
+            state.pop("env_python_proposal", None)
+        self.audit("environment_incomplete", reasons=reasons, python_fallback=proposal)
+        if report.get("status") == "ready":  # a failed step already fired OnEnvError
+            self.hooks.notify(
+                ON_ENV_ERROR,
+                ENV_STAGE,
+                status="incomplete",
+                error="; ".join(reasons)[:600],
+                attempt=state.get("environment_attempts", 0),
+            )
+        how = (
+            f"Retry rebuilds the environment with Python {proposal}: the new install plan lists that download and you approve it."
+            if proposal
+            else "Install the missing build tools (Windows: Microsoft C++ Build Tools; macOS: xcode-select --install; Linux: build-essential) "
+            "or a Python version that has wheels for the pinned packages, then Retry."
+        )
+        await self.ask(
+            ENV_STAGE,
+            "error",
+            state,
+            ctx,
+            title="Environment incomplete: the strict guardrail blocks the next stage",
+            details={
+                "reasons": reasons,
+                "python_fallback": proposal,
+                "warnings": report.get("warnings", []),
+                "agent_diagnosis": report.get("agent_diagnosis"),
+            },
+            error="Not every requirement is installed, so no later stage will start. "
+            + " ".join(reasons)
+            + " "
+            + how,
+        )
 
     async def plan_execution(self, state: dict, ctx) -> None:
         arts = state["artifacts"]
@@ -819,11 +1081,27 @@ class Harness:
             cache_dir=self.cache_dir,
             timeout=EXECUTION_TIMEOUT_SECONDS,
             env_ready=env_ready,
+            **(
+                {"assume_present": covered}
+                if (covered := Provisioned.from_dicts(state.get("toolchains")).tools())
+                else {}
+            ),
         )
+        if state.get("launch_app") and not plan.blocked_reason:
+            state["app_url"] = f"http://127.0.0.1:{app_launcher.free_port()}"  # fresh port for every attempt
+            port = int(state["app_url"].rsplit(":", 1)[1])
+            plan.app = await asyncio.to_thread(app_launcher.detect_launch, workspace, port)
+            if plan.app is None:
+                plan.blocked_reason = (
+                    "The harness could not tell how to start this application (no Streamlit/FastAPI/Flask entry "
+                    "point or npm start script found). Start it yourself and supply its URL for UI/E2E cases."
+                )
         if state.get("app_url"):
             for step in plan.steps:
                 if step.kind == "test":
                     step.env["BASE_URL"] = state["app_url"]
+        provisioned = Provisioned.from_dicts(state.get("toolchains"))
+        apply_toolchains(plan.steps, provisioned)
         plan_dict = plan.to_dict()
         state["execution_plan"] = {
             "workspace": str(workspace),
@@ -853,10 +1131,26 @@ class Harness:
                 if env_ready
                 else "not prepared: setup steps included",
                 "steps": [
-                    {"name": st.name, "kind": st.kind, "command": shlex.join(st.argv)} for st in plan.steps
+                    *(
+                        [{"name": "start-app", "kind": "app", "command": shlex.join(plan.app["argv"])}]
+                        if plan.app
+                        else []
+                    ),
+                    *(
+                        {"name": st.name, "kind": st.kind, "command": shlex.join(st.argv)}
+                        for st in plan.steps
+                    ),
                 ],
                 "effects": (
-                    "Runs the generated tests as your user; repository code executes. Local process only, "
+                    (
+                        "Starts the application under test on "
+                        + str(state.get("app_url"))
+                        + " for the duration of "
+                        "the run, then stops it. "
+                        if plan.app
+                        else ""
+                    )
+                    + "Runs the generated tests as your user; repository code executes. Local process only, "
                     "NOT a security sandbox. Model credentials are not passed to these commands."
                 ),
             },
@@ -870,13 +1164,14 @@ class Harness:
             adapter=info["plan"]["adapter"],
             steps=[Step(**st) for st in info["plan"]["steps"]],
             notes=info["plan"].get("notes", []),
+            app=info["plan"].get("app"),
         )
         out_dir = self.run_dir / "executions" / f"attempt-{info['attempt']}"
         self.audit(
             "execution_started", request_id=request["id"], adapter=plan.adapter, plan_hash=info["hash"]
         )
         report = await asyncio.to_thread(
-            execute_plan, plan, Path(info["workspace"]), out_dir, state.get("workspace_generated")
+            self._execute_with_app, plan, Path(info["workspace"]), out_dir, state, info
         )
         self.audit(
             "execution_completed",
@@ -884,7 +1179,38 @@ class Harness:
             status=report["status"],
             summary=report.get("summary"),
         )
+        if report["status"] in {"blocked", "no_test_evidence", "setup_failed"}:
+            eco = state.get("environment", {}).get("plan", {}).get("ecosystem", "")
+            note = await self._agent_diagnosis("execution", state, report, eco)
+            if note is not None:
+                report["agent_diagnosis"] = note
+        if report["status"] != "passed":
+            self.hooks.notify(
+                ON_EXEC_ERROR,
+                EXECUTION_STAGE,
+                status=report["status"],
+                summary=report.get("summary"),
+                diagnoses=(report.get("diagnoses") or [])[:5],
+                attempt=info["attempt"],
+            )
         await self.review(EXECUTION_STAGE, self._execution_artifact(state, report), state, ctx)
+
+    def _execute_with_app(
+        self, plan: RunPlan, workspace: Path, out_dir: Path, state: dict, info: dict
+    ) -> dict:
+        generated = state.get("workspace_generated")
+        if not plan.app:
+            return execute_plan(plan, workspace, out_dir, generated)
+        log_dir = out_dir.with_name(out_dir.name + "-app")
+        try:
+            with app_launcher.running(plan.app, workspace, state["app_url"], log_dir):
+                self.audit("app_started", kind=plan.app["kind"], url=state["app_url"])
+                return execute_plan(plan, workspace, out_dir, generated)
+        except RuntimeError as exc:  # the application never came up: honest, inconclusive report
+            self.audit("app_failed", error=str(exc)[:600])
+            return execute_plan(
+                RunPlan(plan.adapter, [], blocked_reason=str(exc)), workspace, out_dir, generated
+            )
 
     async def heal(self, state: dict, feedback: str, ctx) -> None:
         """Human-approved regeneration of only the failing/unexecuted tests, with failure evidence."""
@@ -953,7 +1279,7 @@ class Harness:
         evidence_paths = re.findall(r"--- FILE: (.*?) ---", state.get("evidence", ""))
         repair = ""
         for attempt in range(1, MODEL_REPAIR_ATTEMPTS + 1):
-            prompt = json.dumps(
+            prompt = build_prompt(
                 {
                     "assignment": assignment,
                     "repository": state["artifacts"]["repo_analysis"],
@@ -975,8 +1301,7 @@ class Harness:
                         "respect_schema_limits": True,
                         "manual_questions": False,
                     },
-                },
-                separators=(",", ":"),
+                }
             )
             skillset = skills_for(stage, state)
             result = await self.runtime.run_stage(
@@ -1105,7 +1430,7 @@ class Harness:
             for attempt in range(1, 1 if accepted is not None else TEST_GENERATION_MAX_ATTEMPTS + 1):
                 # A deterministic model repeats a rejected answer verbatim: vary the sampling on every retry.
                 retry_temperature = min(0.8, 0.3 * (attempt - 1) + 0.25 * rounds.get(str(batch_index), 0))
-                prompt = json.dumps(
+                prompt = generation_prompt(
                     {
                         "assignment": (
                             "Generate executable test source ONLY for this approved batch. Generate exactly one file per "
@@ -1141,8 +1466,7 @@ class Harness:
                             "respect_schema_limits": True,
                             "manual_questions": False,
                         },
-                    },
-                    separators=(",", ":"),
+                    }
                 )
                 try:
                     generation_skills = skills_for("test_generation", state)
@@ -1366,6 +1690,7 @@ class Harness:
             files,
             cache_dir=self.cache_dir,
             out_root=self.run_dir / "build_checks" / uuid4().hex[:10],
+            provisioned=Provisioned.from_dicts(self.state.get("toolchains")),
         )
 
     async def _build_gate(self, candidate: dict, batch: int) -> None:

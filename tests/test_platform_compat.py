@@ -101,9 +101,9 @@ def test_new_process_group_kwargs_per_os(monkeypatch):
     import subprocess
 
     monkeypatch.setattr(platform_compat, "IS_WINDOWS", True)
-    assert platform_compat.new_process_group_kwargs() == {
-        "creationflags": subprocess.CREATE_NEW_PROCESS_GROUP
-    }
+    # the flag only exists on Windows; raising=False lets this run on a Linux/macOS CI runner too
+    monkeypatch.setattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 512, raising=False)
+    assert platform_compat.new_process_group_kwargs() == {"creationflags": 512}
     monkeypatch.setattr(platform_compat, "IS_WINDOWS", False)
     assert platform_compat.new_process_group_kwargs() == {"start_new_session": True}
 
