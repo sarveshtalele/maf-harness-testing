@@ -1,0 +1,13 @@
+# Vendored skill files are hash-locked against their exact bytes (skills/SKILLS.lock.json, tree_sha256 /
+# read_bytes()). Without this file, GitHub-hosted windows-latest runners default to core.autocrlf=true and
+# actions/checkout converts every text file to CRLF on checkout, producing different bytes than the LF content
+# committed to the repository and failing `maf-harness lint-skills` on that matrix leg every run. Force LF on
+# checkout on every platform so the working tree always matches what is hashed.
+* text=auto eol=lf
+
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.pdf binary
