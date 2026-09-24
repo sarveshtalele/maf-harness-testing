@@ -151,8 +151,9 @@ failures; 56 recorded real logs as fixtures (`tests/error_cases.py`); wired into
 mirror and live for Maven; a 190 MB JDK download was not exercised. Not built: scaffolding a Java or .NET *test project* for generated tests. See [ENVIRONMENTS.md](ENVIRONMENTS.md).
 
 ### M14 — Package structure ✅
-Modules grouped into `repo/ envs/ skills/ tools/ agent/ llm/ qa/ monitoring/ ui/ errors/ hooks/`; every old flat import path stays as an alias of the same module object
-(`tests/test_module_layout.py`), so imports and monkeypatches written against the old layout keep working.
+Modules grouped into `repo/ envs/ skills/ tools/ agent/ llm/ qa/ monitoring/ ui/ errors/ hooks/`. The old flat import paths were
+bridged by compatibility shims for the migration, then removed once every caller (all internal, in `tests/`) moved to the
+subpackage path — a private repo with no external consumers has no reason to carry that indirection permanently.
 
 ### M15 — Hooks and typed tools ✅
 `hooks/`: eight events, verdicts allow/deny/transform/ask, fail-closed on the enforcing ones, evaluate-only mode, command and Python hooks, built-ins (secret redaction, write scope,

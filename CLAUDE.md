@@ -110,9 +110,12 @@ before changing anything in `envs/runners.py`, `envs/execution.py`, or `envs/env
 ## Module map (`src/maf_test_harness/`)
 
 Subpackages by concern (`repo/`, `envs/`, `skills/`, `tools/`, `agent/`, `llm/`, `qa/`, `monitoring/`, `ui/`, plus the
-existing `errors/`); `workflow.py`, `cli.py`, `settings.py`, `models.py` stay at the top. The former flat module names
-(`maf_test_harness.runners`, `.skill_contracts`, `.maf_runtime`, …) remain as aliases of the same module object, so old
-imports and monkeypatches keep working; new code imports the subpackage path. Roughly in pipeline order:
+existing `errors/`); `workflow.py`, `cli.py`, `settings.py`, `models.py` stay at the top. Every module import uses its
+subpackage path (`maf_test_harness.envs.runners`, `.skills.contracts`, `.agent.runtime`, …) — the flat pre-refactor
+names (`maf_test_harness.runners`, `.skill_contracts`, `.maf_runtime`) no longer exist; this is a private repo with no
+external consumers of the old paths, so the compatibility shims that briefly bridged the Phase 1 subpackage refactor
+were removed once every caller (all of them internal, in `tests/`) was updated to the new path. Roughly in pipeline
+order:
 - `workflow.py` — the MAF workflow graph, stage orchestration, prompts, repair loops (the core file)
 - `repo/analyzer.py`, `repo/stack.py` — clone + static analysis, framework/stack detection
 - `envs/environment.py`, `envs/runners.py`, `envs/execution.py` — environment planning, isolated install, command execution

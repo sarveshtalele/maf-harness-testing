@@ -2,7 +2,7 @@ from pathlib import Path
 
 import pytest
 
-from maf_test_harness.skills_registry import lint_all, lint_skill, require_valid, tree_sha256
+from maf_test_harness.skills.registry import lint_all, lint_skill, require_valid, tree_sha256
 
 SKILLS = Path("skills")
 
@@ -82,7 +82,7 @@ def test_package_hash_changes_when_any_skill_file_changes(tmp_path):
 def test_vendored_upstream_skills_match_the_lock_and_tampering_is_detected(tmp_path):
     import shutil
 
-    from maf_test_harness.skills_registry import load_lock, verify_lock
+    from maf_test_harness.skills.registry import load_lock, verify_lock
 
     lock = load_lock(SKILLS)
     assert (

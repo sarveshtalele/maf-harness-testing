@@ -4,7 +4,7 @@ from pathlib import Path
 import pytest
 from fakes import ScriptedStageRuntime, clone_fixture
 
-from maf_test_harness.runtime_service import RuntimeService
+from maf_test_harness.ui.runtime_service import RuntimeService
 from maf_test_harness.workflow import Harness
 
 

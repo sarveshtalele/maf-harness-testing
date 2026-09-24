@@ -1,7 +1,7 @@
 import pytest
 
-from maf_test_harness import triage
-from maf_test_harness.qa_report import build_qa_report, render_markdown
+from maf_test_harness.qa import triage
+from maf_test_harness.qa.report import build_qa_report, render_markdown
 
 PY_TRACE = """def test_x():
 >       assert add(1, 2) == 4
@@ -82,7 +82,7 @@ def test_qa_markdown_has_a_files_to_update_section():
 
 
 def test_target_source_returns_complete_functions_and_their_helpers_not_a_truncated_head(tmp_path):
-    from maf_test_harness.repo_analyzer import extract_target_sources
+    from maf_test_harness.repo.analyzer import extract_target_sources
 
     (tmp_path / "engine").mkdir()
     filler = "".join(
@@ -99,7 +99,7 @@ def test_target_source_returns_complete_functions_and_their_helpers_not_a_trunca
 
 
 def test_target_source_handles_java_and_missing_targets(tmp_path):
-    from maf_test_harness.repo_analyzer import extract_target_sources
+    from maf_test_harness.repo.analyzer import extract_target_sources
 
     (tmp_path / "A.java").write_text("class A {\n  public int total(int a) {\n    return a * 2;\n  }\n}\n")
     out = extract_target_sources(tmp_path, ["A.java total()"], ["A.java"])

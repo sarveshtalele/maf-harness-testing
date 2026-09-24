@@ -6,11 +6,11 @@ from pathlib import Path
 
 import pytest
 
-from maf_test_harness.environment import build_environment_plan, documented_packages, nested_requirements
-from maf_test_harness.repo_analyzer import collaborator_signatures
-from maf_test_harness.routes import extract_routes, route_prefixes
-from maf_test_harness.skill_contracts import check_python_test_hygiene, check_route_literals
-from maf_test_harness.stack import detect_stack
+from maf_test_harness.envs.environment import build_environment_plan, documented_packages, nested_requirements
+from maf_test_harness.repo.analyzer import collaborator_signatures
+from maf_test_harness.repo.routes import extract_routes, route_prefixes
+from maf_test_harness.repo.stack import detect_stack
+from maf_test_harness.skills.contracts import check_python_test_hygiene, check_route_literals
 
 APP = "def run():\n    import anthropic\n    return anthropic.Client()\n\n\ndef main():\n    return 1\n"
 
@@ -184,7 +184,7 @@ def test_nested_requirements_and_documented_packages_are_supported_by_repository
 
 
 def test_two_test_methods_in_one_file_are_named_in_the_feedback():
-    from maf_test_harness.skill_contracts import validate_generated_files
+    from maf_test_harness.skills.contracts import validate_generated_files
 
     code = (
         "// CASE_ID: TC-1\npublic class T {\n  @Test(expected = X.class)\n  public void first() {}\n"
@@ -196,7 +196,7 @@ def test_two_test_methods_in_one_file_are_named_in_the_feedback():
 
 
 def test_arquillian_tests_are_rejected_before_a_build_or_run_is_spent_on_them():
-    from maf_test_harness.code_intel import RepoContext, static_gate
+    from maf_test_harness.tools.code_intel import RepoContext, static_gate
 
     ctx = RepoContext(root=Path("."), source_files=[])
     with pytest.raises(ValueError, match="no container"):

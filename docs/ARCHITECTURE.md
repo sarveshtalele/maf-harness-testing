@@ -181,8 +181,10 @@ sequenceDiagram
 
 Modules are grouped in subpackages: `repo/` (intake), `envs/` (environment, execution, toolchains), `skills/` (Agent Skills),
 `tools/` (central tools), `agent/` (MAF runtime, personas), `llm/` (token ledger), `qa/` (report, triage, packaging),
-`monitoring/` (trace, report, telemetry), `ui/` (Streamlit helpers) and `errors/` (taxonomy and playbook). The old flat
-module names are compatibility aliases of the same module objects (`sys.modules` aliasing, see `tests/test_module_layout.py`).
+`monitoring/` (trace, report, telemetry), `ui/` (Streamlit helpers) and `errors/` (taxonomy and playbook). The pre-refactor
+flat module names no longer exist; every import uses its subpackage path. They were bridged by `sys.modules` compatibility
+shims for one phase of the Phase 1 restructure, then removed once every caller (all internal, in `tests/`) was updated —
+this is a private repo with no external consumers of the old paths, so there was nothing left for the shims to protect.
 
 | File | Responsibility | Key contents | Notes |
 |---|---|---|---|
@@ -293,7 +295,7 @@ its own artifacts. Everything else is refused, and every run is recorded in `sta
 | `test_repo_analyzer.py` | Analysis and evidence selection |
 | `test_skills_registry.py`, `test_personas.py`, `test_cli.py` | Skill lint, persona contracts, `verify-run` |
 | `test_harness_gates.py`, `test_recovery.py`, `test_attempt_audit.py`, `test_runtime_utils.py`, `test_artifact_presenter.py` | Approval replay guards, retry gates, attempt retention, runtime loop, presenters |
-| `test_module_layout.py` | every old flat import path is an alias of the same module object, patching through it works, every module imports |
+| `test_module_layout.py` | every module in the package imports, the skills root resolves correctly |
 | `test_platform_compat.py`, `test_env_check.py`, `test_app_launcher.py` | Windows/POSIX venv layout, tool resolution, process-tree kill, declared-vs-installed packages, starting the app under test |
 | `test_errors.py`, `test_errors_wiring.py` (+ `error_cases.py`) | 56 recorded error logs classified to the right code, playbook consistency, wiring into install/build/QA |
 | `test_envs.py` | requirement detection (Python/Java/.NET), toolchain find/download/verify/extract against a local mirror, plan rewriting |

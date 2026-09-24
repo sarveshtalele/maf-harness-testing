@@ -93,7 +93,7 @@ def _seed_run_at_qa_review(runs_dir: Path, monkeypatch, body: str) -> str:
     from test_execution_stage import local_pytest_plan
 
     import maf_test_harness.workflow as wf
-    from maf_test_harness.runtime_service import RuntimeService
+    from maf_test_harness.ui.runtime_service import RuntimeService
 
     monkeypatch.setattr(wf, "clone_repository", clone_fixture)
     monkeypatch.setattr(wf, "build_plan", local_pytest_plan)
@@ -128,7 +128,7 @@ def _idle(page) -> None:
 
 def _write_trace(run_dir: Path) -> None:
     """The events the MAF middleware writes for one generation stage: a skill load, a harness tool call, two model runs."""
-    from maf_test_harness.trace import TraceRecorder
+    from maf_test_harness.monitoring.trace import TraceRecorder
 
     recorder = TraceRecorder(run_dir / "trace.jsonl")
     common = {"stage": "test_generation"}

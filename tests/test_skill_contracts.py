@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from maf_test_harness.skill_contracts import (
+from maf_test_harness.skills.contracts import (
     SKILL_NAMES,
     design_schema,
     ensure_generated_case_markers,
@@ -345,7 +345,7 @@ def test_validate_generated_files_rejects_excessive_python_imports():
 
 
 def test_contract_cases_without_api_contracts_are_reclassified_to_validation(tmp_path):
-    from maf_test_harness.skill_contracts import finalize_design
+    from maf_test_harness.skills.contracts import finalize_design
 
     source = {
         "app_name": "demo",
@@ -394,7 +394,7 @@ def test_contract_cases_without_api_contracts_are_reclassified_to_validation(tmp
 
 
 def test_contract_case_with_explicit_api_contract_remains_contract():
-    from maf_test_harness.skill_contracts import finalize_design
+    from maf_test_harness.skills.contracts import finalize_design
 
     source = {
         "app_name": "demo",

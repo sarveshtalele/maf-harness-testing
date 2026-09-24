@@ -12,8 +12,8 @@ import pytest
 from fakes import ScriptedStageRuntime, clone_fixture, local_env_plan
 
 import maf_test_harness.workflow as wf
-from maf_test_harness.runners import RunPlan, Step
-from maf_test_harness.runtime_service import RuntimeService
+from maf_test_harness.envs.runners import RunPlan, Step
+from maf_test_harness.ui.runtime_service import RuntimeService
 
 
 def local_pytest_plan(stack, workspace, files, *, cache_dir, timeout=900, env_ready=False):
@@ -364,7 +364,7 @@ def test_qa_outputs_follow_the_vendored_skill_contracts_and_are_validated_by_the
 
 
 def test_skills_are_selected_from_the_stack_and_the_approved_design():
-    from maf_test_harness.skills_config import skills_for
+    from maf_test_harness.skills.config import skills_for
 
     base = {"artifacts": {"repo_analysis": {"languages": {"Python": 3}}}, "stack": {}}
     assert skills_for("requirements", base).all == ["repository-requirements"]
@@ -438,7 +438,7 @@ def test_heal_regenerates_only_failing_cases_even_inside_a_shared_batch(drive):
 
 
 def test_failure_remedies_are_concrete_and_reach_the_regeneration_feedback():
-    from maf_test_harness.triage import remedy_for
+    from maf_test_harness.qa.triage import remedy_for
 
     assert "builtins.input" in remedy_for("OSError: pytest: reading from stdin while output is captured")
     assert "Import or define" in remedy_for("NameError: name 'patch' is not defined")
@@ -470,7 +470,7 @@ def test_generation_prompts_carry_only_the_requirements_the_batch_traces_to():
 
 
 def test_new_remedies_cover_fixtures_containers_validation_providers_and_deep_nesting():
-    from maf_test_harness.triage import remedy_for
+    from maf_test_harness.qa.triage import remedy_for
 
     assert "parameter of the test function" in remedy_for("NameError: name 'capsys' is not defined")
     assert "Bean Validation" in remedy_for(
@@ -483,7 +483,7 @@ def test_new_remedies_cover_fixtures_containers_validation_providers_and_deep_ne
 
 
 def test_remedies_for_mocked_exit_and_patching_missing_module_attributes():
-    from maf_test_harness.triage import remedy_for
+    from maf_test_harness.qa.triage import remedy_for
 
     mocked_exit = "AttributeError: 'NoneType' object has no attribute 'rstrip'\n    mock_exit = mocker.patch.object(sys, \"exit\")\n"
     assert "pytest.raises(SystemExit)" in remedy_for(mocked_exit)
@@ -507,7 +507,7 @@ def test_missing_import_is_repaired_by_the_host_without_another_model_call(drive
 
 
 def test_a_complete_workflow_run_yields_an_observability_report_with_the_full_traceability_chain(drive):
-    from maf_test_harness.observability import build_report
+    from maf_test_harness.monitoring.report import build_report
 
     host, answer = drive(ScriptedStageRuntime())
     to_execution_gate(host, answer)

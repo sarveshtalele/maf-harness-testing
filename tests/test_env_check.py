@@ -1,6 +1,6 @@
 """env_check: telling a missing declared dependency apart from a defect in a generated test."""
 
-from maf_test_harness import env_check
+from maf_test_harness.envs import env_check
 
 
 def test_declared_requirements_reads_requirements_and_pyproject(tmp_path):
@@ -37,7 +37,7 @@ def test_module_errors_map_to_missing_distributions():
 
 
 def test_build_gate_gap_only_when_every_missing_module_is_a_missing_dependency(tmp_path, monkeypatch):
-    from maf_test_harness import build_gate
+    from maf_test_harness.tools import build_gate
 
     monkeypatch.setattr(env_check, "missing_packages", lambda ws: ["fastapi"])
     assert build_gate._environment_gap("No module named 'fastapi'", tmp_path, []) == ["fastapi"]

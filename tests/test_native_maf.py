@@ -19,9 +19,9 @@ from agent_framework import (
     Message,
 )
 
-import maf_test_harness.maf_runtime as runtime_module
-from maf_test_harness.maf_runtime import AgentOutputError, MAFHarnessRuntime
-from maf_test_harness.runtime_service import RuntimeService
+import maf_test_harness.agent.runtime as runtime_module
+from maf_test_harness.agent.runtime import AgentOutputError, MAFHarnessRuntime
+from maf_test_harness.ui.runtime_service import RuntimeService
 
 SKILL = "test-design-generator"
 
@@ -261,7 +261,7 @@ def test_scripts_that_are_not_model_tier_are_rejected_by_the_host(monkeypatch):
 def test_script_runner_refuses_modified_scripts_unsafe_args_and_unlisted_scripts(tmp_path):
     import shutil
 
-    from maf_test_harness.skill_scripts import HarnessScriptRunner, ScriptRefused
+    from maf_test_harness.skills.scripts import HarnessScriptRunner, ScriptRefused
 
     root = tmp_path / "skills"
     shutil.copytree("skills", root)
