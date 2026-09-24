@@ -137,7 +137,7 @@ def py_payload(code):
     return {"files": [{"path": "test_x.py", "content": "# CASE_ID: TC-1\n" + code, "case_ids": ["TC-1"]}]}
 
 
-def test_two_test_methods_for_one_case_is_rejected_with_a_parametrize_hint():
+def test_two_test_methods_for_one_case_is_rejected_with_a_python_only_parametrize_hint():
     two_funcs = (
         "import subprocess\n\n"
         "def test_help_flag_prints_help_and_exits_code_0():\n"
@@ -145,8 +145,36 @@ def test_two_test_methods_for_one_case_is_rejected_with_a_parametrize_hint():
         "def test_h_flag_prints_help_and_exits_code_0():\n"
         "    r = subprocess.run(['app', '-h']); assert r.returncode == 0\n"
     )
-    with pytest.raises(ValueError, match=r"parametrize\('flag'"):
+    with pytest.raises(ValueError, match=r"pytest\.mark\.parametrize") as excinfo:
         validate_generated_files(py_payload(two_funcs), {"TC-1"})
+    assert "JUnit" not in str(excinfo.value)  # a Python target must not be shown JUnit syntax
+
+
+def test_two_test_methods_for_one_exception_type_variant_is_also_rejected():
+    """The real failure this covers: test_main_catches_valueerror + test_main_catches_runtimeerror for 1 case."""
+    two_funcs = (
+        "import pytest\n\n"
+        "def test_main_catches_valueerror():\n"
+        "    with pytest.raises(SystemExit):\n        main(ValueError())\n\n"
+        "def test_main_catches_runtimeerror():\n"
+        "    with pytest.raises(SystemExit):\n        main(RuntimeError())\n"
+    )
+    with pytest.raises(ValueError, match="different exception/error type"):
+        validate_generated_files(py_payload(two_funcs), {"TC-1"})
+
+
+def test_two_test_methods_for_one_case_in_java_is_rejected_with_a_junit_only_hint():
+    two_methods = (
+        "class ATest {\n"
+        '  @org.junit.Test public void testHelpFlag() { assertEquals(0, run("--help")); }\n'
+        '  @org.junit.Test public void testHFlag() { assertEquals(0, run("-h")); }\n}\n'
+    )
+    payload = {
+        "files": [{"path": "ATest.java", "content": "// CASE_ID: TC-1\n" + two_methods, "case_ids": ["TC-1"]}]
+    }
+    with pytest.raises(ValueError, match="JUnit") as excinfo:
+        validate_generated_files(payload, {"TC-1"})
+    assert "pytest" not in str(excinfo.value)  # a Java target must not be shown pytest syntax
 
 
 def test_a_parametrized_test_covering_both_variants_counts_as_one_declaration():

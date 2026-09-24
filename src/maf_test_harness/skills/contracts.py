@@ -857,13 +857,21 @@ def validate_generated_files(payload: dict[str, Any], case_ids: set[str]) -> dic
             raise ValueError(f"generated file has no recognized concrete test declarations: {path}")
         if declarations != 1:
             names = ", ".join(_test_declaration_names(path, content)[:6])
+            suffix = PurePosixPath(path).suffix.lower()
+            parametrize_hint = (
+                " (JUnit `@ParameterizedTest` with `@ValueSource`/`@MethodSource`)."
+                if suffix in {".java", ".kt"}
+                else " (`@pytest.mark.parametrize(('value', 'expected'), [(...), (...)])`)."
+                if suffix == ".py"
+                else "."
+            )
             raise ValueError(
                 f"generated file must contain exactly one concrete test declaration for its one case ID: {path} "
                 f"(found {declarations}{': ' + names if names else ''}). Keep ONE test method and move the extra "
                 "assertions of the others into it; do not add a second test for a second assertion. If the extra "
-                "declarations each exercise a different input for the same behavior (a flag and its alias, GET vs "
-                "HEAD), parametrize the one remaining test instead of asserting each inline "
-                "(`@pytest.mark.parametrize('flag', ['--help', '-h'])`; JUnit `@ParameterizedTest` + `@ValueSource`)."
+                "declarations each exercise a different variant of the same behavior - a different input, a "
+                "different expected outcome, or a different exception/error type - parametrize the one remaining "
+                "test instead of asserting each inline" + parametrize_hint
             )
         declaration_total += declarations
         covered.update(linked)
@@ -1309,7 +1317,9 @@ def _reject_unused_setup(tree: ast.AST, where: str) -> None:
             if name not in loaded:
                 raise ValueError(
                     f"{where} line {line}: '{name}' is built but never used, so the test's setup never reaches the code "
-                    "under test. Pass it to the function under test (or patch the collaborators that produce it)."
+                    f"under test. Pass it in directly (the call under test should read `{name}` somewhere in its "
+                    f"arguments, e.g. `result = func({name})`), or patch the collaborator that would otherwise "
+                    f"produce this value so the function under test consumes it instead of unrelated defaults."
                 )
 
 

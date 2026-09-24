@@ -410,6 +410,19 @@ def test_the_generation_policy_states_the_environment_facts_to_the_model():
     assert wf._generation_policy({"languages": {}}, {})["environment"]["unavailable_packages"] == []
 
 
+def test_the_generation_policy_scopes_language_examples_to_the_dominant_language():
+    py_policy = wf._generation_policy({"languages": {"Python": 10}}, {"stack": {"primary": "python"}})
+    assert "pytest.mark.parametrize" in py_policy["structure_rule"]
+    assert "JUnit" not in py_policy["structure_rule"] and "JDK" not in py_policy["dependency_rule"]
+
+    java_policy = wf._generation_policy({"languages": {"Java": 10}}, {"stack": {"primary": "java"}})
+    assert "JUnit" in java_policy["structure_rule"] and "JDK" in java_policy["dependency_rule"]
+    assert "pytest" not in java_policy["structure_rule"]
+
+    # a case can vary by exception/error type, not only by input value or expected outcome
+    assert "exception/error type" in py_policy["structure_rule"]
+
+
 def test_ui_tooling_reads_the_installed_distributions(tmp_path, monkeypatch):
     monkeypatch.setattr(env_check, "installed_distributions", lambda ws: {"streamlit", "pytest"})
     assert env_check.ui_tooling(tmp_path) == {"playwright": False, "streamlit": True}

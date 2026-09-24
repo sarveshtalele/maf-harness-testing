@@ -215,7 +215,7 @@ def test_undeclared_test_libraries_are_listed_as_forbidden_for_the_prompt():
 
 def test_a_setup_collection_that_is_never_used_is_rejected():
     bad = "def test_boundary():\n    sections = [1, 2, 3]  # 6 * 10 = 60\n    result = compute()\n    assert result == 60\n"
-    with pytest.raises(ValueError, match="'sections' is built but never used"):
+    with pytest.raises(ValueError, match=r"'sections' is built but never used.*result = func\(sections\)"):
         check_python_test_hygiene(bad + "def compute():\n    return 60\n", "t.py")
     used = "def test_a():\n    sections = [1, 2]\n    assert sum(sections) == 3\n"
     check_python_test_hygiene(used, "t.py")
