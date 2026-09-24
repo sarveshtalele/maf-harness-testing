@@ -860,7 +860,10 @@ def validate_generated_files(payload: dict[str, Any], case_ids: set[str]) -> dic
             raise ValueError(
                 f"generated file must contain exactly one concrete test declaration for its one case ID: {path} "
                 f"(found {declarations}{': ' + names if names else ''}). Keep ONE test method and move the extra "
-                "assertions of the others into it; do not add a second test for a second assertion."
+                "assertions of the others into it; do not add a second test for a second assertion. If the extra "
+                "declarations each exercise a different input for the same behavior (a flag and its alias, GET vs "
+                "HEAD), parametrize the one remaining test instead of asserting each inline "
+                "(`@pytest.mark.parametrize('flag', ['--help', '-h'])`; JUnit `@ParameterizedTest` + `@ValueSource`)."
             )
         declaration_total += declarations
         covered.update(linked)

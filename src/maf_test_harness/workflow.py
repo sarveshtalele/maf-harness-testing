@@ -260,6 +260,14 @@ def _generation_policy(repo: dict[str, Any], state: dict[str, Any] | None = None
             "Use only the JDK/standard library and the declared_dependencies. Any other import is rejected by the "
             "host before you are asked again, which wastes a call."
         ),
+        "structure_rule": (
+            "One file, one case ID, one test declaration: literally one `def test_...` / `@Test` method in the file. "
+            "When a case covers more than one equivalent input (a flag and its alias such as --help/-h, GET vs HEAD, "
+            "with/without a trailing slash), that is still ONE test: assert every variant inside that single function, "
+            "or parametrize it (`@pytest.mark.parametrize('flag', ['--help', '-h'])`, JUnit `@ParameterizedTest` + "
+            "`@ValueSource`) - never write a second function for the second variant. The host rejects a second "
+            "declaration before you are asked again, which wastes a call."
+        ),
         "stack": {
             k: stack.get(k) for k in ("primary", "test_runner", "web_ui", "http_service") if k in stack
         },

@@ -133,6 +133,32 @@ def test_ui_test_may_use_the_html_placeholder_attribute():
     assert validate_generated_files(payload(code, "e2e/search.spec.ts"), {"TC-1"})["test_declarations"] == 1
 
 
+def py_payload(code):
+    return {"files": [{"path": "test_x.py", "content": "# CASE_ID: TC-1\n" + code, "case_ids": ["TC-1"]}]}
+
+
+def test_two_test_methods_for_one_case_is_rejected_with_a_parametrize_hint():
+    two_funcs = (
+        "import subprocess\n\n"
+        "def test_help_flag_prints_help_and_exits_code_0():\n"
+        "    r = subprocess.run(['app', '--help']); assert r.returncode == 0\n\n"
+        "def test_h_flag_prints_help_and_exits_code_0():\n"
+        "    r = subprocess.run(['app', '-h']); assert r.returncode == 0\n"
+    )
+    with pytest.raises(ValueError, match=r"parametrize\('flag'"):
+        validate_generated_files(py_payload(two_funcs), {"TC-1"})
+
+
+def test_a_parametrized_test_covering_both_variants_counts_as_one_declaration():
+    parametrized = (
+        "import subprocess\nimport pytest\n\n"
+        "@pytest.mark.parametrize('flag', ['--help', '-h'])\n"
+        "def test_help_flag_prints_help_and_exits_code_0(flag):\n"
+        "    r = subprocess.run(['app', flag]); assert r.returncode == 0\n"
+    )
+    assert validate_generated_files(py_payload(parametrized), {"TC-1"})["test_declarations"] == 1
+
+
 REPO = ["reverse_engineer_skill.py", "src/pkg/core.py", "src/pkg/__init__.py", "skills/agent/tool.py"]
 
 
