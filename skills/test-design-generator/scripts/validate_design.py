@@ -9,11 +9,11 @@ import sys
 from pathlib import Path
 
 try:
-    from maf_test_harness.skill_contracts import finalize_design
+    from maf_test_harness.skills.contracts import finalize_design
 except ImportError:
     repository_root = Path(__file__).resolve().parents[3]
     sys.path.insert(0, str(repository_root / "src"))
-    from maf_test_harness.skill_contracts import finalize_design
+    from maf_test_harness.skills.contracts import finalize_design
 
 
 def main() -> int:

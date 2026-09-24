@@ -10,10 +10,10 @@ import pytest
 from fakes import ScriptedStageRuntime, clone_fixture
 
 import maf_test_harness.workflow as wf
-from maf_test_harness.maf_runtime import BudgetGuard
-from maf_test_harness.runtime_service import RuntimeService
+from maf_test_harness.agent.runtime import BudgetGuard
+from maf_test_harness.llm.usage import DailyLimitError, DailyUsageLedger
 from maf_test_harness.settings import DAILY_TOKEN_LIMIT
-from maf_test_harness.usage import DailyLimitError, DailyUsageLedger
+from maf_test_harness.ui.runtime_service import RuntimeService
 
 
 class Msg:

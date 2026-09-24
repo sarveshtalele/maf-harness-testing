@@ -13,11 +13,17 @@ from pathlib import Path
 
 import pytest
 
-from maf_test_harness import platform_compat
-from maf_test_harness.agent_tools import CENTRAL_TOOL_NAMES, STAGE_TOOLS, HarnessToolbox, tool_instructions
-from maf_test_harness.autofix import autofix_files, fix_java, fix_python
-from maf_test_harness.build_gate import _maven_errors, try_build
-from maf_test_harness.code_intel import (
+from maf_test_harness.envs import platform_compat
+from maf_test_harness.repo.stack import detect_stack
+from maf_test_harness.tools.agent_tools import (
+    CENTRAL_TOOL_NAMES,
+    STAGE_TOOLS,
+    HarnessToolbox,
+    tool_instructions,
+)
+from maf_test_harness.tools.autofix import autofix_files, fix_java, fix_python
+from maf_test_harness.tools.build_gate import _maven_errors, try_build
+from maf_test_harness.tools.code_intel import (
     RepoContext,
     find_symbol,
     installed_packages,
@@ -27,7 +33,6 @@ from maf_test_harness.code_intel import (
     static_gate,
     undefined_python_names,
 )
-from maf_test_harness.stack import detect_stack
 
 
 def write(root, files):

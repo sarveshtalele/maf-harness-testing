@@ -1,4 +1,4 @@
-from maf_test_harness.artifact_presenter import humanize, json_to_markdown
+from maf_test_harness.ui.artifact_presenter import humanize, json_to_markdown
 
 
 def test_humanize():

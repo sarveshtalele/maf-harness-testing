@@ -3,7 +3,7 @@ import sys
 
 import pytest
 
-from maf_test_harness import execution
+from maf_test_harness.envs import execution
 
 
 def test_command_result_records_failure_and_sanitizes_environment(tmp_path, monkeypatch):

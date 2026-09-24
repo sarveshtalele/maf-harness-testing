@@ -2,7 +2,7 @@ from pathlib import Path
 
 import pytest
 
-from maf_test_harness.repo_analyzer import (
+from maf_test_harness.repo.analyzer import (
     RepoInputError,
     analyze_repository,
     build_repository_evidence,

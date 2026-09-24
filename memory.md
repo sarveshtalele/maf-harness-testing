@@ -114,6 +114,18 @@ modules used everywhere, and checkpoints reference the model classes by module p
 * ENV-PY-009 (installed packages mutually incompatible): live failure on personal-finance-using-RAG (batch 2/9, `Router.__init__() ... on_startup`): the per-package pip fallback lost joint resolution and `streamlit>=1.32.0` pulled `starlette 1.6.0` next to `fastapi==0.110.0`. Fixed with joint re-resolution after the fallback, `pip check` + `repair_conflicts` after install (verified live on that environment), classification (`errors/`, `Context.conflicts`), build gate, `list_dependency_conflicts` and `environment_gaps`. 38 codes now.
 * STRICT GUARDRAIL (user rule, 2026-09-21): install ALL requirements, only then proceed. `HARNESS_STRICT_ENV` (default on): after the install steps `Harness._environment_shortfalls` checks failed steps, declared packages missing, `pip check` conflicts remaining; any of them makes the environment gate an error gate (retry/stop only, `state.environment.status = incomplete`), and `Harness.enter` refuses every later stage while incomplete. For `ENV-PY-001/002/003` `envs/recovery.python_fallback` proposes 3.11/3.10/3.12 (installed or installable with uv); Retry wipes the venv and re-plans with `python_override` (an `exact` toolchain requirement listed as a download, approved as usual). Also from the personal-finance-using-RAG run: generation prompt carries `environment` (python, unavailable_packages, ui_tooling); live UI levels only when the environment can run them (Playwright, or Streamlit AppTest for ui); `Could not import X python package` recognised; QA environment actions for never-installed packages; `tools/mock_pitfalls.py` static gates (all 7 real defective tests caught, 6 passing ones unaffected). CLAUDE.md has a Guardrails section; auto-memory `strict-environment-guardrail`. Live check of the guardrail on the real repo: see the log below.
 * Phase 3 gaps (carry forward): no scaffolding of a Java/.NET *generated test project*; a JDK download was not exercised live (190 MB, network here was ~60 KB/s); Python provisioning depends on `uv`; Node/Go untouched; the approved plan shows bare `mvn`/`gradle`/`dotnet` and the harness rewrites them to absolute paths after provisioning (audit records it).
+* Full-project audit (2026-09-24): removed the Phase 1 flat-module compatibility shims entirely (27 files, down from the
+  original 30 minus 3 already-dead ones removed earlier the same day). They were only ever bridging *this repo's own*
+  `tests/*.py` from the old flat paths to the new subpackage ones — a private repo with no PyPI publication and no
+  external consumers of the old import paths, so once every test file was updated to import the subpackage path
+  directly (`maf_test_harness.envs.runners`, `.skills.contracts`, `.agent.runtime`, …), the shims had nothing left to
+  protect. `tests/test_module_layout.py` trimmed from 34 tests (alias/patch/import checks per old name) to 2 (every
+  module imports, skills root resolves) since the thing it was testing no longer exists. `CLAUDE.md`, `ARCHITECTURE.md`,
+  `IMPLEMENTATION_PLAN.md` updated to stop describing the shim layer as current. Also fixed `docs/AUTOMATION.md`
+  misattributing `install-each-package`/`fix-conflicts` to `envs/recovery.py` (they're unconditional parts of
+  `envs/runners.py`'s install pipeline, not playbook recipes) and two new `mock_pitfalls.py` static checks found live:
+  `patch.object(app.state, "x", ...)` before the FastAPI lifespan that sets `x` has run, and `st.session_state` read
+  instead of `at.session_state` after driving the app with `AppTest`.
 
 ## 9. Phase 3 — design (implemented; kept for reference)
 

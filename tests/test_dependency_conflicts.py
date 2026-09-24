@@ -13,7 +13,7 @@ from types import SimpleNamespace
 
 from maf_test_harness.envs import env_check, platform_compat, runners
 from maf_test_harness.envs.runners import Step
-from maf_test_harness.stack import StackProfile
+from maf_test_harness.repo.stack import StackProfile
 from maf_test_harness.tools import build_gate
 from maf_test_harness.tools.registry import ToolContext
 from maf_test_harness.tools.typed import default_registry

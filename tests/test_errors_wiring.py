@@ -6,9 +6,10 @@ from pathlib import Path
 
 from error_cases import MSVC, SRE
 
-from maf_test_harness import build_gate, platform_compat, runners
-from maf_test_harness.qa_report import build_qa_report
-from maf_test_harness.stack import StackProfile
+from maf_test_harness.envs import platform_compat, runners
+from maf_test_harness.qa.report import build_qa_report
+from maf_test_harness.repo.stack import StackProfile
+from maf_test_harness.tools import build_gate
 
 
 def _fake_run(log: str, exit_code: int = 1, status: str = "failed"):

@@ -5,8 +5,8 @@ from pathlib import Path
 
 import pytest
 
-from maf_test_harness import runners
-from maf_test_harness.stack import StackProfile, detect_stack
+from maf_test_harness.envs import runners
+from maf_test_harness.repo.stack import StackProfile, detect_stack
 
 
 def write(root: Path, files: dict[str, str]) -> Path:
@@ -256,7 +256,7 @@ def test_node_adapter_bootstraps_package_json_for_specs_in_non_node_repos(tmp_pa
 
 
 def test_build_failure_keeps_decisive_lines_and_qa_attributes_them_to_the_case(tmp_path):
-    from maf_test_harness.qa_report import build_qa_report
+    from maf_test_harness.qa.report import build_qa_report
 
     script = (
         "import sys; print('[ERROR] src/test/java/FooIT.java:[4,30] package io.restassured does not exist');"
@@ -281,7 +281,7 @@ def test_build_failure_keeps_decisive_lines_and_qa_attributes_them_to_the_case(t
 
 def test_uncompilable_generated_files_are_quarantined_so_the_rest_still_run(tmp_path):
     """Compiled-language analogue of pytest's --continue-on-collection-errors."""
-    from maf_test_harness.qa_report import build_qa_report
+    from maf_test_harness.qa.report import build_qa_report
 
     (tmp_path / "src/test/java").mkdir(parents=True)
     bad, good = "src/test/java/BadTest.java", "src/test/java/GoodTest.java"

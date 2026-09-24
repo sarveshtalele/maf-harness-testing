@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from maf_test_harness import platform_compat
+from maf_test_harness.envs import platform_compat
 
 
 def test_venv_python_layout_per_os(monkeypatch, tmp_path):

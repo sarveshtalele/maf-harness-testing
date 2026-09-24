@@ -1,4 +1,4 @@
-from maf_test_harness.personas import PERSONAS, persona_instructions
+from maf_test_harness.agent.personas import PERSONAS, persona_instructions
 from maf_test_harness.workflow import STAGES
 
 

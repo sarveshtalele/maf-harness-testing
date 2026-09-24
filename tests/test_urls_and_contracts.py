@@ -1,7 +1,7 @@
 import pytest
 
-from maf_test_harness.repo_analyzer import RepoInputError, validate_github_url
-from maf_test_harness.skill_contracts import (
+from maf_test_harness.repo.analyzer import RepoInputError, validate_github_url
+from maf_test_harness.skills.contracts import (
     finalize_discovered_requirements,
     validate_generated_files,
 )
@@ -201,7 +201,7 @@ REPO = ["reverse_engineer_skill.py", "src/pkg/core.py", "src/pkg/__init__.py", "
     ],
 )
 def test_resolvable_python_imports_pass(code):
-    from maf_test_harness.skill_contracts import check_python_imports
+    from maf_test_harness.skills.contracts import check_python_imports
 
     check_python_imports(code, REPO, "requests==2.31\n")
 
@@ -215,7 +215,7 @@ def test_resolvable_python_imports_pass(code):
     ],
 )
 def test_unresolvable_python_imports_fail_with_a_hint(code, needle):
-    from maf_test_harness.skill_contracts import check_python_imports
+    from maf_test_harness.skills.contracts import check_python_imports
 
     with pytest.raises(ValueError, match=needle):
         check_python_imports(code, REPO, "requests\n")
@@ -223,7 +223,7 @@ def test_unresolvable_python_imports_fail_with_a_hint(code, needle):
 
 def test_installed_transitive_module_of_a_declared_dependency_resolves():
     """`langchain` is declared; `langchain_core` is only its transitive dependency, but it is really installed."""
-    from maf_test_harness.skill_contracts import check_python_imports
+    from maf_test_harness.skills.contracts import check_python_imports
 
     code = "from langchain_core.language_models.fake import FakeListLLM\n"
     with pytest.raises(ValueError, match="not a declared dependency"):
@@ -232,7 +232,7 @@ def test_installed_transitive_module_of_a_declared_dependency_resolves():
 
 
 def test_non_importable_module_paths_get_actionable_guidance_and_path_aware_tests_pass():
-    from maf_test_harness.skill_contracts import check_python_imports
+    from maf_test_harness.skills.contracts import check_python_imports
 
     repo = ["skill-packages/03-agent-sdk-skill/reverse_engineer_agent.py"]
     with pytest.raises(ValueError, match="not an importable package.*sys.path"):
@@ -252,7 +252,7 @@ JAVA_REPO = ["src/main/java/org/acme/shop/model/Category.java"]
 
 
 def test_java_imports_resolve_against_jdk_repo_and_declared_dependencies():
-    from maf_test_harness.skill_contracts import check_java_imports
+    from maf_test_harness.skills.contracts import check_java_imports
 
     check_java_imports(
         "import java.util.List;\nimport javax.validation.Validator;\nimport org.junit.Test;\n"
@@ -271,7 +271,7 @@ def test_java_imports_resolve_against_jdk_repo_and_declared_dependencies():
     ],
 )
 def test_java_imports_of_undeclared_libraries_are_rejected(line):
-    from maf_test_harness.skill_contracts import check_java_imports
+    from maf_test_harness.skills.contracts import check_java_imports
 
     with pytest.raises(ValueError, match="not declared in the build files"):
         check_java_imports(line + "\n", JAVA_REPO, POM)
@@ -325,7 +325,7 @@ def read(rel):
 
 
 def test_imported_names_must_exist_at_module_level_and_locals_get_a_precise_hint():
-    from maf_test_harness.skill_contracts import check_python_imports
+    from maf_test_harness.skills.contracts import check_python_imports
 
     files = ["engine/pipeline.py", "helpers.py"]
     check_python_imports(
@@ -342,7 +342,7 @@ def test_imported_names_must_exist_at_module_level_and_locals_get_a_precise_hint
 
 
 def test_modules_with_star_imports_or_getattr_are_not_second_guessed():
-    from maf_test_harness.skill_contracts import check_python_imports
+    from maf_test_harness.skills.contracts import check_python_imports
 
     for source in ("from os.path import *\n", "def __getattr__(name):\n    return 1\n"):
         check_python_imports(
@@ -355,7 +355,7 @@ def test_modules_with_star_imports_or_getattr_are_not_second_guessed():
 
 
 def test_submodules_are_importable_names():
-    from maf_test_harness.skill_contracts import check_python_imports
+    from maf_test_harness.skills.contracts import check_python_imports
 
     check_python_imports(
         "from engine import pipeline\n",
@@ -367,7 +367,7 @@ def test_submodules_are_importable_names():
 
 
 def test_modules_in_non_package_directories_are_importable_by_bare_name_because_the_runner_adds_the_directory():
-    from maf_test_harness.skill_contracts import check_python_imports, extra_import_roots
+    from maf_test_harness.skills.contracts import check_python_imports, extra_import_roots
 
     repo = ["skill-packages/03-agent-sdk-skill/reverse_engineer_agent.py", "engine/pipeline.py", "run.py"]
     assert extra_import_roots(repo) == ["skill-packages/03-agent-sdk-skill"]  # engine/ is importable already
@@ -377,7 +377,7 @@ def test_modules_in_non_package_directories_are_importable_by_bare_name_because_
 
 
 def test_resolve_id_repairs_garbled_hash_suffixes_but_never_guesses_between_candidates():
-    from maf_test_harness.skill_contracts import resolve_id
+    from maf_test_harness.skills.contracts import resolve_id
 
     known = [
         "AC-PUT-CATEGORIES-ID-WITH-VALID-BODY-RETURNS-204-WITH-S-BD50B1F2",
@@ -414,7 +414,7 @@ def test_python_source_that_only_fails_at_compile_time_is_rejected():
 
 
 def test_declared_dependencies_are_parsed_from_build_and_manifest_files(tmp_path):
-    from maf_test_harness.repo_analyzer import declared_dependencies
+    from maf_test_harness.repo.analyzer import declared_dependencies
 
     files = {
         "pom.xml": "<project><dependencies><dependency><artifactId>junit</artifactId></dependency>"
@@ -462,7 +462,7 @@ def _deeply_nested_test(depth: int) -> str:
 
 
 def test_deep_with_chains_are_flattened_to_exitstack_with_identical_semantics():
-    from maf_test_harness.skill_contracts import flatten_nested_with
+    from maf_test_harness.skills.contracts import flatten_nested_with
 
     source = _deeply_nested_test(25)
     with pytest.raises(SyntaxError, match="too many statically nested blocks"):
@@ -479,7 +479,7 @@ def test_deep_with_chains_are_flattened_to_exitstack_with_identical_semantics():
 
 
 def test_a_flattened_test_passes_the_static_gate_that_rejected_the_original():
-    from maf_test_harness.skill_contracts import flatten_nested_with
+    from maf_test_harness.skills.contracts import flatten_nested_with
 
     def py_payload(code):
         return {

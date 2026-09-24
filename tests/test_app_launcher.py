@@ -5,7 +5,8 @@ import textwrap
 
 import pytest
 
-from maf_test_harness import app_launcher, triage
+from maf_test_harness.envs import app_launcher
+from maf_test_harness.qa import triage
 
 
 def write(root, files):

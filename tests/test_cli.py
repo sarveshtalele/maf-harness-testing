@@ -2,7 +2,7 @@ import json
 from pathlib import Path
 
 from maf_test_harness import cli
-from maf_test_harness.skills_registry import tree_sha256
+from maf_test_harness.skills.registry import tree_sha256
 
 SKILLS = Path("skills")
 

@@ -1,6 +1,6 @@
 import pytest
 
-from maf_test_harness.skill_contracts import validate_generated_files
+from maf_test_harness.skills.contracts import validate_generated_files
 
 
 def payload(code, path="test_example.py"):

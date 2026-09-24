@@ -3,9 +3,9 @@
 import asyncio
 from types import SimpleNamespace
 
-from maf_test_harness import observability
-from maf_test_harness.maf_runtime import BudgetGuard
-from maf_test_harness.usage import DailyUsageLedger
+from maf_test_harness.agent.runtime import BudgetGuard
+from maf_test_harness.llm.usage import DailyUsageLedger
+from maf_test_harness.monitoring import report as observability
 
 
 class Msg:

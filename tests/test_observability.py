@@ -9,15 +9,21 @@ import pytest
 from agent_framework import ChatResponse, Content, Message
 from test_native_maf import ScriptedClient, fresh_state
 
-import maf_test_harness.maf_runtime as runtime_module
-import maf_test_harness.telemetry as telemetry
+import maf_test_harness.agent.runtime as runtime_module
+import maf_test_harness.monitoring.telemetry as telemetry
 from maf_test_harness import cli
-from maf_test_harness.agent_tools import HarnessToolbox
-from maf_test_harness.code_intel import RepoContext
-from maf_test_harness.maf_runtime import MAFHarnessRuntime
-from maf_test_harness.observability import build_report, render_markdown
-from maf_test_harness.runtime_service import RuntimeService
-from maf_test_harness.trace import TraceRecorder, read_trace, redact, summarize_arguments, tool_category
+from maf_test_harness.agent.runtime import MAFHarnessRuntime
+from maf_test_harness.monitoring.report import build_report, render_markdown
+from maf_test_harness.monitoring.trace import (
+    TraceRecorder,
+    read_trace,
+    redact,
+    summarize_arguments,
+    tool_category,
+)
+from maf_test_harness.tools.agent_tools import HarnessToolbox
+from maf_test_harness.tools.code_intel import RepoContext
+from maf_test_harness.ui.runtime_service import RuntimeService
 
 # credential-shaped values are assembled at run time so the repository secrets scan can stay strict
 FAKE_KEY = "sk" + "-" + "abcdef1234567890"

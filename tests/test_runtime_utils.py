@@ -1,6 +1,6 @@
 import pytest
 
-from maf_test_harness.maf_runtime import AgentOutputError, extract_json_object
+from maf_test_harness.agent.runtime import AgentOutputError, extract_json_object
 
 
 def test_extract_json_object_accepts_plain_json() -> None:

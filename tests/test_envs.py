@@ -15,7 +15,7 @@ import pytest
 
 from maf_test_harness import envs
 from maf_test_harness.envs import python_env, spec, toolchains
-from maf_test_harness.runners import Step
+from maf_test_harness.envs.runners import Step
 
 
 def write(root: Path, files: dict[str, str]) -> Path:
@@ -419,8 +419,8 @@ def test_windows_prefers_real_launchers_over_extensionless_scripts(tmp_path, mon
 
 
 def test_environment_plan_lists_downloads_instead_of_blocking_on_missing_tools(tmp_path, monkeypatch):
-    from maf_test_harness import environment
-    from maf_test_harness.stack import StackProfile
+    from maf_test_harness.envs import environment
+    from maf_test_harness.repo.stack import StackProfile
 
     monkeypatch.setenv("HARNESS_TOOLCHAIN_DIR", str(tmp_path / "cache"))
     monkeypatch.setattr(toolchains, "DETECTORS", dict.fromkeys(toolchains.DETECTORS, list))
