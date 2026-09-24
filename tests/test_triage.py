@@ -117,3 +117,10 @@ def test_target_source_handles_java_and_missing_targets(tmp_path):
 )
 def test_wrong_url_or_method_failures_point_at_the_route_inventory(message):
     assert "live_app.routes" in triage.remedy_for(message)
+
+
+def test_generic_catch_all_remedies_give_a_concrete_worked_example_not_just_a_category():
+    assert "collaborator_signatures" in triage.remedy_for("cannot find symbol")
+    assert "{'user': {'id': 1" in triage.remedy_for("KeyError: 'id'")
+    assert "trace the actual" in triage.remedy_for("AssertionError: assert 3 == 4")
+    assert "from app.rag_pipeline import get_chain" in triage.remedy_for("cannot import name 'x'")

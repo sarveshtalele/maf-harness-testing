@@ -245,6 +245,7 @@ def _generation_policy(repo: dict[str, Any], state: dict[str, Any] | None = None
     dominant = max(languages, key=languages.get) if languages else "Unknown"
     state = state or {}
     stack = state.get("stack") or {}
+    is_jvm = stack.get("primary") == "java" or dominant.lower() in {"java", "kotlin"}
     return {
         "dominant_language": dominant,
         "languages": languages,
@@ -257,8 +258,26 @@ def _generation_policy(repo: dict[str, Any], state: dict[str, Any] | None = None
         "declared_dependencies": (state.get("declared_dependencies") or [])[:120],
         "forbidden_imports": _undeclared_libraries(state.get("declared_dependencies") or []),
         "dependency_rule": (
-            "Use only the JDK/standard library and the declared_dependencies. Any other import is rejected by the "
-            "host before you are asked again, which wastes a call."
+            (
+                "Use only the JDK/standard library and the declared_dependencies. "
+                if is_jvm
+                else "Use only the standard library and the declared_dependencies. "
+            )
+            + "Any other import is rejected by the host before you are asked again, which wastes a call."
+        ),
+        "structure_rule": (
+            "One file, one case ID, one test declaration: literally one `def test_...` / `@Test` method in the file. "
+            "When a case covers more than one variant of the same behavior - a different input (a flag and its alias "
+            "such as --help/-h, GET vs HEAD), a different expected outcome, or a different exception/error type (the "
+            "same function raising ValueError vs RuntimeError for two invalid inputs) - that is still ONE test: assert "
+            "every variant inside that single function, or parametrize it"
+            + (
+                " (JUnit `@ParameterizedTest` with `@ValueSource`/`@MethodSource`)"
+                if is_jvm
+                else " (`@pytest.mark.parametrize(('value', 'expected'), [(...), (...)])`)"
+            )
+            + " - never write a second function for the second variant. The host rejects a second declaration before "
+            "you are asked again, which wastes a call."
         ),
         "stack": {
             k: stack.get(k) for k in ("primary", "test_runner", "web_ui", "http_service") if k in stack

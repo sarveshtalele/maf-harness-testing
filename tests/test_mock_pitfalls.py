@@ -147,6 +147,57 @@ def test_autospec_on_app_state_is_rejected_and_a_plain_assignment_passes(ctx):
     )
 
 
+# --- patching app.state before the lifespan that sets it has run -----------------------------------------------------
+
+LIFESPAN_STATE_BAD = """
+from fastapi.testclient import TestClient
+from unittest.mock import patch, MagicMock
+from app.main import app
+
+def test_x():
+    with patch.object(app.state, "chain", MagicMock()) as mock_chain:
+        client = TestClient(app)
+        response = client.get("/toc")
+    assert response.status_code == 200
+"""
+LIFESPAN_STATE_GOOD_WITH_BLOCK = """
+from fastapi.testclient import TestClient
+from unittest.mock import patch, MagicMock
+from app.main import app
+
+def test_x():
+    with TestClient(app) as client:
+        with patch.object(app.state, "chain", MagicMock()) as mock_chain:
+            response = client.get("/toc")
+    assert response.status_code == 200
+"""
+LIFESPAN_STATE_GOOD_DIRECT_ASSIGN = """
+from fastapi.testclient import TestClient
+from unittest.mock import MagicMock
+from app.main import app
+
+def test_x():
+    app.state.chain = MagicMock()
+    client = TestClient(app)
+    response = client.get("/toc")
+    assert response.status_code == 200
+"""
+
+
+def test_patching_app_state_before_the_lifespan_runs_is_rejected(ctx):
+    with pytest.raises(
+        ValueError, match=r"only assigned inside the FastAPI lifespan.*with TestClient\(app\) as"
+    ):
+        gate(ctx, LIFESPAN_STATE_BAD)
+    gate(ctx, LIFESPAN_STATE_GOOD_WITH_BLOCK)
+    gate(ctx, LIFESPAN_STATE_GOOD_DIRECT_ASSIGN)
+    # create=True is an explicit opt-in to patch an attribute that may not exist yet
+    gate(
+        ctx,
+        'from unittest.mock import patch\nfrom app.main import app\n\ndef test_x():\n    with patch.object(app.state, "chain", create=True):\n        pass\n',
+    )
+
+
 # --- MagicMock as a LangChain LLM -------------------------------------------------------------------------------------
 
 LLM_BAD = """
@@ -286,6 +337,44 @@ def test_reading_streamlit_html_is_rejected_apptest_passes(ctx):
     )
 
 
+# --- st.session_state read after driving the app with AppTest --------------------------------------------------------
+
+SESSION_STATE_BAD = """
+from streamlit.testing.v1 import AppTest
+import streamlit as st
+
+def test_chat():
+    at = AppTest.from_file("streamlit_app.py")
+    at.run()
+    assert len(st.session_state.chat_history) == 1
+"""
+SESSION_STATE_BAD_SUBSCRIPT = """
+from streamlit.testing.v1 import AppTest
+import streamlit as st
+
+def test_chat():
+    at = AppTest.from_file("streamlit_app.py")
+    at.run()
+    assert st.session_state["chat_history"][0] == ("user", "hi")
+"""
+SESSION_STATE_GOOD = """
+from streamlit.testing.v1 import AppTest
+
+def test_chat():
+    at = AppTest.from_file("streamlit_app.py")
+    at.run()
+    assert len(at.session_state["chat_history"]) == 1
+"""
+
+
+def test_reading_bare_session_state_after_apptest_is_rejected_at_session_state_passes(ctx):
+    with pytest.raises(ValueError, match=r"test process's own \(uninitialized\).*at\.session_state"):
+        gate(ctx, SESSION_STATE_BAD)
+    with pytest.raises(ValueError, match=r"test process's own \(uninitialized\).*at\.session_state"):
+        gate(ctx, SESSION_STATE_BAD_SUBSCRIPT)
+    gate(ctx, SESSION_STATE_GOOD)
+
+
 # --- existence guard --------------------------------------------------------------------------------------------------
 
 GUARD_BAD = """
@@ -408,6 +497,19 @@ def test_the_generation_policy_states_the_environment_facts_to_the_model():
     assert env["ui_tooling"] == {"playwright": False, "streamlit": True}
     assert "stub it in sys.modules" in env["rule"] and json.dumps(env)
     assert wf._generation_policy({"languages": {}}, {})["environment"]["unavailable_packages"] == []
+
+
+def test_the_generation_policy_scopes_language_examples_to_the_dominant_language():
+    py_policy = wf._generation_policy({"languages": {"Python": 10}}, {"stack": {"primary": "python"}})
+    assert "pytest.mark.parametrize" in py_policy["structure_rule"]
+    assert "JUnit" not in py_policy["structure_rule"] and "JDK" not in py_policy["dependency_rule"]
+
+    java_policy = wf._generation_policy({"languages": {"Java": 10}}, {"stack": {"primary": "java"}})
+    assert "JUnit" in java_policy["structure_rule"] and "JDK" in java_policy["dependency_rule"]
+    assert "pytest" not in java_policy["structure_rule"]
+
+    # a case can vary by exception/error type, not only by input value or expected outcome
+    assert "exception/error type" in py_policy["structure_rule"]
 
 
 def test_ui_tooling_reads_the_installed_distributions(tmp_path, monkeypatch):

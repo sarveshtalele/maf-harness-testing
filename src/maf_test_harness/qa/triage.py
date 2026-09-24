@@ -78,7 +78,9 @@ REMEDIES: list[tuple[re.Pattern[str], str]] = [
     (
         re.compile(r"patch(?:\.object)?\(\s*(?:sys\s*,\s*)?['\"](?:sys\.)?exit['\"]"),
         "Do not mock sys.exit: execution then continues past the exit and fails later. Use "
-        "`with pytest.raises(SystemExit) as exc:` and assert `exc.value.code`.",
+        "`with pytest.raises(SystemExit) as exc:` and assert `exc.value.code`. To also assert which code sys.exit "
+        "received per parametrized case, keep the patch but give it `side_effect=SystemExit` so it actually raises "
+        "(`patch('sys.exit', side_effect=SystemExit) as mock_exit`), still inside `pytest.raises(SystemExit)`.",
     ),
     (
         re.compile(r"module '([\w.]+)' has no attribute '(\w+)'"),
@@ -166,7 +168,8 @@ REMEDIES: list[tuple[re.Pattern[str], str]] = [
     (
         re.compile(r"cannot import name|No module named|ImportError"),
         "Import only names defined at module level in target_source and modules listed in source_files / "
-        "python_import_roots.",
+        "python_import_roots: e.g. `from app.rag_pipeline import get_chain`, not a name you expect to exist but "
+        "never saw declared in either list.",
     ),
     (
         re.compile(r"readonly attribute|can't set attribute|cannot set attribute", re.I),
@@ -180,16 +183,19 @@ REMEDIES: list[tuple[re.Pattern[str], str]] = [
     (
         re.compile(r"KeyError: '(\w+)'"),
         "The data you built lacks the key the code reads; construct the full shape shown in target_source, not a "
-        "partial mock.",
+        "partial mock, e.g. if the code reads `payload['user']['id']`, build "
+        "`{'user': {'id': 1, ...}}` with every key it accesses, not just the one that happened to be missing.",
     ),
     (
         re.compile(r"cannot find symbol|does not exist|has private access|cannot be applied", re.I),
-        "Use only classes, methods and constructors that appear in target_source; test through the public API.",
+        "Use only classes, methods and constructors that appear in target_source; test through the public API. Call "
+        "collaborator_signatures for the real constructors/methods available on a type before guessing one.",
     ),
     (
         re.compile(r"AssertionError|expected:<|Expected|assert ", re.I),
-        "Recompute the expected value from target_source. If the code's behavior is intended, correct the "
-        "expectation; never weaken the assertion just to pass.",
+        "Recompute the expected value from target_source instead of guessing a literal: trace the actual "
+        "transformation the code applies to the input you passed, and assert that exact result. If the code's "
+        "behavior is intended, correct the expectation; never weaken the assertion just to pass.",
     ),
 ]
 
