@@ -1233,7 +1233,10 @@ def check_python_test_hygiene(
         if _mocks_sys_exit(node):
             raise ValueError(
                 f"{where} line {node.lineno} mocks sys.exit: code keeps running past the mocked exit and fails later. "
-                "Use `with pytest.raises(SystemExit) as exc:` and assert `exc.value.code`."
+                "Wrap the call in `with pytest.raises(SystemExit) as exc:` and assert `exc.value.code`. To also assert "
+                "which code sys.exit received (e.g. a different code per parametrized exception type), keep the patch "
+                "but give it `side_effect=SystemExit` so it actually raises: `patch('sys.exit', side_effect=SystemExit) "
+                "as mock_exit`, still inside `pytest.raises(SystemExit)`, then `mock_exit.assert_called_once_with(code)`."
             )
         name = _call_name(node)
         target = _string_arg(node)

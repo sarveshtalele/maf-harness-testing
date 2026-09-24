@@ -31,7 +31,7 @@ def test_mocking_sys_exit_without_a_raising_side_effect_is_rejected(call):
     code = f"import sys\nfrom unittest.mock import patch, MagicMock\n\ndef test_x(monkeypatch):\n    with {call}:\n        pass\n"
     if call.startswith("monkeypatch"):
         code = f"import sys\nfrom unittest.mock import MagicMock\n\ndef test_x(monkeypatch):\n    {call}\n"
-    with pytest.raises(ValueError, match="pytest.raises\\(SystemExit\\)"):
+    with pytest.raises(ValueError, match=r"pytest\.raises\(SystemExit\).*side_effect=SystemExit"):
         check_python_test_hygiene(code, "tests/t.py")
 
 

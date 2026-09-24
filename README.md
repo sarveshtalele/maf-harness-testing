@@ -234,7 +234,7 @@ uv run python scripts/vendor_skills.py --source /tmp/awesome-agent-skills    # r
 
 ```bash
 uv run ruff check src tests app.py scripts && uv run ruff format --check src tests app.py scripts
-uv run pytest -q --ignore=tests/targets                    # unit + component (real MAF) + workflow e2e; no network, no model (about 680 tests)
+uv run pytest -q --ignore=tests/targets                    # unit + component (real MAF) + workflow e2e; no network, no model
 uv run maf-harness lint-skills                             # Agent Skills spec lint + lock verification
 HARNESS_BROWSER=1 PLAYWRIGHT_BROWSERS_PATH=$PWD/.browser-cache uv run pytest tests/targets/test_harness_browser.py -q   # UI in a real browser
 ```

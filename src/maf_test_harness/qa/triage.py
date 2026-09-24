@@ -78,7 +78,9 @@ REMEDIES: list[tuple[re.Pattern[str], str]] = [
     (
         re.compile(r"patch(?:\.object)?\(\s*(?:sys\s*,\s*)?['\"](?:sys\.)?exit['\"]"),
         "Do not mock sys.exit: execution then continues past the exit and fails later. Use "
-        "`with pytest.raises(SystemExit) as exc:` and assert `exc.value.code`.",
+        "`with pytest.raises(SystemExit) as exc:` and assert `exc.value.code`. To also assert which code sys.exit "
+        "received per parametrized case, keep the patch but give it `side_effect=SystemExit` so it actually raises "
+        "(`patch('sys.exit', side_effect=SystemExit) as mock_exit`), still inside `pytest.raises(SystemExit)`.",
     ),
     (
         re.compile(r"module '([\w.]+)' has no attribute '(\w+)'"),

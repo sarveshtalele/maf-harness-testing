@@ -6,10 +6,14 @@ never opens the file gets them wrong and the failure surfaces one execution late
 * ``@asynccontextmanager`` / ``@contextmanager`` functions driven like generators (``.__anext__()``), which fails with
   ``'_AsyncGeneratorContextManager' object has no attribute '__anext__'``;
 * ``patch.object(app.state, "x", autospec=True)``: ``app.state`` attributes are plain values (often a mock from another test);
+* ``patch.object(app.state, "x", ...)`` (no ``create=True``) when ``x`` is only assigned inside the FastAPI lifespan and the
+  test never runs it (``TestClient(app)`` used outside a ``with`` block): the attribute doesn't exist yet to patch;
 * a ``MagicMock`` standing in for a LangChain LLM inside a real chain: chains need a ``Runnable``;
 * a hand-written stand-in class patched in for ``PromptTemplate``/``ChatPromptTemplate`` inside a real chain: LangChain
   validates it as a pydantic ``BasePromptTemplate`` and rejects a plain duck-typed object;
 * a "UI test" that starts Streamlit and reads the server's HTML: it is an empty JavaScript shell, the widgets are not in it;
+* a test that drives the app with ``AppTest`` but then reads ``st.session_state`` (the test process's own, empty context)
+  instead of ``at.session_state`` (the simulated app's actual state);
 * a function called with a literal path that its first statement checks with ``os.path.exists``, while the test mocks
   everything else.
 
@@ -174,6 +178,65 @@ def _check_autospec_on_state(tree: ast.AST, path: str) -> None:
             )
 
 
+def _state_attrs_set_only_in_lifespan(functions: dict[str, ast.AST]) -> set[str]:
+    """Names like ``app.state.chain`` assigned only inside an @asynccontextmanager lifespan function."""
+    names = set()
+    for fn in functions.values():
+        if not (_decorator_names(fn) & CONTEXT_MANAGER_DECORATORS):
+            continue
+        for node in ast.walk(fn):
+            if (
+                isinstance(node, ast.Assign)
+                and len(node.targets) == 1
+                and isinstance(node.targets[0], ast.Attribute)
+                and isinstance(node.targets[0].value, ast.Attribute)
+                and node.targets[0].value.attr == "state"
+            ):
+                names.add(node.targets[0].attr)
+    return names
+
+
+def _uses_test_client_as_context_manager(tree: ast.AST) -> bool:
+    return any(
+        isinstance(node, ast.With)
+        and any(
+            isinstance(item.context_expr, ast.Call) and _name(item.context_expr.func) == "TestClient"
+            for item in node.items
+        )
+        for node in ast.walk(tree)
+    )
+
+
+def _check_patch_state_before_lifespan_runs(tree: ast.AST, path: str, ctx: RepoContext) -> None:
+    functions = _repo_functions(ctx)
+    lifespan_attrs = _state_attrs_set_only_in_lifespan(functions)
+    if not lifespan_attrs or _uses_test_client_as_context_manager(tree):
+        return
+    for node in ast.walk(tree):
+        if not (
+            isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) and node.func.attr == "object"
+        ):
+            continue
+        if any(kw.arg == "create" for kw in node.keywords):
+            continue
+        if not node.args or _name(node.args[0]) != "state":
+            continue
+        if (
+            len(node.args) > 1
+            and isinstance(node.args[1], ast.Constant)
+            and node.args[1].value in lifespan_attrs
+        ):
+            attr = node.args[1].value
+            raise ValueError(
+                f"{path}: patches `<app>.state.{attr}` but it is only assigned inside the FastAPI lifespan "
+                "(@asynccontextmanager), which never runs unless TestClient is used as a context manager "
+                "(`with TestClient(app) as client:`) — `patch.object` then fails with `AttributeError: ... does not "
+                f"have the attribute {attr!r}` because the attribute doesn't exist yet. Use `with TestClient(app) as "
+                f"client:` before patching (it runs startup), or assign directly instead of patching: "
+                f"`app.state.{attr} = MagicMock()`."
+            )
+
+
 def _string_targets(tree: ast.AST) -> list[str]:
     out = []
     for node in ast.walk(tree):
@@ -266,6 +329,28 @@ def _check_streamlit_html(content: str, path: str) -> None:
         )
 
 
+def _check_bare_session_state_with_apptest(tree: ast.AST, path: str, content: str) -> None:
+    if "AppTest" not in content:
+        return
+    for node in ast.walk(tree):
+        target = None
+        if isinstance(node, ast.Attribute) and node.attr == "session_state":
+            target = node.value
+        elif (
+            isinstance(node, ast.Subscript)
+            and isinstance(node.value, ast.Attribute)
+            and node.value.attr == "session_state"
+        ):
+            target = node.value.value
+        if target is not None and _name(target) == "st":
+            raise ValueError(
+                f"{path}: reads `st.session_state` after driving the app with `AppTest` — that is the test process's "
+                "own (uninitialized) Streamlit context, not the simulated app's state, and raises AttributeError for "
+                "any key the app itself set. Read it from the AppTest object instead: `at.session_state[...]` "
+                "(whichever name holds `AppTest.from_file(...)`)."
+            )
+
+
 def _first_param_guard(fn: ast.AST) -> str | None:
     """The first parameter's name when the function starts by checking that path exists (and raising)."""
     params = [a.arg for a in getattr(fn, "args", ast.arguments()).args]
@@ -322,9 +407,11 @@ def check_mock_pitfalls(content: str, path: str, ctx: RepoContext) -> None:
     functions = _repo_functions(ctx)
     _check_context_manager_misuse(tree, path, functions)
     _check_autospec_on_state(tree, path)
+    _check_patch_state_before_lifespan_runs(tree, path, ctx)
     _check_mock_llm_in_chain(tree, path, content, ctx)
     _check_mock_prompt_template_in_chain(tree, path, ctx)
     _check_streamlit_html(content, path)
+    _check_bare_session_state_with_apptest(tree, path, content)
     _check_existence_guard(tree, path, content, functions)
 
 
