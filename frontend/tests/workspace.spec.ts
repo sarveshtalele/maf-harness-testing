@@ -239,6 +239,8 @@ test('aligned editors, configuration separation and confirmed run removal', asyn
   await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
   await page.setViewportSize({ width: 1280, height: 720 });
   await page.getByRole('button', { name: 'Configuration', exact: true }).click();
+  await page.reload();
+  await expect(page.getByRole('heading', { name: 'Configuration', exact: true })).toBeVisible();
   await expect(page.getByRole('button', { name: 'Agent personas', exact: true })).toHaveCount(0);
   await expect(page.getByRole('button', { name: 'Edit agent prompts →', exact: true })).toHaveCount(0);
   const response = await request.post('/api/harness/runs', { data: { repo_url: 'https://github.com/acme/demo' } });

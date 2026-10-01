@@ -277,3 +277,26 @@ def test_nested_playwright_junit_filename_maps_without_guessing_duplicate_names(
     duplicate = {**file, "path": "other/tests/browser.spec.ts", "case_ids": ["other"]}
     result = runners.map_results_to_cases(report, [file, duplicate])[0]
     assert result["case_id"] is None and result["mapping_error"] == "ambiguous test identity"
+
+
+def test_windows_export_paths_are_portable_on_a_mac_host():
+    from pathlib import PureWindowsPath
+
+    from maf_test_harness.qa.packaging import portable_plan
+
+    run = PureWindowsPath("C:/runs/example")
+    state = {
+        "execution_plan": {
+            "plan": {
+                "steps": [
+                    {
+                        "argv": ["C:\\tools\\npm.cmd", str(run / "workspace/frontend/test.js")],
+                        "env": {"CLAUDE_TELEMETRY_DB": str(run / "workspace/data.db")},
+                    }
+                ]
+            }
+        }
+    }
+    step = portable_plan(state, run)["test"][0]
+    assert step["argv"] == ["npm.cmd", "{REPO}/frontend/test.js"]
+    assert step["env"]["CLAUDE_TELEMETRY_DB"] == "{REPO}/data.db"

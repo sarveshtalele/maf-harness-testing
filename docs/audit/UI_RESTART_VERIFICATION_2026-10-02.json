@@ -5,5 +5,23 @@
   "promptActionGap": 16,
   "mobilePromptsFit": true,
   "azureButtons": 0,
-  "failures": []
+  "failures": [],
+  "native_report_theme_verification": {
+    "light": {
+      "background": "rgb(255, 255, 255)",
+      "theme": "light-mode"
+    },
+    "dark": {
+      "background": "rgb(13, 17, 23)",
+      "theme": "dark-mode"
+    },
+    "page_errors": [],
+    "sandbox": "allow-scripts",
+    "screenshots": [
+      "playwright-report-light.png",
+      "playwright-report-dark.png"
+    ],
+    "ui_checks_passed": 7,
+    "backend_checks_passed": 21
+  }
 }

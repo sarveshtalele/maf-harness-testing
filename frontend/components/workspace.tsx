@@ -7,6 +7,7 @@ import Reports from './reports';
 import Prompts from './prompts';
 import Observability, { Select } from './observability';
 
+const pages: Record<string, string> = { skills: 'Skills', prompts: 'Prompts', configuration: 'Configuration', new: 'New run' };
 const tabs = ['Review', 'Artifacts', 'Generated tests', 'QA report', 'Test reports', 'Logs', 'Observability', 'Audit', 'Prompts'];
 const stages = ['repo_analysis', 'requirements', 'environment_setup', 'test_planning', 'test_design', 'test_generation', 'test_execution'];
 
@@ -33,10 +34,9 @@ export default function Workspace() {
     const params = new URLSearchParams(location.search);
     const key = params.get('run');
     if (key && /^[A-Za-z0-9_-]{1,100}$/.test(key)) { setId(key); setPage('Run'); }
-    if (params.get('page') === 'skills') setPage('Skills');
-    if (params.get('page') === 'prompts') setPage('Prompts');
+    if (!key && pages[params.get('page') || '']) setPage(pages[params.get('page') || '']);
     const value = params.get('tab'); if (value && tabs.includes(value)) setTab(value);
-    const pop = () => { const p = new URLSearchParams(location.search); setId(p.get('run') || ''); setPage(p.has('run') ? 'Run' : p.get('page') === 'skills' ? 'Skills' : p.get('page') === 'prompts' ? 'Prompts' : 'Runs'); setTab(tabs.includes(p.get('tab') || '') ? p.get('tab')! : 'Review'); };
+    const pop = () => { const p = new URLSearchParams(location.search); setId(p.get('run') || ''); setPage(p.has('run') ? 'Run' : pages[p.get('page') || ''] || 'Runs'); setTab(tabs.includes(p.get('tab') || '') ? p.get('tab')! : 'Review'); };
     window.addEventListener('popstate', pop); return () => window.removeEventListener('popstate', pop);
   }, []);
   useEffect(() => { document.documentElement.dataset.theme = theme === 'dark' ? 'dark' : 'light'; }, [theme]);
@@ -56,7 +56,7 @@ export default function Workspace() {
   const navigate = (next: string, runId = '', runTab = 'Review') => {
     setPage(next); setError('');
     if (next === 'Run') { if (runId !== id) setRun(null); setId(runId); setTab(runTab); history.pushState({}, '', `?run=${encodeURIComponent(runId)}&tab=${encodeURIComponent(runTab)}`); }
-    else { setId(''); setRun(null); history.pushState({}, '', next === 'Skills' ? '/?page=skills' : next === 'Prompts' ? '/?page=prompts' : '/'); }
+    else { setId(''); setRun(null); history.pushState({}, '', Object.entries(pages).some(([, name]) => name === next) ? `/?page=${Object.entries(pages).find(([, name]) => name === next)![0]}` : '/'); }
   };
   const changeTab = (next: string) => { setTab(next); history.replaceState({}, '', `?run=${encodeURIComponent(id)}&tab=${encodeURIComponent(next)}`); };
   const act = async (path: string, body: Row) => {
@@ -116,8 +116,8 @@ export default function Workspace() {
           {tab === 'Artifacts' && <Artifacts run={run} />}
           {tab === 'Generated tests' && <Generated run={run} />}
           {tab === 'QA report' && <QA run={run} />}
-          {tab === 'Test reports' && <Reports key={`${id}:reports`} run={run} />}
-          {tab === 'Logs' && <Reports key={`${id}:logs`} run={run} logs />}
+          {tab === 'Test reports' && <Reports key={`${id}:reports`} run={run} theme={theme} />}
+          {tab === 'Logs' && <Reports key={`${id}:logs`} run={run} logs theme={theme} />}
           {tab === 'Observability' && <Evidence key={`${id}:obs`} id={id} kind="observability" busy={run.busy} />}
           {tab === 'Audit' && <Evidence key={`${id}:audit`} id={id} kind="audit" busy={run.busy} run={run} />}
         </>}

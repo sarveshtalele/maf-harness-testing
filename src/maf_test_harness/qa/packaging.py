@@ -14,7 +14,7 @@ from __future__ import annotations
 import json
 import shlex
 import zipfile
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 
 from ..envs.execution import EXPORT_SKIP_DIRS, FORWARDED_ENV, _exportable
 from ..hooks.builtin import redact
@@ -90,7 +90,8 @@ def portable_plan(state: dict, run_dir: Path) -> dict:
 
     def replace_paths(value):
         if isinstance(value, str):
-            return value.replace(str(run_dir / "workspace"), "{REPO}")
+            replaced = value.replace(str(run_dir / "workspace"), "{REPO}")
+            return replaced.replace("\\", "/") if replaced.startswith("{REPO}") else replaced
         if isinstance(value, list):
             return [replace_paths(item) for item in value]
         if isinstance(value, dict):
@@ -104,7 +105,12 @@ def portable_plan(state: dict, run_dir: Path) -> dict:
     services = app.get("services", [app] if app else [])
     for step in [*portable["install"], *portable["test"], *services]:
         if step.get("argv"):
-            executable = Path(step["argv"][0])
+            raw_executable = step["argv"][0]
+            executable = (
+                PureWindowsPath(raw_executable)
+                if PureWindowsPath(raw_executable).is_absolute()
+                else Path(raw_executable)
+            )
             if executable.is_absolute():
                 step["argv"][0] = (
                     "{SYSTEM_PYTHON}" if executable.name.startswith("python") else executable.name

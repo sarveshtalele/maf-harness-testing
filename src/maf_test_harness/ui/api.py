@@ -495,7 +495,7 @@ class LocalAPI:
     def evidence(self, key: str):
         return public(inventory(self.run_path(key)))
 
-    def evidence_file(self, key: str, file_id: str, asset="", *, download=False):
+    def evidence_file(self, key: str, file_id: str, asset="", *, download=False, theme=None):
         path = file_path(self.run_path(key), file_id, "" if asset == "view.html" else asset)
         mime = MIMES.get(path.suffix.lower(), mimetypes.guess_type(path.name)[0] or "text/plain")
         if path.suffix.lower() in {".log", ".md", ".xml"} and not download and not asset:
@@ -518,6 +518,11 @@ class LocalAPI:
             # Playwright reads theme settings from storage. An opaque sandbox cannot access real storage;
             # provide report-local memory instead of granting it access to the UI's origin.
             shim = b"""<script>for(const name of ['localStorage','sessionStorage']){const values=new Map();Object.defineProperty(window,name,{value:{getItem:k=>values.get(String(k))??null,setItem:(k,v)=>values.set(String(k),String(v)),removeItem:k=>values.delete(String(k)),clear:()=>values.clear(),key:i=>[...values.keys()][i]??null,get length(){return values.size}}});}</script>"""
+            if theme in {"light", "dark"}:
+                shim += (
+                    f"<script>localStorage.theme='{theme}-mode';</script>"
+                    "<style>html,body{background:var(--color-canvas-default)}</style>"
+                ).encode()
             match = re.search(rb"<head[^>]*>", content, re.I)
             at = match.end() if match else 0
             content = content[:at] + shim + content[at:]
@@ -624,7 +629,11 @@ def make_server(api: LocalAPI, token: str, port: int = 8765):
                             self.reply(200, api.evidence(key))
                         elif len(parts) >= 4 and parts[2] == "evidence":
                             data, mime, name = api.evidence_file(
-                                key, parts[3], "/".join(parts[4:]), download=query.get("download") == ["1"]
+                                key,
+                                parts[3],
+                                "/".join(parts[4:]),
+                                download=query.get("download") == ["1"],
+                                theme=query.get("theme", [None])[0],
                             )
                             self.reply(200, data, mime, name)
                         elif parts[2:] == ["download"]:

@@ -98,6 +98,13 @@ def test_evidence_is_contained_redacted_and_preserves_reports(local_api, tmp_pat
     report = next(f for f in files if f["kind"] == "report")
     body, mime, _ = api.evidence_file(key, report["id"], "view.html")
     assert mime == "text/html" and b"private-evidence-value" not in body
+    for theme in ("light", "dark"):
+        themed = api.evidence_file(key, report["id"], "view.html", theme=theme)[0]
+        assert f"localStorage.theme='{theme}-mode'".encode() in themed
+        assert b"background:var(--color-canvas-default)" in themed
+    assert (
+        b"localStorage.theme=" not in api.evidence_file(key, report["id"], "view.html", theme="<script>")[0]
+    )
     payload = io.BytesIO()
     with zipfile.ZipFile(payload, "w") as archive:
         archive.writestr("report.json", '{"message":"private-evidence-value"}')
