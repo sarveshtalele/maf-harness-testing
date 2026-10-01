@@ -137,3 +137,5 @@ Open **Agent prompts** to edit/save default persona instructions and the end-to-
 ### Azure hosting plan
 
 Read the documentation-only [Azure deployment proposal](docs/AZURE_DEPLOYMENT_PROPOSAL.md) and supporting [Terraform](azure-plan/README.md) for the East US 2 B1 cost estimate, Mermaid architecture, Terraform and phased hosted implementation. The current branch remains local; hosted identity, per-user isolation and isolated execution are required before deploying a shared web harness. No Azure resources were deployed.
+
+To verify installation without leaving servers running, use `./start-macos.command --smoke-test` on macOS or `.\start-windows.cmd --smoke-test` on Windows. This installs/builds the application, checks the actual homepage and authenticated backend connection, then stops both services. Stop any existing launcher for this checkout first: its build output is shared even when ports differ. A model key is required for repository runs, but not this startup check.

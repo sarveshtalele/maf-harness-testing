@@ -30,12 +30,13 @@ jobs:
         working-directory: frontend
       - run: npm run build
         working-directory: frontend
+      - run: uv run pytest tests/test_ui_launcher.py -q
       - name: macOS launcher smoke check
         if: runner.os == 'macOS'
-        run: ./start-macos.command --help
+        run: ./start-macos.command --smoke-test
       - name: Windows launcher smoke check
         if: runner.os == 'Windows'
-        run: .\start-windows.cmd --help
+        run: .\start-windows.cmd --smoke-test
       - run: npx playwright install chromium
         working-directory: frontend
       - run: npm test

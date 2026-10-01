@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import secrets
 import shutil
@@ -12,6 +13,8 @@ import subprocess
 import sys
 import time
 from pathlib import Path
+from urllib.error import URLError
+from urllib.request import urlopen
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -24,6 +27,7 @@ def main():
     parser.add_argument(
         "--check-only", action="store_true", help="Check ports before rebuilding a stopped UI"
     )
+    parser.add_argument("--smoke-test", action="store_true", help="Verify both servers, then stop")
     parser.add_argument("--port", type=int, default=3000)
     parser.add_argument("--api-port", type=int, default=8765)
     args = parser.parse_args()
@@ -77,6 +81,23 @@ def main():
             raise RuntimeError("The local API did not become ready.")
         command = [npm, "run", "start" if args.production else "dev", "--", "--port", str(args.port)]
         processes.append(subprocess.Popen(command, cwd=ROOT / "frontend", env=env, **kwargs))
+        if args.smoke_test:
+            for _ in range(120):
+                if any(process.poll() is not None for process in processes):
+                    raise RuntimeError("A local service exited before startup verification.")
+                try:
+                    with urlopen(f"http://127.0.0.1:{args.port}/", timeout=2) as response:
+                        if b"Agentic QE Platform" not in response.read():
+                            raise RuntimeError("The frontend returned an unexpected page.")
+                    with urlopen(f"http://127.0.0.1:{args.port}/api/harness/config", timeout=2) as response:
+                        config = json.load(response)
+                    if not {"model", "key_configured", "stages"}.issubset(config):
+                        raise RuntimeError("The frontend could not verify the backend configuration.")
+                    print("Startup verified: UI and authenticated backend proxy work.", flush=True)
+                    return
+                except (URLError, TimeoutError):
+                    time.sleep(0.5)
+            raise RuntimeError("The UI/backend connection did not become ready.")
         print(f"Open http://127.0.0.1:{args.port} — Ctrl+C stops both services.", flush=True)
         while all(process.poll() is None for process in processes):
             time.sleep(0.3)
