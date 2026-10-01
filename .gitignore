@@ -23,3 +23,11 @@ test-results/
 docs/audit/*.log
 docs/audit/execution-targets/
 .skill-audit/
+
+# Next.js UI and local tooling
+.tools/
+frontend/node_modules/
+frontend/.next/
+frontend/*.tsbuildinfo
+frontend/playwright-report/
+frontend/test-results/

@@ -118,6 +118,8 @@ Optional switches (defaults shown, all listed in `.env.example`):
 
 ## 3. Run the application and open it in the browser
 
+**Next.js UI (macOS / Windows):** `npm --prefix frontend ci`, then `uv run python scripts/start_ui.py`. Open http://127.0.0.1:3000. See [docs/NEXTJS_UI.md](docs/NEXTJS_UI.md) for setup, adjustable panels, per-user storage, production builds and browser checks. The Streamlit UI below remains available.
+
 ```bash
 uv run streamlit run app.py
 ```

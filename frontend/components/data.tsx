@@ -1,0 +1,81 @@
+'use client';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
+import { label, number, record, text, type Row } from '@/lib/harness';
+
+export function ResizeHandle({ label: name, axis = 'horizontal', start }: { label: string; axis?: 'horizontal' | 'both'; start: () => (dx: number, dy: number) => void }) {
+  const drag = useRef<{ x: number; y: number; move: (dx: number, dy: number) => void } | null>(null);
+  return <button className={`resize-handle resize-${axis}`} aria-label={name} title={`${name}: drag or use arrow keys`} onPointerDown={e => {
+    if (e.button !== 0) return;
+    e.preventDefault(); e.currentTarget.setPointerCapture(e.pointerId);
+    drag.current = { x: e.clientX, y: e.clientY, move: start() };
+  }} onPointerMove={e => { const d = drag.current; if (d) d.move(e.clientX - d.x, e.clientY - d.y); }} onPointerUp={e => {
+    drag.current = null; if (e.currentTarget.hasPointerCapture(e.pointerId)) e.currentTarget.releasePointerCapture(e.pointerId);
+  }} onLostPointerCapture={() => { drag.current = null; }} onPointerCancel={() => { drag.current = null; }} onKeyDown={e => {
+    const delta: Record<string, [number, number]> = { ArrowLeft: [-20, 0], ArrowRight: [20, 0], ArrowUp: [0, -20], ArrowDown: [0, 20] };
+    if (delta[e.key] && (axis === 'both' || e.key === 'ArrowLeft' || e.key === 'ArrowRight')) { e.preventDefault(); start()(...delta[e.key]); }
+  }}><span aria-hidden="true">{axis === 'both' ? '◢' : '⋮'}</span></button>;
+}
+
+export function usePreference<T>(key: string, initial: T): [T, (value: T) => void] {
+  const [value, setValue] = useState(initial);
+  useEffect(() => { try { const stored = localStorage.getItem(key); setValue(stored == null ? initial : JSON.parse(stored)); } catch { setValue(initial); } }, [key]); // initial is deliberately a stable fallback, not a storage dependency.
+  const save = (next: T) => { setValue(next); try { localStorage.setItem(key, JSON.stringify(next)); } catch { /* Layout still works without storage. */ } };
+  return [value, save];
+}
+
+export function Panel({ title, children, storageKey, actions, defaultOpen = true }: { title: string; children: ReactNode; storageKey: string; actions?: ReactNode; defaultOpen?: boolean }) {
+  const [height, setHeight] = usePreference<number>(`panel-height:${storageKey}`, 0);
+  const [width, setWidth] = usePreference<number>(`panel-width:${storageKey}`, 100);
+  const [collapsed, setCollapsed] = usePreference<boolean>(`panel-closed:${storageKey}`, !defaultOpen);
+  const [expanded, setExpanded] = useState(false);
+  const dialog = useRef<HTMLDialogElement>(null);
+  const panel = useRef<HTMLElement>(null);
+  const body = useRef<HTMLDivElement>(null);
+  useEffect(() => { if (expanded) dialog.current?.showModal(); }, [expanded]);
+  const safeHeight = Number.isFinite(height) ? Math.max(0, Math.min(1200, height)) : 0;
+  return <section ref={panel} className="panel" style={{ width: `${Math.max(50, Math.min(100, Number(width) || 100))}%` }}>
+    <header className="panel-heading"><button className="panel-title" aria-expanded={!collapsed} onClick={() => setCollapsed(!collapsed)}><span aria-hidden="true">{collapsed ? '▸' : '▾'}</span> {title}</button><div className="panel-actions">{actions}<button title={`Expand ${title}`} aria-label={`Expand ${title}`} onClick={() => setExpanded(true)}>⤢</button></div></header>
+    {!collapsed && <><div ref={body} className="panel-body resizable" style={safeHeight ? { height: safeHeight } : {}}>{children}</div><ResizeHandle label={`Resize ${title}`} axis="both" start={() => {
+      const box = panel.current!.getBoundingClientRect(); const parentWidth = box.width / (Math.max(50, Math.min(100, Number(width) || 100)) / 100);
+      const bodyHeight = body.current!.getBoundingClientRect().height;
+      return (dx, dy) => { setWidth(Math.max(50, Math.min(100, (box.width + dx) / parentWidth * 100))); setHeight(Math.round(Math.max(100, Math.min(1200, bodyHeight + dy)))); };
+    }} /></>}
+    {expanded && <dialog ref={dialog} aria-label={title} className="expanded-panel" onCancel={() => setExpanded(false)} onClose={() => setExpanded(false)}><header className="panel-heading"><h2>{title}</h2><button autoFocus onClick={() => { dialog.current?.close(); setExpanded(false); }}>Close expanded view</button></header><div className="panel-body">{children}</div></dialog>}
+  </section>;
+}
+
+export function Badge({ value }: { value: unknown }) {
+  const str = text(value); const lower = str.toLowerCase();
+  const kind = /fail|error|interrupted|inconclusive|blocked/.test(lower) ? 'bad' : /pass|verified|complete|ready|true/.test(lower) ? 'good' : /wait|review|skip|stopped|pending/.test(lower) ? 'warn' : '';
+  return <span className={`badge ${kind}`}>{label(str)}</span>;
+}
+export function Metrics({ values }: { values: Row }) {
+  return <div className="metrics">{Object.entries(values).map(([key, value]) => <div className="metric" key={key}><span>{label(key)}</span><strong>{number(value)}</strong></div>)}</div>;
+}
+export function ExportButtons({ id, kind }: { id: string; kind: string }) {
+  const base = `/api/harness/runs/${encodeURIComponent(id)}/download?kind=${encodeURIComponent(kind)}`;
+  return <><a className="button small" href={`${base}&format=md`} download>Markdown ↓</a><a className="button small" href={`${base}&format=json`} download>JSON ↓</a></>;
+}
+
+export function DataView({ value, depth = 0 }: { value: unknown; depth?: number }) {
+  if (value == null) return <span className="muted">Not specified</span>;
+  if (Array.isArray(value)) {
+    if (!value.length) return <p className="muted">None recorded.</p>;
+    if (value.every(item => item && typeof item === 'object' && !Array.isArray(item))) return <DataTable data={value as Row[]} />;
+    return <ul className="data-list">{value.map((item, i) => <li key={i}><DataView value={item} depth={depth + 1} /></li>)}</ul>;
+  }
+  if (typeof value === 'object') return <dl className="data-fields">{Object.entries(record(value)).map(([key, item]) => <div key={key}>
+    <dt>{label(key)}</dt><dd>{item && typeof item === 'object' ? <details open={depth < 1}><summary>View {label(key).toLowerCase()}</summary><DataView value={item} depth={depth + 1} /></details> : key === 'content' || (typeof item === 'string' && item.includes('\n')) ? <pre>{text(item)}</pre> : <span>{text(item)}</span>}</dd>
+  </div>)}</dl>;
+  return <span className="data-text">{text(value)}</span>;
+}
+
+export function DataTable({ data, columns }: { data: Row[]; columns?: string[] }) {
+  const [search, setSearch] = useState('');
+  const [page, setPage] = useState(0);
+  const keys = columns || [...new Set(data.flatMap(item => Object.keys(item)))].slice(0, 7);
+  const shown = data.filter(item => JSON.stringify(item).toLowerCase().includes(search.toLowerCase()));
+  const current = Math.min(page, Math.max(0, Math.ceil(shown.length / 30) - 1));
+  if (!data.length) return <p className="empty-inline">No records yet.</p>;
+  return <div className="data-table"><div className="table-tools"><input aria-label="Search table records" type="search" placeholder="Search records…" value={search} onChange={e => { setSearch(e.target.value); setPage(0); }} /><small>{shown.length} of {data.length} records</small></div><div className="table-scroll"><table><thead><tr>{keys.map(key => <th key={key}>{label(key)}</th>)}<th>Details</th></tr></thead><tbody>{shown.slice(current * 30, current * 30 + 30).map((item, i) => <tr key={i}>{keys.map(key => <td key={key}>{['status', 'result', 'verdict', 'state', 'ok'].includes(key) ? <Badge value={item[key]} /> : <span className="cell-text" title={text(item[key])}>{text(item[key])}</span>}</td>)}<td><details><summary>Full details</summary><DataView value={item} depth={3} /></details></td></tr>)}</tbody></table></div>{shown.length > 30 && <div className="table-tools"><button disabled={current === 0} onClick={() => setPage(current - 1)}>Previous</button><span>Page {current + 1} / {Math.ceil(shown.length / 30)}</span><button disabled={(current + 1) * 30 >= shown.length} onClick={() => setPage(current + 1)}>Next</button></div>}</div>;
+}
