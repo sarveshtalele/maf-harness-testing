@@ -58,7 +58,7 @@ The scripts install/build on each launch to keep the checkout and dependencies c
 5. **QA report:** inspect per-case results, requirement coverage, recorded failure output and recommendations with affected files. Recommendations require review; an assertion failure alone does not establish an application defect.
 6. **Test reports:** view saved Playwright HTML inside the UI, screenshots and JUnit, or download a trace for `npx playwright show-trace trace.zip`. Browser evidence appears only when a browser suite produced it.
 7. **Logs:** choose an installation/build/execution log, search its line-numbered output or download the full file. **Audit** and **Observability** show approvals, agents, tools and usage.
-8. Download the deliverable ZIP when available. Browse **Agent skills** to inspect all installed packages and their provenance.
+8. Download the deliverable ZIP when available. Browse **Agent skills** to open each package’s readable instruction page, resources and integrity checks.
 
 Drag sidebar/column edges and panel corners; use arrow keys for accessible resizing. Preferences persist in your browser. Runs default to `~/.maf-harness/runs`, separately for each OS user. This is a local app without shared-server login.
 

@@ -41,3 +41,9 @@ The harness UI’s three Chromium workflow/layout journeys passed after removing
 Backend correctness findings and proposed fixes are recorded in [the backend review](BACKEND_REVIEW_2026-10-01.md), B01–B12. Those fixes remain unapplied pending the previously requested approval. In particular, mixed ecosystem execution and QA verdict accuracy prevent interpreting a green generated suite as proof of full repository coverage.
 
 TokenTelemetry independent Playwright validation at commit `276f37789304ca6d61a3923301f141c13ccd5a1b`: **14 passed / 1 failed**. All eleven React pages, API checks, project/request navigation and exports passed; the 390px dashboard overflows horizontally. Screenshots, HTML/JUnit and the failure trace are preserved locally. The first attempt used incorrect authored locators and is preserved separately; the corrected attempt exposed this actual responsive failure. The model-driven harness cycle is tracked separately in the live run report.
+
+## Branch retirement update — 2 October 2026
+
+The legacy GUI is no longer installed/launched on `new-ui`. `app.py`, `monitoring/ui.py` and `tests/targets/test_harness_browser.py` are now explicit retirement candidates, with their related GUI-only symbols/tests and documentation references. They remain present and were not deleted. Shared API/Markdown helpers and support for testing repositories that use this framework remain active. The exact deletion scope and independent approval choices are in [the updated backend/cleanup plan](BACKEND_FIX_PLAN_2026-10-02.md).
+
+The preceding cleanup commit’s backend and macOS/Windows Next.js CI workflows passed. The completed TokenTelemetry generated cycle reported 9 passed, 26 errors and 1 failed; diagnosis and proposed corrections are in the updated plan.

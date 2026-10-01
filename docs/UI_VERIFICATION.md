@@ -2,7 +2,7 @@
 
 ## Implemented
 
-Next.js 16.3.8 / React 19.3.0 frontend, backed by the existing Python Harness through a loopback HTTP adapter. No workflow, checkpoint, runner, hook, environment or model-generation algorithm was changed. Streamlit and CLI remain usable.
+Next.js 16.3.8 / React 19.3.0 frontend, backed by the existing Python Harness through a loopback HTTP adapter. No workflow, checkpoint, runner, hook, environment or model-generation algorithm was changed. The CLI remains available; legacy GUI setup was retired on this branch on 2 October.
 
 All seven workflow stages and existing review/tool/error decisions are represented. UI includes saved runs, repo/app input, artifact detail and exports, source downloads, QA verdict/coverage/failure/file-update evidence, ZIP, all observability sections and approval/provenance audit. Panels resize in height and width, collapse and expand into accessible dialogs. Sidebar and workspace split are adjustable. Layout preferences persist in the browser for each run/panel.
 
@@ -52,7 +52,7 @@ See [NEXTJS_UI.md](NEXTJS_UI.md) for both OS startup and verification commands. 
 
 ## Follow-up UI clarification — mouse resizing and project skills
 
-Explicit mouse handles now resize sidebar width, workspace columns, and panel width/height. Keyboard arrows, alternate sliders, fullscreen dialogs, responsive stacking and persisted preferences remain available. The Agent skills page reads all ten project packages with search, expandable instructions/resources/metadata and integrity/provenance details. Screenshot: [project skill cards](ui/agent-skills-desktop.png).
+Explicit mouse handles now resize sidebar width, workspace columns, and panel width/height. Keyboard arrows, fullscreen dialogs, responsive stacking and persisted preferences remain available. The adjustment forms/sliders were subsequently removed. The Agent skills page reads all ten project packages with search, expandable instructions/resources/metadata and integrity/provenance details. Screenshot: [project skill cards](ui/agent-skills-desktop.png).
 
 Follow-up verification: optimized build/TypeScript passed; focused adapter suite **6 passed**; browser journeys **3 passed**, including exact mouse drag distances and reload persistence; production skills page/mobile checks passed. Full backend regression before the new catalog test: **723 passed, 1 skipped**. Backend audit findings and proposed fixes are recorded in [BACKEND_REVIEW_2026-10-01.md](BACKEND_REVIEW_2026-10-01.md); workflow fixes and the next TokenTelemetry live cycle await the user's explicit approval.
 
@@ -77,3 +77,9 @@ The new-ui dependency lock, startup documentation and CI no longer install or la
 - Next.js production build/typecheck and all **4 browser journeys passed**.
 - Real TokenTelemetry browser report rendered **14 passed / 1 failed** inside the sandboxed viewer. Its independent browser result remains separate from generated Python QA (**9 passed / 26 errors / 1 failed**).
 - Updated screenshots: [report](ui/tokentelemetry-report-view.png), [QA failures](ui/tokentelemetry-qa-view.png).
+
+## Original theme and skill documentation — 2 October 2026
+
+Restored the approved concept’s neutral light palette (`--primary: #202024`) and original dark palette (`#eeeeef`), removing blue overrides. Skill cards now link to distinct reloadable documentation URLs. Their Markdown is rendered as React nodes with headings, lists, tables and fenced code; embedded HTML remains inert text, and links permit HTTP(S) only. Upstream branch/commit/library provenance is omitted from the website; offline lock validation remains unchanged.
+
+Production build and TypeScript passed; **4 browser journeys passed**, including skill-page reloads, Markdown tables/code, exact light/dark theme values, mouse resizing and 390px layout. Both main servers restarted on ports 3000/8765. Screenshots: [light](ui/skill-document-light.png), [dark](ui/skill-document-dark.png). The preceding cleanup commit’s GitHub backend and macOS/Windows UI workflows all completed successfully.
