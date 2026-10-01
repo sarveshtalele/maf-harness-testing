@@ -88,6 +88,7 @@ def test_generated_file_type_beats_repo_ecosystem(tmp_path):
         assert "--reporter=junit,html" in test_step.argv
         capture = (tmp_path / ".harness-playwright-report.config.ts").read_text()
         assert "only-on-failure" in capture and "retain-on-failure" in capture
+        assert "baseURL: process.env.BASE_URL || original.use?.baseURL" in capture
         assert test_step.env["PLAYWRIGHT_HTML_OPEN"] == "never"
 
 

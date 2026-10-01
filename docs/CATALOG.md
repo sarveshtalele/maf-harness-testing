@@ -151,7 +151,7 @@ table per file.
 
 | Group | Files | Role |
 |---|---|---|
-| Orchestration | `workflow.py`, `cli.py` | The MAF workflow graph, stage prompts, repair loops (`workflow.py`); the headless CLI driver (`cli.py`) — `app.py` at the repo root is the Streamlit UI, both drive the same `Harness` |
+| Orchestration | `workflow.py`, `cli.py` | The MAF workflow graph, stage prompts, repair loops (`workflow.py`); the headless CLI driver (`cli.py`) — the Next.js client calls `ui/api.py`; both drive the same `Harness` |
 | Repository intake | `repo/analyzer.py`, `repo/stack.py` | Clone + static analysis; framework/stack/ecosystem detection |
 | Environment | `envs/environment.py`, `envs/runners.py`, `envs/execution.py`, `envs/platform_compat.py`, `envs/env_check.py`, `envs/app_launcher.py`, `envs/` (requirement detection and toolchain provisioning), `errors/` (error taxonomy and playbook) | Environment planning, isolated install, per-ecosystem run adapters, local-process execution, OS-specific decisions (Windows vs POSIX) centralized in one module; declared-vs-installed dependency check (`env_check`); starting the app under test for Playwright E2E (`app_launcher`) |
 | Agent Skills | `skills/config.py`, `skills/registry.py`, `skills/contracts.py`, `skills/scripts.py`, `skills/reports.py` | Which skill a stage loads and why; spec/lock validation; contract enforcement on generated output; sandboxed script execution; host-run QA skill reports |
@@ -161,7 +161,7 @@ table per file.
 | Automation | `envs/recovery.py`, `agent/diagnosis.py`, `llm/prompts.py`, `tools/skill_tools.py` | Bounded automatic recovery of setup failures, the opt-in diagnosis agent, stable-first prompt assembly, skill validators as a tool; see [AUTOMATION.md](AUTOMATION.md) |
 | Runtime | `agent/runtime.py`, `ui/runtime_service.py` | MAF agent construction, `SkillsProvider` wiring, tool-trace middleware, `BudgetGuard` (`agent/runtime.py`); one asyncio event-loop-per-UI-session wrapper (`ui/runtime_service.py`) |
 | QA & delivery | `qa/report.py`, `qa/triage.py`, `qa/packaging.py` | Verdict computation, failure triage (files/lines to update), ZIP assembly |
-| Observability | `monitoring/report.py`, `monitoring/ui.py`, `monitoring/trace.py`, `monitoring/telemetry.py` | Run tracing, the Observability tab, OpenTelemetry export |
+| Observability | `monitoring/report.py`, `frontend/components/observability.tsx`, `monitoring/trace.py`, `monitoring/telemetry.py` | Run tracing, the Observability tab, OpenTelemetry export |
 | Support | `llm/usage.py`, `settings.py`, `models.py`, `agent/personas.py`, `repo/routes.py` | Daily token ledger, config, Pydantic schemas, stage personas, app-route extraction |
 
 ## 6. Verification

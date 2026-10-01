@@ -39,7 +39,15 @@ def build_qa_report(
     files = generation.get("files", [])
     file_for_case = {f["case_ids"][0]: f["path"] for f in files}
     results = map_results_to_cases((execution or {}).get("cases", []), files)
-    result_for_case = {r["case_id"]: r for r in results if r.get("case_id")}
+    result_for_case = {}
+    severity = {"passed": 0, "skipped": 1, "not_executed": 2, "failed": 3, "error": 4}
+    for result in results:
+        cid = result.get("case_id")
+        if cid and (
+            cid not in result_for_case
+            or severity.get(result["status"], 4) > severity.get(result_for_case[cid]["status"], 4)
+        ):
+            result_for_case[cid] = result
     cases = []
     diagnostics = (execution or {}).get("diagnostics", [])
     quarantined = set((execution or {}).get("quarantined", []))
@@ -112,6 +120,15 @@ def build_qa_report(
     }
     environment = {**(environment or {}), "diagnoses": (execution or {}).get("diagnoses", [])}
     updates = build_updates(cases, files, repo.get("source_files", []), coverage, req_sources, environment)
+    verdict = verdict_for(execution)
+    if counts.get("failed") or counts.get("error"):
+        verdict = "FAIL"
+    elif verdict.startswith("PASS") and (
+        not cases or counts.get("not_executed") or counts.get("not_run") or unmapped
+    ):
+        verdict = "INCONCLUSIVE"
+    elif verdict == "PASS" and counts.get("skipped"):
+        verdict = "PASS_WITH_SKIPS"
     return {
         "generated_at": datetime.now(UTC).isoformat(),
         "repository": {
@@ -119,7 +136,7 @@ def build_qa_report(
             "commit": repo.get("commit_sha"),
             "name": repo.get("repo_name"),
         },
-        "verdict": verdict_for(execution),
+        "verdict": verdict,
         "execution_status": (execution or {}).get("status", "not_run"),
         "adapter": (execution or {}).get("adapter"),
         "case_status_counts": counts,

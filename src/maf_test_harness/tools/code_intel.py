@@ -318,6 +318,82 @@ def probe_tools() -> list[dict[str, Any]]:
 # ------------------------------------------------------------------------------------------ gates
 
 
+def source_contracts(ctx: RepoContext) -> dict[str, str]:
+    """Bounded source evidence for state, schema and payload contracts; never execute it."""
+    selected = sorted(
+        ctx.source_files,
+        key=lambda p: (
+            not any(
+                word in p.lower()
+                for word in ("connection", "schema", "db.py", "common.py", "models", "routes")
+            ),
+            p,
+        ),
+    )
+    facts, remaining = {}, 24000
+    for path in selected:
+        text = ctx.read(path)
+        if not text or not any(
+            word in text for word in ("CREATE TABLE", "os.environ", "extract_usage", "@router.")
+        ):
+            continue
+        excerpt = text[: min(7000, remaining)]
+        facts[path] = excerpt
+        remaining -= len(excerpt)
+        if remaining <= 0:
+            break
+    return facts
+
+
+def check_stateful_fixtures(ctx: RepoContext, path: str, content: str) -> None:
+    tree = ast.parse(content)
+    for statement in tree.body:
+        if isinstance(statement, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            continue
+        for node in ast.walk(statement):
+            if isinstance(node, (ast.Assign, ast.AugAssign, ast.AnnAssign)):
+                targets = node.targets if isinstance(node, ast.Assign) else [node.target]
+                if any("os.environ" in ast.unparse(target) for target in targets):
+                    raise ValueError(
+                        f"{path}: import-time environment mutation leaks between test modules; use a per-test monkeypatch fixture and restore captured target constants"
+                    )
+            if isinstance(node, ast.Call) and ast.unparse(node.func) in {
+                "os.environ.setdefault",
+                "os.environ.update",
+            }:
+                raise ValueError(
+                    f"{path}: configure environment inside a per-test fixture, never at module import"
+                )
+    schemas = {}
+    for source in source_contracts(ctx).values():
+        for table, body in re.findall(
+            r"CREATE TABLE(?: IF NOT EXISTS)?\s+(\w+)\s*\((.*?)\);", source, re.I | re.S
+        ):
+            columns = set(re.findall(r"(?:^|,)\s*(\w+)\s+(?:INTEGER|TEXT|REAL|BLOB|NUMERIC)\b", body, re.I))
+            if columns:
+                schemas.setdefault(table.lower(), set()).update(column.lower() for column in columns)
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Constant) or not isinstance(node.value, str):
+            continue
+        for table, columns in re.findall(r"INSERT(?: OR \w+)? INTO\s+(\w+)\s*\(([^)]+)\)", node.value, re.I):
+            declared = schemas.get(table.lower())
+            supplied = {column.strip().lower() for column in columns.split(",")}
+            if declared and supplied - declared:
+                # ALTER TABLE additions are legitimate schema facts too.
+                additions = set(
+                    re.findall(
+                        r"ALTER TABLE\s+" + re.escape(table) + r"\s+ADD(?: COLUMN)?\s+(\w+)",
+                        "\n".join(ctx.read(p) or "" for p in ctx.source_files),
+                        re.I,
+                    )
+                )
+                unknown = supplied - declared - {name.lower() for name in additions}
+                if unknown:
+                    raise ValueError(
+                        f"{path}: INSERT uses nonexistent {table} column(s): {', '.join(sorted(unknown))}; use the repository schema"
+                    )
+
+
 def static_gate(ctx: RepoContext, path: str, content: str) -> None:
     """Every static defect the host can find in one generated file; raises ``ValueError`` describing the first."""
     if path.endswith(".py"):
@@ -337,6 +413,7 @@ def static_gate(ctx: RepoContext, path: str, content: str) -> None:
             )
         check_python_test_hygiene(content, path, ctx.source_files, read_source=ctx.read)
         check_mock_pitfalls(content, path, ctx)
+        check_stateful_fixtures(ctx, path, content)
     elif path.endswith((".java", ".kt")):
         if problem := _native_syntax_check(path, content):
             raise ValueError(f"{path}: {problem}")

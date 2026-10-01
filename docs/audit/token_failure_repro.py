@@ -78,17 +78,13 @@ def main(workspace: Path) -> None:
             context.result = json.dumps({"ok": False, "code": "REPRO_FAILURE"})
 
         await trace.process(context, call_next)
-        assert trace.calls[-1]["ok"] is True
-        print("Typed {ok:false} result is currently mislabeled successful in tool trace")
+        assert trace.calls[-1]["ok"] is False
+        print("Typed failure is correctly recorded unsuccessful")
 
     asyncio.run(tool_failure())
     oversized = ToolResult(False, evidence="x" * 7000, suggested_fixes=["y" * 7000]).to_json()
-    try:
-        json.loads(oversized)
-    except json.JSONDecodeError:
-        print("Oversized tool envelope is truncated into invalid JSON")
-    else:
-        raise AssertionError("Expected current oversized-envelope defect")
+    assert json.loads(oversized)["ok"] is False
+    print("Bounded tool envelope remains valid JSON")
 
 
 if __name__ == "__main__":

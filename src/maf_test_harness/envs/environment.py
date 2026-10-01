@@ -16,7 +16,7 @@ from pathlib import Path
 
 from ..repo.stack import REQUIRED_TOOLS, StackProfile
 from . import plan_toolchains, platform_compat
-from .runners import Step, resolve_ecosystem, setup_steps
+from .runners import Step, repository_components, resolve_ecosystem, setup_steps
 
 # tool -> (version command, install hint)
 TOOLS: dict[str, tuple[list[str], str]] = {
@@ -112,7 +112,12 @@ def documented_packages(needs: list[dict], root: Path, limit: int = 8) -> list[s
             continue
         match = _PIP_INSTALL.match(str(need.get("how_to_install", "")))
         evidence = root / str(need.get("evidence_file") or "")
-        if not match or not need.get("evidence_file") or not evidence.is_file():
+        if (
+            not match
+            or not need.get("evidence_file")
+            or not evidence.resolve().is_relative_to(root.resolve())
+            or not evidence.is_file()
+        ):
             continue
         text = evidence.read_text(encoding="utf-8", errors="replace").lower()
         for spec in match.group(1).split():
@@ -146,6 +151,8 @@ def build_environment_plan(
     timeout: float = 900,
     needs: list[dict] | None = None,
     python_override: str | None = None,
+    _component: bool = False,
+    browser_tests: bool = False,
 ) -> dict:
     """Prerequisites, isolation strategy and the exact install steps for the primary ecosystem.
 
@@ -153,6 +160,43 @@ def build_environment_plan(
     """
     eco = resolve_ecosystem(stack)
     root = Path(repo_or_workspace)
+    components = repository_components(stack, root)
+    if not _component and (len(components) > 1 or any(cwd != "." for _, cwd in components)):
+        from dataclasses import replace
+
+        from ..repo.stack import detect_stack
+
+        plans = []
+        for kind, cwd in components:
+            local_root = (root / cwd).resolve()
+            local = replace(detect_stack(local_root), primary=kind, ecosystems=[kind])
+            child = build_environment_plan(
+                local,
+                local_root,
+                cache_dir,
+                timeout,
+                needs if cwd == "." else None,
+                python_override if kind == "python" else None,
+                _component=True,
+                browser_tests=browser_tests and kind == "node",
+            )
+            for step in child["steps"]:
+                step["cwd"] = (Path(cwd) / step["cwd"]).as_posix()
+            plans.append({**child, "cwd": cwd})
+        return {
+            "ecosystem": eco,
+            "components": [{"ecosystem": kind, "cwd": cwd} for kind, cwd in components],
+            "toolchains": [row for child in plans for row in child["toolchains"]],
+            "needs_download": any(child["needs_download"] for child in plans),
+            "isolation": "; ".join(f"{child['cwd']}: {child['isolation']}" for child in plans),
+            "prerequisites": [row for child in plans for row in child["prerequisites"]],
+            "missing_prerequisites": sorted(
+                {name for child in plans for name in child["missing_prerequisites"]}
+            ),
+            "steps": [step for child in plans for step in child["steps"]],
+            "notes": [f"Install component {child['ecosystem']} at {child['cwd']}" for child in plans],
+        }
+
     wrapper = eco == "maven" and (root / "mvnw").exists()
     prerequisites = [_probe(t) for t in REQUIRED_TOOLS.get(eco, ()) if not (wrapper and t == "mvn")]
     python = eco == "python"
@@ -161,6 +205,7 @@ def build_environment_plan(
         root,
         str(Path(cache_dir).resolve()),
         timeout,
+        need_playwright=browser_tests and eco == "node",
         extra_requirements=nested_requirements(root) if python else None,
         extra_packages=documented_packages(needs or [], root) if python else None,
     )

@@ -8,6 +8,7 @@ import os
 import re
 import shlex
 import traceback
+from datetime import UTC, datetime
 from functools import partial
 from pathlib import Path
 from typing import Any
@@ -22,8 +23,9 @@ from agent_framework import (
     response_handler,
 )
 from filelock import FileLock
+from pydantic import ValidationError
 
-from .agent import diagnosis
+from .agent import diagnosis, prompt_settings
 from .agent.personas import PERSONAS, persona_instructions
 from .envs import Provisioned, ToolchainError, app_launcher, env_check, provision_for
 from .envs import recovery as env_recovery
@@ -85,7 +87,7 @@ from .skills.reports import run_skill_checks
 from .tools.agent_tools import HarnessToolbox
 from .tools.autofix import autofix_files
 from .tools.build_gate import try_build
-from .tools.code_intel import RepoContext, static_gate
+from .tools.code_intel import RepoContext, source_contracts, static_gate
 from .tools.registry import ToolContext
 from .tools.typed import default_registry
 
@@ -178,6 +180,7 @@ def _allowed_levels(state: dict[str, Any]) -> set[str]:
         tooling is not None
         and (state.get("stack") or {}).get("primary") == "python"
         and not tooling.get("playwright")
+        and not tooling.get("node_playwright")
     ):
         live -= {"e2e", "accessibility"}
         if not tooling.get("streamlit"):
@@ -254,6 +257,8 @@ def _generation_policy(repo: dict[str, Any], state: dict[str, Any] | None = None
         "existing_test_files": (repo.get("test_files") or [])[:30],
         "likely_test_directories": repo.get("likely_test_directories", []),
         "package_files": (repo.get("package_files") or [])[:30],
+        "selected_application_component": state.get("app_component"),
+        "component_path_rule": "Place Node tests inside the component containing its package.json. For the selected frontend, write new specs under <selected_application_component>/tests/. Root tests/ cannot resolve nested frontend dependencies. Other ecosystems belong to their own manifest component.",
         "python_import_roots": extra_import_roots(repo.get("source_files") or []),
         "declared_dependencies": (state.get("declared_dependencies") or [])[:120],
         "forbidden_imports": _undeclared_libraries(state.get("declared_dependencies") or []),
@@ -306,7 +311,7 @@ def _generation_policy(repo: dict[str, Any], state: dict[str, Any] | None = None
         },
         "level_rules": {
             "unit": "Isolated, no network; mock boundaries but never the behavior under test.",
-            "integration": "Real collaborators in-process; temp dirs/in-memory DBs only.",
+            "integration": "Real collaborators in-process; temp dirs/in-memory DBs only. Use the database schema verbatim, unique composite keys and actual response fields. Close connections in finally/context managers and roll back on failure. Never mutate os.environ at module import; configure captured database paths with a per-test monkeypatch before importing the target, restoring imported module constants when necessary. Derive input JSON nesting and expected totals from the real parser, never invented fields.",
             "api": "Use the framework's in-process test client when one exists, else BASE_URL.",
             "cli": "Invoke the real entry point via subprocess or the framework runner; assert exit code and output.",
             "jvm": (
@@ -320,7 +325,7 @@ def _generation_policy(repo: dict[str, Any], state: dict[str, Any] | None = None
             "ui/e2e/accessibility": (
                 "Only with live_app.available and only the levels in allowed_test_levels. A Streamlit UI is tested in-process "
                 "with `streamlit.testing.v1.AppTest` (never by fetching the server's HTML: it is an empty JavaScript shell); "
-                "a browser (Playwright) only when environment.ui_tooling.playwright is true."
+                "For a Node frontend use TypeScript @playwright/test when environment.ui_tooling.node_playwright is true; use BASE_URL and real rendered selectors. Capture screenshots and retain traces. Derive selectors from rendered source, including shared page-header and navigation components. Assert fixture prerequisites and each expected page/detail unconditionally: do not silently skip assertions with if(count>0). Seed disposable data using the actual backend schema and isolated application database before detail checks. A Python browser is available only when environment.ui_tooling.playwright is true."
             ),
             "security": "Assert rejection/sanitization paths that the source shows.",
         },
@@ -487,7 +492,13 @@ class Harness:
         self.save()
         return self.view
 
-    async def start(self, repo_url: str, app_url: str | None = None, start_app: bool = False):
+    async def start(
+        self,
+        repo_url: str,
+        app_url: str | None = None,
+        start_app: bool = False,
+        app_component: str | None = None,
+    ):
         if self.view["status"] != "new":
             raise ValueError("Run already started. Resume its pending request.")
         _, _, _, ref = validate_github_url(repo_url, with_ref=True)
@@ -497,11 +508,14 @@ class Harness:
             raise ValueError(
                 "app_url must be a local http(s) URL such as http://localhost:8080 (tests run on this host)."
             )
+        if not (self.run_dir / "prompts.json").exists():
+            prompt_settings.save(self.run_dir / "prompts.json", prompt_settings.defaults())
         self.state = {
             "repo_url": repo_url.strip(),
             "repo_ref": ref,
             "app_url": app_url.strip() if app_url else None,
             "launch_app": bool(start_app and not app_url),
+            "app_component": app_component,
             "stages": self.stages,
             "artifacts": {},
             "revisions": {},
@@ -830,6 +844,10 @@ class Harness:
             "status": environment.get("status", "not_planned"),
             "ecosystem": environment.get("plan", {}).get("ecosystem"),
         }
+        atomic_json(self.run_dir / "qa_report.json", qa)
+        markdown_temp = self.run_dir / "qa_report.md.tmp"
+        markdown_temp.write_text(render_markdown(qa), encoding="utf-8")
+        markdown_temp.replace(self.run_dir / "qa_report.md")
         return {
             "qa_report": qa,
             "execution": execution,
@@ -908,6 +926,7 @@ class Harness:
             EXECUTION_TIMEOUT_SECONDS,
             state["artifacts"].get("requirements", {}).get("environment_needs"),
             *([state["env_python"]] if state.get("env_python") else []),  # only after a fallback was approved
+            **({"browser_tests": True} if state.get("app_url") else {}),
         )
         state["environment"] = {"plan": plan, "hash": digest(plan), "status": "planned"}
         if (
@@ -957,15 +976,24 @@ class Harness:
         self.hooks.context["allow_downloads"] = True  # the approved plan lists every toolchain download
         self.audit("environment_started", request_id=request["id"], plan_hash=info["hash"])
         try:  # the approval covers downloading the toolchains listed in the plan
-            provisioned = await asyncio.to_thread(
-                partial(
-                    provision_for,
-                    self.workspace,
-                    info["plan"]["ecosystem"],
-                    allow_download=True,
-                    python_override=state.get("env_python"),
+            provisioned = Provisioned()
+            for component in info["plan"].get(
+                "components", [{"ecosystem": info["plan"]["ecosystem"], "cwd": "."}]
+            ):
+                found = await asyncio.to_thread(
+                    partial(
+                        provision_for,
+                        self.workspace / component["cwd"],
+                        component["ecosystem"],
+                        allow_download=True,
+                        python_override=state.get("env_python")
+                        if component["ecosystem"] == "python"
+                        else None,
+                    )
                 )
-            )
+                provisioned.toolchains.extend(found.toolchains)
+                provisioned.events.extend(found.events)
+
         except ToolchainError as exc:
             self.audit("toolchains_failed", error=str(exc)[:600])
             provisioned = None
@@ -1100,6 +1128,24 @@ class Harness:
             cache_dir=self.cache_dir,
             timeout=EXECUTION_TIMEOUT_SECONDS,
             env_ready=env_ready,
+            ready_components=frozenset(
+                (c["ecosystem"], c["cwd"])
+                for c in state.get("environment", {})
+                .get("plan", {})
+                .get(
+                    "components",
+                    [
+                        {
+                            "ecosystem": state.get("environment", {})
+                            .get("plan", {})
+                            .get("ecosystem", stack.primary),
+                            "cwd": ".",
+                        }
+                    ],
+                )
+            )
+            if env_ready
+            else frozenset(),
             **(
                 {"assume_present": covered}
                 if (covered := Provisioned.from_dicts(state.get("toolchains")).tools())
@@ -1109,7 +1155,11 @@ class Harness:
         if state.get("launch_app") and not plan.blocked_reason:
             state["app_url"] = f"http://127.0.0.1:{app_launcher.free_port()}"  # fresh port for every attempt
             port = int(state["app_url"].rsplit(":", 1)[1])
-            plan.app = await asyncio.to_thread(app_launcher.detect_launch, workspace, port)
+            plan.app = await asyncio.to_thread(
+                app_launcher.detect_launch, workspace, port, state.get("app_component")
+            )
+            if plan.app and plan.app.get("blocked_reason"):
+                plan.blocked_reason = plan.app["blocked_reason"]
             if plan.app is None:
                 plan.blocked_reason = (
                     "The harness could not tell how to start this application (no Streamlit/FastAPI/Flask entry "
@@ -1151,7 +1201,17 @@ class Harness:
                 else "not prepared: setup steps included",
                 "steps": [
                     *(
-                        [{"name": "start-app", "kind": "app", "command": shlex.join(plan.app["argv"])}]
+                        [
+                            {
+                                "name": f"start-{service['kind']}",
+                                "kind": "app",
+                                "command": shlex.join(service["argv"]),
+                                "cwd": service.get("cwd", "."),
+                                "url": service.get("url"),
+                                "env": service.get("env", {}),
+                            }
+                            for service in plan.app.get("services", [plan.app])
+                        ]
                         if plan.app
                         else []
                     ),
@@ -1259,6 +1319,71 @@ class Harness:
         self.audit("heal_started", round=state["heal_rounds"], failed_case_ids=sorted(failed_ids))
         await ctx.send_message(state)  # graph edge test_execution -> test_generation
 
+    async def _call_model(self, *, stage, persona, prompt, state, **kwargs):
+        settings = prompt_settings.load(self.run_dir / "prompts.json")
+        persona = settings["personas"].get(stage, persona)
+        batch = kwargs.pop("prompt_batch", None)
+        key = f"{stage}:{batch}" if batch is not None else stage
+        prompt = settings["overrides"].get(key) or prompt
+        if settings["repository_prompt"]:
+            persona += "\n\nUSER REPOSITORY REVIEW GUIDANCE:\n" + settings["repository_prompt"]
+        identifier = uuid4().hex
+        folder = self.run_dir / "prompts"
+        folder.mkdir(exist_ok=True)
+        record = {
+            "id": identifier,
+            "created_at": datetime.now(UTC).isoformat(),
+            "stage": stage,
+            "batch": batch,
+            "override_key": key,
+            "persona": persona,
+            "user_prompt": prompt,
+            "sha256": hashlib.sha256(prompt.encode()).hexdigest(),
+        }
+        state.setdefault("prompt_records", []).append(
+            {k: record[k] for k in ("id", "stage", "batch", "override_key", "sha256")}
+        )
+        atomic_json(folder / f"{identifier}.json", record)
+        self.save()
+        try:
+            return await self.runtime.run_stage(
+                stage=stage, persona=persona, prompt=prompt, state=state, **kwargs
+            )
+        finally:
+            record.update(state.get("model_instructions", {}).get(stage, {}))
+            record["skills"] = [
+                {"name": name, "instructions": (self.skills_root / name / "SKILL.md").read_text()}
+                for name in skills_for(stage, state).all
+            ]
+            atomic_json(folder / f"{identifier}.json", record)
+
+    def _selected_app_source(
+        self, state: dict, *, preferred: list[str] | None = None, max_chars: int = 14000
+    ) -> dict[str, str]:
+        component = state.get("app_component")
+        if not component:
+            return {}
+        paths = state["artifacts"].get("repo_analysis", {}).get("source_files", [])
+        paths = sorted(
+            (p for p in paths if p.startswith(component.rstrip("/") + "/")),
+            key=lambda p: (
+                p not in (preferred or []),
+                not p.endswith(("App.tsx", "App.jsx")),
+                "/components/" not in p and "/hooks/" not in p,
+                p,
+            ),
+        )
+        facts, remaining = {}, max_chars
+        for path in paths:
+            text = self._read_repo_file(path)
+            if text:
+                excerpt = text[: min(16000 if max_chars > 14000 else 3000, remaining)]
+                facts[path] = excerpt
+                remaining -= len(excerpt)
+                if remaining <= 0:
+                    break
+        return facts
+
     async def model(self, stage, state, ctx):
         if self.runtime is None:
             raise ValueError("Configure API key/model before running this stage, then retry.")
@@ -1306,6 +1431,11 @@ class Harness:
                     "repository_evidence": state.get("evidence", ""),
                     "evidence_file_paths": evidence_paths if stage == "requirements" else None,
                     "stack_profile": state.get("stack", {}),
+                    "selected_application": {
+                        "component": state.get("app_component"),
+                        "source": self._selected_app_source(state),
+                        "coverage_rule": "When a frontend component is selected and live UI levels are available, include meaningful browser navigation, visible data/empty-state and responsive layout checks traced to its source. Do not replace frontend qualification with API-only coverage. Do not invent unspecified browser capabilities.",
+                    },
                     "live_app": {
                         "available": bool(state.get("app_url")),
                         "allowed_test_levels": sorted(_allowed_levels(state)),
@@ -1323,16 +1453,28 @@ class Harness:
                 }
             )
             skillset = skills_for(stage, state)
-            result = await self.runtime.run_stage(
-                stage=stage,
-                skill_name=skillset.primary,
-                companions=skillset.companions,
-                persona=persona_instructions(stage),
-                prompt=prompt,
-                state=state,
-                persist=self.save,
-                response_format=response_format,
-            )
+            try:
+                result = await self._call_model(
+                    stage=stage,
+                    skill_name=skillset.primary,
+                    companions=skillset.companions,
+                    persona=persona_instructions(stage),
+                    prompt=prompt,
+                    state=state,
+                    persist=self.save,
+                    response_format=response_format,
+                )
+            except ValidationError as exc:
+                self.audit(
+                    "stage_repair", stage=stage, attempt=attempt, error="Invalid model JSON/schema output"
+                )
+                if attempt == MODEL_REPAIR_ATTEMPTS:
+                    raise
+                repair = (
+                    "The previous response was invalid JSON/schema output. Return exactly one schema-valid JSON object, escape newlines/control characters within strings, and follow the output_contract. "
+                    + str(exc.errors(include_input=False))[:900]
+                )
+                continue
             if result["status"] == "needs_input":
                 raise ValueError(
                     "The agent requested manual configuration, but this workflow is autonomous. "
@@ -1444,6 +1586,12 @@ class Harness:
                 )
                 or target_source
             )
+            if any(case.get("level") in {"ui", "e2e", "accessibility"} for case in work):
+                app_sources = self._selected_app_source(state, preferred=preferred, max_chars=96000)
+                batch_source += "\n".join(
+                    f"--- SELECTED APPLICATION SOURCE: {path} ---\n{source}"
+                    for path, source in app_sources.items()
+                )
             collaborators = collaborator_signatures(self.run_dir / "repo", batch_source, source_files)
             rounds = state.setdefault("generation_rounds", {})
             for attempt in range(1, 1 if accepted is not None else TEST_GENERATION_MAX_ATTEMPTS + 1):
@@ -1474,6 +1622,7 @@ class Harness:
                         },
                         "target_source": batch_source,
                         "collaborator_signatures": collaborators or None,
+                        "state_and_schema_source": source_contracts(self._repo_context()),
                         "repository_evidence": evidence or state.get("evidence", ""),
                         "revision_feedback": state.get("feedback", {}).get("test_generation"),
                         "repair_feedback": repair_feedback or None,
@@ -1489,8 +1638,9 @@ class Harness:
                 )
                 try:
                     generation_skills = skills_for("test_generation", state)
-                    result = await self.runtime.run_stage(
+                    result = await self._call_model(
                         stage="test_generation",
+                        prompt_batch=batch_index,
                         skill_name=generation_skills.primary,
                         companions=generation_skills.companions,
                         persona=persona_instructions("test_generation"),
@@ -1713,7 +1863,13 @@ class Harness:
         )
 
     async def _build_gate(self, candidate: dict, batch: int) -> None:
-        report = await asyncio.to_thread(self._build_files, candidate["files"])
+        accepted = [
+            f
+            for artifact in self.state.get("accepted_generation_batches", {}).get("batches", {}).values()
+            for f in artifact.get("files", [])
+        ]
+        by_path = {f["path"]: f for f in [*accepted, *candidate["files"]]}
+        report = await asyncio.to_thread(self._build_files, list(by_path.values()))
         tooling = self.state.setdefault("tooling", {"autofix": 0, "build_checks": 0, "build_failures": 0})
         if report["status"] != "skipped":
             tooling["build_checks"] += 1
@@ -1746,8 +1902,22 @@ class Harness:
 
     def _check_imports(self, candidate: dict, state: dict) -> None:
         """Static gates (syntax, imports, undefined names, mocks, patch targets, URLs) on every generated file."""
+        from .envs.runners import repository_components, resolve_ecosystem
+
         ctx = self._repo_context()
+        stack = detect_stack(self.workspace)
+        node_roots = [cwd for kind, cwd in repository_components(stack, self.workspace) if kind == "node"]
         for item in candidate["files"]:
+            if (
+                resolve_ecosystem(stack, [item]) == "node"
+                and node_roots
+                and not any(cwd == "." or item["path"].startswith(cwd + "/") for cwd in node_roots)
+            ):
+                raise ValueError(
+                    f"Node test {item['path']} is outside its package.json component. "
+                    f"Place this spec under a NEW tests/ path inside one of {node_roots}; "
+                    "the runner resolves dependencies from that component."
+                )
             static_gate(ctx, item["path"], item["content"])
 
     async def validate(self, stage, state):
@@ -1761,6 +1931,23 @@ class Harness:
                 if unknown:
                     raise ValueError(f"Requirement cites files not supplied as evidence: {sorted(unknown)}")
             requirements = finalize_discovered_requirements(validated, state["repo_url"])
+            root = (self.run_dir / "repo").resolve()
+
+            def check_evidence(value):
+                if isinstance(value, dict):
+                    for path in value.get("source_files", []):
+                        target = (root / path).resolve()
+                        if not target.is_relative_to(root) or not target.is_file():
+                            raise ValueError(
+                                f"Requirement evidence does not exist in the analyzed repository: {path}"
+                            )
+                    for child in value.values():
+                        check_evidence(child)
+                elif isinstance(value, list):
+                    for child in value:
+                        check_evidence(child)
+
+            check_evidence(requirements)
             if self.stages != CORE_STAGES:  # deterministic preview of the isolated-environment install plan
                 stack = await asyncio.to_thread(detect_stack, self.run_dir / "repo")
                 requirements["environment_plan"] = await asyncio.to_thread(
@@ -1786,6 +1973,21 @@ class Harness:
                 allowed_levels=_allowed_levels(state),
             )
             self._require_coverage_or_reason(design, state)
+            if (
+                state.get("app_component")
+                and any(
+                    path.startswith(state["app_component"].rstrip("/") + "/")
+                    and path.endswith((".tsx", ".jsx", ".vue", ".svelte", ".html"))
+                    for path in state["artifacts"]["repo_analysis"].get("source_files", [])
+                )
+                and _allowed_levels(state) & {"ui", "e2e", "accessibility"}
+                and not any(
+                    case.get("level") in {"ui", "e2e", "accessibility"} for case in design_cases(design)
+                )
+            ):
+                raise ValueError(
+                    "Selected frontend lacks browser coverage. Add source-backed UI/E2E cases for its visible workflow and responsive layout; API-only cases cannot qualify the selected frontend."
+                )
             return design
         if stage == "test_generation":
             generated = expand_generated_lines(GeneratedFilesDraft.model_validate(draft).model_dump())

@@ -1,0 +1,12 @@
+{
+  "checked_at": "2026-10-02",
+  "terraform": "1.14.0",
+  "azurerm": "4.81.0",
+  "fmt": "passed",
+  "init_backend_false": "passed",
+  "validate": "passed",
+  "azure_plan": "not run - no subscription authentication",
+  "apply": "not run",
+  "container_build": "not run - Docker unavailable",
+  "hosted_application": "implementation prerequisites remain"
+}

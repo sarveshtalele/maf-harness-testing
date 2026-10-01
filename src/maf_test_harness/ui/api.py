@@ -3,14 +3,11 @@
 from __future__ import annotations
 
 import argparse
-import base64
 import hmac
-import io
 import json
 import mimetypes
 import os
 import re
-import zipfile
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from threading import RLock
@@ -18,8 +15,9 @@ from urllib.parse import parse_qs, unquote, urlsplit
 from uuid import uuid4
 
 import yaml
-from filelock import FileLock
+from filelock import FileLock, Timeout
 
+from ..agent import prompt_settings
 from ..agent.personas import PERSONAS
 from ..agent.runtime import MAFHarnessRuntime
 from ..hooks.builtin import redact
@@ -54,6 +52,7 @@ PUBLIC_STATE = (
     "invocations",
     "telemetry",
     "heal_rounds",
+    "prompt_records",
 )
 
 
@@ -208,6 +207,61 @@ class LocalAPI:
             )
         self.host = Harness(self.run_path(key), skills_root=ROOT / "skills", runtime=runtime)
 
+    def prompts(self, key: str | None = None, record_id: str | None = None) -> dict:
+        with self.lock:
+            folder = self.run_path(key) if key else self.runs.parent
+            if record_id:
+                if not re.fullmatch(r"[a-f0-9]{32}", record_id):
+                    raise ValueError("Invalid prompt record ID")
+                path = folder / "prompts" / f"{record_id}.json"
+                if not path.is_file():
+                    raise FileNotFoundError("Prompt record unavailable")
+                return public(json.loads(path.read_text()))
+            settings = prompt_settings.load(folder / "prompts.json")
+            records = self.read(key)["state"].get("prompt_records", []) if key else []
+            return public(
+                {
+                    "settings": settings,
+                    "defaults": prompt_settings.defaults(),
+                    "records": records,
+                    "host_stages": ["repo_analysis", "environment_setup", "test_execution"],
+                }
+            )
+
+    def save_prompts(self, body: dict, key: str | None = None) -> dict:
+        with self.lock:
+            if key and self.busy():
+                raise RuntimeError(
+                    "Wait for the current operation to finish before changing this run's prompts."
+                )
+            folder = self.run_path(key) if key else self.runs.parent
+            current = prompt_settings.load(folder / "prompts.json")
+            if set(body) == {"override_key", "override_prompt"}:
+                key_name, text = body["override_key"], body["override_prompt"]
+                if not isinstance(key_name, str) or key_name.split(":")[0] not in PERSONAS:
+                    raise ValueError("Unknown prompt override stage")
+                overrides = dict(current["overrides"])
+                if text is None:
+                    overrides.pop(key_name, None)
+                else:
+                    overrides[key_name] = text
+                body = {"overrides": overrides}
+            settings = prompt_settings.save(folder / "prompts.json", {**current, **body})
+            if key:
+                event = {
+                    "event": "prompts_saved",
+                    "at": __import__("datetime")
+                    .datetime.now(__import__("datetime").timezone.utc)
+                    .isoformat(),
+                    "stage": "prompt_settings",
+                    "sha256": __import__("hashlib")
+                    .sha256(json.dumps(settings, sort_keys=True).encode())
+                    .hexdigest(),
+                }
+                with (folder / "audit.jsonl").open("a") as stream:
+                    stream.write(json.dumps(event) + "\n")
+            return public({"settings": settings})
+
     def start(self, body: dict) -> dict:
         with self.lock:
             if self.busy():
@@ -215,6 +269,15 @@ class LocalAPI:
             url = body.get("repo_url")
             app_url = body.get("app_url") or None
             launch = body.get("start_app", False)
+            component = body.get("app_component") or None
+            if component is not None and (
+                not isinstance(component, str)
+                or ".." in component.split("/")
+                or "\\" in component
+                or component.startswith("/")
+                or ":" in component
+            ):
+                raise ValueError("Application component must be a relative repository directory")
             if (
                 not isinstance(url, str)
                 or (app_url is not None and not isinstance(app_url, str))
@@ -231,6 +294,9 @@ class LocalAPI:
             key = uuid4().hex[:12]
             path = self.run_path(key, create=True)
             path.mkdir(mode=0o700)
+            prompt_settings.save(
+                path / "prompts.json", prompt_settings.load(self.runs.parent / "prompts.json")
+            )
             # Persist a visible new run before dispatch; Harness.start will populate the real checkpoint.
             (path / "run.json").write_text(
                 json.dumps({"status": "new", "state": {"repo_url": url}, "consumed": []}), encoding="utf-8"
@@ -238,7 +304,7 @@ class LocalAPI:
 
             async def begin():
                 await self.replace_host(key)
-                await self.host.start(url, app_url, launch)
+                await self.host.start(url, app_url, launch, component)
 
             self.job_run = key
             self.job = self.service.submit(begin())
@@ -282,6 +348,33 @@ class LocalAPI:
             self.errors.pop(key, None)
             self.job = self.service.submit(self.replace_host(key))
             return {"id": key}
+
+    def delete_run(self, key: str, body: dict) -> dict:
+        with self.lock:
+            if self.busy():
+                raise RuntimeError("Wait for the active operation before deleting a run.")
+            if body.get("confirm_run_id") != key:
+                raise ValueError("Confirm the exact run ID before deleting.")
+            path = self.run_path(key)
+            try:
+                with FileLock(str(path / "run.lock"), timeout=0):
+                    pass
+            except Timeout as exc:
+                raise RuntimeError("This run is active in another process.") from exc
+            if self.host and self.host.run_dir == path:
+
+                async def release():
+                    if getattr(self.host.runtime, "close", None):
+                        await self.host.runtime.close()
+
+                self.service.submit(release()).result(15)
+                self.host = None
+            trash = path.parent.parent / ".deleted-runs"
+            trash.mkdir(exist_ok=True, mode=0o700)
+            destination = trash / f"{key}-{uuid4().hex}"
+            path.rename(destination)
+            self.errors.pop(key, None)
+            return {"id": key, "deleted": True, "recoverable": True}
 
     def audit(self, key):
         path = self.run_path(key) / "audit.jsonl"
@@ -418,44 +511,9 @@ class LocalAPI:
                 "application/json",
                 None,
             )
-        content = path.read_bytes()
-        if mime == "text/html":
-            html = content.decode("utf-8", errors="replace")
-            payload = re.search(
-                r'(<template id="playwrightReportBase64">data:application/zip;base64,)([^<]+)', html
-            )
-            if payload:
-                source, destination = io.BytesIO(base64.b64decode(payload[2])), io.BytesIO()
-                with (
-                    zipfile.ZipFile(source) as archive,
-                    zipfile.ZipFile(destination, "w", zipfile.ZIP_DEFLATED) as clean,
-                ):
-                    if (
-                        len(archive.infolist()) > 500
-                        or sum(f.file_size for f in archive.infolist()) > 32 * 1024 * 1024
-                    ):
-                        raise ValueError("Embedded report data exceeds the 32 MB viewer limit.")
-                    for item in archive.infolist():
-                        data = archive.read(item)
-                        if item.filename.endswith(".json"):
-                            data = json.dumps(public(json.loads(data))).encode()
-                        clean.writestr(item.filename, data)
-                html = (
-                    html[: payload.start(2)]
-                    + base64.b64encode(destination.getvalue()).decode()
-                    + html[payload.end(2) :]
-                )
-            # Key/value heuristics confuse minified JS token enums with credentials. Still redact
-            # configured secrets and credential-shaped strings inside code, and all report text/data.
-            pieces = re.split(r"(<script\b[^>]*>.*?</script>)", html, flags=re.I | re.S)
-            content = "".join(
-                redact(piece, keyed=False)[0] if re.match(r"<script\b", piece, re.I) else public(piece)
-                for piece in pieces
-            ).encode()
-        elif path.suffix.lower() == ".js":
-            content = redact(content.decode("utf-8", errors="replace"), keyed=False)[0].encode()
-        elif path.suffix.lower() in {".json", ".css", ".xml", ".log", ".md", ".txt"}:
-            content = public(content.decode("utf-8", errors="replace")).encode()
+        from .evidence import clean_content
+
+        content = clean_content(path)
         if mime == "text/html" and not download:
             # Playwright reads theme settings from storage. An opaque sandbox cannot access real storage;
             # provide report-local memory instead of granting it access to the UI's origin.
@@ -544,6 +602,8 @@ def make_server(api: LocalAPI, token: str, port: int = 8765):
                 if self.command == "GET":
                     if parts == ["config"]:
                         self.reply(200, api.config())
+                    elif parts == ["prompts"]:
+                        self.reply(200, api.prompts())
                     elif parts == ["skills"]:
                         self.reply(200, api.skills())
                     elif parts == ["runs"]:
@@ -552,6 +612,10 @@ def make_server(api: LocalAPI, token: str, port: int = 8765):
                         key = parts[1]
                         if len(parts) == 2:
                             self.reply(200, api.read(key))
+                        elif parts[2:] == ["prompts"]:
+                            self.reply(200, api.prompts(key))
+                        elif len(parts) == 4 and parts[2] == "prompts":
+                            self.reply(200, api.prompts(key, parts[3]))
                         elif parts[2:] == ["audit"]:
                             self.reply(200, api.audit(key))
                         elif parts[2:] == ["observability"]:
@@ -574,13 +638,19 @@ def make_server(api: LocalAPI, token: str, port: int = 8765):
                     if self.headers.get("Content-Type", "").split(";")[0] != "application/json":
                         raise ValueError("JSON body required.")
                     length = int(self.headers.get("Content-Length", "0"))
-                    if not 0 < length <= 65536:
-                        raise ValueError("Body must be between 1 and 65,536 bytes.")
+                    if not 0 < length <= 2097152:
+                        raise ValueError("Body must be between 1 and 2,097,152 bytes.")
                     body = json.loads(self.rfile.read(length))
                     if not isinstance(body, dict):
                         raise ValueError("JSON object required.")
-                    if parts == ["runs"]:
+                    if parts == ["prompts"]:
+                        self.reply(200, api.save_prompts(body))
+                    elif len(parts) == 3 and parts[0] == "runs" and parts[2] == "prompts":
+                        self.reply(200, api.save_prompts(body, parts[1]))
+                    elif parts == ["runs"]:
                         self.reply(202, api.start(body))
+                    elif len(parts) == 3 and parts[0] == "runs" and parts[2] == "delete":
+                        self.reply(200, api.delete_run(parts[1], body))
                     elif len(parts) == 3 and parts[0] == "runs" and parts[2] in {"respond", "reconnect"}:
                         result = (
                             api.respond(parts[1], body) if parts[2] == "respond" else api.reconnect(parts[1])

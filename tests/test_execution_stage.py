@@ -5,6 +5,7 @@ mapping to approved cases and the QA report are all real.
 """
 
 import json
+import re
 import sys
 from pathlib import Path
 
@@ -16,7 +17,7 @@ from maf_test_harness.envs.runners import RunPlan, Step
 from maf_test_harness.ui.runtime_service import RuntimeService
 
 
-def local_pytest_plan(stack, workspace, files, *, cache_dir, timeout=900, env_ready=False):
+def local_pytest_plan(stack, workspace, files, *, cache_dir, timeout=900, env_ready=False, **kwargs):
     """Same shape as the python adapter, minus venv/pip (no network in unit tests)."""
     step = Step(
         "pytest",
@@ -270,8 +271,11 @@ def assert_deliverable(host):
     assert not any(".git/" in n or ".harness-venv" in n or "node_modules" in n for n in names)
     assert json.loads(archive.read("harness-report/qa_report.json"))["verdict"] == "PASS"
     assert "## Files to update" in archive.read("harness-report/qa_report.md").decode()
-    assert "sk-" not in "".join(
-        archive.read(n).decode("utf-8", "ignore") for n in names if n.endswith((".md", ".json", ".jsonl"))
+    assert not re.search(
+        r"\bsk-(?:custom-|proj-)?[A-Za-z0-9_-]{16,}",
+        "".join(
+            archive.read(n).decode("utf-8", "ignore") for n in names if n.endswith((".md", ".json", ".jsonl"))
+        ),
     )
 
 

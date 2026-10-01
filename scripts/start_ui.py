@@ -21,11 +21,14 @@ def main():
     parser.add_argument(
         "--production", action="store_true", help="Use the built frontend (npm run build first)"
     )
+    parser.add_argument(
+        "--check-only", action="store_true", help="Check ports before rebuilding a stopped UI"
+    )
     parser.add_argument("--port", type=int, default=3000)
     parser.add_argument("--api-port", type=int, default=8765)
     args = parser.parse_args()
     npm = shutil.which("npm.cmd" if os.name == "nt" else "npm")
-    if not npm or not (ROOT / "frontend" / "node_modules").is_dir():
+    if not npm or (not args.check_only and not (ROOT / "frontend" / "node_modules").is_dir()):
         parser.error("Install Node.js and run npm ci in frontend first.")
     if args.port == args.api_port or not all(0 < p < 65536 for p in (args.port, args.api_port)):
         parser.error("Choose two different ports between 1 and 65535.")
@@ -37,6 +40,8 @@ def main():
                 probe.bind(("127.0.0.1", port))
             except OSError:
                 parser.error(f"Port {port} is already in use.")
+    if args.check_only:
+        return
     env = {
         **os.environ,
         "HARNESS_API_TOKEN": secrets.token_urlsafe(48),

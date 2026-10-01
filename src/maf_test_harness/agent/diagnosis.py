@@ -10,7 +10,6 @@ Off by default (``HARNESS_DIAGNOSIS_AGENT=on``): it costs tokens, and it only ru
 
 from __future__ import annotations
 
-import json
 from pathlib import Path
 from typing import Any, Literal
 
@@ -91,10 +90,6 @@ async def diagnose(
         return DiagnosisNote.model_validate(note).model_dump() | {"source": "agent"}
     except Exception as exc:  # advisory only
         return {"error": f"{type(exc).__name__}: {str(exc)[:300]}", "source": "agent"}
-
-
-def as_json(note: dict[str, Any]) -> str:
-    return json.dumps(note, ensure_ascii=False)
 
 
 __all__ = ["AGENT_NAME", "PERSONA", "DiagnosisNote", "diagnose", "diagnosis_prompt", "log_tail"]

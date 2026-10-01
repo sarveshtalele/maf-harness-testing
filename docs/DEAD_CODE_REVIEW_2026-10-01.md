@@ -1,6 +1,6 @@
 # Cleanup review — 1 October 2026
 
-No files have been deleted. File deletion requires the user’s explicit approval. The requested shared **Adjust panel** form and its CSS were removed; mouse drag handles, keyboard resizing and fullscreen remain.
+Historical review status on 1 October: no files had been deleted. On 2 October the user explicitly approved the exact retired GUI cleanup described below; only that cleanup has now been performed. Further file deletion still requires explicit approval. The requested shared **Adjust panel** form and its CSS were removed; mouse drag handles, keyboard resizing and fullscreen remain.
 
 ## Review scope and limits
 
@@ -47,3 +47,7 @@ TokenTelemetry independent Playwright validation at commit `276f37789304ca6d61a3
 The legacy GUI is no longer installed/launched on `new-ui`. `app.py`, `monitoring/ui.py` and `tests/targets/test_harness_browser.py` are now explicit retirement candidates, with their related GUI-only symbols/tests and documentation references. They remain present and were not deleted. Shared API/Markdown helpers and support for testing repositories that use this framework remain active. The exact deletion scope and independent approval choices are in [the updated backend/cleanup plan](BACKEND_FIX_PLAN_2026-10-02.md).
 
 The preceding cleanup commit’s backend and macOS/Windows Next.js CI workflows passed. The completed TokenTelemetry generated cycle reported 9 passed, 26 errors and 1 failed; diagnosis and proposed corrections are in the updated plan.
+
+## Approved cleanup — 2026-10-02
+
+The user approved exactly `app.py`, `src/maf_test_harness/monitoring/ui.py`, `tests/targets/test_harness_browser.py` and the associated GUI-only symbols/tests/references in the backend plan. They are removed. Earlier retention statements above describe the original audit state. Historical HTML, the supplied PDF, shared API/report modules and target-framework support remain.

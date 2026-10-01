@@ -48,9 +48,17 @@ class ToolResult:
         text = json.dumps(self.to_dict(), ensure_ascii=False, default=str)
         if len(text) <= limit:
             return text
-        # keep it valid JSON: shrink the payload, never cut the envelope in the middle
-        slim = {**self.to_dict(), "data": {"truncated": True}, "evidence": self.evidence[:500]}
-        return json.dumps(slim, ensure_ascii=False, default=str)[:limit]
+        # Bound before serialization; slicing serialized JSON can corrupt an error envelope.
+        slim = {**self.to_dict(), "data": {"truncated": True}}
+        slim["evidence"] = self.evidence[:500]
+        slim["suggested_fixes"] = [str(x)[:300] for x in self.suggested_fixes[:3]]
+        slim["next_actions"] = [str(x)[:300] for x in self.next_actions[:3]]
+        text = json.dumps(slim, ensure_ascii=False, default=str)
+        if len(text) > limit:
+            text = json.dumps({"ok": self.ok, "code": self.code[:100], "data": {"truncated": True}})
+        if len(text) > limit:
+            raise ValueError("Tool result limit is too small for a valid envelope")
+        return text
 
     @staticmethod
     def from_json(text: str) -> ToolResult:

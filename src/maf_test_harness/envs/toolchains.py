@@ -24,14 +24,14 @@ import time
 import urllib.request
 import zipfile
 from collections.abc import Callable
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from urllib.parse import urlsplit, urlunsplit
 
 from filelock import FileLock
 
 from . import platform_compat
-from .spec import at_least, version_tuple
+from .spec import at_least, specifier_allows, version_tuple
 
 PINNED_MAVEN = {"3": "3.9.9", "3.9": "3.9.9", "3.8": "3.8.8", "3.6": "3.6.3"}
 ADOPTIUM = "https://api.adoptium.net"
@@ -217,8 +217,10 @@ DETECTORS: dict[str, Callable[[], list[Toolchain]]] = {
 }
 
 
-def satisfies(kind: str, have: str, want: str, exact: bool = False) -> bool:
+def satisfies(kind: str, have: str, want: str, exact: bool = False, specifier: str = "") -> bool:
     """Is an installed ``have`` good enough for a requirement of ``want`` (``exact``: the same major.minor)?"""
+    if kind == "python" and specifier and not specifier_allows(specifier, have):
+        return False
     have_v, want_v = version_tuple(have), version_tuple(want)
     if not have_v or not want_v:
         return False
@@ -253,7 +255,9 @@ def _home_in(kind: str, folder: Path) -> Path | None:
     return mac_home
 
 
-def cached(kind: str, want: str, root: Path | None = None, exact: bool = False) -> Toolchain | None:
+def cached(
+    kind: str, want: str, root: Path | None = None, exact: bool = False, specifier: str = ""
+) -> Toolchain | None:
     root = root or cache_root()
     base = root / kind
     best: Toolchain | None = None
@@ -262,19 +266,21 @@ def cached(kind: str, want: str, root: Path | None = None, exact: bool = False) 
         if entry.name != _dir_for(kind, version, root).name or not (entry / ".complete").is_file():
             continue
         home = _home_in(kind, entry)
-        if home and satisfies(kind, version, want, exact):
+        if home and satisfies(kind, version, want, exact, specifier):
             candidate = Toolchain(kind, version, home, "cache")
             if best is None or version_tuple(version) < version_tuple(best.version):  # closest fit
                 best = candidate
     return best
 
 
-def find(kind: str, want: str, root: Path | None = None, exact: bool = False) -> Toolchain | None:
+def find(
+    kind: str, want: str, root: Path | None = None, exact: bool = False, specifier: str = ""
+) -> Toolchain | None:
     """A toolchain that already satisfies ``want``: the system's first, then the cache."""
     for candidate in DETECTORS[kind]():
-        if satisfies(kind, candidate.version, want, exact):
+        if satisfies(kind, candidate.version, want, exact, specifier):
             return candidate
-    return cached(kind, want, root, exact) if kind != "python" else None
+    return cached(kind, want, root, exact, specifier) if kind != "python" else None
 
 
 # ---------------------------------------------------------------------------------------------- network
@@ -320,7 +326,7 @@ def _archive_kind(name: str) -> str:
     return "tar.gz" if name.endswith((".tar.gz", ".tgz")) else "zip"
 
 
-def resolve_download(kind: str, want: str, fetch: Fetch = http_get) -> Download:
+def resolve_download(kind: str, want: str, fetch: Fetch = http_get, fallback_version: str = "") -> Download:
     """Where to download ``kind`` >= ``want`` for this platform (queries the vendor's metadata)."""
     system, arch = platform_key()
     if kind == "jdk":
@@ -330,6 +336,12 @@ def resolve_download(kind: str, want: str, fetch: Fetch = http_get) -> Download:
             "&vendor=eclipse"
         )
         items = json.loads(fetch(url))
+        if not items and fallback_version:
+            compatible = resolve_download(kind, fallback_version, fetch)
+            return replace(
+                compatible,
+                source=f"{compatible.source}; compatible JDK {fallback_version} for Java {want} source",
+            )
         if not items:
             raise ToolchainError(f"Eclipse Temurin has no JDK {major} for {system}/{arch}.")
         package = items[0]["binary"]["package"]
@@ -546,7 +558,9 @@ def ensure(
     """Make every requirement available: reuse what exists, download the rest only when ``allow_download``."""
     result = Provisioned()
     for req in requirements:
-        have = find(req.kind, req.version, root, req.exact)
+        have = find(
+            req.kind, req.version, root, req.exact, **({"specifier": req.specifier} if req.specifier else {})
+        )
         if have:
             result.toolchains.append(have)
             result.events.append(
@@ -564,7 +578,20 @@ def ensure(
                     f"Python {req.version} is not installed. Install it (or the 'uv' tool) and retry."
                 )
         else:
-            toolchain = provision(resolve_download(req.kind, req.version, fetch), root, opener)
+            toolchain = provision(
+                resolve_download(
+                    req.kind,
+                    req.version,
+                    fetch,
+                    **({"fallback_version": req.fallback_version} if req.fallback_version else {}),
+                ),
+                root,
+                opener,
+            )
+        if not satisfies(req.kind, toolchain.version, req.version, req.exact, req.specifier):
+            raise ToolchainError(
+                f"Provisioned {req.kind} {toolchain.version} violates {req.specifier or req.version}"
+            )
         result.toolchains.append(toolchain)
         result.events.append(
             {

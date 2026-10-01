@@ -477,11 +477,13 @@ def test_live_ui_levels_follow_the_browser_tooling_of_a_python_environment():
         return wf._allowed_levels(state) & wf.LIVE_APP_LEVELS
 
     assert levels({"playwright": True, "streamlit": True}) == {"ui", "e2e", "accessibility"}
-    assert levels({"playwright": False, "streamlit": True}) == {"ui"}  # AppTest still works
+    assert levels({"playwright": False, "streamlit": True, "node_playwright": False}) == {
+        "ui"
+    }  # AppTest still works
     assert levels({"playwright": False, "streamlit": False}) == set()
     assert levels(None) == {"ui", "e2e", "accessibility"}  # environment not inspected: unchanged behaviour
     assert levels({"playwright": False, "streamlit": False}, primary="node") == {"ui", "e2e", "accessibility"}
-    assert levels({"playwright": False, "streamlit": True}, url=None) == set()
+    assert levels({"playwright": False, "streamlit": True, "node_playwright": False}, url=None) == set()
 
 
 def test_the_generation_policy_states_the_environment_facts_to_the_model():
@@ -489,12 +491,12 @@ def test_the_generation_policy_states_the_environment_facts_to_the_model():
         "environment": {
             "python_version": "3.11",
             "missing_packages": ["chromadb"],
-            "ui_tooling": {"playwright": False, "streamlit": True},
+            "ui_tooling": {"playwright": False, "streamlit": True, "node_playwright": False},
         }
     }
     env = wf._generation_policy({"languages": {"Python": 1}}, state)["environment"]
     assert env["python"] == "3.11" and env["unavailable_packages"] == ["chromadb"]
-    assert env["ui_tooling"] == {"playwright": False, "streamlit": True}
+    assert env["ui_tooling"] == {"playwright": False, "streamlit": True, "node_playwright": False}
     assert "stub it in sys.modules" in env["rule"] and json.dumps(env)
     assert wf._generation_policy({"languages": {}}, {})["environment"]["unavailable_packages"] == []
 
@@ -514,6 +516,10 @@ def test_the_generation_policy_scopes_language_examples_to_the_dominant_language
 
 def test_ui_tooling_reads_the_installed_distributions(tmp_path, monkeypatch):
     monkeypatch.setattr(env_check, "installed_distributions", lambda ws: {"streamlit", "pytest"})
-    assert env_check.ui_tooling(tmp_path) == {"playwright": False, "streamlit": True}
+    assert env_check.ui_tooling(tmp_path) == {
+        "playwright": False,
+        "streamlit": True,
+        "node_playwright": False,
+    }
     monkeypatch.setattr(env_check, "installed_distributions", lambda ws: None)
     assert env_check.ui_tooling(tmp_path) is None

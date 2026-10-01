@@ -46,7 +46,7 @@ untrusted code without a sandbox; supporting private repositories (needs credent
 | `runners.py`, `execution.py` | Runner adapters (pytest, jest/vitest/playwright, maven, gradle, go, dotnet), result parsers, safe process execution |
 | `code_intel.py`, `autofix.py`, `build_gate.py`, `agent_tools.py`, `routes.py` | Central deterministic tools: import resolution, API/symbol lookup, static gates, mechanical repairs, compile/collect gate, route inventory; MAF function-tool wrappers |
 | `qa_report.py` | requirement → case → test → result report and verdict |
-| `cli.py`, `app.py` | Headless/CI driver and Streamlit UI over the same workflow |
+| `cli.py`, `ui/api.py`, `frontend/` | Headless/CI driver and Next.js UI over the same workflow |
 
 ## 4. Alignment with Microsoft Learn "Agent Skills"
 
@@ -87,7 +87,7 @@ Deterministic report (case/requirement states, failures, provenance, limitations
 only failing cases (≤3 rounds) with failure evidence; assertions must not be weakened.
 
 ### M5 — Delivery surface ✅
-`maf-harness` CLI (interactive, `--auto-approve`, `--auto-heal`, exit codes for CI), Streamlit UI (QA tab,
+`maf-harness` CLI (interactive, `--auto-approve`, `--auto-heal`, exit codes for CI), Next.js UI (QA view,
 execution approval, app URL, provenance), GitHub Actions CI.
 
 ### M6 — Qualification against real targets 🟡
@@ -189,7 +189,7 @@ stage as an opt-in tool. The agent loops are verified with a real MAF pipeline a
 | Unit | validators, URL policy, ID stability, parsers, adapters, presenter | every push |
 | Component (real MAF, scripted transport) | skill provider/priming/verification, budget, provenance, workflow gates, recovery | every push |
 | Workflow e2e (real subprocess) | export → plan → run pytest → QA report → heal loop, tamper/skip paths | every push |
-| Browser e2e (Playwright) | Streamlit UI validation and QA rendering (`HARNESS_BROWSER=1`) | CI job |
+| Browser e2e (Playwright) | Next.js workflow, report and QA rendering (`npm --prefix frontend test`) | CI job |
 | Live model e2e | full CLI run against real repos through the gateway (`docs/audit/E2E_RESULTS.md`) | manual/nightly, key from env |
 | Real-subprocess recovery / hooks | recovery with real timeouts and venv rewinds, command hooks as real processes, hooks in a real MAF loop | every push |
 

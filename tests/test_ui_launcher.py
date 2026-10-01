@@ -10,7 +10,8 @@ from pathlib import Path
 import pytest
 
 
-def test_occupied_port_is_rejected_without_stopping_its_owner():
+@pytest.mark.parametrize("preflight", [False, True])
+def test_occupied_port_is_rejected_without_stopping_its_owner(preflight):
     root = Path(__file__).resolve().parents[1]
     if (
         not shutil.which("npm.cmd" if os.name == "nt" else "npm")
@@ -25,6 +26,7 @@ def test_occupied_port_is_rejected_without_stopping_its_owner():
             [
                 sys.executable,
                 str(root / "scripts/start_ui.py"),
+                *(["--check-only"] if preflight else []),
                 "--port",
                 str(port),
                 "--api-port",

@@ -29,6 +29,20 @@ test('complete browser workflow, layouts, evidence, downloads and stale gates', 
   }
   await expect.poll(async () => (await (await request.get(`/api/harness/runs/${key}`)).json()).status).toBe('complete');
   await page.reload();
+  await page.getByRole('button', { name: 'Prompts', exact: true }).click();
+  await expect(page.getByRole('heading', { name: 'Run prompts', exact: true })).toBeVisible();
+  await page.getByRole('button', { name: /1\. Requirements/ }).click();
+  const fullPrompt = page.getByLabel('Complete user prompt and output contract', { exact: true });
+  await expect(fullPrompt).not.toHaveValue('');
+  const originalPrompt = await fullPrompt.inputValue();
+  await fullPrompt.fill(originalPrompt + '\nBrowser proof saved override.');
+  await page.getByRole('button', { name: 'Save for next attempt', exact: true }).click();
+  await expect(page.getByRole('status')).toContainText('Saved for future calls in this run');
+  const savedSettings = await (await request.get(`/api/harness/runs/${key}/prompts`)).json();
+  expect(savedSettings.settings.overrides.requirements).toBe(originalPrompt + '\nBrowser proof saved override.');
+  await page.reload();
+  await page.getByRole('button', { name: /1\. Requirements/ }).click();
+  await expect(fullPrompt).toHaveValue(originalPrompt);
   await page.getByRole('button', { name: 'QA report', exact: true }).click();
   await expect(page.getByText('PASS', { exact: true }).first()).toBeVisible();
   await page.getByRole('button', { name: 'Test reports', exact: true }).click();
@@ -181,4 +195,61 @@ test('mouse resizing persists and project skill cards show real package details'
   await expect.poll(() => page.evaluate(() => getComputedStyle(document.documentElement).getPropertyValue('--primary').trim())).toBe('#eeeeef');
   await page.setViewportSize({ width: 390, height: 844 });
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBeTruthy();
+});
+
+test('editable prompt defaults persist', async ({ page }) => {
+  await page.goto('/?page=prompts');
+  await expect(page.getByRole('heading', { name: 'Agent prompts', exact: true })).toBeVisible();
+  const guidance = page.getByLabel('Review guidance', { exact: true });
+  const original = await guidance.inputValue();
+  await guidance.fill('Browser regression guidance: use real source and isolated data.');
+  await page.getByRole('button', { name: 'Save prompts', exact: true }).click();
+  await expect(page.getByRole('status')).toContainText('Saved as defaults');
+  await page.reload();
+  await expect(guidance).toHaveValue('Browser regression guidance: use real source and isolated data.');
+  await page.getByLabel('Complete persona prompt', { exact: true }).fill('Editable requirements persona: source evidence only.');
+  await page.getByRole('button', { name: 'Save persona', exact: true }).click();
+  await expect(page.getByRole('status')).toContainText('Saved as defaults');
+  await guidance.fill(original);
+  await page.getByRole('button', { name: 'Restore stage default', exact: true }).click();
+  await page.getByRole('button', { name: 'Save prompts', exact: true }).click();
+});
+
+
+test('platform branding and navigation exclude Azure proposals', async ({ page }) => {
+  await page.goto('/');
+  await expect(page).toHaveTitle('Agentic QE Platform');
+  await expect(page.locator('.brand')).toContainText('Agentic QE');
+  await expect(page.getByRole('button', { name: 'Azure guide', exact: true })).toHaveCount(0);
+});
+
+
+test('aligned editors, configuration separation and confirmed run removal', async ({ page, request }) => {
+  await page.goto('/?page=prompts');
+  const textarea = page.getByLabel('Review guidance', { exact: true });
+  await expect(textarea).toBeVisible();
+  const inputBox = (await textarea.boundingBox())!;
+  const saveBox = (await page.getByRole('button', { name: 'Save prompts', exact: true }).boundingBox())!;
+  expect(saveBox.y - (inputBox.y + inputBox.height)).toBeGreaterThanOrEqual(15);
+  const resize = page.getByRole('button', { name: 'Resize Repository review prompt', exact: true });
+  await resize.press('ArrowLeft');
+  await resize.press('Home');
+  await expect.poll(async () => (await page.locator('.prompt-editor .panel').first().boundingBox())!.width).toBeGreaterThan(900);
+  await page.setViewportSize({ width: 390, height: 844 });
+  await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+  await page.setViewportSize({ width: 1280, height: 720 });
+  await page.getByRole('button', { name: 'Configuration', exact: true }).click();
+  await expect(page.getByRole('button', { name: 'Agent personas', exact: true })).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'Edit agent prompts →', exact: true })).toHaveCount(0);
+  const response = await request.post('/api/harness/runs', { data: { repo_url: 'https://github.com/acme/demo' } });
+  const key = (await response.json()).id;
+  await expect.poll(async () => (await (await request.get(`/api/harness/runs/${key}`)).json()).busy).toBe(false);
+  await page.getByRole('button', { name: /^Runs\b/ }).click();
+  const remove = page.getByRole('button', { name: `Delete run ${key}`, exact: true });
+  await expect(remove).toBeEnabled(); await remove.click();
+  await page.getByRole('button', { name: 'Keep run', exact: true }).click();
+  await expect(remove).toBeVisible(); await remove.click();
+  await page.getByRole('dialog').getByRole('button', { name: 'Delete run', exact: true }).click();
+  await expect(remove).toHaveCount(0);
+  expect((await request.get(`/api/harness/runs/${key}`)).status()).toBe(404);
 });

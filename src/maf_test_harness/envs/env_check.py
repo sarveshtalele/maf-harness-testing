@@ -101,7 +101,19 @@ def ui_tooling(workspace: Path) -> dict[str, bool] | None:
     installed = installed_distributions(workspace)
     if installed is None:
         return None
-    return {"playwright": "playwright" in installed, "streamlit": "streamlit" in installed}
+    from ..repo.stack import detect_stack
+    from .runners import repository_components
+
+    node_browser = any(
+        (workspace / cwd / "node_modules/@playwright/test/package.json").is_file()
+        for kind, cwd in repository_components(detect_stack(workspace), workspace)
+        if kind == "node"
+    )
+    return {
+        "playwright": "playwright" in installed or node_browser,
+        "node_playwright": node_browser,
+        "streamlit": "streamlit" in installed,
+    }
 
 
 _UNMET = re.compile(

@@ -13,7 +13,7 @@ import shutil
 import sys
 import time
 import xml.etree.ElementTree as ET
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, replace
 from pathlib import Path, PurePosixPath
 
 from .. import errors
@@ -131,6 +131,46 @@ def resolve_ecosystem(stack: StackProfile, files: list[dict] | None = None) -> s
     return stack.primary
 
 
+def repository_components(stack: StackProfile, workspace: Path) -> list[tuple[str, str]]:
+    """Manifest-backed install locations; nested Python requirements share the root venv."""
+    manifests = {
+        "package.json": "node",
+        "pom.xml": "maven",
+        "build.gradle": "gradle",
+        "build.gradle.kts": "gradle",
+        "go.mod": "go",
+    }
+    components = []
+    if "python" in stack.ecosystems or stack.primary == "python":
+        components.append(("python", "."))
+    for rel in stack.build_files:
+        path = PurePosixPath(rel)
+        eco = manifests.get(path.name)
+        target = (workspace / rel).resolve()
+        if eco and target.is_relative_to(workspace.resolve()) and target.is_file():
+            item = (eco, path.parent.as_posix())
+            if item not in components:
+                components.append(item)
+    return components or [(stack.primary, ".")]
+
+
+def generated_groups(
+    stack: StackProfile, workspace: Path, files: list[dict]
+) -> dict[tuple[str, str], list[dict]]:
+    groups = {}
+    components = repository_components(stack, workspace)
+    for file in files:
+        eco = resolve_ecosystem(stack, [file])
+        candidates = [
+            cwd
+            for kind, cwd in components
+            if kind == eco and (cwd == "." or file["path"].startswith(cwd + "/"))
+        ]
+        cwd = max(candidates, key=len) if candidates else "."
+        groups.setdefault((eco, cwd), []).append(file)
+    return groups
+
+
 def setup_steps(
     eco: str,
     ws: Path,
@@ -240,6 +280,7 @@ def setup_steps(
                         *platform_compat.resolve_tool("npm"),
                         "install",
                         "--no-save",
+                        "--ignore-scripts",
                         "--no-audit",
                         "--no-fund",
                         "@playwright/test",
@@ -323,13 +364,51 @@ def build_plan(
     timeout: float = 900,
     env_ready: bool = False,
     assume_present: frozenset[str] = frozenset(),
+    ready_components: frozenset[tuple[str, str]] | None = None,
+    _grouped: bool = False,
 ) -> RunPlan:
     """Choose the adapter for the generated tests: (remaining) setup steps, then the test step.
 
     ``assume_present`` names required tools a provisioned toolchain covers, so they are not reported missing.
     """
     ws = Path(workspace)
+    groups = generated_groups(stack, ws, files)
+    if not _grouped and (len(groups) > 1 or any(cwd != "." for _, cwd in groups)):
+        from ..repo.stack import detect_stack
+
+        steps, notes, blocked = [], [], []
+        for (kind, cwd), members in groups.items():
+            root = (ws / cwd).resolve()
+            local = detect_stack(root)
+            local = replace(local, primary=kind, ecosystems=[kind])
+            relative = [
+                {**f, "path": str(PurePosixPath(f["path"]).relative_to(cwd)) if cwd != "." else f["path"]}
+                for f in members
+            ]
+            child = build_plan(
+                local,
+                root,
+                relative,
+                cache_dir=cache_dir,
+                timeout=timeout,
+                env_ready=(kind, cwd) in (ready_components or frozenset())
+                if ready_components is not None
+                else env_ready and kind == stack.primary,
+                assume_present=assume_present,
+                _grouped=True,
+            )
+            if child.blocked_reason:
+                blocked.append(f"{kind} {cwd}: {child.blocked_reason}")
+            for step in child.steps:
+                step.cwd = (PurePosixPath(cwd) / step.cwd).as_posix()
+                if step.report_glob and cwd != ".":
+                    step.report_glob = (PurePosixPath(cwd) / step.report_glob).as_posix()
+                steps.append(step)
+            notes.append(f"{kind} component: {cwd} ({len(members)} generated files)")
+        return RunPlan("multi-component", steps, notes=notes, blocked_reason="; ".join(blocked) or None)
     eco = resolve_ecosystem(stack, files)
+    if ready_components is not None:
+        env_ready = (eco, ".") in ready_components
     cache = str(Path(cache_dir).resolve())
     reports = ws / REPORT_DIR
     missing = [
@@ -412,12 +491,16 @@ def build_plan(
             )
             # Keep the wrapper beside the original so its relative paths retain their meaning.
             config = (f"import original from './{original}';\n" if original else "const original = {};\n") + (
-                "const capture = { screenshot: { mode: 'only-on-failure', fullPage: true }, trace: 'retain-on-failure' };\n"
+                "const capture = { screenshot: { mode: 'only-on-failure', fullPage: true }, trace: 'retain-on-failure', baseURL: process.env.BASE_URL || original.use?.baseURL };\n"
                 "export default { ...original, use: { ...original.use, ...capture }, "
                 "projects: original.projects?.map(project => ({ ...project, use: { ...project.use, ...capture } })) };\n"
             )
             config_path = ws / config_name
-            if config_path.exists() and config_path.read_text(encoding="utf-8") != config:
+            legacy_config = config.replace(", baseURL: process.env.BASE_URL || original.use?.baseURL", "")
+            if config_path.exists() and config_path.read_text(encoding="utf-8") not in {
+                config,
+                legacy_config,
+            }:
                 raise ValueError(f"Refusing to overwrite existing {config_name}")
             config_path.write_text(config, encoding="utf-8")
             steps.append(
@@ -486,6 +569,25 @@ def build_plan(
         return RunPlan(f"node-{runner}", steps)
 
     steps = setup_steps(eco, ws, cache, timeout, env_ready=env_ready)
+    if eco in {"maven", "gradle"}:
+        provider_calls = any(
+            re.search(
+                r"\bValidation\.(?:buildDefaultValidatorFactory|byDefaultProvider|byProvider)\s*\(",
+                file["content"],
+            )
+            for file in files
+        )
+        manifests = "\n".join(
+            (ws / name).read_text(errors="replace")
+            for name in ("pom.xml", "build.gradle", "build.gradle.kts")
+            if (ws / name).is_file()
+        )
+        if provider_calls and not re.search(r"hibernate-validator|bval-jsr", manifests):
+            return RunPlan(
+                "java-" + eco,
+                [],
+                blocked_reason="Standalone Bean Validation needs a runtime provider (hibernate-validator or bval-jsr), not only the Java EE API. Declare and approve a test-runtime provider or revise unsupported standalone cases.",
+            )
     if eco == "maven":
         mvn = platform_compat.resolve_wrapper(ws, "mvnw", "mvnw.cmd", "mvn")
         classes = ",".join(_java_class(p) for p in _paths(files, (".java",)))
@@ -1008,7 +1110,7 @@ def _run_test_step(step: Step, workspace: Path, out_dir: Path, label: str) -> tu
     if step.name == "playwright":
         # Preserve each attempt before a subsequent Playwright run replaces its working reports.
         for name in ("playwright-report", "test-results"):
-            source = workspace / REPORT_DIR / name
+            source = workspace / step.cwd / REPORT_DIR / name
             if source.is_dir() and any(
                 p.is_file() and p.stat().st_mtime >= started for p in source.rglob("*")
             ):
@@ -1127,7 +1229,15 @@ def execute_plan(
         report["summary"] = counts
         if counts["tests"] == 0:
             report["status"] = "no_test_evidence"
-        elif counts["failed"] or counts["errors"] or report.get("quarantined"):
+        elif (
+            counts["failed"]
+            or counts["errors"]
+            or report.get("quarantined")
+            or any(
+                step["kind"] == "test" and step["status"] not in {"command_succeeded", "passed"}
+                for step in report["steps"]
+            )
+        ):
             report["status"] = "failed"
         elif counts["passed"] == 0:
             report["status"] = "no_test_evidence"
@@ -1158,28 +1268,41 @@ def declared_test_name(path: str, content: str) -> str | None:
 def map_results_to_cases(cases: list[dict], files: list[dict]) -> list[dict]:
     """Attach the approved case ID to each executed test (one file per case, one test per file).
 
-    Matching order: declared test name, then the file stem in the report's class/module name. Collection and compile
+    Matching order: full file/module identity, then a unique filename/stem, then a unique declared name. Collection and compile
     errors are reported by the runners with the *dotted module path* as the name and no class, so the stem is also
     matched against the name; otherwise those failures lose their case and their message.
     """
-    by_name: dict[str, str] = {}
-    by_stem: dict[str, str] = {}
-    for f in files:
-        case_id = f["case_ids"][0]
-        name = declared_test_name(f["path"], f["content"])
-        if name:
-            by_name[name] = case_id
-        by_stem[PurePosixPath(f["path"]).stem] = case_id
+    indexed = [(f, declared_test_name(f["path"], f["content"])) for f in files]
     mapped = []
     for case in cases:
-        label = case.get("classname") or ""
-        case_id = by_name.get(case["name"]) or next(
-            (
-                cid
-                for stem, cid in by_stem.items()
-                if stem and (stem in label or case["name"] == stem or case["name"].endswith("." + stem))
-            ),
-            None,
+        name = str(case.get("name", "")).split("[", 1)[0]
+        label = str(case.get("classname", "")).replace("\\", "/")
+        report_file = str(case.get("file", "")).replace("\\", "/")
+        exact = []
+        identified = []
+        named = []
+        for file, declared in indexed:
+            path = PurePosixPath(file["path"])
+            module = path.with_suffix("").as_posix().replace("/", ".")
+            file_match = report_file and (report_file == str(path) or report_file.endswith("/" + str(path)))
+            module_match = label == module or label.startswith(module + ".") or name == module
+            if file_match or module_match:
+                exact.append(file["case_ids"][0])
+            elif (
+                label.split(".")[-1] == path.stem
+                or name == path.stem
+                or PurePosixPath(label).name == path.name
+                or (report_file and PurePosixPath(report_file).name == path.name)
+            ):
+                identified.append(file["case_ids"][0])
+            if declared and name == declared:
+                named.append(file["case_ids"][0])
+        candidates = set(exact or identified or named)
+        mapped.append(
+            {
+                **case,
+                "case_id": next(iter(candidates)) if len(candidates) == 1 else None,
+                **({"mapping_error": "ambiguous test identity"} if len(candidates) > 1 else {}),
+            }
         )
-        mapped.append({**case, "case_id": case_id})
     return mapped

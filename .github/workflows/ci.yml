@@ -24,7 +24,7 @@ jobs:
       - name: Install
         run: uv sync --extra dev --python ${{ matrix.python }}
       - name: Lint
-        run: uv run ruff check src tests app.py scripts && uv run ruff format --check src tests app.py scripts
+        run: uv run ruff check src tests scripts && uv run ruff format --check src tests scripts
       - name: Agent Skills spec lint
         run: uv run maf-harness lint-skills
       - name: Unit, component (real MAF, scripted transport) and workflow e2e tests

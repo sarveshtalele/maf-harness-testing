@@ -2,8 +2,13 @@
 
 from __future__ import annotations
 
+import base64
 import hashlib
+import io
+import json
 import os
+import re
+import zipfile
 from pathlib import Path
 
 ROOTS = (
@@ -109,3 +114,49 @@ def file_path(run_dir: Path, file_id: str, asset: str = "") -> Path:
     if path.stat().st_size > MAX_FILE_BYTES:
         raise ValueError("Evidence exceeds the 32 MB viewer limit.")
     return path
+
+
+def clean_content(path: Path) -> bytes:
+    """Redact report text and embedded Playwright data while preserving native assets."""
+    from ..hooks.builtin import _redact_value, redact
+
+    content = path.read_bytes()
+    mime = MIMES.get(path.suffix.lower())
+    if mime == "text/html":
+        html = content.decode("utf-8", errors="replace")
+        payload = re.search(
+            r'(<template id="playwrightReportBase64">data:application/zip;base64,)([^<]+)', html
+        )
+        if payload:
+            source, destination = io.BytesIO(base64.b64decode(payload[2])), io.BytesIO()
+            with (
+                zipfile.ZipFile(source) as archive,
+                zipfile.ZipFile(destination, "w", zipfile.ZIP_DEFLATED) as clean,
+            ):
+                if (
+                    len(archive.infolist()) > 500
+                    or sum(f.file_size for f in archive.infolist()) > 32 * 1024 * 1024
+                ):
+                    raise ValueError("Embedded report data exceeds the 32 MB viewer limit.")
+                for item in archive.infolist():
+                    data = archive.read(item)
+                    if item.filename.endswith(".json"):
+                        data = json.dumps(_redact_value(json.loads(data))[0]).encode()
+                    clean.writestr(item.filename, data)
+            html = (
+                html[: payload.start(2)]
+                + base64.b64encode(destination.getvalue()).decode()
+                + html[payload.end(2) :]
+            )
+        # Key/value heuristics confuse minified JS token enums with credentials. Still redact
+        # configured secrets and credential-shaped strings inside code, and all report text/data.
+        pieces = re.split(r"(<script\b[^>]*>.*?</script>)", html, flags=re.I | re.S)
+        content = "".join(
+            redact(piece, keyed=False)[0] if re.match(r"<script\b", piece, re.I) else redact(piece)[0]
+            for piece in pieces
+        ).encode()
+    elif path.suffix.lower() == ".js":
+        content = redact(content.decode("utf-8", errors="replace"), keyed=False)[0].encode()
+    elif path.suffix.lower() in {".json", ".css", ".xml", ".log", ".md", ".txt"}:
+        content = redact(content.decode("utf-8", errors="replace"))[0].encode()
+    return content

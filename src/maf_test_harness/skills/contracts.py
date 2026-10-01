@@ -106,7 +106,12 @@ def resolve_id(candidate: Any, known: Any) -> str | None:
 def _clean_paths(paths: Any, what: str) -> list[str]:
     if not isinstance(paths, list) or not paths or not all(isinstance(p, str) and p.strip() for p in paths):
         raise ValueError(f"each {what} needs at least one source file")
-    return list(dict.fromkeys(p.strip() for p in paths))[:8]
+    cleaned = list(dict.fromkeys(p.strip() for p in paths))[:8]
+    for path in cleaned:
+        pure = PurePosixPath(path)
+        if pure.is_absolute() or ".." in pure.parts or "\\" in path or ":" in path:
+            raise ValueError(f"{what} evidence path must be contained in the repository: {path}")
+    return cleaned
 
 
 def finalize_discovered_requirements(document: dict[str, Any], repo_url: str) -> dict[str, Any]:

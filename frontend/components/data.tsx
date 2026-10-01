@@ -2,15 +2,16 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { label, number, record, text, type Row } from '@/lib/harness';
 
-export function ResizeHandle({ label: name, axis = 'horizontal', start }: { label: string; axis?: 'horizontal' | 'both'; start: () => (dx: number, dy: number) => void }) {
+export function ResizeHandle({ label: name, axis = 'horizontal', start, reset }: { label: string; axis?: 'horizontal' | 'both'; reset?: () => void; start: () => (dx: number, dy: number) => void }) {
   const drag = useRef<{ x: number; y: number; move: (dx: number, dy: number) => void } | null>(null);
-  return <button className={`resize-handle resize-${axis}`} aria-label={name} title={`${name}: drag or use arrow keys`} onPointerDown={e => {
+  return <button className={`resize-handle resize-${axis}`} aria-label={name} title={`${name}: drag or use arrow keys${reset ? "; double-click or Home to restore size" : ""}`} onDoubleClick={reset} onPointerDown={e => {
     if (e.button !== 0) return;
     e.preventDefault(); e.currentTarget.setPointerCapture(e.pointerId);
     drag.current = { x: e.clientX, y: e.clientY, move: start() };
   }} onPointerMove={e => { const d = drag.current; if (d) d.move(e.clientX - d.x, e.clientY - d.y); }} onPointerUp={e => {
     drag.current = null; if (e.currentTarget.hasPointerCapture(e.pointerId)) e.currentTarget.releasePointerCapture(e.pointerId);
   }} onLostPointerCapture={() => { drag.current = null; }} onPointerCancel={() => { drag.current = null; }} onKeyDown={e => {
+    if (e.key === 'Home' && reset) { e.preventDefault(); reset(); return; }
     const delta: Record<string, [number, number]> = { ArrowLeft: [-20, 0], ArrowRight: [20, 0], ArrowUp: [0, -20], ArrowDown: [0, 20] };
     if (delta[e.key] && (axis === 'both' || e.key === 'ArrowLeft' || e.key === 'ArrowRight')) { e.preventDefault(); start()(...delta[e.key]); }
   }}><span aria-hidden="true">{axis === 'both' ? '◢' : '⋮'}</span></button>;
@@ -35,7 +36,7 @@ export function Panel({ title, children, storageKey, actions, defaultOpen = true
   const safeHeight = Number.isFinite(height) ? Math.max(0, Math.min(1200, height)) : 0;
   return <section ref={panel} className="panel" style={{ width: `${Math.max(50, Math.min(100, Number(width) || 100))}%` }}>
     <header className="panel-heading"><button className="panel-title" aria-expanded={!collapsed} onClick={() => setCollapsed(!collapsed)}><span aria-hidden="true">{collapsed ? '▸' : '▾'}</span> {title}</button><div className="panel-actions">{actions}<button title={`Expand ${title}`} aria-label={`Expand ${title}`} onClick={() => setExpanded(true)}>⤢</button></div></header>
-    {!collapsed && <><div ref={body} className="panel-body resizable" style={safeHeight ? { height: safeHeight } : {}}>{children}</div><ResizeHandle label={`Resize ${title}`} axis="both" start={() => {
+    {!collapsed && <><div ref={body} className="panel-body resizable" style={safeHeight ? { height: safeHeight } : {}}>{children}</div><ResizeHandle label={`Resize ${title}`} axis="both" reset={() => { setWidth(100); setHeight(0); }} start={() => {
       const box = panel.current!.getBoundingClientRect(); const parentWidth = box.width / (Math.max(50, Math.min(100, Number(width) || 100)) / 100);
       const bodyHeight = body.current!.getBoundingClientRect().height;
       return (dx, dy) => { setWidth(Math.max(50, Math.min(100, (box.width + dx) / parentWidth * 100))); setHeight(Math.round(Math.max(100, Math.min(1200, bodyHeight + dy)))); };

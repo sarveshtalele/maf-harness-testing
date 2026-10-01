@@ -18,7 +18,7 @@ from typing import Any
 
 from ..envs import env_check, platform_compat, toolchains
 from ..envs.execution import run_command, write_generated
-from ..envs.runners import VENV_DIR, Step, _expand_env, build_plan, resolve_ecosystem
+from ..envs.runners import VENV_DIR, Step, _expand_env, build_plan, generated_groups, resolve_ecosystem
 from ..errors import Context, classify, is_environmental
 from ..repo.stack import StackProfile
 
@@ -101,12 +101,50 @@ def try_build(
     """``{"status": "ok" | "failed" | "skipped", "tool", "errors": [{file, line, message}], "seconds", "reason"}``."""
     started = time.time()
     workspace = Path(workspace)
+    groups = generated_groups(stack, workspace, files)
+    if len(groups) > 1 or any(cwd != "." for _, cwd in groups):
+        from dataclasses import replace
+
+        from ..repo.stack import detect_stack
+
+        reports = []
+        for index, ((kind, cwd), members) in enumerate(groups.items()):
+            root = workspace / cwd
+            local = replace(detect_stack(root), primary=kind, ecosystems=[kind])
+            relative = [
+                {**f, "path": str(PurePosixPath(f["path"]).relative_to(cwd)) if cwd != "." else f["path"]}
+                for f in members
+            ]
+            report = try_build(
+                local,
+                root,
+                relative,
+                cache_dir=cache_dir,
+                out_root=out_root / f"component-{index}",
+                timeout=timeout,
+                provisioned=provisioned,
+            )
+            for error in report.get("errors", []):
+                error["file"] = (PurePosixPath(cwd) / error["file"]).as_posix()
+            reports.append(report)
+        return {
+            "status": "failed"
+            if any(r["status"] == "failed" for r in reports)
+            else "ok"
+            if any(r["status"] == "ok" for r in reports)
+            else "skipped",
+            "tool": "component collection",
+            "errors": [e for r in reports for e in r.get("errors", [])],
+            "seconds": round(time.time() - started, 1),
+            "components": reports,
+        }
     generated = [f["path"] for f in files]
     eco = resolve_ecosystem(stack, files)
     result: dict[str, Any] = {"status": "skipped", "tool": None, "errors": [], "reason": ""}
     if eco == "python" and not Path(platform_compat.venv_python(workspace / VENV_DIR)).exists():
         return {**result, "reason": "isolated environment not installed"}
-    if eco not in {"python", "maven"}:
+    node_browser = eco == "node" and any("@playwright/test" in f["content"] for f in files)
+    if eco not in {"python", "maven"} and not node_browser:
         return {**result, "reason": f"no build check for ecosystem '{eco}'"}
     plan = build_plan(
         stack,
@@ -182,6 +220,30 @@ def try_build(
                         continue
                     result["status"] = "failed"
                     result["errors"] += _python_errors(output, item["path"])
+            if result["status"] == "ok" and len(files) > 1:
+                argv = [
+                    a
+                    for a in test_step.argv
+                    if not a.startswith(("--junitxml", "--continue-on-collection-errors"))
+                    and a not in generated
+                ]
+                combined = run_command(
+                    [*argv, "--collect-only", *generated],
+                    workspace,
+                    out_root / "collect-combined",
+                    timeout=timeout,
+                    env=_expand_env(test_step.env, workspace),
+                    inherit_env=True,
+                )
+                if (
+                    combined["exit_code"] != 0
+                    and not result.get("env_missing")
+                    and not result.get("environment_issues")
+                ):
+                    output = _tail(out_root / "collect-combined" / "stdout.log") + _tail(
+                        out_root / "collect-combined" / "stderr.log"
+                    )
+                    result.update(status="failed", errors=_python_errors(output, generated[0]))
             if (result.get("env_missing") or result.get("environment_issues")) and result["status"] == "ok":
                 reasons = []
                 if result.get("env_missing"):
@@ -192,6 +254,26 @@ def try_build(
                 result.update(
                     status="skipped", reason="; ".join(reasons) + " (install failed); not a test defect"
                 )
+        elif node_browser:
+            argv = [a for a in test_step.argv if not a.startswith(("--reporter=", "--output="))]
+            run = run_command(
+                [*argv, "--list"],
+                workspace,
+                out_root / "browser-collect",
+                timeout=timeout,
+                env=_expand_env(test_step.env, workspace),
+                inherit_env=True,
+            )
+            output = _tail(out_root / "browser-collect/stdout.log") + _tail(
+                out_root / "browser-collect/stderr.log"
+            )
+            result.update(
+                tool="playwright --list",
+                status="ok" if run["exit_code"] == 0 else "failed",
+                errors=[]
+                if run["exit_code"] == 0
+                else [{"file": generated[0], "line": 0, "message": output[-800:]}],
+            )
         else:
             argv = [*test_step.argv[: test_step.argv.index("test")], "-q", "test-compile"]
             run = run_command(

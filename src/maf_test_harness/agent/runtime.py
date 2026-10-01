@@ -208,9 +208,30 @@ class ToolTraceMiddleware(FunctionMiddleware):
             entry["duration_ms"] = round((time.monotonic() - started) * 1000)
             self._emit(entry, error=True)
             raise
-        text = str(context.result or "")
+        result = context.result
+        text = (
+            result
+            if isinstance(result, str)
+            else "\n".join(str(getattr(item, "text", "") or "") for item in result)
+            if isinstance(result, list)
+            else str(result or "")
+        )
+        try:
+            envelope = result if isinstance(result, dict) else json.loads(text)
+        except (ValueError, TypeError):
+            envelope = {}
+        typed = envelope if isinstance(envelope, dict) else {}
         entry.update(
-            ok=not text.startswith("Error"),
+            ok=typed.get("ok") is True
+            if "ok" in typed
+            else not text.startswith(("Error", "Function failed", "Argument parsing failed")),
+            code=typed.get("code"),
+            category=typed.get("category"),
+            outcome="unknown"
+            if not typed and entry["name"] in self.harness_tools
+            else "success"
+            if typed.get("ok", True)
+            else "failure",
             result_chars=len(text),
             duration_ms=round((time.monotonic() - started) * 1000),
         )
@@ -225,6 +246,9 @@ class ToolTraceMiddleware(FunctionMiddleware):
             ok=entry["ok"] and not error,
             duration_ms=entry.get("duration_ms"),
             result_chars=entry.get("result_chars"),
+            outcome=entry.get("outcome", "failure" if error else "unknown"),
+            code=entry.get("code"),
+            result_category=entry.get("category"),
         )
 
 
@@ -556,6 +580,16 @@ class MAFHarnessRuntime:
                 ),
                 disable_tool_auto_approval=True,
             )
+        state.setdefault("model_instructions", {})[stage] = {
+            "harness_instructions": options.get("harness_instructions", ""),
+            "agent_instructions": options.get("agent_instructions", ""),
+            "provider_options": {
+                "model": self.model,
+                "max_output_tokens": DEFAULT_MAX_OUTPUT_TOKENS,
+                "skill_mode": self.skill_mode,
+            },
+            "available_tools": [getattr(tool, "name", "unknown") for tool in harness_tools],
+        }
         return create_harness_agent(**options)
 
     @staticmethod
@@ -658,8 +692,9 @@ class MAFHarnessRuntime:
         temperature: float = 0.0,
     ) -> dict:
         skills = [skill_name, *companions]
-        if self._agents.get(stage, (None, None))[0] != skills:  # first call, or the skill set changed
-            self._agents[stage] = (skills, self._create_agent(stage, skills, persona, state, persist))
+        identity = (skills, persona)
+        if self._agents.get(stage, (None, None))[0] != identity:  # first call, or the skill set changed
+            self._agents[stage] = (identity, self._create_agent(stage, skills, persona, state, persist))
             self._primed.pop(stage, None)
         agent = self._agents[stage][1]
         self._guards[stage].budget, self._guards[stage].persist = state["budget"], persist

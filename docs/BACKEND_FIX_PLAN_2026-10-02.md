@@ -1,6 +1,6 @@
-# Backend correction and cleanup plan — approval required
+# Backend correction and cleanup plan — approved implementation
 
-No source files have been deleted. This plan proposes changes; it does not apply backend fixes. The authorized UI theme/skill-page changes are separate. The original B01–B12 findings remain in [the backend review](BACKEND_REVIEW_2026-10-01.md), with B06 partially implemented under the later reporting request.
+The user approved B01–B15 and the fresh React/FastAPI cycle, then separately approved exactly the three retired GUI files and associated symbols/references below. Those files and symbols are now removed locally; local validation and the fresh live cycle have completed; the fresh QA is FAIL with remaining generated-test defects documented in the cycle audit. Historical HTML and the supplied PDF remain. The original B01–B12 findings remain in [the backend review](BACKEND_REVIEW_2026-10-01.md), with B06 partially implemented under the later reporting request.
 
 ## What actually failed in TokenTelemetry
 
@@ -69,16 +69,26 @@ Context7 tracks current source; implementation changes will be checked against t
 | 5 | Regression and CI | Full Python, lint/skill integrity, Next build and browser journeys; macOS/Windows GitHub workflows. Retain genuine failing target assertions. |
 | 6 | Fresh TokenTelemetry cycle | Record target commit; use the documented React/FastAPI app with disposable telemetry state. Generate and execute approved backend/browser cases; show coverage gaps explicitly, classify test/environment/app failures, and verify report screenshots/ZIP/trace links without credentials. Add CLI/alternate UI coverage only if explicitly selected. |
 
-## Exact deletion candidates — nothing deleted
+## Approved exact deletion scope
 
-These are retired GUI artifacts on `new-ui`, not universally dead files. They may be removed **only if specifically approved**:
+The following retired GUI artifacts were specifically approved and removed:
 
 1. `app.py` — retained legacy GUI entry point; no longer installed/launched on this branch.
 2. `src/maf_test_harness/monitoring/ui.py` — legacy GUI observability renderer, used only by the retired app and two legacy tests.
 3. `tests/targets/test_harness_browser.py` — retired GUI-only browser check, superseded for this branch by Next.js Playwright journeys.
 
-Associated edits after deletion approval: remove only the two legacy AppTest functions in `tests/test_automation_report.py`, the legacy-only `render_json_ui`/`artifact_downloads` functions in shared `ui/artifact_presenter.py`, and their direct documentation/lint references. Retain those shared files and every active Markdown export/API helper. Remove the confirmed uncalled `agent/diagnosis.py::as_json` helper/import, retaining the diagnosis module.
+Approved associated edits: remove only the two legacy AppTest functions in `tests/test_automation_report.py`, the legacy-only `render_json_ui`/`artifact_downloads` functions in shared `ui/artifact_presenter.py`, and their direct documentation/lint references. Retain those shared files and every active Markdown export/API helper. Remove the confirmed uncalled `agent/diagnosis.py::as_json` helper/import, retaining the diagnosis module.
 
 Optional historical artifacts, separate approval: `agentic-testing-harness-v5-fixed.html` and `design/concept.html`. They remain useful design/approval records; removal is not necessary for operation. Keep the supplied PDF, skill packages/lock, workflow, CLI, target-framework support, reports and local run evidence.
 
 Approval choices: (A) implement B01–B15 and run the fresh React/FastAPI cycle; (B) delete the three retired GUI files and only the associated symbols/references listed above; (C) optionally remove the two historical HTML files. Each choice is independent. Deletion does not follow automatically from approval of backend fixes.
+
+## Implementation and verification update — 2 October
+
+The approved cleanup removed exactly the three retired GUI files and listed GUI-only symbols; historical HTML and the supplied PDF remain. B01–B15 code corrections are implemented locally: command/report consistency, case identity/parameter aggregation, missing-evidence verdicts, manifest component provisioning/runners, managed multi-service launch/readiness, native Node Playwright evidence, truthful tool outcomes, full Python constraints, Java validation/provider checks and compatible fallback, portable report replay, contained evidence paths, source-backed fixture checks, bounded valid tool JSON and centralized trace outcomes. Dynamic fixture correctness still requires execution; static checks do not prove arbitrary repository behavior.
+
+The fresh React run exposed two additional generation defects now corrected at the shared host boundary: Node specs outside their package component are rejected with an actionable path; selected frontend source is included for browser generation even when a case target is a broad description. Browser policy requires source-derived selectors, unconditional prerequisites/detail assertions and disposable source-schema fixtures. Full prompt templates/history are editable and snapshotted per run; immutable historical requests remain available.
+
+Local verification includes 736 full-suite backend passes plus the added native Playwright filename-mapping regression, seven passing UI browser journeys and a production Next.js build. The accurate independent TokenTelemetry proof is documented in [the fresh cycle audit](audit/TOKEN_TELEMETRY_FRESH_2026-10-02.md): 25 real application checks, 20 passed and 5 genuine mobile overflow failures, with 52 screenshots and 25 traces. It remains separate from model-generated case execution; consult that audit for the current generated-cycle state rather than treating supplemental evidence as generated QA.
+
+The UI is named **Agentic QE Platform**. Startup scripts now check occupied ports before installing/building, preventing a second launch from replacing assets of an already-running production UI. Azure remains a [documentation-only proposal](AZURE_DEPLOYMENT_PROPOSAL.md), with supporting Terraform and no deployed resources.

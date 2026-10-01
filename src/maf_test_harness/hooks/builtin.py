@@ -36,7 +36,14 @@ _TOKENS = [
     re.compile(r"AKIA[0-9A-Z]{16}"),
     re.compile(r"(?i)\bBearer\s+[A-Za-z0-9._~+/=-]{20,}"),
 ]
-_SECRET_ENV = ("OPENAI_API_KEY", "ANTHROPIC_API_KEY", "GITHUB_TOKEN", "GH_TOKEN", "AWS_SECRET_ACCESS_KEY")
+_SECRET_ENV = (
+    "OPENAI_API_KEY",
+    "ANTHROPIC_API_KEY",
+    "ANTHROPIC_AUTH_TOKEN",
+    "GITHUB_TOKEN",
+    "GH_TOKEN",
+    "AWS_SECRET_ACCESS_KEY",
+)
 
 
 def redact(text: str, *, keyed: bool = True) -> tuple[str, int]:

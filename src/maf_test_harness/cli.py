@@ -1,4 +1,4 @@
-"""Headless driver for the same checkpointed MAF workflow the Streamlit UI uses.
+"""Headless driver for the same checkpointed MAF workflow the Next.js UI uses.
 
   maf-harness run https://github.com/owner/repo [--auto-approve] [--auto-heal 2] [--app-url http://localhost:8080]
   maf-harness lint-skills [skills_dir]
@@ -91,7 +91,7 @@ async def run(args) -> int:
         view = (
             host.view
             if host.view.get("status") != "new"
-            else await host.start(args.repo_url, args.app_url, args.start_app)
+            else await host.start(args.repo_url, args.app_url, args.start_app, args.app_component)
         )
         while view["status"] == "waiting":
             pending = view["pending"]
@@ -194,6 +194,7 @@ def main(argv: list[str] | None = None) -> int:
     runp.add_argument(
         "--app-url", help="Local URL of the running application (enables ui/e2e/accessibility cases)"
     )
+    runp.add_argument("--app-component", help="Explicit repository application directory, e.g. frontend")
     runp.add_argument(
         "--start-app",
         action="store_true",

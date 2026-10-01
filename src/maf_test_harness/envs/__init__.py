@@ -20,8 +20,10 @@ def plan_toolchains(
     spec = detect_spec(workspace, ecosystem, python_override)
     rows = []
     for req in spec.requirements:
-        have = toolchains.find(req.kind, req.version, root, req.exact)
-        row = {"kind": req.kind, "version": req.version, "reason": req.reason}
+        have = toolchains.find(
+            req.kind, req.version, root, req.exact, **({"specifier": req.specifier} if req.specifier else {})
+        )
+        row = {"kind": req.kind, "version": req.version, "reason": req.reason, "specifier": req.specifier}
         if have:
             row.update(status="found", found=have.version, source=have.source, home=str(have.home))
         else:

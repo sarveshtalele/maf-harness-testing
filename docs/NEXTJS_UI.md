@@ -1,4 +1,4 @@
-# Local Next.js workspace
+# Agentic QE Platform — local Next.js workspace
 
 The Next.js UI keeps the existing seven-stage MAF workflow, human gates, hook engine, strict environment checks, generation validators, recovery, reports and checkpoints. The CLI uses the same backend.
 
@@ -22,6 +22,8 @@ uv run python scripts/start_ui.py
 ```
 
 Open http://127.0.0.1:3000. Ctrl+C stops both processes. The launcher uses the current Python environment, finds `npm`/`npm.cmd`, binds both services to loopback and supplies a fresh private API token to the server processes. It does not persist the token or expose it to the browser.
+
+Stop both running services with Ctrl+C before a production build. Replacing `.next` while a production server is running can break JavaScript/CSS bundle loading. The platform startup scripts check for occupied ports before installing or building.
 
 For a production build:
 
@@ -52,15 +54,15 @@ Run views include Review, Artifacts, Generated tests, QA report, Test reports, L
 
 Repository input still supports public GitHub repositories. Application URLs must be localhost/127.0.0.1 on the execution host. Execution support depends on the detected stack and available tools. Dependencies use isolated environments, but commands run as the OS user: this is not a security sandbox for arbitrary untrusted repositories. These existing backend limits have not changed.
 
-The adapter accepts a server-only bearer token and rejects browser Origin headers. Next.js proxies same-origin requests, validates local host/origin and never returns its bearer token. State responses omit model sessions, prompts and internal checkpoint fields. Presentation data uses the existing secret redactor. Downloads are limited to known artifacts or the selected run's ZIP; arbitrary filesystem paths are not accepted.
+The adapter accepts a server-only bearer token and rejects browser Origin headers. Next.js proxies same-origin requests, validates local host/origin and never returns its bearer token. State responses omit model sessions and internal checkpoint fields; assembled prompts are available only through the explicit prompt-history endpoints and are redacted for presentation. Presentation data uses the existing secret redactor. Downloads are limited to known artifacts or the selected run's ZIP; arbitrary filesystem paths are not accepted.
 
 ## Checks
 
 ```text
 uv sync --extra dev --extra e2e
 uv run pytest -q --ignore=tests/targets
-uv run ruff check src tests app.py scripts
-uv run ruff format --check src tests app.py scripts
+uv run ruff check src tests scripts
+uv run ruff format --check src tests scripts
 uv run maf-harness lint-skills
 npm --prefix frontend run typecheck
 npm --prefix frontend run build
@@ -86,3 +88,19 @@ The Node Playwright adapter preserves the repository’s root Playwright configu
 **Logs** provides line numbers, error highlighting, filename/attempt search and in-output filtering. Large logs show the first 512 KB with a full download. Evidence files over 32 MB are omitted from the inline inventory. Secret redaction applies to textual presentation; arbitrary source/configuration paths and external symlinks are not served.
 
 CI publishes Playwright HTML/JUnit, screenshots and traces as per-OS artifacts, including on failed runs. The macOS startup timeout was increased from 30 to 120 seconds for cold framework imports; server output is retained for diagnosis.
+
+## Editable prompts
+
+Open **Agent prompts** for saved persona instructions and the repository review prompt. Defaults are documented in `prompts/personas.json` and `prompts/repository-review.md`. Saved user settings live beside the user's run directory, outside this checkout. New runs receive an independent snapshot; updating defaults does not rewrite existing runs.
+
+Inside a run, open **Prompts** to edit that run's templates and inspect each recorded request: persona, harness/agent instructions, model options, full user input and output contract, and assigned skill instructions. Download a request as JSON. Editing a recorded user prompt creates an override for the next attempt of its stage/generation batch; historical records remain unchanged. Host stages have descriptive personas, while install commands, approval gates and verdict computation stay deterministic. Save when the current operation has reached a gate. Overrides remain subject to schema, traceability and execution approval checks.
+
+Historical runs created before prompt recording do not contain complete request history. Complete request files are local evidence and are redacted on download; never put credentials into prompt templates.
+
+The application brand is **Agentic QE Platform**. Azure deployment is a documentation-only proposal in `docs/AZURE_DEPLOYMENT_PROPOSAL.md`; it does not add UI navigation or application pages.
+
+### Layout and run removal
+
+Configuration contains gateway status and usage; persona editing is only on **Agent prompts** and each run’s **Prompts** tab. Editor labels, text areas and action rows use consistent spacing in light/dark mode. Mouse resize handles remain; double-click a panel corner or press Home on its handle to restore automatic height and full width.
+
+Run history has a **Delete** action with a confirmation dialog. An active operation or CLI run lock prevents removal. Files move to `.deleted-runs` next to the user’s run directory, so removal from history is recoverable; no existing user run was removed during implementation or verification.

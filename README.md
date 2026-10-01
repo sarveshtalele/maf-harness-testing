@@ -1,4 +1,4 @@
-# MAF Test Harness
+# Agentic QE Platform
 
 A local repository-testing workspace with a **Next.js frontend** and the existing **Python / Microsoft Agent Framework backend**. `new-ui` is the primary UI branch. Give the harness a public GitHub repository, review each stage, approve installation and test execution, then inspect QA results, failure recommendations, logs and browser evidence.
 
@@ -47,6 +47,8 @@ To use different ports:
 .\start-windows.cmd --port 3001 --api-port 8766
 ```
 
+Stop the current launcher with Ctrl+C before updating or rebuilding. The startup scripts now reject occupied ports before installing/building, so a second launch cannot replace a running server’s assets. If a browser was open during an older rebuild, reload it after restarting.
+
 The scripts install/build on each launch to keep the checkout and dependencies consistent. For faster development after initial setup: `uv run python scripts/start_ui.py`.
 
 ### Using the workspace
@@ -58,13 +60,14 @@ The scripts install/build on each launch to keep the checkout and dependencies c
 5. **QA report:** inspect per-case results, requirement coverage, recorded failure output and recommendations with affected files. Recommendations require review; an assertion failure alone does not establish an application defect.
 6. **Test reports:** view saved Playwright HTML inside the UI, screenshots and JUnit, or download a trace for `npx playwright show-trace trace.zip`. Browser evidence appears only when a browser suite produced it.
 7. **Logs:** choose an installation/build/execution log, search its line-numbered output or download the full file. **Audit** and **Observability** show approvals, agents, tools and usage.
-8. Download the deliverable ZIP when available. Browse **Agent skills** to open each package’s readable instruction page, resources and integrity checks.
+8. Use **Delete** in run history to remove an idle run after confirmation. Files move to the local `.deleted-runs` folder for recovery; active operations cannot be removed.
+9. Download the deliverable ZIP when available. Browse **Agent skills** to open each package’s readable instruction page, resources and integrity checks.
 
-Drag sidebar/column edges and panel corners; use arrow keys for accessible resizing. Preferences persist in your browser. Runs default to `~/.maf-harness/runs`, separately for each OS user. This is a local app without shared-server login.
+Drag sidebar/column edges and panel corners; use arrow keys for accessible resizing. Double-click a panel corner or press Home on its resize handle to restore its original size. Preferences persist in your browser. Runs default to `~/.maf-harness/runs`, separately for each OS user. This is a local app without shared-server login.
 
-[Detailed setup and UI guide](docs/NEXTJS_UI.md) · [Backend findings and limits](docs/BACKEND_REVIEW_2026-10-01.md) · [Cleanup review — no files deleted](docs/DEAD_CODE_REVIEW_2026-10-01.md)
+[Detailed setup and UI guide](docs/NEXTJS_UI.md) · [Backend findings and limits](docs/BACKEND_REVIEW_2026-10-01.md) · [Approved cleanup status](docs/DEAD_CODE_REVIEW_2026-10-01.md)
 
-The backend selects one execution ecosystem today. Mixed-stack coverage, QA edge cases and other reviewed gaps are listed above; a passing generated suite does not prove that every repository component was exercised. Playwright HTML/screenshots/traces are captured for the Node Playwright adapter; Python and other adapters show the report assets they actually produce.
+The backend provisions manifest components and groups generated tests by their native ecosystem and working directory. Selected frontend browser cases receive source evidence and component ownership validation; a passing generated suite does not prove that every repository component was exercised. Playwright HTML/screenshots/traces are captured for the Node Playwright adapter; Python and other adapters show the report assets they actually produce.
 
 ## Development and verification
 
@@ -77,8 +80,8 @@ uv run python scripts/start_ui.py
 The development launcher starts both services. To verify a production build:
 
 ```text
-uv run ruff check src tests app.py scripts
-uv run ruff format --check src tests app.py scripts
+uv run ruff check src tests scripts
+uv run ruff format --check src tests scripts
 uv run pytest -q --ignore=tests/targets
 uv run maf-harness lint-skills
 npm --prefix frontend run typecheck
@@ -126,3 +129,11 @@ The CLI defaults to project-local `.harness_runs`. Set `HARNESS_RUNS_DIR` to the
 | [Observability](docs/OBSERVABILITY.md) | Traces, tools, usage and requirement coverage |
 
 This README documents the `new-ui` branch's Next.js application. Historical source files are retained pending explicit deletion approval; they are not installed or launched as this branch's UI.
+
+### Customize agent prompts
+
+Open **Agent prompts** to edit/save default persona instructions and the end-to-end repository review guide. Each run keeps a separate snapshot. Its **Prompts** tab displays full recorded model requests and lets you save changes for the next attempt. Examples are in [prompts/repository-review.md](prompts/repository-review.md) and [prompts/personas.json](prompts/personas.json). Prompt edits do not bypass approvals or change historical requests.
+
+### Azure hosting plan
+
+Read the documentation-only [Azure deployment proposal](docs/AZURE_DEPLOYMENT_PROPOSAL.md) and supporting [Terraform](azure-plan/README.md) for the East US 2 B1 cost estimate, Mermaid architecture, Terraform and phased hosted implementation. The current branch remains local; hosted identity, per-user isolation and isolated execution are required before deploying a shared web harness. No Azure resources were deployed.

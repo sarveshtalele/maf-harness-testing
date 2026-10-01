@@ -31,3 +31,5 @@ frontend/.next/
 frontend/*.tsbuildinfo
 frontend/playwright-report/
 frontend/test-results/
+
+.deleted-runs/

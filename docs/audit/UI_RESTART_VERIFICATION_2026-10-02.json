@@ -1,0 +1,9 @@
+{
+  "title": "Agentic QE Platform",
+  "theme": "dark",
+  "configurationPersonas": 0,
+  "promptActionGap": 16,
+  "mobilePromptsFit": true,
+  "azureButtons": 0,
+  "failures": []
+}

@@ -1,0 +1,15 @@
+flowchart TD
+  User[Internal team browser] --> Gate[HTTPS / IP allowlist / Entra Easy Auth]
+  subgraph AppService[Linux App Service - one B1 instance]
+    Gate --> UI[Next.js - port 8080]
+    UI --> Proxy[Same-origin API proxy / verified user identity]
+    Proxy --> API[Python harness API - loopback 8765]
+    API --> Data[Persistent /home - per-user runs and reports]
+    API --> Jobs[Hosted execution disabled until isolated runner exists]
+  end
+  Vault[Existing Key Vault - Entra secret] --> Gate
+  Image[Public GHCR - immutable image digest] --> UI
+  Jobs -. Future isolated worker .-> Worker[Ephemeral worker - no web credentials]
+  Worker -. Git clone .-> GitHub[GitHub repository]
+  Worker -. Model requests through restricted broker .-> Model[Model gateway]
+  Worker -. Reports and screenshots .-> Data

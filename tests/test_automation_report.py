@@ -2,8 +2,6 @@
 
 import json
 
-import pytest
-
 from maf_test_harness.monitoring.report import build_report, render_markdown
 
 
@@ -112,54 +110,3 @@ def test_markdown_has_the_automation_section(tmp_path):
     assert "1 enforced deny, 1 would-block" in text and "| diagnose_env_error | 2 | 0 |" in text
     assert "Automatic recoveries applied: 1" in text and "Diagnosis agent notes: 1" in text
     assert text.index("## Automation") < text.index("## Stages")
-
-
-def test_the_observability_page_renders_the_automation_tab(tmp_path):
-    AppTest = pytest.importorskip(
-        "streamlit.testing.v1", reason="Legacy UI is not installed on new-ui"
-    ).AppTest
-
-    run = write_run(tmp_path, AUDIT, [ENV_REPORT])
-    script = (
-        "import sys\n"
-        "sys.path.insert(0, 'src')\n"
-        "from maf_test_harness.monitoring.report import build_report\n"
-        "from maf_test_harness.monitoring.ui import render_observability\n"
-        f"render_observability(build_report(__import__('pathlib').Path({str(run)!r})))\n"
-    )
-    app = AppTest.from_string(script).run(timeout=30)
-    assert not app.exception, app.exception
-    labels = [m.label for m in app.metric]
-    assert "Enforced denies" in labels and "Would block (evaluate-only)" in labels
-    assert any("Automation" in str(t.label) for t in app.tabs)
-
-
-def test_the_overview_shows_the_prompt_cache_table(tmp_path):
-    AppTest = pytest.importorskip(
-        "streamlit.testing.v1", reason="Legacy UI is not installed on new-ui"
-    ).AppTest
-
-    trace = [
-        {
-            "seq": 1,
-            "kind": "chat_call",
-            "stage": "test_generation",
-            "status": "ok",
-            "tokens": {"input": 1000, "output": 50, "total": 1050, "cached": 800},
-            "prompt_chars": 4000,
-            "prefix_shared_chars": 3000,
-            "at": "2026-01-01T00:00:00+00:00",
-        }
-    ]
-    run = write_run(tmp_path, [])
-    (run / "trace.jsonl").write_text("".join(json.dumps(e) + "\n" for e in trace))
-    script = (
-        "import sys\n"
-        "sys.path.insert(0, 'src')\n"
-        "from maf_test_harness.monitoring.report import build_report\n"
-        "from maf_test_harness.monitoring.ui import render_observability\n"
-        f"render_observability(build_report(__import__('pathlib').Path({str(run)!r})))\n"
-    )
-    app = AppTest.from_string(script).run(timeout=30)
-    assert not app.exception, app.exception
-    assert any("Prompt cache" in m.value for m in app.markdown)

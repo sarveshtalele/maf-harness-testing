@@ -39,7 +39,7 @@ flowchart LR
   A --> B
   R --> B
   Q --> B
-  B --> UI[Observability tab · monitoring/ui.py]
+  B --> UI[Next.js per-run observability]
   B --> CLI[maf-harness trace]
   B --> MD[Markdown / JSON export]
 ```

@@ -235,3 +235,68 @@ def test_failed_reconnect_discards_old_runtime(local_api):
     wait(api)
     assert not api.read(key)["operation_error"]
     assert api.read(key)["pending"]["id"] == original
+
+
+def test_prompts_are_saved_snapshotted_and_historical_requests_remain_immutable(local_api):
+    api = local_api
+    settings = api.prompts()["settings"]
+    settings["personas"]["requirements"] = "CUSTOM PERSONA: derive requirements only from evidence."
+    settings["repository_prompt"] = "USER REVIEW: test real backend and frontend with disposable data."
+    api.save_prompts(settings)
+    key = api.start({"repo_url": "https://github.com/acme/demo"})["id"]
+    wait(api)
+    api.save_prompts({**settings, "repository_prompt": "New runs only."})
+    assert api.prompts(key)["settings"]["repository_prompt"] == settings["repository_prompt"]
+    approve(api, key)
+    approve(api, key)
+    records = api.prompts(key)["records"]
+    original = api.prompts(key, records[-1]["id"])
+    assert original["persona"].startswith("CUSTOM PERSONA:")
+    run_settings = api.prompts(key)["settings"]
+    run_settings["overrides"]["requirements"] = original["user_prompt"] + "\nFuture revision guidance."
+    api.save_prompts(run_settings, key)
+    assert api.prompts(key, records[-1]["id"]) == original
+    assert api.prompts(key)["settings"]["overrides"]["requirements"].endswith("Future revision guidance.")
+    with pytest.raises(ValueError, match="Invalid prompt record"):
+        api.prompts(key, "../private")
+    with pytest.raises(ValueError, match="Unknown stage"):
+        api.save_prompts({"personas": {"invented": "unsafe"}})
+
+
+def test_full_prompt_override_is_saved_without_resending_other_large_requests(local_api):
+    key = local_api.start({"repo_url": "https://github.com/acme/demo"})["id"]
+    wait(local_api)
+    source = "full source evidence\n" * 10000
+    local_api.save_prompts({"override_key": "test_design", "override_prompt": source}, key)
+    local_api.save_prompts({"repository_prompt": "Keep the exact source evidence."}, key)
+    assert local_api.prompts(key)["settings"]["overrides"]["test_design"] == source
+    local_api.save_prompts({"override_key": "test_design", "override_prompt": None}, key)
+    assert "test_design" not in local_api.prompts(key)["settings"]["overrides"]
+
+
+def test_delete_run_requires_confirmation_idle_and_preserves_recoverable_files(local_api):
+    from concurrent.futures import Future
+
+    from filelock import FileLock
+
+    api = local_api
+    key = api.start({"repo_url": "https://github.com/acme/demo"})["id"]
+    wait(api)
+    path = api.run_path(key)
+    (path / "evidence.txt").write_text("preserved report")
+    with pytest.raises(ValueError, match="exact run ID"):
+        api.delete_run(key, {})
+    api.job = Future()
+    with pytest.raises(RuntimeError, match="active operation"):
+        api.delete_run(key, {"confirm_run_id": key})
+    api.job = None
+    with FileLock(str(path / "run.lock")):
+        with pytest.raises(RuntimeError, match="another process"):
+            api.delete_run(key, {"confirm_run_id": key})
+    result = api.delete_run(key, {"confirm_run_id": key})
+    assert result == {"id": key, "deleted": True, "recoverable": True}
+    assert not path.exists() and key not in {row["id"] for row in api.list_runs()["runs"]}
+    preserved = next((api.runs.parent / ".deleted-runs").glob(key + "-*"))
+    assert (preserved / "evidence.txt").read_text() == "preserved report"
+    with pytest.raises(FileNotFoundError):
+        api.read(key)

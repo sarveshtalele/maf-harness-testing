@@ -10,6 +10,8 @@ if not exist .env (
     if errorlevel 1 exit /b 1
     echo Created .env. Configure your gateway there before starting a run.
 )
+uv run --no-project --python 3.12 python scripts/start_ui.py --check-only %*
+if errorlevel 1 exit /b %errorlevel%
 uv sync --python 3.12 --extra dev --extra e2e
 if errorlevel 1 exit /b %errorlevel%
 call npm --prefix frontend ci

@@ -29,7 +29,7 @@ redaction, a write scope and download consent, plus any user hooks ([HOOKS.md](H
 
 ```mermaid
 flowchart LR
-  U([Reviewer]) <-->|approve / revise / skip / stop| UI[Streamlit UI · app.py]
+  U([Reviewer]) <-->|approve / revise / skip / stop| UI[Next.js UI · frontend]
   U <-->|same gates| CLI[maf-harness CLI · cli.py]
   UI --> WF
   CLI --> WF

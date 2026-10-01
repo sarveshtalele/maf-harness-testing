@@ -22,6 +22,8 @@ class ToolRequirement:
     version: str  # minimum: "3.11", "17", "3.9.9", "8.0"
     reason: str = ""  # the repository file (or default) that decided it
     exact: bool = False  # this exact major.minor, not "at least" (a fallback interpreter)
+    specifier: str = ""  # complete Python bounds and exclusions
+    fallback_version: str = ""  # source-compatible alternative, never an explicit runtime pin
 
 
 @dataclass
@@ -67,7 +69,9 @@ def python_requirement(ws: Path) -> ToolRequirement | None:
         text = _read(ws / name).strip()
         match = re.search(r"(\d+\.\d+)(?:\.\d+)?", text)
         if match:
-            return ToolRequirement("python", match.group(1), name)
+            return ToolRequirement(
+                "python", match.group(1), name, exact=True, specifier="==" + match.group(0)
+            )
     for name, pattern in (
         ("pyproject.toml", r"requires-python\s*=\s*[\"']([^\"']+)[\"']"),
         ("setup.cfg", r"python_requires\s*=\s*(\S+)"),
@@ -75,9 +79,15 @@ def python_requirement(ws: Path) -> ToolRequirement | None:
     ):
         match = re.search(pattern, _read(ws / name))
         if match:
-            lower = minimum_from_specifier(match.group(1))
-            if lower:
-                return ToolRequirement("python", lower, f"{name} ({match.group(1)})")
+            constraint = match.group(1)
+            lower = minimum_from_specifier(constraint) or "3.8"
+            major, minor = map(int, lower.split("."))
+            excluded = {m.group(1) for m in re.finditer(r"!=\s*(\d+\.\d+)\.\*", constraint)}
+            while f"{major}.{minor}" in excluded:
+                minor += 1
+            return ToolRequirement(
+                "python", f"{major}.{minor}", f"{name} ({constraint})", specifier=constraint
+            )
     return None
 
 
@@ -172,7 +182,16 @@ def java_spec(ws: Path, ecosystem: str) -> EnvSpec:
     spec = EnvSpec("gradle" if gradle else "maven", build_tool="gradle" if gradle else "maven")
     release = java_release(ws)
     if release:
-        spec.requirements.append(ToolRequirement("jdk", release[0], release[1]))
+        spec.requirements.append(
+            ToolRequirement(
+                "jdk",
+                release[0],
+                release[1],
+                fallback_version="11"
+                if release[0] == "8" and release[1].startswith("pom.xml <maven.compiler.")
+                else "",
+            )
+        )
     else:
         spec.requirements.append(
             ToolRequirement("jdk", DEFAULT_JDK, "default (no release found in the build files)")
@@ -247,6 +266,9 @@ def detect_spec(ws: Path, ecosystem: str, python_override: str | None = None) ->
     if ecosystem == "python":
         spec = EnvSpec("python", build_tool="pip")
         if python_override:
+            declared = python_requirement(ws)
+            if declared and declared.specifier and not specifier_allows(declared.specifier, python_override):
+                raise ValueError(f"Fallback Python {python_override} violates {declared.specifier}")
             spec.requirements.append(
                 ToolRequirement(
                     "python",
