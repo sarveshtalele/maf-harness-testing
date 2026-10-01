@@ -4,9 +4,11 @@ The Next.js UI keeps the existing seven-stage MAF workflow, human gates, hook en
 
 ## Start on macOS or Windows
 
-Prerequisites: Git, Python 3.11+ (3.12 tested), uv and Node.js 20.9+.
+Prerequisites: Git, Python 3.11+ (3.12 tested), uv and Node.js 24 LTS.
 
-From the repository root, in Terminal or PowerShell:
+The simplest production startup is `./start-macos.command` on macOS or `.\start-windows.cmd` in Windows PowerShell. Each installs locked dependencies, builds Next.js and starts both servers. Existing `.env` files are preserved. Both accept `--port` and `--api-port`.
+
+For manual setup, from the repository root in Terminal or PowerShell:
 
 ```text
 uv sync --extra dev
@@ -44,7 +46,7 @@ Drag the sidebar’s right edge or the divider between workspace columns to resi
 
 The **Agent skills** page at `/?page=skills` shows all installed project packages as searchable cards, with primary/companion/host roles, descriptions, full SKILL.md instructions, resource files, reviewed-script hashes and upstream integrity status. It reads the actual skill registry and does not change packages.
 
-Run views include Review, Artifacts, Generated tests, QA report, Observability and Audit. All nested artifact fields and raw JSON remain available. Audit has expandable events, filters, complete-record search and JSONL export. Observability includes stages/cache/model calls, skills, tool filters, hooks/recovery/diagnosis, timeline/lane filters, traceability/state filters, integrity, telemetry and exports. Complete and passing are distinct; FAIL and INCONCLUSIVE keep their own verdicts.
+Run views include Review, Artifacts, Generated tests, QA report, Test reports, Logs, Observability and Audit. All nested artifact fields and raw JSON remain available. Audit has expandable events, filters, complete-record search and JSONL export. Observability includes stages/cache/model calls, skills, tool filters, hooks/recovery/diagnosis, timeline/lane filters, traceability/state filters, integrity, telemetry and exports. Complete and passing are distinct; FAIL and INCONCLUSIVE keep their own verdicts.
 
 ## Local execution limits
 
@@ -72,3 +74,15 @@ npm test
 ```
 
 The browser fixture replaces only the model/clone/install-plan inputs with deterministic local data. The real workflow generates source, runs pytest as a subprocess, builds QA/ZIP and handles gates through HTTP. This is separate from live GitHub/model qualification. `HARNESS_TEST_PYTHON` can override the default `.venv` Python path. CI checks macOS and Windows; a CI configuration is not evidence of a completed Windows run.
+
+## Reports, failures and logs
+
+QA failures are shown as cards with recorded output, affected paths and the existing backend's improvement recommendations. These are triage advice, not a proven cause. Tables have sticky sortable headings, row inspection dialogs, search and pagination. Filters use visible choice chips.
+
+**Test reports** discovers contained evidence in the selected run's execution/environment/build directories, `browser-reports` and known workspace report folders. Playwright HTML runs inside a sandboxed iframe with restricted network access, separately from the app. Report theme settings use memory-only storage; embedded Playwright JSON is redacted before rendering. Screenshot cards show the actual saved images; traces can be downloaded for the local Playwright viewer. Missing assets remain visibly missing; reports are not fabricated for unit-only runs.
+
+The Node Playwright adapter preserves the repository’s root Playwright configuration through a separate capture wrapper and requests JUnit+HTML, failure screenshots and retained failure traces, then copies fresh browser output into the immutable execution attempt directory. Other adapters expose assets they already produce. This does not repair the mixed-ecosystem runner limitation documented in the backend review.
+
+**Logs** provides line numbers, error highlighting, filename/attempt search and in-output filtering. Large logs show the first 512 KB with a full download. Evidence files over 32 MB are omitted from the inline inventory. Secret redaction applies to textual presentation; arbitrary source/configuration paths and external symlinks are not served.
+
+CI publishes Playwright HTML/JUnit, screenshots and traces as per-OS artifacts, including on failed runs. The macOS startup timeout was increased from 30 to 120 seconds for cold framework imports; server output is retained for diagnosis.

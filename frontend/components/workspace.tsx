@@ -3,9 +3,10 @@ import { useCallback, useEffect, useRef, useState, type CSSProperties, type Form
 import { api, artifacts, download, label, record, rows, text, type Config, type Row, type Run, type RunSummary } from '@/lib/harness';
 import { Badge, DataTable, DataView, ExportButtons, Metrics, Panel, ResizeHandle, usePreference } from './data';
 import Skills from './skills';
+import Reports from './reports';
 import Observability, { Select } from './observability';
 
-const tabs = ['Review', 'Artifacts', 'Generated tests', 'QA report', 'Observability', 'Audit'];
+const tabs = ['Review', 'Artifacts', 'Generated tests', 'QA report', 'Test reports', 'Logs', 'Observability', 'Audit'];
 const stages = ['repo_analysis', 'requirements', 'environment_setup', 'test_planning', 'test_design', 'test_generation', 'test_execution'];
 
 export default function Workspace() {
@@ -98,6 +99,8 @@ export default function Workspace() {
           {tab === 'Artifacts' && <Artifacts run={run} />}
           {tab === 'Generated tests' && <Generated run={run} />}
           {tab === 'QA report' && <QA run={run} />}
+          {tab === 'Test reports' && <Reports key={`${id}:reports`} run={run} />}
+          {tab === 'Logs' && <Reports key={`${id}:logs`} run={run} logs />}
           {tab === 'Observability' && <Evidence key={`${id}:obs`} id={id} kind="observability" busy={run.busy} />}
           {tab === 'Audit' && <Evidence key={`${id}:audit`} id={id} kind="audit" busy={run.busy} run={run} />}
         </>}
@@ -146,8 +149,24 @@ function Generated({ run }: { run: Run }) {
 }
 function QA({ run }: { run: Run }) {
   const execution = record(artifacts(run).test_execution); const qa = record(execution.qa_report);
-  if (!Object.keys(qa).length) return <p className="empty-inline">QA results appear after approved host execution.</p>;
-  return <><div className="qa-summary"><Badge value={qa.verdict} /><span>Execution: {text(qa.execution_status)} · Runner: {text(qa.adapter)}</span><ExportButtons id={run.id} kind="qa" /></div>{qa.verdict === 'INCONCLUSIVE' && <p className="notice bad">Tests did not produce sufficient execution evidence. Inconclusive is never a pass.</p>}<Metrics values={record(qa.case_status_counts)} />{[['Case results', qa.cases], ['Requirement coverage', qa.requirement_coverage], ['Failures', qa.failures], ['Files to update', qa.updates], ['Skill contract checks', qa.skill_checks]].map(([title, value]) => <Panel key={text(title)} title={text(title)} storageKey={`${run.id}:qa:${title}`}><>{title === 'Case results' ? <DataTable data={rows(value)} columns={['title', 'level', 'actor', 'priority', 'status', 'file']} /> : title === 'Requirement coverage' ? <DataTable data={rows(value)} columns={['state', 'category', 'actor', 'text']} /> : <DataView value={value} />}</></Panel>)}<Panel title="Complete QA evidence" storageKey={`${run.id}:qa:full`} defaultOpen={false}><DataView value={qa} /></Panel>{run.actions.includes('revise') && run.pending?.stage === 'test_execution' && <p className="notice">Use the Review tab to regenerate failing tests. New source and execution require approval again.</p>}</>;
+  if (!Object.keys(qa).length) return <div className="empty-state"><span>◫</span><h2>Your results will appear here</h2><p>Approve execution to produce case results, requirement coverage and failure evidence.</p></div>;
+  const updates = record(qa.updates);
+  const failures = rows(qa.cases).filter(c => ['failed', 'error', 'not_executed'].includes(text(c.status)));
+  const actions = [...rows(updates.generated_test_files_to_update), ...rows(updates.repository_files_to_review)];
+  return <><div className="qa-summary"><div><span className="eyebrow">Saved execution verdict</span><h2><Badge value={qa.verdict} /></h2><p>Execution: {text(qa.execution_status)} · Runner: {text(qa.adapter)}</p></div><ExportButtons id={run.id} kind="qa" /></div>{qa.verdict === 'INCONCLUSIVE' && <p className="notice bad">Tests did not produce sufficient execution evidence. Inconclusive is never a pass.</p>}<Metrics values={record(qa.case_status_counts)} />
+    <Panel title="Why tests failed & what to improve" storageKey={`${run.id}:qa:failures`}>
+      <p className="field-help">Observed output and recommendations from the saved QA report. A failing assertion needs review of both application behavior and the test expectation.</p>
+      {failures.length ? <div className="failure-cards">{failures.map((c, i) => {
+        const related = actions.filter(a => a.case_id === c.id);
+        return <article className="failure-card" key={text(c.id) || i}><header><div><span className="eyebrow">{text(c.id)} · {label(c.level)}</span><h3>{text(c.title)}</h3></div><Badge value={c.status} /></header><code className="failure-location">{text(c.file || 'No generated file recorded')}</code><div className="failure-reason"><b>Observed failure</b><pre>{text(c.message || 'No failure output was recorded. This case did not execute; inspect the execution logs and environment status.')}</pre></div><div className="failure-next"><span aria-hidden="true">↗</span><div><b>Recommended next step</b>{related.length ? related.map((a, n) => <div key={n}><span className="badge">{label(a.classification)}</span><p>{text(a.action)}</p><small>{text(a.file)}{a.lines ? ` · lines ${text(a.lines)}` : a.line ? `:${text(a.line)}` : ''}</small></div>) : <p>Inspect this case’s output and the execution logs. Confirm the environment and reproduce the behavior before changing the application or its test.</p>}</div></div></article>;
+      })}</div> : <div className="success-note"><span>✓</span><div><b>No failed cases in the saved QA report</b><p>Review requirement coverage and warnings before treating this run as complete coverage.</p></div></div>}
+    </Panel>
+    <Panel title="Case results" storageKey={`${run.id}:qa:Case results`}><DataTable data={rows(qa.cases)} columns={['title', 'level', 'actor', 'priority', 'status', 'file']} /></Panel>
+    <Panel title="Requirement coverage" storageKey={`${run.id}:qa:Requirement coverage`}><DataTable data={rows(qa.requirement_coverage)} columns={['state', 'category', 'actor', 'text']} /></Panel>
+    <Panel title="Improvement worklist" storageKey={`${run.id}:qa:updates`}><DataTable data={[...actions, ...rows(updates.requirements_needing_tests), ...rows(updates.environment_actions)]} columns={['classification', 'file', 'case', 'detail', 'action']} /></Panel>
+    <Panel title="Warnings & limitations" storageKey={`${run.id}:qa:limits`}><DataView value={{ warnings: qa.warnings, limitations: qa.limitations, unmapped_results: qa.unmapped_results }} /></Panel>
+    <Panel title="Skill contract checks" storageKey={`${run.id}:qa:checks`}><DataView value={qa.skill_checks} /></Panel>
+    <Panel title="Complete QA evidence" storageKey={`${run.id}:qa:full`} defaultOpen={false}><DataView value={qa} /></Panel>{run.actions.includes('revise') && run.pending?.stage === 'test_execution' && <p className="notice">Use the Review tab to regenerate failing tests. New source and execution require approval again.</p>}</>;
 }
 function Evidence({ id, kind, busy, run }: { id: string; kind: 'audit' | 'observability'; busy: boolean; run?: Run }) {
   const [data, setData] = useState<Row | null>(null); const [error, setError] = useState(''); const [event, setEvent] = useState(''); const [stage, setStage] = useState('');

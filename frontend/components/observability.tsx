@@ -36,5 +36,5 @@ export default function Observability({ id, report }: { id: string; report: Row 
   </div>;
 }
 export function Select({ label: name, value, set, options }: { label: string; value: string; set: (value: string) => void; options: string[] }) {
-  return <label className="filter-label">{name}<select value={value} onChange={e => set(e.target.value)}><option value="">All</option>{[...new Set(options)].filter(Boolean).sort().map(o => <option value={o} key={o}>{label(o)}</option>)}</select></label>;
+  return <fieldset className="filter-chips"><legend>{name}</legend>{['', ...new Set(options.filter(Boolean).sort())].map(o => <button type="button" key={o} aria-pressed={value === o} onClick={() => set(o)}>{o ? label(o) : 'All'}</button>)}</fieldset>;
 }

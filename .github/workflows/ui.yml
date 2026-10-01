@@ -30,12 +30,20 @@ jobs:
         working-directory: frontend
       - run: npm run build
         working-directory: frontend
+      - name: macOS launcher smoke check
+        if: runner.os == 'macOS'
+        run: ./start-macos.command --help
+      - name: Windows launcher smoke check
+        if: runner.os == 'Windows'
+        run: .\start-windows.cmd --help
       - run: npx playwright install chromium
         working-directory: frontend
       - run: npm test
         working-directory: frontend
       - uses: actions/upload-artifact@v4
-        if: failure()
+        if: always()
         with:
-          name: ui-failure-${{ matrix.os }}
-          path: frontend/test-results
+          name: ui-report-${{ matrix.os }}
+          path: |
+            frontend/test-results
+            frontend/playwright-report

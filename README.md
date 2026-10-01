@@ -1,11 +1,70 @@
 # MAF Test Harness
 
-A human-approved, evidence-driven **test-engineering harness** built on [Microsoft Agent Framework](https://learn.microsoft.com/en-us/agent-framework/) (MAF)
-and Agent Skills. Give it a public GitHub repository. It analyzes the code, works out what must be installed (and installs it into an **isolated
-environment after your approval**), designs tests per user persona, generates them in the repository's native framework, **runs them**, and hands
-back a **ZIP with the complete repository, all generated and executed tests, and a QA report that lists the files and lines to update**.
-Runs on **Windows, macOS and Linux**; prepares isolated environments for **Python, Java (Maven and Gradle) and .NET** (and Node/Go), downloading a missing JDK, Maven, Gradle, .NET SDK or Python
-into a private cache after you approve it; classifies environment and test-run errors and retries what is safe automatically; and puts a fail-closed **hook engine** around every tool call, model call and gate.
+A local repository-testing workspace with a **Next.js frontend** and the existing **Python / Microsoft Agent Framework backend**. `new-ui` is the primary UI branch. Give the harness a public GitHub repository, review each stage, approve installation and test execution, then inspect QA results, failure recommendations, logs and browser evidence.
+
+The UI includes mouse-resizable panels, light/dark appearance, per-user run history, agent skill cards, audit and observability. Streamlit and the CLI remain supported. Execution runs as your OS user with isolated dependencies; use a disposable machine for repositories you do not trust.
+
+## Quick start: macOS and Windows
+
+Install [Git](https://git-scm.com/), [Node.js 24 LTS](https://nodejs.org/) and [uv](https://docs.astral.sh/uv/getting-started/installation/). The scripts let uv provision Python 3.12, install the locked Python/frontend dependencies and build the UI.
+
+```text
+git clone --branch new-ui https://github.com/sarveshtalele/maf-harness-testing.git
+cd maf-harness-testing
+```
+
+Copy `.env.example` to `.env`, then edit it with your gateway values:
+
+```dotenv
+OPENAI_API_KEY=your-key-here
+OPENAI_BASE_URL=https://your-openai-compatible-gateway
+OPENAI_MODEL=your-tool-capable-model
+```
+
+macOS Terminal:
+
+```bash
+cp .env.example .env   # first setup only; do not overwrite an existing .env
+chmod 600 .env
+# Edit .env, then:
+./start-macos.command
+```
+
+Windows PowerShell:
+
+```powershell
+Copy-Item .env.example .env   # first setup only
+notepad .env
+.\start-windows.cmd
+```
+
+Open **http://127.0.0.1:3000**. One launcher starts both **Next.js on 3000** and the **Python API on 8765**, with matching private server credentials. Keep the terminal open; Ctrl+C stops both servers. A missing `.env` is created from the example without overwriting existing configuration. Restart after changing gateway settings. Never commit credentials.
+
+To use different ports:
+
+```text
+./start-macos.command --port 3001 --api-port 8766
+.\start-windows.cmd --port 3001 --api-port 8766
+```
+
+The scripts install/build on each launch to keep the checkout and dependencies consistent. For faster development after initial setup: `uv run python scripts/start_ui.py`.
+
+### Using the workspace
+
+1. **Configuration:** check the gateway model and whether a key is configured; the key itself is hidden.
+2. **New run:** enter a public GitHub URL and optionally a running local application URL. Approve the clone action.
+3. **Review:** inspect requirements, the environment plan, test plan/design and generated source. Approve, request changes or stop at each gate.
+4. **Run tests:** review exact commands before approving execution. Missing prerequisites and errors remain visible.
+5. **QA report:** inspect per-case results, requirement coverage, recorded failure output and recommendations with affected files. Recommendations require review; an assertion failure alone does not establish an application defect.
+6. **Test reports:** view saved Playwright HTML inside the UI, screenshots and JUnit, or download a trace for `npx playwright show-trace trace.zip`. Browser evidence appears only when a browser suite produced it.
+7. **Logs:** choose an installation/build/execution log, search its line-numbered output or download the full file. **Audit** and **Observability** show approvals, agents, tools and usage.
+8. Download the deliverable ZIP when available. Browse **Agent skills** to inspect all installed packages and their provenance.
+
+Drag sidebar/column edges and panel corners; use arrow keys for accessible resizing. Preferences persist in your browser. Runs default to `~/.maf-harness/runs`, separately for each OS user. This is a local app without shared-server login.
+
+[Detailed setup and UI guide](docs/NEXTJS_UI.md) · [Backend findings and limits](docs/BACKEND_REVIEW_2026-10-01.md) · [Cleanup review — no files deleted](docs/DEAD_CODE_REVIEW_2026-10-01.md)
+
+The backend selects one execution ecosystem today. Mixed-stack coverage, QA edge cases and other reviewed gaps are listed above; a passing generated suite does not prove that every repository component was exercised. Playwright HTML/screenshots/traces are captured for the Node Playwright adapter; Python and other adapters show the report assets they actually produce.
 
 ```text
 repo URL ─► analyze ─► requirements ─► environment ─► test plan ─► test design ─► test generation ─► run ─► QA report + ZIP
@@ -33,7 +92,8 @@ compile) is answered by deterministic **central tools** instead of a model retry
 
 | Need | Why | Check |
 |---|---|---|
-| Python 3.11+ and [`uv`](https://docs.astral.sh/uv/) | run the harness | `python3 --version`, `uv --version` |
+| Python 3.11+ (3.12 recommended) and [`uv`](https://docs.astral.sh/uv/) | run the harness | `python3 --version`, `uv --version` |
+| Node.js 24 LTS | run/build the Next.js UI | `node --version`, `npm --version` |
 | `git` | clone the target | `git --version` |
 | An OpenAI-compatible chat gateway and key (tool-calling model) | the agents | your provider |
 | Toolchain of the repository you test | a missing JDK, Maven, Gradle, .NET SDK or Python is listed in the environment approval and, if you approve, downloaded (checksum-verified) into `~/.maf-harness/toolchains`; nothing on the system PATH or registry changes. Other tools (Node, Go, ...) are reported with an install hint | shown at the environment step |
@@ -43,7 +103,7 @@ Optional: Playwright browsers (`uv run playwright install chromium`) only if you
 ## 2. Setup
 
 ```bash
-git clone https://github.com/sarveshtalele/maf-harness-testing.git
+git clone --branch new-ui https://github.com/sarveshtalele/maf-harness-testing.git
 cd maf-harness-testing
 uv sync --extra dev            # creates .venv and installs the pinned dependencies
 ```
@@ -73,7 +133,7 @@ OPENAI_BASE_URL=https://your-openai-compatible-gateway
 OPENAI_MODEL=deepseek-v4-flash-global
 ```
 
-The CLI and the Streamlit app read it automatically at start-up (working directory first, then the project root). **Restart the app after editing it.**
+The Python API, CLI and Streamlit app read it automatically at start-up (working directory first, then the project root). **Restart the app after editing it.**
 Only `OPENAI_*`, `LLM_MODEL` and `HARNESS_*` are read from the file, and a variable that is already set in your shell **wins** over the file.
 
 **Alternative — environment variables** in the shell that starts the app (useful in CI or for a one-off run):
@@ -82,12 +142,12 @@ Only `OPENAI_*`, `LLM_MODEL` and `HARNESS_*` are read from the file, and a varia
 export OPENAI_API_KEY="<your key>"
 export OPENAI_BASE_URL="https://your-openai-compatible-gateway"
 export OPENAI_MODEL="deepseek-v4-flash-global"
-uv run streamlit run app.py
+uv run python scripts/start_ui.py
 ```
 
 One run can also use a different model without touching the configuration: `uv run maf-harness run <repo> --model <name>`.
 
-**Check that it works.** In the app, the sidebar section *Model gateway* shows the model, the base URL and `API key: configured`. To test the gateway itself
+**Check that it works.** In the Next.js app, **Configuration → Model gateway** shows the model, the base URL and `API key: configured`. To test the gateway itself
 (a `200` means the key, URL and model are accepted; `401` a wrong key; `404` a wrong URL or model name; `429` the provider's quota):
 
 ```bash
@@ -104,7 +164,7 @@ Optional switches (defaults shown, all listed in `.env.example`):
 
 | Variable | Default | Effect |
 |---|---|---|
-| `HARNESS_DAILY_TOKEN_LIMIT` | `50000000` | the harness's daily token cap, shared by all runs on this machine |
+| `HARNESS_DAILY_TOKEN_LIMIT` | `50000000` | the harness's daily token cap, shared by all runs for this OS user |
 | `HARNESS_AGENT_TOOLS` / `HARNESS_AUTOFIX` / `HARNESS_BUILD_GATE` | `on` | central agent tools / mechanical import repairs / compile-collect gate (`off` for A/B comparison) |
 | `HARNESS_DIAGNOSIS_AGENT` / `HARNESS_SKILL_EVALUATORS` | `off` | LLM diagnosis note after unrecovered failures / skill validators as a design-stage tool; see [docs/AUTOMATION.md](docs/AUTOMATION.md) |
 | `HARNESS_STRICT_ENV` | `on` | **strict guardrail**: nothing after environment setup starts until every declared requirement is installed and consistent; an incomplete environment is a blocking gate that proposes another Python when that would fix it (see [docs/ENVIRONMENTS.md](docs/ENVIRONMENTS.md)) |
@@ -118,7 +178,9 @@ Optional switches (defaults shown, all listed in `.env.example`):
 
 ## 3. Run the application and open it in the browser
 
-**Next.js UI (macOS / Windows):** `npm --prefix frontend ci`, then `uv run python scripts/start_ui.py`. Open http://127.0.0.1:3000. See [docs/NEXTJS_UI.md](docs/NEXTJS_UI.md) for setup, adjustable panels, per-user storage, production builds and browser checks. The Streamlit UI below remains available.
+Use the platform script in Quick start for the primary Next.js application. Manual development startup: `npm --prefix frontend ci`, then `uv run python scripts/start_ui.py`. Open http://127.0.0.1:3000. See [docs/NEXTJS_UI.md](docs/NEXTJS_UI.md).
+
+**Legacy Streamlit UI:**
 
 ```bash
 uv run streamlit run app.py
@@ -146,7 +208,7 @@ Walk-through:
 8. On completion, download the **ZIP** (repository + generated tests + reports).
 9. Open the **Observability** tab of any run (also for saved runs) to see which skills and tools were invoked, what each stage cost (with the provider's prompt-cache hit), a timeline, what the hooks blocked or rewrote and what recovery did (*Automation*), and the requirement → case → file → result chain ([details](docs/OBSERVABILITY.md)).
 
-The sidebar shows the token meter: **a daily cap of 50,000,000 tokens (shared by all runs on this machine, resetting at local midnight) is the only harness limit** — no per-run, per-call or call-count limits. The ledger lives in `~/.maf-harness/usage` (override with `HARNESS_USAGE_DIR`); counting starts when it is first written.
+The sidebar shows the token meter: **a daily cap of 50,000,000 tokens (shared by all runs for this OS user, resetting at local midnight) is the only harness limit** — no per-run, per-call or call-count limits. The ledger lives in `~/.maf-harness/usage` (override with `HARNESS_USAGE_DIR`); counting starts when it is first written.
 Your model gateway may enforce its own, separate quota; when it answers HTTP 429 the UI says so and retrying will not help until it resets (the harness never works around a provider limit).
 
 ## 4. Command line
@@ -169,7 +231,7 @@ uv run maf-harness lint-skills                        # Agent Skills spec lint
 
 ```
 .harness_runs/<run>/
-  qa_report.md / qa_report.json          verdict · per-case results · requirement coverage · files to update
+  run.json                             saved artifacts, execution and QA results (also downloadable from the UI)
   deliverables/<repo>-with-tests-<run>.zip
         <repo>/…                          complete repository at the analyzed commit + every generated test at its real path
         harness-report/qa_report.md       the report
@@ -252,7 +314,7 @@ HARNESS_BROWSER=1 PLAYWRIGHT_BROWSERS_PATH=$PWD/.browser-cache uv run pytest tes
 | "Set OPENAI_API_KEY before starting the workflow" | no key was found: create `.env` from `.env.example` (see *Configure the model gateway*) or export the variable, then restart the app |
 | The app still shows the old model or URL after editing `.env` | restart it: settings are read once at start-up; a variable exported in your shell overrides `.env` |
 | HTTP 401 / 404 from the gateway | 401: wrong key. 404: wrong base URL (try adding or removing `/v1`) or a model name your gateway does not serve |
-| "Daily token cap of 50,000,000 reached" | wait for local midnight or raise `HARNESS_DAILY_TOKEN_LIMIT`; all runs on this machine share the cap (`maf-harness run` prints today's usage) |
+| "Daily token cap of 50,000,000 reached" | wait for local midnight or raise `HARNESS_DAILY_TOKEN_LIMIT`; all runs for this OS user share the cap (`maf-harness run` prints today's usage) |
 | "The model gateway refused the request (HTTP 429)" | the provider's own quota is exhausted; nothing in the harness can lift it. Choose *Retry* at the error gate after it resets (a *Stop* cannot be resumed) |
 | A batch keeps failing generation | the audit log (`audit.jsonl`, `generation_attempts/`) names the gate; retries vary the temperature, and the error text says what to fix |
 | UI/E2E cases are not offered | pass the running application's URL with `--app-url`, or let the harness start it with `--start-app` (Streamlit, FastAPI, Flask, npm `start`/`dev`) |

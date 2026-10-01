@@ -39,7 +39,7 @@ _TOKENS = [
 _SECRET_ENV = ("OPENAI_API_KEY", "ANTHROPIC_API_KEY", "GITHUB_TOKEN", "GH_TOKEN", "AWS_SECRET_ACCESS_KEY")
 
 
-def redact(text: str) -> tuple[str, int]:
+def redact(text: str, *, keyed: bool = True) -> tuple[str, int]:
     """Replace secret-looking strings (and the values of well-known secret environment variables) in ``text``."""
     count = 0
     for name in _SECRET_ENV:
@@ -50,10 +50,11 @@ def redact(text: str) -> tuple[str, int]:
     for pattern in _TOKENS:
         text, n = pattern.subn(REDACTED, text)
         count += n
-    text, n = _KEYED.subn(
-        lambda m: m.group(1) + REDACTED, text
-    )  # keep the key and quotes (JSON stays valid), hide the value
-    count += n
+    if keyed:
+        text, n = _KEYED.subn(
+            lambda m: m.group(1) + REDACTED, text
+        )  # keep the key and quotes (JSON stays valid), hide the value
+        count += n
     return text, count
 
 

@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import shutil
 import sys
 import time
 import xml.etree.ElementTree as ET
@@ -393,6 +394,32 @@ def build_plan(
             steps = [st for st in steps if st.name != "install-playwright"]  # repo already depends on it
         paths = _paths(files)
         if runner == "playwright":
+            config_name = ".harness-playwright-report.config.ts"
+            original = next(
+                (
+                    name
+                    for name in (
+                        "playwright.config.ts",
+                        "playwright.config.js",
+                        "playwright.config.mts",
+                        "playwright.config.mjs",
+                        "playwright.config.cts",
+                        "playwright.config.cjs",
+                    )
+                    if (ws / name).is_file()
+                ),
+                None,
+            )
+            # Keep the wrapper beside the original so its relative paths retain their meaning.
+            config = (f"import original from './{original}';\n" if original else "const original = {};\n") + (
+                "const capture = { screenshot: { mode: 'only-on-failure', fullPage: true }, trace: 'retain-on-failure' };\n"
+                "export default { ...original, use: { ...original.use, ...capture }, "
+                "projects: original.projects?.map(project => ({ ...project, use: { ...project.use, ...capture } })) };\n"
+            )
+            config_path = ws / config_name
+            if config_path.exists() and config_path.read_text(encoding="utf-8") != config:
+                raise ValueError(f"Refusing to overwrite existing {config_name}")
+            config_path.write_text(config, encoding="utf-8")
             steps.append(
                 Step(
                     "playwright",
@@ -402,7 +429,9 @@ def build_plan(
                         "playwright",
                         "test",
                         *paths,
-                        "--reporter=junit",
+                        "--reporter=junit,html",
+                        f"--config={config_name}",
+                        f"--output={REPORT_DIR}/test-results",
                     ],
                     "test",
                     parser="junit",
@@ -410,6 +439,8 @@ def build_plan(
                     timeout=timeout,
                     env={
                         "PLAYWRIGHT_JUNIT_OUTPUT_NAME": str(reports / "junit.xml"),
+                        "PLAYWRIGHT_HTML_OUTPUT_DIR": str(reports / "playwright-report"),
+                        "PLAYWRIGHT_HTML_OPEN": "never",
                         **_playwright_browsers(),
                     },
                 )
@@ -974,6 +1005,14 @@ def _run_test_step(step: Step, workspace: Path, out_dir: Path, label: str) -> tu
     )
     stdout = str(out_dir / label / "stdout.log")
     result["stdout_path"] = stdout
+    if step.name == "playwright":
+        # Preserve each attempt before a subsequent Playwright run replaces its working reports.
+        for name in ("playwright-report", "test-results"):
+            source = workspace / REPORT_DIR / name
+            if source.is_dir() and any(
+                p.is_file() and p.stat().st_mtime >= started for p in source.rglob("*")
+            ):
+                shutil.copytree(source, out_dir / label / "browser-reports" / name, symlinks=True)
     entry = {
         "name": step.name,
         "kind": step.kind,

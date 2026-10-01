@@ -1,15 +1,16 @@
 import { NextRequest } from 'next/server';
 
 export const dynamic = 'force-dynamic';
-const segments = /^[A-Za-z0-9_-]+$/;
+const segments = /^[A-Za-z0-9_.-]+$/;
 
 async function proxy(request: NextRequest, context: { params: Promise<{ path: string[] }> }) {
   const { path } = await context.params;
   const origin = request.headers.get('origin');
   const host = request.headers.get('host') || '';
-  if (!/^(localhost|127\.0\.0\.1):\d+$/.test(host) || (origin && origin !== `http://${host}`))
+  const reportAsset = request.method === 'GET' && path[0] === 'runs' && path[2] === 'evidence' && path.length >= 5;
+  if (!/^(localhost|127\.0\.0\.1):\d+$/.test(host) || (origin && origin !== `http://${host}` && !(reportAsset && origin === 'null')))
     return Response.json({ error: 'Only the local UI can access the harness.' }, { status: 403 });
-  if (!path.every(part => segments.test(part)))
+  if (!path.every(part => segments.test(part) && part !== '.' && part !== '..'))
     return Response.json({ error: 'Invalid path.' }, { status: 400 });
   const token = process.env.HARNESS_API_TOKEN;
   if (!token) return Response.json({ error: 'Start the UI using scripts/start_ui.py so the local API is connected.' }, { status: 503 });
@@ -23,7 +24,7 @@ async function proxy(request: NextRequest, context: { params: Promise<{ path: st
       body, cache: 'no-store', signal: AbortSignal.timeout(30000),
     });
     const headers = new Headers({ 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff' });
-    for (const name of ['content-type', 'content-disposition']) {
+    for (const name of ['content-type', 'content-disposition', 'content-security-policy', 'access-control-allow-origin']) {
       const value = response.headers.get(name);
       if (value) headers.set(name, value);
     }

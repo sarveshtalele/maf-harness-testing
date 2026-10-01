@@ -31,6 +31,16 @@ test('complete browser workflow, layouts, evidence, downloads and stale gates', 
   await page.reload();
   await page.getByRole('button', { name: 'QA report', exact: true }).click();
   await expect(page.getByText('PASS', { exact: true }).first()).toBeVisible();
+  await page.getByRole('button', { name: 'Test reports', exact: true }).click();
+  const report = page.frameLocator('iframe[title="Playwright report"]');
+  await expect(report.getByRole('heading', { name: 'Browser report fixture' })).toBeVisible();
+  await expect(report.locator('#verdict')).toHaveText('PASS');
+  expect(await report.locator('body').getAttribute('data-isolated')).toBe('yes');
+  expect(await page.locator('body').getAttribute('data-report-escaped')).toBeNull();
+  await page.getByRole('button', { name: 'Logs', exact: true }).click();
+  await expect(page.getByRole('region', { name: 'Log output' })).toBeVisible();
+  await page.getByRole('searchbox', { name: 'Find in output' }).fill('not-a-real-log-line');
+  await expect(page.getByRole('region', { name: 'Log output' })).toBeEmpty();
   const downloadPromise = page.waitForEvent('download');
   await page.getByRole('link', { name: 'Download deliverable ZIP ↓' }).click();
   expect((await downloadPromise).suggestedFilename()).toMatch(/\.zip$/);
@@ -67,6 +77,33 @@ test('complete browser workflow, layouts, evidence, downloads and stale gates', 
   const secret = await request.get('/api/harness/config');
   expect(JSON.stringify(await secret.json())).not.toContain('fixture-configured-flag');
   expect(errors).toEqual([]);
+});
+
+test('failed execution shows recorded reason, improvement advice and inspectable results', async ({ page, request }) => {
+  await page.goto('/');
+  await page.getByRole('button', { name: 'New run', exact: true }).click();
+  await page.getByRole('textbox', { name: 'Public GitHub repository URL' }).fill('https://github.com/acme/failure');
+  await page.getByRole('button', { name: 'Start repository review →' }).click();
+  await expect(page.getByRole('button', { name: 'Approve repository inspection' })).toBeEnabled();
+  const id = new URL(page.url()).searchParams.get('run')!;
+  for (let i = 0; i < 10; i++) {
+    const before = await (await request.get(`/api/harness/runs/${id}`)).json();
+    await page.getByRole('button', { name: /^(Approve repository inspection|Approve and proceed|Install in isolated environment|Run tests here)$/ }).click();
+    await expect.poll(async () => { const next = await (await request.get(`/api/harness/runs/${id}`)).json(); return !next.busy && next.pending?.id !== before.pending?.id; }, { timeout: 60000 }).toBeTruthy();
+  }
+  await page.getByRole('button', { name: 'QA report', exact: true }).click();
+  await expect(page.locator('.failure-card')).toHaveCount(1);
+  await expect(page.locator('.failure-reason')).toContainText('assert 3 == 4');
+  await expect(page.locator('.failure-next')).toContainText('never weaken the assertion');
+  const table = page.locator('.panel').filter({ has: page.getByRole('button', { name: 'Case results', exact: true }) });
+  await table.getByRole('button', { name: 'Status', exact: false }).click();
+  await table.getByRole('button', { name: 'Inspect record 1' }).click();
+  await expect(page.getByRole('dialog', { name: 'Record details' })).toContainText('assert 3 == 4');
+  await page.keyboard.press('Escape');
+  await page.setViewportSize({ width: 390, height: 844 });
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBeTruthy();
+  await page.getByRole('button', { name: 'Test reports', exact: true }).click();
+  await expect(page.frameLocator('iframe').locator('#verdict')).toHaveText('FAIL');
 });
 
 test('deny, retry, revise, stop, invalid inputs and hostile origins', async ({ page, request }) => {

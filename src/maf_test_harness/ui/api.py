@@ -3,10 +3,14 @@
 from __future__ import annotations
 
 import argparse
+import base64
 import hmac
+import io
 import json
+import mimetypes
 import os
 import re
+import zipfile
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from threading import RLock
@@ -27,6 +31,7 @@ from ..skills.config import COMPANION_PURPOSE, SKILL_NAMES
 from ..skills.registry import FRONTMATTER_RE, lint_all, load_lock, verify_lock
 from ..workflow import STAGES, Harness
 from .artifact_presenter import json_to_markdown
+from .evidence import MIMES, file_path, inventory
 from .runtime_service import RuntimeService
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -394,6 +399,72 @@ class LocalAPI:
             f"{kind}.{fmt}",
         )
 
+    def evidence(self, key: str):
+        return public(inventory(self.run_path(key)))
+
+    def evidence_file(self, key: str, file_id: str, asset="", *, download=False):
+        path = file_path(self.run_path(key), file_id, "" if asset == "view.html" else asset)
+        mime = MIMES.get(path.suffix.lower(), mimetypes.guess_type(path.name)[0] or "text/plain")
+        if path.suffix.lower() in {".log", ".md", ".xml"} and not download and not asset:
+            with path.open("rb") as stream:
+                content = stream.read(512 * 1024)
+            return (
+                public(
+                    {
+                        "text": content.decode("utf-8", errors="replace"),
+                        "truncated": path.stat().st_size > len(content),
+                    }
+                ),
+                "application/json",
+                None,
+            )
+        content = path.read_bytes()
+        if mime == "text/html":
+            html = content.decode("utf-8", errors="replace")
+            payload = re.search(
+                r'(<template id="playwrightReportBase64">data:application/zip;base64,)([^<]+)', html
+            )
+            if payload:
+                source, destination = io.BytesIO(base64.b64decode(payload[2])), io.BytesIO()
+                with (
+                    zipfile.ZipFile(source) as archive,
+                    zipfile.ZipFile(destination, "w", zipfile.ZIP_DEFLATED) as clean,
+                ):
+                    if (
+                        len(archive.infolist()) > 500
+                        or sum(f.file_size for f in archive.infolist()) > 32 * 1024 * 1024
+                    ):
+                        raise ValueError("Embedded report data exceeds the 32 MB viewer limit.")
+                    for item in archive.infolist():
+                        data = archive.read(item)
+                        if item.filename.endswith(".json"):
+                            data = json.dumps(public(json.loads(data))).encode()
+                        clean.writestr(item.filename, data)
+                html = (
+                    html[: payload.start(2)]
+                    + base64.b64encode(destination.getvalue()).decode()
+                    + html[payload.end(2) :]
+                )
+            # Key/value heuristics confuse minified JS token enums with credentials. Still redact
+            # configured secrets and credential-shaped strings inside code, and all report text/data.
+            pieces = re.split(r"(<script\b[^>]*>.*?</script>)", html, flags=re.I | re.S)
+            content = "".join(
+                redact(piece, keyed=False)[0] if re.match(r"<script\b", piece, re.I) else public(piece)
+                for piece in pieces
+            ).encode()
+        elif path.suffix.lower() == ".js":
+            content = redact(content.decode("utf-8", errors="replace"), keyed=False)[0].encode()
+        elif path.suffix.lower() in {".json", ".css", ".xml", ".log", ".md", ".txt"}:
+            content = public(content.decode("utf-8", errors="replace")).encode()
+        if mime == "text/html" and not download:
+            # Playwright reads theme settings from storage. An opaque sandbox cannot access real storage;
+            # provide report-local memory instead of granting it access to the UI's origin.
+            shim = b"""<script>for(const name of ['localStorage','sessionStorage']){const values=new Map();Object.defineProperty(window,name,{value:{getItem:k=>values.get(String(k))??null,setItem:(k,v)=>values.set(String(k),String(v)),removeItem:k=>values.delete(String(k)),clear:()=>values.clear(),key:i=>[...values.keys()][i]??null,get length(){return values.size}}});}</script>"""
+            match = re.search(rb"<head[^>]*>", content, re.I)
+            at = match.end() if match else 0
+            content = content[:at] + shim + content[at:]
+        return content, mime, path.name if download or path.suffix.lower() == ".zip" else None
+
     def config(self):
         return public(
             {
@@ -439,6 +510,12 @@ def make_server(api: LocalAPI, token: str, port: int = 8765):
             self.send_header("Content-Length", str(len(payload)))
             self.send_header("Cache-Control", "no-store")
             self.send_header("X-Content-Type-Options", "nosniff")
+            if mime == "text/html":
+                self.send_header(
+                    "Content-Security-Policy",
+                    "default-src 'none'; script-src 'unsafe-inline' blob:; style-src 'unsafe-inline'; img-src 'self' data: blob:; connect-src 'self' data: blob:; font-src data:; worker-src blob:; sandbox allow-scripts",
+                )
+            self.send_header("Access-Control-Allow-Origin", "*")
             if filename:
                 safe = re.sub(r"[^A-Za-z0-9._-]", "_", filename)
                 self.send_header("Content-Disposition", f'attachment; filename="{safe}"')
@@ -479,6 +556,13 @@ def make_server(api: LocalAPI, token: str, port: int = 8765):
                             self.reply(200, api.audit(key))
                         elif parts[2:] == ["observability"]:
                             self.reply(200, public(build_report(api.run_path(key), ROOT / "skills")))
+                        elif parts[2:] == ["evidence"]:
+                            self.reply(200, api.evidence(key))
+                        elif len(parts) >= 4 and parts[2] == "evidence":
+                            data, mime, name = api.evidence_file(
+                                key, parts[3], "/".join(parts[4:]), download=query.get("download") == ["1"]
+                            )
+                            self.reply(200, data, mime, name)
                         elif parts[2:] == ["download"]:
                             data, mime, name = api.download(key, query)
                             self.reply(200, data, mime, name)

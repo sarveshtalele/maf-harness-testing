@@ -1,8 +1,12 @@
 """Adapter proof: real workflow/subprocesses, scripted model and local clone fixture."""
 
+import base64
+import io
 import json
+import re
 import threading
 import time
+import zipfile
 from urllib.error import HTTPError
 from urllib.request import Request, urlopen
 
@@ -74,6 +78,52 @@ def test_project_skill_catalog(local_api):
     assert cards["coverage-analyzer"]["role"] == "Host report validator"
     assert all(card["instructions"] and "SKILL.md" in card["resources"] for card in cards.values())
     assert any(card["reviewed_scripts"] for card in cards.values())
+
+
+def test_evidence_is_contained_redacted_and_preserves_reports(local_api, tmp_path, monkeypatch):
+    api = local_api
+    key = api.start({"repo_url": "https://github.com/acme/demo"})["id"]
+    wait(api)
+    folder = api.run_path(key) / "executions" / "attempt-1" / "playwright-report"
+    folder.mkdir(parents=True)
+    monkeypatch.setenv("OPENAI_API_KEY", "private-evidence-value")
+    (folder / "index.html").write_text("<h1>Playwright report</h1><p>private-evidence-value</p>")
+    (folder / "stdout.log").write_text("AssertionError: private-evidence-value")
+    (folder / "data").mkdir()
+    (folder / "data" / "result.json").write_text('{"status":"failed"}')
+    (api.run_path(key) / "workspace").mkdir()
+    (api.run_path(key) / "workspace" / ".env").write_text("not-public")
+    files = api.evidence(key)["files"]
+    assert len(files) == 2 and not any(".env" in f["path"] for f in files)
+    report = next(f for f in files if f["kind"] == "report")
+    body, mime, _ = api.evidence_file(key, report["id"], "view.html")
+    assert mime == "text/html" and b"private-evidence-value" not in body
+    payload = io.BytesIO()
+    with zipfile.ZipFile(payload, "w") as archive:
+        archive.writestr("report.json", '{"message":"private-evidence-value"}')
+    encoded = base64.b64encode(payload.getvalue()).decode()
+    (folder / "index.html").write_text(
+        "<head></head><script>const enums={token:`passed`};</script>"
+        f'<template id="playwrightReportBase64">data:application/zip;base64,{encoded}</template>'
+    )
+    html = api.evidence_file(key, report["id"], "view.html")[0].decode()
+    assert "token:`passed`" in html and "Object.defineProperty(window" in html
+    clean = re.search(r"data:application/zip;base64,([^<]+)", html)[1]
+    with zipfile.ZipFile(io.BytesIO(base64.b64decode(clean))) as archive:
+        assert "private-evidence-value" not in archive.read("report.json").decode()
+    log = next(f for f in files if f["kind"] == "log")
+    assert "private-evidence-value" not in api.evidence_file(key, log["id"])[0]["text"]
+    assert api.evidence_file(key, report["id"], "data/result.json")[0] == b'{"status":"failed"}'
+    for asset in ("../run.json", "../../.env", "data/../index.html", "data\\result.json"):
+        with pytest.raises(ValueError):
+            api.evidence_file(key, report["id"], asset)
+    with pytest.raises(FileNotFoundError):
+        api.evidence_file(key, "not-a-file-id")
+    try:
+        (folder / "outside.log").symlink_to(tmp_path / "outside.log")
+    except OSError:
+        pass
+    assert len(api.evidence(key)["files"]) == 2
 
 
 def test_boundaries_and_interruption(local_api, tmp_path, monkeypatch):

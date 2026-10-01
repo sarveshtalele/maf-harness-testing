@@ -84,6 +84,11 @@ def test_generated_file_type_beats_repo_ecosystem(tmp_path):
         assert "not installed" in plan.blocked_reason
     else:
         assert plan.adapter == "node-playwright" and "install-playwright" in [s.name for s in plan.steps]
+        test_step = plan.steps[-1]
+        assert "--reporter=junit,html" in test_step.argv
+        capture = (tmp_path / ".harness-playwright-report.config.ts").read_text()
+        assert "only-on-failure" in capture and "retain-on-failure" in capture
+        assert test_step.env["PLAYWRIGHT_HTML_OPEN"] == "never"
 
 
 def test_missing_toolchain_is_reported_not_faked(tmp_path, monkeypatch):
