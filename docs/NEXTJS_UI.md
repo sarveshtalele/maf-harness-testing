@@ -1,6 +1,6 @@
 # Local Next.js workspace
 
-The Next.js UI keeps the existing seven-stage MAF workflow, human gates, hook engine, strict environment checks, generation validators, recovery, reports and checkpoints. Streamlit and the CLI remain available.
+The Next.js UI keeps the existing seven-stage MAF workflow, human gates, hook engine, strict environment checks, generation validators, recovery, reports and checkpoints. The CLI uses the same backend.
 
 ## Start on macOS or Windows
 
@@ -38,11 +38,11 @@ New UI runs default to `~/.maf-harness/runs` for each operating-system user; `.h
 
 The API reads the existing checkpoint format and passes decisions to `Harness.respond`. Browser reloads do not kill an operation. One operation runs at a time, matching the previous local UI. Old runs without full traces show summary observability. Interrupted consumed gates are never automatically replayed. Reconnect rebuilds the runtime connection, not the approved action.
 
-CLI/Streamlit default to project-local storage. Set their `HARNESS_RUNS_DIR` to the UI directory if you want to work on the same runs. Stop the UI operation before using another host to mutate that run. Rollback consists of stopping the launcher and using Streamlit/CLI; no checkpoint migration is required.
+The CLI defaults to project-local storage. Set their `HARNESS_RUNS_DIR` to the UI directory if you want to work on the same runs. Stop the UI operation before using another host to mutate that run. No checkpoint migration is required.
 
 ## Layout and evidence
 
-Drag the sidebar’s right edge or the divider between workspace columns to resize with the mouse. Drag a panel’s visible lower-right handle to adjust both width and height. Handles capture the pointer so dragging continues outside their bounds, and support arrow keys. **Adjust layout** provides sidebar/column sliders and a reset. Panel sizing is controlled directly by its drag handle; the former panel adjustment form is removed. Each panel collapses or expands into a dialog. Preferences are saved in this browser, scoped to the run and panel. Small screens stack the panels; Escape closes expanded views.
+Drag the sidebar’s right edge or the divider between workspace columns to resize with the mouse. Drag a panel’s visible lower-right handle to adjust both width and height. Handles capture the pointer so dragging continues outside their bounds, and support arrow keys. Layout changes use mouse handles or arrow keys; there is no adjustment form or slider menu. Panel sizing is controlled directly by its drag handle; the former panel adjustment form is removed. Each panel collapses or expands into a dialog. Preferences are saved in this browser, scoped to the run and panel. Small screens stack the panels; Escape closes expanded views.
 
 The **Agent skills** page at `/?page=skills` shows all installed project packages as searchable cards, with primary/companion/host roles, descriptions, full SKILL.md instructions, resource files, reviewed-script hashes and upstream integrity status. It reads the actual skill registry and does not change packages.
 

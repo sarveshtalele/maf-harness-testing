@@ -4,11 +4,11 @@ test('complete browser workflow, layouts, evidence, downloads and stale gates', 
   const errors: string[] = []; page.on('pageerror', error => errors.push(error.message));
   await page.goto('/');
   await expect(page.getByText('Your first run starts here')).toBeVisible();
-  await page.getByRole('button', { name: 'Adjust layout', exact: true }).click();
-  await page.getByRole('slider', { name: 'Sidebar width' }).fill('290');
+  await expect(page.getByRole('button', { name: 'Adjust layout', exact: true })).toHaveCount(0);
+  await page.getByRole('button', { name: 'Resize sidebar', exact: true }).press('ArrowRight');
+  const sidebarWidth = (await page.locator('.sidebar').boundingBox())!.width;
   await page.reload();
-  await page.getByRole('button', { name: 'Adjust layout', exact: true }).click();
-  await expect(page.getByRole('slider', { name: 'Sidebar width' })).toHaveValue('290');
+  await expect.poll(async () => (await page.locator('.sidebar').boundingBox())!.width).toBeCloseTo(sidebarWidth, 0);
   await page.getByRole('button', { name: 'New run', exact: true }).click();
   await page.getByRole('textbox', { name: 'Public GitHub repository URL' }).fill('https://github.com/acme/demo');
   await page.getByRole('button', { name: 'Start repository review →' }).click();

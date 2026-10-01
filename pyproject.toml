@@ -14,7 +14,6 @@ dependencies = [
   "PyYAML>=6.0,<7",
   "jsonschema>=4.23,<5",
   "pydantic>=2.9,<3.0",
-  "streamlit>=1.49,<2.0",
   "filelock>=3.16,<4.0",
 ]
 

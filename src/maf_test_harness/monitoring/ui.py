@@ -5,16 +5,15 @@ from __future__ import annotations
 import json
 from typing import Any
 
-import pandas as pd
-import streamlit as st
-
 from ..ui.artifact_presenter import humanize
 from .report import render_markdown
 
 RESULT_ORDER = ["passed", "failed", "error", "skipped", "not_executed"]
 
 
-def _frame(rows: list[dict[str, Any]], columns: list[str] | None = None) -> pd.DataFrame:
+def _frame(rows: list[dict[str, Any]], columns: list[str] | None = None) -> Any:
+    import pandas as pd
+
     frame = pd.DataFrame(rows)
     if columns:
         frame = frame.reindex(columns=[c for c in columns if c in frame.columns] or frame.columns)
@@ -24,6 +23,8 @@ def _frame(rows: list[dict[str, Any]], columns: list[str] | None = None) -> pd.D
 def _table(
     rows: list[dict[str, Any]], columns: list[str] | None = None, empty: str = "Nothing recorded."
 ) -> None:
+    import streamlit as st
+
     if not rows:
         st.caption(empty)
         return
@@ -32,6 +33,8 @@ def _table(
 
 def _render_automation(automation: dict[str, Any] | None) -> None:
     """Hooks, automatic recovery, typed tools and the diagnosis agent: what acted on its own, and what it refused."""
+    import streamlit as st
+
     if not automation:
         st.info("No automation data for this run.")
         return
@@ -93,6 +96,9 @@ def _render_automation(automation: dict[str, Any] | None) -> None:
 
 def render_observability(report: dict[str, Any], key_prefix: str = "obs") -> None:
     """One page per run: what ran, which skills and tools were invoked, what it cost, and how requirements trace to results."""
+    import pandas as pd
+    import streamlit as st
+
     run, totals = report["run"], report["totals"]
     st.subheader("Observability and traceability")
     st.caption(

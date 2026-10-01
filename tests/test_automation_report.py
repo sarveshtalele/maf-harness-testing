@@ -2,6 +2,8 @@
 
 import json
 
+import pytest
+
 from maf_test_harness.monitoring.report import build_report, render_markdown
 
 
@@ -113,7 +115,9 @@ def test_markdown_has_the_automation_section(tmp_path):
 
 
 def test_the_observability_page_renders_the_automation_tab(tmp_path):
-    from streamlit.testing.v1 import AppTest
+    AppTest = pytest.importorskip(
+        "streamlit.testing.v1", reason="Legacy UI is not installed on new-ui"
+    ).AppTest
 
     run = write_run(tmp_path, AUDIT, [ENV_REPORT])
     script = (
@@ -131,7 +135,9 @@ def test_the_observability_page_renders_the_automation_tab(tmp_path):
 
 
 def test_the_overview_shows_the_prompt_cache_table(tmp_path):
-    from streamlit.testing.v1 import AppTest
+    AppTest = pytest.importorskip(
+        "streamlit.testing.v1", reason="Legacy UI is not installed on new-ui"
+    ).AppTest
 
     trace = [
         {

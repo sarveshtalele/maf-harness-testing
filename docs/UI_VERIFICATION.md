@@ -66,3 +66,14 @@ Follow-up verification: optimized build/TypeScript passed; focused adapter suite
 - Screenshots: [report viewer](ui/playwright-report-view.png), [failure cards](ui/qa-failure-view.png), [logs](ui/log-view.png).
 - Prior GitHub Actions run `36902430992`: Windows passed; macOS timed out after 30 seconds during server startup, before any browser tests. Startup timeout is now 120 seconds with piped server diagnostics. CI publishes HTML/JUnit and browser artifacts on success or failure, and smoke-checks both platform scripts.
 - No source files were deleted. Previously reviewed backend verdict/mapping/mixed-stack findings remain pending approval; Node browser report capture was authorized by the newer report request.
+
+## Branch cleanup and fresh-server verification — 2 October 2026
+
+Removed the global adjustment button/form; sidebar, column and panel mouse handles remain, with keyboard resizing and persisted preferences. No native select dropdowns or adjustment forms were present in the freshly rebuilt main UI at port 3000. Both servers were stopped and the production launcher restarted.
+
+The new-ui dependency lock, startup documentation and CI no longer install or launch the legacy GUI. Historical files remain pending deletion approval; their optional rendering dependencies are loaded only when invoked. The two retained legacy GUI checks skip without that dependency.
+
+- Python: **723 passed, 3 skipped**; Ruff lint/format and skill integrity passed.
+- Next.js production build/typecheck and all **4 browser journeys passed**.
+- Real TokenTelemetry browser report rendered **14 passed / 1 failed** inside the sandboxed viewer. Its independent browser result remains separate from generated Python QA (**9 passed / 26 errors / 1 failed**).
+- Updated screenshots: [report](ui/tokentelemetry-report-view.png), [QA failures](ui/tokentelemetry-qa-view.png).
