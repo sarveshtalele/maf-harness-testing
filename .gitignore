@@ -33,3 +33,7 @@ frontend/playwright-report/
 frontend/test-results/
 
 .deleted-runs/
+
+# local generation benchmark submissions and evidence
+.benchmark-results/
+.benchmark-candidates/

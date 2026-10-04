@@ -71,6 +71,12 @@ The backend provisions manifest components and groups generated tests by their n
 
 ## Development and verification
 
+Coding assistants should read [AGENTS.md](AGENTS.md), the shared guidance referenced by Claude Code
+and GitHub Copilot. The offline [generation quality benchmark](docs/GENERATION_BENCHMARK.md) scores
+submitted suites for baseline validity and seeded-defect detection. Run
+`uv run python scripts/benchmark_generation.py` to calibrate it with reference tests; calibration
+is separate from measuring model-generated test quality.
+
 ```text
 uv sync --python 3.12 --extra dev --extra e2e
 npm --prefix frontend ci
