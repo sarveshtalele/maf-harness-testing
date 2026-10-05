@@ -57,3 +57,11 @@ def test_heuristic_lines_and_unsupported_coverage_are_explicit(tmp_path):
     assert any("Unsupported declaration parser: surface.rs" in gap for gap in result["gaps"])
     draft = requirements_from_facts(result, "Demo")
     assert "candidate" in draft["requirements"][0]["text"]
+
+
+def test_host_skills_do_not_claim_model_companion_execution():
+    from maf_test_harness.skills.config import skills_for
+
+    state = {"requirements_mode": "deterministic", "stack": {"openapi_files": ["openapi.json"]}}
+    assert skills_for("requirements", state).all == ["requirement-analysis"]
+    assert skills_for("repo_analysis", state).all == ["reverse-engineering"]

@@ -75,6 +75,9 @@ def test_project_skill_catalog(local_api):
     cards = {card["name"]: card for card in catalog["skills"]}
     assert len(cards) == 12 and all(card["valid"] for card in cards.values())
     assert cards["repository-requirements"]["primary_stages"] == ["requirements"]
+    assert cards["requirement-analysis"]["primary_stages"] == ["requirements"]
+    assert cards["reverse-engineering"]["primary_stages"] == ["repo_analysis"]
+    assert cards["reverse-engineering"]["role"] == "Host-static primary"
     assert cards["playwright-test-generator"]["role"] == "Companion"
     assert cards["coverage-analyzer"]["role"] == "Host report validator"
     assert all(card["instructions"] and "SKILL.md" in card["resources"] for card in cards.values())

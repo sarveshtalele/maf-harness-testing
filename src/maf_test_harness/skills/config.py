@@ -2,7 +2,7 @@
 
 Every stage has one *primary* skill (its contract) and zero or more *companion* skills that apply only when the
 repository or the approved design calls for them. Selection is deterministic host logic over facts, never a model
-decision; the runtime advertises exactly the selected skills and verifies that every one was loaded through MAF.
+decision. Model stages verify loading through MAF; host-static stages verify locked packages and run the host adapter.
 """
 
 from __future__ import annotations
@@ -16,6 +16,8 @@ SKILL_NAMES = {
     "test_design": "test-design-generator",
     "test_generation": "generic-test-generator",
 }
+
+HOST_SKILL_NAMES = {"repo_analysis": "reverse-engineering", "requirements": "requirement-analysis"}
 
 # What each companion is for; shown to the model so it applies the skill for that purpose only.
 COMPANION_PURPOSE = {
@@ -38,7 +40,11 @@ class SkillSet:
 
 def skills_for(stage: str, state: dict) -> SkillSet:
     """The skills a stage must load for this run (deterministic over the stack profile and approved design)."""
-    primary = "requirement-analysis" if stage == "requirements" and state.get("requirements_mode") == "deterministic" else SKILL_NAMES[stage]
+    if stage == "repo_analysis" or (
+        stage == "requirements" and state.get("requirements_mode") == "deterministic"
+    ):
+        return SkillSet(HOST_SKILL_NAMES[stage])
+    primary = SKILL_NAMES[stage]
     companions: list[str] = []
     stack = state.get("stack") or {}
     languages = set((state.get("artifacts", {}).get("repo_analysis") or {}).get("languages") or {})

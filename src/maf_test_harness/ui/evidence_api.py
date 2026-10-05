@@ -10,7 +10,7 @@ from pathlib import Path
 import yaml
 
 from ..monitoring.report import build_report, render_markdown
-from ..skills.config import COMPANION_PURPOSE, SKILL_NAMES
+from ..skills.config import COMPANION_PURPOSE, HOST_SKILL_NAMES, SKILL_NAMES
 from ..skills.registry import FRONTMATTER_RE, lint_all, load_lock, verify_lock
 from .artifact_presenter import json_to_markdown
 from .evidence import MIMES, file_path, inventory
@@ -44,12 +44,18 @@ class EvidenceAPI:
                 {
                     "name": report.name,
                     "description": meta.get("description", "No description provided."),
-                    "role": "Primary"
+                    "role": "Host-static primary"
+                    if report.name in HOST_SKILL_NAMES.values()
+                    else "Primary"
                     if report.name in SKILL_NAMES.values()
                     else "Companion"
                     if report.name in COMPANION_PURPOSE
                     else "Host report validator",
-                    "primary_stages": [stage for stage, name in SKILL_NAMES.items() if name == report.name],
+                    "primary_stages": [
+                        stage
+                        for stage, name in [*SKILL_NAMES.items(), *HOST_SKILL_NAMES.items()]
+                        if name == report.name
+                    ],
                     "purpose": COMPANION_PURPOSE.get(report.name),
                     "metadata": meta,
                     "instructions": source[match.end() :] if match else source,
