@@ -4,6 +4,8 @@ A local repository-testing workspace with a **Next.js frontend** and the existin
 
 The UI includes mouse-resizable panels, light/dark appearance, per-user run history, agent skill cards, audit and observability. The CLI uses the same backend. Execution runs as your OS user with isolated dependencies; use a disposable machine for repositories you do not trust.
 
+Repository analysis and requirements execute the locked reverse-engineering and requirement-analysis scripts without model calls. Planning, design and generation remain model-assisted. Agent skills shows the workflow map and recorded script executions; Observability filters evidence by step. Run completion measures approved stage milestones, separately from the test verdict. See the [run failure and skill execution review](docs/RUN_FAILURE_AND_SKILL_EXECUTION_REVIEW.md) for verification and limits.
+
 ## Quick start: macOS and Windows
 
 Install [Git](https://git-scm.com/), [Node.js 24 LTS](https://nodejs.org/) and [uv](https://docs.astral.sh/uv/getting-started/installation/). The scripts let uv provision Python 3.12, install the locked Python/frontend dependencies and build the UI.

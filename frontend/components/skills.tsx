@@ -1,10 +1,10 @@
 'use client';
 import { useEffect, useState } from 'react';
-import { api, label, type Row } from '@/lib/harness';
-import { Badge, DataView, Metrics } from './data';
+import { api, label, rows, text, type Row } from '@/lib/harness';
+import { Badge, DataTable, DataView, Metrics } from './data';
 import Markdown from './markdown';
 
-type Skill = { name: string; description: string; role: string; primary_stages: string[]; purpose?: string; instructions: string; resources: string[]; metadata: Row; reviewed_scripts: Row; sha256: string; valid: boolean; locked: boolean; errors: string[]; warnings: string[]; provenance: Row };
+type Skill = { name: string; description: string; role: string; primary_stages: string[]; purpose?: string; instructions: string; resources: string[]; metadata: Row; reviewed_scripts: Row; sha256: string; valid: boolean; locked: boolean; errors: string[]; warnings: string[]; provenance: Row; executions: Row[] };
 
 export default function Skills() {
   const [catalog, setCatalog] = useState<{ skills: Skill[]; upstream: Row } | null>(null);
@@ -22,6 +22,7 @@ export default function Skills() {
   const skill = skills.find(s => s.name === selected);
   if (selected && catalog) return <><a className="button small" href="/?page=skills">← All agent skills</a>{skill ? <article className="skill-document">
     <header><span className="eyebrow">Agent skill · {skill.role}</span><h1>{label(skill.name.replaceAll('-', ' '))}</h1><p>{skill.description}</p><div className="skill-tags"><Badge value={skill.valid ? 'Valid package' : 'Integrity error'} />{skill.primary_stages.map(stage => <Badge key={stage} value={stage} />)}</div></header>
+    <section><h2>Recorded execution by run and step</h2><DataTable data={rows(skill.executions)} /><p>Package loading and script execution are different events. Historical adapter calls have no script execution record.</p></section>
     <Markdown text={skill.instructions} />
     <section><h2>Package resources</h2><ul>{skill.resources.map(resource => <li key={resource}><code>{resource}</code></li>)}</ul></section>
     <section><h2>Integrity and reviewed scripts</h2><DataView value={{ package_sha256: skill.sha256, errors: skill.errors, warnings: skill.warnings, reviewed_scripts: skill.reviewed_scripts }} /></section>
@@ -29,7 +30,7 @@ export default function Skills() {
   return <><div className="page-header"><div><span className="eyebrow">Project skill library</span><h1>Agent skills</h1><p>Installed packages, workflow roles, instructions and integrity details.</p></div></div>
     {error && <div className="notice bad" role="alert">{error}</div>}
     {!catalog && !error && <p role="status">Loading project skills…</p>}
-    {catalog && <><Metrics values={{ available_skills: skills.length, valid_packages: skills.filter(s => s.valid).length }} />
+    {catalog && <><section className="skill-document"><h2>Skill → workflow step → execution map</h2><DataTable data={skills.map(s => ({ skill: s.name, primary_steps: s.primary_stages, recorded_steps: [...new Set(rows(s.executions).map(r => text(r.stage)))], mode: s.role, recorded_runs: new Set(rows(s.executions).map(r => text(r.run_id))).size, script_executions: rows(s.executions).filter(r => r.status === "script-executed").length }))} /><p>Recorded history covers the latest 100 runs. A listed package is not proof its script ran.</p></section><Metrics values={{ available_skills: skills.length, valid_packages: skills.filter(s => s.valid).length }} />
       <div className="table-tools"><input aria-label="Search agent skills" type="search" placeholder="Search name, description or workflow role…" value={search} onChange={e => setSearch(e.target.value)} /><small>{visible.length} of {skills.length} skills</small></div>
       {!visible.length && <p>No skills match your search.</p>}
       <div className="skills-grid">{visible.map(skill => <article className="skill-card" key={skill.name}>

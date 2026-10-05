@@ -29,6 +29,8 @@ STAGE_ORDER = (
     "approved_inputs",
     "repository_evidence",
     "evidence_file_paths",
+    "approved_traceability_ids",
+    "traceability_rule",
     "revision_feedback",
     "repair_feedback",
 )

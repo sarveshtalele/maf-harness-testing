@@ -39,7 +39,6 @@ from .repo.analyzer import (
     declared_dependencies,
     validate_github_url,
 )
-from .repo.reverse_engineering import reverse_engineer
 from .repo.stack import detect_stack
 from .settings import (
     AGENT_TOOLS,
@@ -48,7 +47,7 @@ from .settings import (
     STRICT_ENV,
 )
 from .skills.config import skills_for
-from .skills.registry import verify_lock
+from .skills.host import execute_host_skill
 from .tools.agent_tools import HarnessToolbox
 from .tools.registry import ToolContext
 from .tools.typed import default_registry
@@ -550,22 +549,21 @@ class Harness(ExecutionSteps, GenerationSteps, PlanningSteps):
             state["evidence"] = build_repository_evidence(
                 self.run_dir / "repo", max_files=60, max_total_chars=120_000
             )
-            problems = verify_lock(self.skills_root, ["reverse-engineering"])
-            if problems:
-                raise ValueError("Reverse-engineering skill integrity failed: " + "; ".join(problems))
-            state.setdefault("skill_tool_trace", {})[stage] = {
-                "execution_mode": "host-static",
-                "skills": ["reverse-engineering"],
-                "verified_host_skill": True,
-                "skill_loaded_via_maf": None,
-            }
             analyzed = artifact.model_dump()
             analyzed["reverse_engineering"] = await asyncio.to_thread(
-                reverse_engineer, self.run_dir / "repo", artifact.source_files
+                execute_host_skill,
+                self.run_dir,
+                self.skills_root,
+                stage,
+                "reverse-engineering",
+                {"root": str(self.run_dir / "repo"), "source_files": artifact.source_files},
+                state,
+                self.audit,
             )
             atomic_json(self.run_dir / "reverse_engineering.json", analyzed["reverse_engineering"])
             self.audit(
                 "deterministic_reverse_engineering",
+                stage=stage,
                 model_calls=0,
                 coverage=analyzed["reverse_engineering"]["coverage"],
             )

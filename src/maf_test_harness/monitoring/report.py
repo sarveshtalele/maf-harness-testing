@@ -81,14 +81,17 @@ def _read_jsonl(path: Path) -> list[dict[str, Any]]:
     return events
 
 
-def _origins(skills_root: Path) -> set[str]:
+def _origins(skills_root: Path) -> dict[str, str]:
     """Names of skills vendored from the upstream catalog (everything else is local)."""
     try:
         from ..skills.registry import load_lock
 
-        return set(load_lock(skills_root).get("skills", {}))
+        return {
+            name: item.get("origin", "local")
+            for name, item in load_lock(skills_root).get("skills", {}).items()
+        }
     except Exception:  # a missing or unreadable lock only removes the origin column
-        return set()
+        return {}
 
 
 def _event_detail(event: dict[str, Any]) -> str:
@@ -218,6 +221,11 @@ def build_report(run_dir: Path, skills_root: Path | None = None) -> dict[str, An
     stages = state.get("stages") or list(SKILL_NAMES)
     provenance = state.get("skill_provenance", {})
     stage_trace = state.get("skill_tool_trace", {})
+    provenance = dict(provenance)
+    for stage, info in stage_trace.items():
+        if info.get("execution_mode") == "host-static" and info.get("skills"):
+            provenance[stage] = {"name": info["skills"][0], "companions": [], "host_static": True}
+
     budget = state.get("budget", {})
     origins = _origins(skills_root or DEFAULT_SKILLS_ROOT)
 
@@ -332,7 +340,10 @@ def build_report(run_dir: Path, skills_root: Path | None = None) -> dict[str, An
     for stage in stages:
         prov = provenance.get(stage) or {}
         assigned = [prov["name"], *(c["name"] for c in prov.get("companions", []))] if prov else []
-        loaded = list((stage_trace.get(stage) or {}).get("loaded_skills", []))
+        loaded = list(
+            (stage_trace.get(stage) or {}).get("loaded_skills", [])
+            or (stage_trace.get(stage) or {}).get("skills", [])
+        )
         runs = [r for r in model_runs if r["stage"] == stage]
         calls = [c for c in tool_calls if c["stage"] == stage]
         loaded_via_calls = {
@@ -348,11 +359,21 @@ def build_report(run_dir: Path, skills_root: Path | None = None) -> dict[str, An
         stage_rows.append(
             {
                 "stage": stage,
-                "actor": "agent" if stage in SKILL_NAMES else "host",
+                "actor": "host" if prov.get("host_static") else "agent" if stage in SKILL_NAMES else "host",
                 "assigned_skills": assigned,
                 "loaded_skills": loaded,
-                "skills_verified": bool((stage_trace.get(stage) or {}).get("skill_loaded_via_maf")),
+                "skills_verified": bool(
+                    (stage_trace.get(stage) or {}).get("skill_loaded_via_maf")
+                    or (stage_trace.get(stage) or {}).get("verified_host_skill")
+                ),
+                "execution_mode": (stage_trace.get(stage) or {}).get(
+                    "execution_mode", "model-assisted" if stage in SKILL_NAMES else "host"
+                ),
+                "script_runs": len(
+                    [r for r in state.get("skill_script_runs", []) if r.get("stage") == stage]
+                ),
                 "model_runs": len(runs),
+                "provider_calls": len([e for e in chat if e.get("stage") == stage]),
                 "tool_calls": len(calls),
                 "tool_failures": sum(1 for c in calls if not c["ok"]),
                 "harness_tools_available": harness_available,
@@ -361,7 +382,7 @@ def build_report(run_dir: Path, skills_root: Path | None = None) -> dict[str, An
                 "model_seconds": round(sum(durations) / 1000, 1) if durations else None,
                 "repairs": counts["stage_repair"] + counts["test_generation_repair"],
                 "errors": counts["stage_error"],
-                "approved": stage in (state.get("approved") or {}) or stage in (state.get("artifacts") or {}),
+                "approved": stage in (state.get("approved") or {}),
             }
         )
 
@@ -377,7 +398,7 @@ def build_report(run_dir: Path, skills_root: Path | None = None) -> dict[str, An
                 name,
                 {
                     "skill": name,
-                    "origin": "upstream" if name in origins else "local",
+                    "origin": origins.get(name, "local"),
                     "stages": [],
                     "role": role,
                     "package_sha256": info.get("package_sha256", ""),

@@ -73,7 +73,49 @@ class EvidenceAPI:
                     "locked": entry is not None,
                 }
             )
-        return public({"skills": cards, "upstream": lock.get("upstream", {})})
+        executions = []
+        for run in self.list_runs()["runs"][:100]:
+            try:
+                state = json.loads((self.run_path(run["id"]) / "run.json").read_text(encoding="utf-8")).get(
+                    "state", {}
+                )
+            except (OSError, ValueError):
+                continue
+            for stage, info in state.get("skill_tool_trace", {}).items():
+                names = info.get("loaded_skills", []) or info.get("skills", [])
+                for name in names:
+                    scripts = [
+                        r
+                        for r in state.get("skill_script_runs", [])
+                        if r.get("skill") == name and r.get("stage") == stage
+                    ]
+                    executions.append(
+                        {
+                            "run_id": run["id"],
+                            "skill": name,
+                            "stage": stage,
+                            "mode": info.get("execution_mode", "model-instructions"),
+                            "status": "failed"
+                            if any(r.get("exit_code") != 0 for r in scripts)
+                            else "script-executed"
+                            if scripts
+                            else "package-loaded; no script recorded",
+                            "scripts": [
+                                {k: r.get(k) for k in ("script", "sha256", "exit_code", "duration_seconds")}
+                                for r in scripts
+                            ],
+                        }
+                    )
+        for card in cards:
+            card["executions"] = [r for r in executions if r["skill"] == card["name"]]
+        return public(
+            {
+                "skills": cards,
+                "upstream": lock.get("upstream", {}),
+                "executions": executions,
+                "execution_history_limit": 100,
+            }
+        )
 
     def download(self, key: str, query: dict) -> tuple[bytes, str, str]:
         run = self.read(key)

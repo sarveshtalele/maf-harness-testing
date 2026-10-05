@@ -8,13 +8,13 @@
     },
     "requirement-analysis": {
       "scripts/analyze.py": {
-        "sha256": "35261628d7a1266a0ebefaeef42787d3b36431867642429e0268d4a4fe497b5a",
+        "sha256": "eff44397c2e02a5c434256dd82311847eb00b5e6c4ca26bba999d093171da295",
         "tier": "host"
       }
     },
     "reverse-engineering": {
       "scripts/analyze.py": {
-        "sha256": "3a2b62f287ac65f73c305cb884531e14ad299b46496f890a57547355edb241b4",
+        "sha256": "58f65f068bcc5033990e7816e72be7671171fd36c799b9f117905fcb5b407486",
         "tier": "host"
       }
     },
@@ -127,8 +127,8 @@
         "status": "host-reviewed"
       },
       "files": {
-        "SKILL.md": "b643a12babc5cc37cc3054a83ed0858d0574a089ef1ac82a7bd9fb4a460d82a4",
-        "scripts/analyze.py": "35261628d7a1266a0ebefaeef42787d3b36431867642429e0268d4a4fe497b5a"
+        "SKILL.md": "79c65e152d13ed6b4dc1ce033b09710c49df596d16f63cc3535a36b9770997dc",
+        "scripts/analyze.py": "eff44397c2e02a5c434256dd82311847eb00b5e6c4ca26bba999d093171da295"
       },
       "origin": "host-adapted",
       "path": "requirement-analysis",
@@ -140,8 +140,8 @@
         "status": "host-reviewed"
       },
       "files": {
-        "SKILL.md": "466a0e62c50a6895695b676e615f686392d27551261e4845b45d0e5b03afcfb3",
-        "scripts/analyze.py": "3a2b62f287ac65f73c305cb884531e14ad299b46496f890a57547355edb241b4"
+        "SKILL.md": "52317f84d3bfe763efa768f6be01a7d761553412341cb6bb35e56fdb5285815c",
+        "scripts/analyze.py": "58f65f068bcc5033990e7816e72be7671171fd36c799b9f117905fcb5b407486"
       },
       "origin": "host-adapted",
       "path": "reverse-engineering",

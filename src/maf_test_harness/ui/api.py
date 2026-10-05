@@ -22,7 +22,8 @@ from ..repo.analyzer import validate_github_url
 from ..settings import API_KEY, BASE_URL, MODEL, validate_gateway_settings
 from ..workflow import Harness
 from .evidence_api import EvidenceAPI
-from .presentation import public as public
+from .presentation import public
+from .progress import progress
 from .runtime_service import RuntimeService
 from .settings_api import SettingsAPI
 
@@ -127,6 +128,7 @@ class LocalAPI(EvidenceAPI, SettingsAPI):
             return public(
                 {
                     "id": key,
+                    "progress": progress(view),
                     "status": status,
                     "pending": {k: v for k, v in pending.items() if k != "state"} if pending else None,
                     "state": {k: state[k] for k in PUBLIC_STATE if k in state},
@@ -156,6 +158,7 @@ class LocalAPI(EvidenceAPI, SettingsAPI):
                         rows.append(
                             {
                                 "id": key,
+                                "progress": run["progress"],
                                 "repo_url": run["state"].get("repo_url"),
                                 "status": run["status"],
                                 "stage": (run["pending"] or {}).get("stage")

@@ -53,6 +53,7 @@ test('complete browser workflow, layouts, evidence, downloads and stale gates', 
   }
   await expect.poll(async () => (await (await request.get(`/api/harness/runs/${key}`)).json()).status).toBe('complete');
   await page.reload();
+  await expect(page.getByRole('progressbar', { name: 'Workflow completion', exact: true })).toHaveAttribute('value', '100');
   await page.getByRole('button', { name: 'Prompts', exact: true }).click();
   await expect(page.getByRole('heading', { name: 'Run prompts', exact: true })).toBeVisible();
   await page.getByRole('button', { name: /1\. Requirements/ }).click();
@@ -92,6 +93,7 @@ test('complete browser workflow, layouts, evidence, downloads and stale gates', 
   await page.getByRole('button', { name: 'Generated tests', exact: true }).click();
   await expect(page.locator('.source-code')).toContainText('def test_');
   await page.getByRole('button', { name: 'Observability', exact: true }).click();
+  await expect(page.getByRole('group', { name: 'Workflow step' })).toBeVisible();
   await page.getByRole('button', { name: 'Expand Stage activity & token usage' }).click();
   await expect(page.getByRole('dialog')).toBeVisible();
   await page.keyboard.press('Escape');
@@ -209,13 +211,14 @@ test('mouse resizing persists and project skill cards show real package details'
   await expect.poll(async () => (await panel.boundingBox())!.width).toBeCloseTo(resized.width, 0);
   await expect.poll(async () => (await panel.boundingBox())!.height).toBeCloseTo(resized.height, 0);
   await page.getByRole('button', { name: 'Agent skills', exact: true }).click();
+  await expect(page.getByRole('heading', { name: 'Skill → workflow step → execution map', exact: true })).toBeVisible();
   await expect(page.locator('.skill-card')).toHaveCount(12);
   await page.getByRole('searchbox', { name: 'Search agent skills' }).fill('playwright');
   await expect(page.locator('.skill-card')).toHaveCount(1);
   await expect(page.getByText('Upstream library provenance', { exact: true })).toHaveCount(0);
   await page.getByRole('link', { name: 'View skill details →', exact: true }).click();
   await expect(page).toHaveURL(/skill=playwright-test-generator/);
-  await expect(page.locator('.skill-document h2').first()).toContainText('Playwright');
+  await expect(page.locator('.markdown-document h2').first()).toContainText('Playwright');
   await expect(page.locator('.markdown-document pre').first()).not.toBeEmpty();
   await expect(page.locator('.markdown-document table').first()).toBeVisible();
   await expect(page.getByText('Upstream library provenance', { exact: true })).toHaveCount(0);

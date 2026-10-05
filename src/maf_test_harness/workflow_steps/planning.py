@@ -16,7 +16,6 @@ from ..envs.setup_guide import setup_guide
 from ..llm.prompts import build_prompt
 from ..models import GeneratedFilesDraft, RequirementsDraft, TestDesignDraft, TestPlan
 from ..qa.report import design_cases
-from ..repo.requirements import requirements_from_facts
 from ..repo.stack import detect_stack
 from ..settings import (
     EXECUTION_TIMEOUT_SECONDS,
@@ -28,10 +27,12 @@ from ..skills.contracts import (
     finalize_discovered_requirements,
     validate_generated_files,
 )
+from ..skills.host import execute_host_skill
 from ..workflow_support import (
     CORE_STAGES,
     MODEL_REPAIR_ATTEMPTS,
     _allowed_levels,
+    _compact_repo,
     _compact_requirements,
     atomic_json,
 )
@@ -117,22 +118,20 @@ class PlanningSteps:
                     *analysis.get("gaps", []),
                     "Requirements include only files retained in the host source-evidence budget; inspect repository analysis for omitted declarations.",
                 ]
-            draft = requirements_from_facts(
-                analysis,
-                repo.get("repo_name") or "Repository",
-                state.get("repo_knowledge", ""),
+            draft = await asyncio.to_thread(
+                execute_host_skill,
+                self.run_dir,
+                self.skills_root,
+                stage,
+                "requirement-analysis",
+                {
+                    "analysis": analysis,
+                    "app_name": repo.get("repo_name") or "Repository",
+                    "knowledge": state.get("repo_knowledge", ""),
+                },
+                state,
+                self.audit,
             )
-            from ..skills.registry import verify_lock
-
-            problems = verify_lock(self.skills_root, ["requirement-analysis"])
-            if problems:
-                raise ValueError("Requirement skill integrity failed: " + "; ".join(problems))
-            state.setdefault("skill_tool_trace", {})[stage] = {
-                "execution_mode": "host-static",
-                "skills": ["requirement-analysis"],
-                "verified_host_skill": True,
-                "skill_loaded_via_maf": None,
-            }
             state["draft"] = draft
             artifact = await self.validate(stage, state)
             artifact["metadata"]["generator"] = "requirement-analysis"
@@ -141,6 +140,7 @@ class PlanningSteps:
             artifact["model_calls"] = 0
             self.audit(
                 "deterministic_requirements",
+                stage=stage,
                 model_calls=0,
                 requirements=len(artifact["requirement_model"]["requirements"]),
             )
@@ -181,18 +181,33 @@ class PlanningSteps:
             raise ValueError(f"Unsupported model stage: {stage}")
 
         schema = response_format.model_json_schema()
+        if stage == "test_design":
+            requirements = _compact_requirements(state["artifacts"]["requirements"])
+            ids = sorted(
+                {
+                    item["id"]
+                    for key in ("requirements", "acceptance_criteria", "validation_rules", "api_contracts")
+                    for item in requirements[key]
+                }
+            )
+            schema["$defs"]["TraceabilityLinkDraft"]["properties"]["id"]["enum"] = ids
+            schema["$defs"]["TestDesignCaseDraft"]["properties"]["actor"]["enum"] = sorted(
+                {a["name"] for a in requirements["actors"]} | {"System"}
+            )
         evidence_paths = re.findall(r"--- FILE: (.*?) ---", state.get("evidence", ""))
         repair = ""
         for attempt in range(1, MODEL_REPAIR_ATTEMPTS + 1):
             prompt = build_prompt(
                 {
                     "assignment": assignment,
-                    "repository": state["artifacts"]["repo_analysis"],
+                    "repository": _compact_repo(state["artifacts"]["repo_analysis"], []),
                     "approved_inputs": {
                         **upstream,
                         "user_repository_context_unverified": state.get("repo_knowledge", ""),
                     },
-                    "repository_evidence": state.get("evidence", ""),
+                    "repository_evidence": state.get("evidence", "")
+                    if stage == "requirements"
+                    else state.get("evidence", "")[:32000],
                     "evidence_file_paths": evidence_paths if stage == "requirements" else None,
                     "stack_profile": state.get("stack", {}),
                     "selected_application": {
@@ -206,6 +221,23 @@ class PlanningSteps:
                     },
                     "revision_feedback": state.get("feedback", {}).get(stage),
                     "repair_feedback": repair or None,
+                    "approved_traceability_ids": {
+                        key: [
+                            item["id"]
+                            for item in _compact_requirements(state["artifacts"].get("requirements", {})).get(
+                                key, []
+                            )
+                        ]
+                        for key in (
+                            "requirements",
+                            "acceptance_criteria",
+                            "validation_rules",
+                            "api_contracts",
+                        )
+                    }
+                    if stage == "test_design"
+                    else None,
+                    "traceability_rule": "Copy source IDs verbatim from approved_traceability_ids. Never create source IDs or actors. Unknown behavior remains a gap; do not invent it.",
                     "output_contract": schema,
                     "json_rules": {
                         "single_complete_object": True,
@@ -255,7 +287,7 @@ class PlanningSteps:
                 if attempt == MODEL_REPAIR_ATTEMPTS:
                     raise
                 repair = (
-                    f"Attempt {attempt} was rejected by host validation: {str(exc)[:900]}. Return a corrected "
+                    f"Attempt {attempt} was rejected by host validation: {str(exc)[:16000]}. Return a corrected "
                     "complete JSON object that fixes exactly this problem and keeps everything else valid."
                 )
                 continue

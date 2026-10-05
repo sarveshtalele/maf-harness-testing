@@ -40,6 +40,15 @@ def test_default_workflow_builds_requirements_without_calling_model(tmp_path, mo
         artifact = host.state["artifacts"]["requirements"]
         assert artifact["analysis_mode"] == "deterministic" and artifact["model_calls"] == 0
         assert artifact["metadata"]["generator"] == "requirement-analysis"
+        scripts = host.state["skill_script_runs"]
+        assert {r["skill"] for r in scripts} == {"reverse-engineering", "requirement-analysis"}
+        assert all(r["exit_code"] == 0 and len(r["sha256"]) == 64 for r in scripts)
+        from maf_test_harness.monitoring.report import build_report
+
+        report = build_report(tmp_path, Path("skills"))
+        host_rows = [r for r in report["stages"] if r["stage"] in {"repo_analysis", "requirements"}]
+        assert all(r["actor"] == "host" and r["assigned_skills"] and r["script_runs"] == 1 for r in host_rows)
+        assert report["totals"]["script_runs"] == 2
         assert runtime.calls == [] and not host.workspace.exists()
         assert host.state["artifacts"]["repo_analysis"]["reverse_engineering"]["facts"]
     finally:
@@ -65,3 +74,23 @@ def test_host_skills_do_not_claim_model_companion_execution():
     state = {"requirements_mode": "deterministic", "stack": {"openapi_files": ["openapi.json"]}}
     assert skills_for("requirements", state).all == ["requirement-analysis"]
     assert skills_for("repo_analysis", state).all == ["reverse-engineering"]
+
+
+def test_progress_counts_approved_gates_and_never_equates_completion_to_pass():
+    from maf_test_harness.ui.progress import progress
+
+    state = {
+        "stages": ["repo_analysis", "test_execution"],
+        "approved": {"repo_analysis": "hash"},
+        "artifacts": {"test_execution": {"qa_report": {"verdict": "FAIL"}}},
+    }
+    assert progress({"state": state, "status": "waiting"})["percent"] == 50
+    assert progress({"state": state, "status": "complete"})["percent"] == 100
+
+
+def test_skill_script_input_paths_cannot_escape_temporary_directory():
+    from maf_test_harness.skills.scripts import HarnessScriptRunner, ScriptRefused
+
+    runner = HarnessScriptRunner(Path("skills"), tiers=("host",))
+    with pytest.raises(ScriptRefused, match="temporary input"):
+        runner.run("requirement-analysis", "scripts/analyze.py", files={"../escaped.json": "{}"})

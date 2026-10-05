@@ -40,6 +40,7 @@ class HarnessScriptRunner:
     """MAF ``SkillScriptRunner`` and the host's own script executor, both gated by the same allow-list."""
 
     def __init__(self, skills_root: Path, tiers: tuple[str, ...] = ("model",)):
+        self.tiers = tiers
         self.skills_root = Path(skills_root).resolve()
         self.allowed = {
             key: sha for tier in tiers for key, sha in reviewed_scripts(self.skills_root, tier).items()
@@ -76,21 +77,41 @@ class HarnessScriptRunner:
 
     # ---- execution
     def run(
-        self, skill: str, rel: str, args: Any = None, *, files: dict[str, str] | None = None
+        self,
+        skill: str,
+        rel: str,
+        args: Any = None,
+        *,
+        files: dict[str, str] | None = None,
+        output_json: str | None = None,
     ) -> dict[str, Any]:
         """Run a reviewed script in a temp dir holding ``files``; returns {exit_code, stdout, stderr, ...}."""
+        if output_json and "host" not in self.tiers:
+            raise ScriptRefused("JSON artifact output is host-only.")
         path = self.check(skill, rel)
         argv = [*INTERPRETERS.get(path.suffix, [str(path)]), str(path), *self._clean_args(args)]
-        work = Path(tempfile.mkdtemp(prefix="skill-script-"))
+        work = Path(tempfile.mkdtemp(prefix="skill-script-")).resolve()
         try:
             for name, content in (files or {}).items():
-                target = work / "input" / name
+                target = (work / "input" / name).resolve()
+                if not target.is_relative_to(work / "input"):
+                    raise ScriptRefused("Input file must stay inside the temporary input directory.")
                 target.parent.mkdir(parents=True, exist_ok=True)
                 target.write_text(content, encoding="utf-8")
             started = time.time()
             result = run_command(argv, work, work / "logs", timeout=SCRIPT_TIMEOUT_SECONDS)
             stdout = (work / "logs" / "stdout.log").read_text(encoding="utf-8", errors="replace")
             stderr = (work / "logs" / "stderr.log").read_text(encoding="utf-8", errors="replace")
+            data = None
+            if output_json and result.get("exit_code") == 0:
+                output = (work / output_json).resolve()
+                if (
+                    not output.is_relative_to(work)
+                    or output.is_symlink()
+                    or output.stat().st_size > 8_000_000
+                ):
+                    raise ScriptRefused("Invalid or oversized host JSON output.")
+                data = json.loads(output.read_text(encoding="utf-8"))
         finally:
             shutil.rmtree(work, ignore_errors=True)
         record = {
@@ -103,7 +124,12 @@ class HarnessScriptRunner:
             "duration_seconds": round(time.time() - started, 3),
         }
         self.runs.append(record)
-        return {**record, "stdout": stdout[:MAX_OUTPUT_CHARS], "stderr": stderr[:MAX_OUTPUT_CHARS]}
+        return {
+            **record,
+            "stdout": stdout[:MAX_OUTPUT_CHARS],
+            "stderr": stderr[:MAX_OUTPUT_CHARS],
+            **({"data": data} if output_json else {}),
+        }
 
     # ---- MAF SkillScriptRunner protocol
     def __call__(self, skill: Any, script: Any, args: Any = None) -> str:

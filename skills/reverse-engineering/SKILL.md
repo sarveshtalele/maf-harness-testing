@@ -14,3 +14,5 @@ Python declarations use AST; non-Python declaration candidates are explicitly he
 Keep candidate facts separate from demonstrated semantics. Never claim architectural pattern, domain behavior, security, compliance or complete coverage from symbol names. Record syntax failures, skipped files and limits in gaps. Retain the existing host's route, dependency and stack evidence rather than replacing those contracts.
 
 Output: JSON facts, files, coverage and gaps, stored inside the repository-analysis artifact and `reverse_engineering.json`.
+
+Execution proof: the host runs `scripts/analyze.py --request input/request.json --output output.json` through its reviewed host-tier script runner. The request is host-owned JSON; reverse engineering reads the approved clone, and requirements consumes its saved facts. The runner records script SHA-256, stage, exit code and duration. Successful JSON output is validated before the review gate. No model chooses or invokes these two scripts.

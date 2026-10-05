@@ -767,7 +767,9 @@ class MAFHarnessRuntime:
         if (
             self.script_runner.runs
         ):  # scripts the agent ran through MAF run_skill_script (reviewed, hash-checked)
-            state.setdefault("skill_script_runs", []).extend(self.script_runner.runs)
+            state.setdefault("skill_script_runs", []).extend(
+                {**r, "stage": stage} for r in self.script_runner.runs
+            )
             self.script_runner.runs.clear()
         raw_text = result.text or ""
         state.setdefault("raw_model_output", {})[stage] = raw_text

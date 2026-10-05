@@ -341,7 +341,6 @@ class GenerationSteps:
         gaps_report.notes so a human decides at the review gate instead of the run being blocked.
         """
         arts = state["artifacts"]
-        reqs = {r["id"]: r["text"] for r in arts["requirements"]["requirement_model"]["requirements"]}
         cited = " ".join(str(g) for g in state.get("draft", {}).get("gaps", [])).lower()
         cases = design_cases(design)
         problems: list[str] = []
@@ -366,7 +365,7 @@ class GenerationSteps:
             )
         missing = [rid for rid in design["gaps_report"]["uncovered_requirements"] if rid.lower() not in cited]
         if missing:
-            listing = "; ".join(f"{rid}: {reqs[rid][:110]}" for rid in missing[:12])
+            listing = "; ".join(missing)
             problems.append(
                 f"{len(missing)} requirement(s) have no test case. Add cases tracing to them, or cite each "
                 f"requirement ID in `gaps` with the reason. Uncovered: {listing}"
