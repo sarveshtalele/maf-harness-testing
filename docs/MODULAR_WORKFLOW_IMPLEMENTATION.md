@@ -39,3 +39,5 @@ If an adapter or startup procedure cannot be inferred, the guide explicitly requ
 - Production build and lint/format checks passed.
 - Production launcher smoke check verified the actual homepage and authenticated backend proxy, then stopped both servers.
 - Windows/macOS CI remains the cross-platform gate; local verification was on macOS. Model responses in workflow regression tests use scripted transports; no fresh model-driven GitHub qualification run is claimed by these results.
+
+The first macOS CI startup check exposed the launcher's old ten-second API readiness budget during cold imports. The launcher now uses a bounded 90-second monotonic deadline and still fails immediately if the backend process exits. The startup test retains actual homepage/proxy and shutdown assertions.

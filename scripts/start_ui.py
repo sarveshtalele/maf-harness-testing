@@ -69,7 +69,9 @@ def main():
             **kwargs,
         )
         processes.append(backend)
-        for _ in range(100):
+        # Cold MAF imports on hosted runners can exceed the old ten-second startup budget.
+        deadline = time.monotonic() + 90
+        while time.monotonic() < deadline:
             if backend.poll() is not None:
                 raise RuntimeError("The local API failed to start. See its error above.")
             try:

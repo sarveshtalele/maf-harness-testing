@@ -42,7 +42,7 @@ def test_occupied_port_is_rejected_without_stopping_its_owner(preflight):
             pass
 
 
-def test_production_startup_verifies_proxy_and_stops_both_servers():
+def test_production_startup_verifies_proxy_and_stops_both_servers(tmp_path):
     root = Path(__file__).resolve().parents[1]
     if not (root / "frontend/.next/BUILD_ID").is_file():
         pytest.skip("Build the frontend before the startup integration check")
@@ -65,7 +65,12 @@ def test_production_startup_verifies_proxy_and_stops_both_servers():
         cwd=root,
         capture_output=True,
         text=True,
-        timeout=120,
+        env={
+            **os.environ,
+            "HARNESS_RUNS_DIR": str(tmp_path / "runs"),
+            "HARNESS_USAGE_DIR": str(tmp_path / "usage"),
+        },
+        timeout=240,
     )
     assert result.returncode == 0, result.stdout + result.stderr
     assert "Startup verified: UI and authenticated backend proxy work." in result.stdout
