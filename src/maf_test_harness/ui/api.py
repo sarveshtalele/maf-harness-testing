@@ -5,8 +5,11 @@ from __future__ import annotations
 import argparse
 import hmac
 import json
+import logging
 import os
 import re
+import traceback
+from datetime import UTC, datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from threading import RLock
@@ -21,6 +24,7 @@ from ..monitoring.report import build_report
 from ..repo.analyzer import validate_github_url
 from ..settings import API_KEY, BASE_URL, MODEL, validate_gateway_settings
 from ..workflow import Harness
+from ..workflow_support import atomic_json
 from .evidence_api import EvidenceAPI
 from .presentation import public
 from .progress import progress
@@ -105,7 +109,18 @@ class LocalAPI(EvidenceAPI, SettingsAPI):
                 self.job.result()
             except Exception as exc:
                 self.errors[self.job_run] = public(str(exc))
+                self.operation_log(self.job_run, "failed", public(traceback.format_exc()))
+                path = self.run_path(self.job_run) / "run.json"
+                view = json.loads(path.read_text(encoding="utf-8"))
+                if not view.get("pending"):
+                    view.update(status="interrupted", error=public(str(exc)))
+                    atomic_json(path, view)
             self.job = None
+
+    def operation_log(self, key, status, error=""):
+        path = self.run_path(key) / "workflow.log"
+        with path.open("a", encoding="utf-8") as stream:
+            stream.write(f"{datetime.now(UTC).isoformat()} operation {status} {public(error)}\n")
 
     def busy(self) -> bool:
         self.harvest()
@@ -247,6 +262,7 @@ class LocalAPI(EvidenceAPI, SettingsAPI):
                 await self.host.start(url, app_url, launch, component, knowledge)
 
             self.job_run = key
+            self.operation_log(key, "starting repository workflow; waiting for clone approval")
             self.job = self.service.submit(begin())
             return {"id": key}
 
@@ -276,6 +292,7 @@ class LocalAPI(EvidenceAPI, SettingsAPI):
 
             self.errors.pop(key, None)
             self.job_run = key
+            self.operation_log(key, f"responding to {pending['stage']} {pending['kind']} gate: {decision}")
             self.job = self.service.submit(answer())
             return {"id": key}
 
@@ -287,6 +304,32 @@ class LocalAPI(EvidenceAPI, SettingsAPI):
             self.job_run = key
             self.errors.pop(key, None)
             self.job = self.service.submit(self.replace_host(key))
+            return {"id": key}
+
+    def rerun(self, key: str, body: dict):
+        with self.lock:
+            if self.busy():
+                raise RuntimeError("Wait for the active operation before rerunning a step.")
+            run = self.read(key)
+            stage = body.get("stage")
+            saved_stages = run["state"].get("stages", [])
+            if stage not in saved_stages:
+                raise ValueError("Unknown workflow step.")
+            if any(
+                s not in run["state"].get("approved", {}) for s in saved_stages[: saved_stages.index(stage)]
+            ):
+                raise ValueError("Approve preceding steps before rerunning this step.")
+            if body.get("request_id") != (run["pending"] or {}).get("id"):
+                raise RuntimeError("Run changed. Refresh before rerunning a step.")
+
+            async def replay():
+                await self.replace_host(key)
+                await self.host.rerun(stage, body.get("request_id"))
+
+            self.errors.pop(key, None)
+            self.job_run = key
+            self.operation_log(key, f"rerunning from {stage}")
+            self.job = self.service.submit(replay())
             return {"id": key}
 
     def delete_run(self, key: str, body: dict) -> dict:
@@ -444,9 +487,17 @@ def make_server(api: LocalAPI, token: str, port: int = 8765):
                         self.reply(202, api.start(body))
                     elif len(parts) == 3 and parts[0] == "runs" and parts[2] == "delete":
                         self.reply(200, api.delete_run(parts[1], body))
-                    elif len(parts) == 3 and parts[0] == "runs" and parts[2] in {"respond", "reconnect"}:
+                    elif (
+                        len(parts) == 3
+                        and parts[0] == "runs"
+                        and parts[2] in {"respond", "reconnect", "rerun"}
+                    ):
                         result = (
-                            api.respond(parts[1], body) if parts[2] == "respond" else api.reconnect(parts[1])
+                            api.respond(parts[1], body)
+                            if parts[2] == "respond"
+                            else api.rerun(parts[1], body)
+                            if parts[2] == "rerun"
+                            else api.reconnect(parts[1])
                         )
                         self.reply(202, result)
                     else:
@@ -458,6 +509,9 @@ def make_server(api: LocalAPI, token: str, port: int = 8765):
             except (RuntimeError, PermissionError) as exc:
                 self.reply(409, {"error": public(str(exc))})
             except Exception:
+                logging.getLogger(__name__).error(
+                    "Local API request failed: %s", public(traceback.format_exc())
+                )
                 self.reply(
                     500, {"error": "Unable to read this run. Inspect local state and reconnect if needed."}
                 )
@@ -469,6 +523,7 @@ def make_server(api: LocalAPI, token: str, port: int = 8765):
 
 
 def main():
+    logging.basicConfig(level=logging.WARNING, format="%(asctime)s %(levelname)s %(message)s")
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--port", type=int, default=8765)
     args = parser.parse_args()

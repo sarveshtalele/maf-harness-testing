@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import secrets
 import shutil
 import signal
@@ -12,14 +13,62 @@ import socket
 import subprocess
 import sys
 import time
+from datetime import datetime
 from pathlib import Path
+from threading import Lock, Thread
 from urllib.error import URLError
 from urllib.request import urlopen
 
 ROOT = Path(__file__).resolve().parents[1]
 
 
+def node_runtime():
+    node = shutil.which("node")
+    if not node:
+        raise RuntimeError("Install Node.js 24 LTS, open a new terminal, then retry. https://nodejs.org/")
+    result = subprocess.run([node, "--version"], capture_output=True, text=True, timeout=10)
+    version = result.stdout.strip()
+    if result.returncode or not re.fullmatch(r"v24\.\d+\.\d+", version):
+        raise RuntimeError(
+            f"Node.js 24 LTS is required. Found {version or 'unknown'} at {node}. Check where node (Windows) or which node (macOS) and remove older PATH entries."
+        )
+    print(f"Node.js {version} · {node} (Next.js is a separate framework version)", flush=True)
+    return node
+
+
+def npm_command(node):
+    npm = shutil.which("npm.cmd" if os.name == "nt" else "npm")
+    roots = [Path(node).resolve().parent, Path(npm).resolve().parent if npm else Path(node).parent]
+    candidates = [root / "node_modules/npm/bin/npm-cli.js" for root in roots]
+    candidates += [root / "../lib/node_modules/npm/bin/npm-cli.js" for root in roots]
+    if npm and Path(npm).resolve().name == "npm-cli.js":
+        candidates.append(Path(npm).resolve())
+    cli = next((p.resolve() for p in candidates if p.is_file()), None)
+    if not cli:
+        raise RuntimeError(
+            "Cannot find npm-cli.js for Node 24. Repair the official Node.js 24 installation and reopen the terminal."
+        )
+    return [node, str(cli)]
+
+
+def frontend_command(node, mode, port=None):
+    entry = ROOT / "frontend/node_modules/next/dist/bin/next"
+    if not entry.is_file():
+        raise RuntimeError(
+            "Next.js is missing. Run start-windows.cmd or start-macos.command to reinstall frontend dependencies."
+        )
+    return [
+        node,
+        str(entry),
+        mode,
+        *(["--webpack"] if mode == "build" else ["--hostname", "127.0.0.1", "--port", str(port)]),
+    ]
+
+
 def main():
+    for stream in (sys.stdout, sys.stderr):
+        if hasattr(stream, "reconfigure"):
+            stream.reconfigure(encoding="utf-8", errors="backslashreplace")
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--production", action="store_true", help="Use the built frontend (npm run build first)"
@@ -27,13 +76,17 @@ def main():
     parser.add_argument(
         "--check-only", action="store_true", help="Check ports before rebuilding a stopped UI"
     )
+    parser.add_argument(
+        "--prepare", action="store_true", help="Install frontend dependencies and build with Node 24"
+    )
     parser.add_argument("--smoke-test", action="store_true", help="Verify both servers, then stop")
     parser.add_argument("--port", type=int, default=3000)
     parser.add_argument("--api-port", type=int, default=8765)
     args = parser.parse_args()
-    npm = shutil.which("npm.cmd" if os.name == "nt" else "npm")
-    if not npm or (not args.check_only and not (ROOT / "frontend" / "node_modules").is_dir()):
-        parser.error("Install Node.js and run npm ci in frontend first.")
+    try:
+        node = node_runtime()
+    except (RuntimeError, OSError, subprocess.TimeoutExpired) as exc:
+        parser.error(str(exc))
     if args.port == args.api_port or not all(0 < p < 65536 for p in (args.port, args.api_port)):
         parser.error("Choose two different ports between 1 and 65535.")
     for port in (args.port, args.api_port):
@@ -51,10 +104,70 @@ def main():
         "HARNESS_API_TOKEN": secrets.token_urlsafe(48),
         "HARNESS_API_PORT": str(args.api_port),
         "NEXT_TELEMETRY_DISABLED": "1",
+        "PYTHONUTF8": "1",
+        "PYTHONIOENCODING": "utf-8",
+        "PYTHONUNBUFFERED": "1",
+        "PATH": str(Path(node).parent) + os.pathsep + os.environ.get("PATH", ""),
     }
     # Keep each operating-system user's data separate; an explicit runs directory still takes precedence.
     env.setdefault("HARNESS_RUNS_DIR", str(Path.home() / ".maf-harness" / "runs"))
     Path(env["HARNESS_RUNS_DIR"]).mkdir(parents=True, exist_ok=True, mode=0o700)
+    log_dir = Path(env.get("HARNESS_LOG_DIR") or Path(env["HARNESS_RUNS_DIR"]).parent / "logs")
+    log_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
+    env["HARNESS_LOG_DIR"] = str(log_dir)
+    log_path = log_dir / ("launch-" + datetime.now().strftime("%Y%m%d-%H%M%S-%f") + ".log")
+    log = log_path.open("w", encoding="utf-8")
+    print(
+        f"Service/setup log: {log_path}\nRun logs: {Path(env['HARNESS_RUNS_DIR']) / '<run-id>'} (Logs, Audit and Observability in the UI)",
+        flush=True,
+    )
+    lock = Lock()
+    # Keys may be configured in .env rather than inherited. Never copy them into saved service output.
+    secret_values = [
+        v
+        for k, v in env.items()
+        if any(t in k.upper() for t in ("KEY", "TOKEN", "SECRET", "PASSWORD")) and len(v) > 8
+    ]
+    if (ROOT / ".env").is_file():
+        for line in (ROOT / ".env").read_text(encoding="utf-8").splitlines():
+            key, sep, value = line.partition("=")
+            if (
+                sep
+                and any(t in key.upper() for t in ("KEY", "TOKEN", "SECRET", "PASSWORD"))
+                and len(value.strip().strip("\"'")) > 8
+            ):
+                secret_values.append(value.strip().strip("\"'"))
+    threads = []
+
+    def launch(argv, cwd, name):
+        child = subprocess.Popen(
+            argv,
+            cwd=cwd,
+            env=env,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            **kwargs,
+        )
+        processes.append(child)
+
+        def pump():
+            for line in child.stdout:
+                for secret in secret_values:
+                    line = line.replace(secret, "[REDACTED]")
+                with lock:
+                    log.write(f"{datetime.now().isoformat(timespec='seconds')} [{name}] {line}")
+                    log.flush()
+                    print(line, end="", flush=True)
+            child.stdout.close()
+
+        worker = Thread(target=pump, daemon=True)
+        threads.append(worker)
+        worker.start()
+        return child
+
     processes = []
     kwargs = (
         {"creationflags": subprocess.CREATE_NEW_PROCESS_GROUP}
@@ -62,13 +175,23 @@ def main():
         else {"start_new_session": True}
     )
     try:
-        backend = subprocess.Popen(
+        if args.prepare:
+            install = launch(
+                [*npm_command(node), "ci", "--include=dev", "--bin-links=true"],
+                ROOT / "frontend",
+                "npm-install",
+            )
+            if install.wait() != 0:
+                raise RuntimeError(f"npm install failed. See {log_path}")
+            build = launch(frontend_command(node, "build"), ROOT / "frontend", "next-build")
+            if build.wait() != 0:
+                raise RuntimeError(f"Next.js build failed. See {log_path}")
+            return
+        backend = launch(
             [sys.executable, "-m", "maf_test_harness.ui.api", "--port", str(args.api_port)],
-            cwd=ROOT,
-            env=env,
-            **kwargs,
+            ROOT,
+            "backend",
         )
-        processes.append(backend)
         # Cold MAF imports on hosted runners can exceed the old ten-second startup budget.
         deadline = time.monotonic() + 90
         while time.monotonic() < deadline:
@@ -81,8 +204,8 @@ def main():
                 time.sleep(0.1)
         else:
             raise RuntimeError("The local API did not become ready.")
-        command = [npm, "run", "start" if args.production else "dev", "--", "--port", str(args.port)]
-        processes.append(subprocess.Popen(command, cwd=ROOT / "frontend", env=env, **kwargs))
+        command = frontend_command(node, "start" if args.production else "dev", args.port)
+        launch(command, ROOT / "frontend", "frontend")
         if args.smoke_test:
             for _ in range(120):
                 if any(process.poll() is not None for process in processes):
@@ -127,6 +250,9 @@ def main():
                 else:
                     process.kill()
                 process.wait()
+        for worker in threads:
+            worker.join(timeout=5)
+        log.close()
 
 
 if __name__ == "__main__":

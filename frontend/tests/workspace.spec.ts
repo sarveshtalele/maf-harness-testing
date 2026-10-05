@@ -124,6 +124,16 @@ test('complete browser workflow, layouts, evidence, downloads and stale gates', 
   const secret = await request.get('/api/harness/config');
   expect(JSON.stringify(await secret.json())).not.toContain('fixture-configured-flag');
   expect(errors).toEqual([]);
+  await page.setViewportSize({ width: 1440, height: 1000 });
+  await page.getByRole('button', { name: 'Rerun from step ↻', exact: true }).click();
+  await page.locator('[aria-label="Rerun workflow step"]').getByRole('button', { name: 'Requirements', exact: true }).click();
+  await page.getByRole('button', { name: 'Rerun Requirements →', exact: true }).click();
+  await expect(page.getByRole('button', { name: 'Approve and proceed', exact: true })).toBeEnabled();
+  await expect(page.getByText('Workflow progress · 14%', { exact: true })).toBeVisible();
+  await page.reload();
+  await expect(page.getByRole('button', { name: 'Approve and proceed', exact: true })).toBeEnabled();
+  await page.getByRole('button', { name: 'Stop workflow', exact: true }).click();
+  await expect(page.getByText('Workflow stopped. Approved evidence remains available.', { exact: true })).toBeVisible();
 });
 
 test('failed execution shows recorded reason, improvement advice and inspectable results', async ({ page, request }) => {
@@ -211,7 +221,7 @@ test('mouse resizing persists and project skill cards show real package details'
   await expect.poll(async () => (await panel.boundingBox())!.width).toBeCloseTo(resized.width, 0);
   await expect.poll(async () => (await panel.boundingBox())!.height).toBeCloseTo(resized.height, 0);
   await page.getByRole('button', { name: 'Agent skills', exact: true }).click();
-  await expect(page.getByRole('heading', { name: 'Skill → workflow step → execution map', exact: true })).toBeVisible();
+  await expect(page.getByLabel('requirement-analysis workflow map')).toBeVisible();
   await expect(page.locator('.skill-card')).toHaveCount(12);
   await page.getByRole('searchbox', { name: 'Search agent skills' }).fill('playwright');
   await expect(page.locator('.skill-card')).toHaveCount(1);

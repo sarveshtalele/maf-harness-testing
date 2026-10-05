@@ -201,6 +201,7 @@ def _generation_policy(repo: dict[str, Any], state: dict[str, Any] | None = None
         "selected_application_component": state.get("app_component"),
         "component_path_rule": "Place Node tests inside the component containing its package.json. For the selected frontend, write new specs under <selected_application_component>/tests/. Root tests/ cannot resolve nested frontend dependencies. Other ecosystems belong to their own manifest component.",
         "python_import_roots": extra_import_roots(repo.get("source_files") or []),
+        "python_contract_rule": "Inspect collaborator signatures before constructing fixtures, including all required dataclass fields. Follow the actual returned representation: dictionary keys are not object attributes. Never infer return types from an internal helper dataclass if the function serializes it to a dictionary. Read the implementation before writing assertions.",
         "declared_dependencies": (state.get("declared_dependencies") or [])[:120],
         "forbidden_imports": _undeclared_libraries(state.get("declared_dependencies") or []),
         "dependency_rule": (

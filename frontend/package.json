@@ -3,11 +3,11 @@
   "version": "1.0.0",
   "private": true,
   "scripts": {
-    "dev": "next dev --hostname 127.0.0.1",
-    "build": "next build --webpack",
-    "start": "next start --hostname 127.0.0.1",
-    "typecheck": "tsc --noEmit",
-    "test": "playwright test"
+    "dev": "node node_modules/next/dist/bin/next dev --hostname 127.0.0.1",
+    "build": "node node_modules/next/dist/bin/next build --webpack",
+    "start": "node node_modules/next/dist/bin/next start --hostname 127.0.0.1",
+    "typecheck": "node node_modules/typescript/bin/tsc --noEmit",
+    "test": "node node_modules/@playwright/test/cli.js test"
   },
   "dependencies": {
     "next": "16.3.8",
@@ -20,5 +20,8 @@
     "@types/react": "19.3.0",
     "@types/react-dom": "19.3.0",
     "typescript": "7.0.2"
+  },
+  "engines": {
+    "node": ">=24 <25"
   }
 }

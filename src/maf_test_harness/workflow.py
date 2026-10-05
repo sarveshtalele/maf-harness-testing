@@ -54,6 +54,7 @@ from .tools.typed import default_registry
 from .workflow_steps.execution import ExecutionSteps
 from .workflow_steps.generation import GenerationSteps
 from .workflow_steps.planning import PlanningSteps
+from .workflow_steps.rerun import RerunSteps
 
 # Levels that need a running application; without one the design stage may only use in-process levels.
 from .workflow_support import (
@@ -126,7 +127,7 @@ class StageExecutor(Executor):
         await self.host.answer(original_request.get("stage", self.stage), original_request, response, ctx)
 
 
-class Harness(ExecutionSteps, GenerationSteps, PlanningSteps):
+class Harness(RerunSteps, ExecutionSteps, GenerationSteps, PlanningSteps):
     """Checkpointed autonomous MAF workflow with one human review gate per stage."""
 
     def __init__(
@@ -189,15 +190,28 @@ class Harness(ExecutionSteps, GenerationSteps, PlanningSteps):
             self.audit,
         )
         self.hooks.notify(SESSION_START, run=self.run_dir.name, resumed=bool(self.state))
-        self.storage = FileCheckpointStorage(self.run_dir / "checkpoints")
-        executors = [StageExecutor(stage, self) for stage in self.stages]
+        self._build_workflow()
+
+    def _build_workflow(self):
+        attempt = self.view.get("rerun_attempt")
+        self.storage = FileCheckpointStorage(
+            self.run_dir / "checkpoints" / attempt if attempt else self.run_dir / "checkpoints"
+        )
+        start = self.view.get("restart_stage") or self.stages[0]
+        first = self.stages.index(start)
+        if EXECUTION_STAGE in self.stages:
+            first = min(first, self.stages.index("test_generation"))
+        graph_stages = self.stages[first:]
+        executors = [StageExecutor(stage, self) for stage in graph_stages]
         builder = WorkflowBuilder(
-            start_executor=executors[0], name="maf-test-harness", checkpoint_storage=self.storage
+            start_executor=executors[graph_stages.index(start)],
+            name="maf-test-harness",
+            checkpoint_storage=self.storage,
         )
         for current, following in zip(executors, executors[1:], strict=False):
             builder.add_edge(current, following)
         if EXECUTION_STAGE in self.stages:  # human-approved heal loop: failing tests go back to generation
-            builder.add_edge(executors[-1], executors[self.stages.index("test_generation")])
+            builder.add_edge(executors[-1], executors[graph_stages.index("test_generation")])
         self.workflow = builder.build()
         self._restored = False
 

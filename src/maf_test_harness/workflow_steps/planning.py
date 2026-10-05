@@ -72,7 +72,10 @@ class PlanningSteps:
         finally:
             record.update(state.get("model_instructions", {}).get(stage, {}))
             record["skills"] = [
-                {"name": name, "instructions": (self.skills_root / name / "SKILL.md").read_text()}
+                {
+                    "name": name,
+                    "instructions": (self.skills_root / name / "SKILL.md").read_text(encoding="utf-8"),
+                }
                 for name in skills_for(stage, state).all
             ]
             atomic_json(folder / f"{identifier}.json", record)

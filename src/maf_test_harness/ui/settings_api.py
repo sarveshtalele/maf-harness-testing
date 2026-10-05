@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 from pathlib import Path
 
@@ -78,6 +79,8 @@ class SettingsAPI:
                 "model": MODEL,
                 "base_url": BASE_URL,
                 "key_configured": bool(API_KEY),
+                "run_directory": str(self.runs),
+                "service_log_directory": os.getenv("HARNESS_LOG_DIR") or str(self.runs.parent / "logs"),
                 "daily": DailyUsageLedger().snapshot(),
                 "stages": STAGES,
                 "personas": {

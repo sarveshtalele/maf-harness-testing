@@ -94,6 +94,7 @@ GENERATION_MAX_ATTEMPTS = max(1, int(os.getenv("HARNESS_GENERATION_MAX_ATTEMPTS"
 
 # Wall-clock limit for each host-run setup/test command.
 EXECUTION_TIMEOUT_SECONDS = float(os.getenv("HARNESS_EXECUTION_TIMEOUT", "900"))
+MODEL_TIMEOUT_SECONDS = max(1, float(os.getenv("HARNESS_MODEL_TIMEOUT_SECONDS", "300")))
 
 
 def validate_gateway_settings() -> None:

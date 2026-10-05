@@ -326,3 +326,89 @@ def test_repository_knowledge_is_bounded_and_preserved(local_api):
     )["id"]
     wait(local_api)
     assert local_api.read(key)["state"]["repo_knowledge"] == "Use Python 3.11; see README."
+
+
+def test_rerun_step_preserves_evidence_and_resets_downstream(local_api):
+    api = local_api
+    key = api.start({"repo_url": "https://github.com/acme/demo"})["id"]
+    wait(api)
+    for _ in range(10):
+        approve(api, key)
+    assert api.read(key)["status"] == "complete"
+    api.rerun(key, {"stage": "requirements", "request_id": None})
+    wait(api)
+    assert not api.errors
+    run = api.read(key)
+    assert run["pending"]["stage"] == "requirements"
+    assert list(run["state"]["approved"]) == ["repo_analysis"]
+    assert "test_execution" not in run["state"]["artifacts"]
+    archives = list((api.run_path(key) / "attempts").glob("*/run.json"))
+    assert len(archives) == 1
+    assert json.loads(archives[0].read_text())["status"] == "complete"
+    with pytest.raises(ValueError, match="preceding"):
+        api.rerun(key, {"stage": "test_execution", "request_id": run["pending"]["id"]})
+    with pytest.raises(RuntimeError, match="changed"):
+        api.rerun(key, {"stage": "requirements", "request_id": "stale"})
+    # Recreating the host must resume the new checkpoint graph, not the old completed cycle.
+    api.reconnect(key)
+    wait(api)
+    approve(api, key)
+    assert api.read(key)["pending"]["stage"] == "test_planning"
+    for _ in range(10):
+        if api.read(key)["status"] == "complete":
+            break
+        approve(api, key)
+    assert api.read(key)["status"] == "complete"
+    api.rerun(key, {"stage": "test_execution", "request_id": None})
+    wait(api)
+    assert not api.errors
+    assert api.read(key)["pending"]["stage"] == "test_execution"
+    assert api.read(key)["pending"]["kind"] == "tool"
+
+
+@pytest.mark.parametrize(
+    "stage",
+    [
+        "repo_analysis",
+        "requirements",
+        "test_planning",
+        "test_design",
+        "test_generation",
+        "environment_setup",
+        "test_execution",
+    ],
+)
+def test_each_workflow_step_can_be_rerun(local_api, stage):
+    api = local_api
+    key = api.start({"repo_url": "https://github.com/acme/demo"})["id"]
+    wait(api)
+    for _ in range(10):
+        approve(api, key)
+    saved = api.read(key)
+    api.rerun(key, {"stage": stage, "request_id": None})
+    wait(api)
+    assert not api.errors
+    run = api.read(key)
+    assert run["pending"]["stage"] == stage
+    order = saved["state"]["stages"]
+    assert set(run["state"]["approved"]) == set(order[: order.index(stage)])
+    assert list((api.run_path(key) / "attempts").glob("*/run.json"))
+    if stage == "repo_analysis":
+        assert list((api.run_path(key) / "attempts").glob("*/repo"))
+
+
+def test_runtime_start_failure_is_persisted_and_visible_in_logs(local_api):
+    api = local_api
+
+    def unavailable():
+        raise RuntimeError("Gateway unavailable")
+
+    api.runtime_factory = unavailable
+    key = api.start({"repo_url": "https://github.com/acme/demo"})["id"]
+    wait(api)
+    run = api.read(key)
+    assert run["status"] == "interrupted"
+    assert run["operation_error"] == "Gateway unavailable"
+    log = (api.run_path(key) / "workflow.log").read_text(encoding="utf-8")
+    assert "starting repository workflow" in log and "Gateway unavailable" in log
+    assert any(item["path"] == "workflow.log" for item in api.evidence(key)["files"])

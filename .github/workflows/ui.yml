@@ -23,7 +23,8 @@ jobs:
       - run: uv sync --extra dev --extra e2e
       - run: uv run pytest tests/test_ui_api.py tests/test_platform_compat.py -q
       - run: uv run ruff check src tests scripts
-      - run: npm ci
+      - name: Install without npm command shims (Windows regression)
+        run: npm ci --include=dev --bin-links=false
         working-directory: frontend
       - run: uv run pytest tests/test_ui_launcher.py -q
       - run: npm run typecheck

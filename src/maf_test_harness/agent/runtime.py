@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import ast
+import asyncio
 import copy
 import hashlib
 import json
@@ -32,6 +33,7 @@ from ..monitoring.trace import TraceRecorder, summarize_arguments, tool_category
 from ..settings import (
     HOOKS_BACKEND,
     MAX_OUTPUT_TOKENS,
+    MODEL_TIMEOUT_SECONDS,
     SKILL_MODE,
 )
 from ..skills.config import COMPANION_PURPOSE
@@ -407,6 +409,14 @@ class MAFHarnessRuntime:
         self._clients.append(client)
         return client
 
+    async def _run_agent(self, agent, prompt, **kwargs):
+        try:
+            return await asyncio.wait_for(agent.run(prompt, **kwargs), timeout=MODEL_TIMEOUT_SECONDS)
+        except TimeoutError as exc:
+            raise AgentOutputError(
+                f"Model operation timed out after {MODEL_TIMEOUT_SECONDS:g} seconds. Check the gateway URL/model and connectivity, then Retry. HARNESS_MODEL_TIMEOUT_SECONDS controls this limit."
+            ) from exc
+
     async def run_tool_agent(
         self,
         *,
@@ -461,7 +471,7 @@ class MAFHarnessRuntime:
         if response_format is not None:
             options["response_format"] = response_format
         try:
-            result = await agent.run(prompt, session=agent.create_session(), options=options)
+            result = await self._run_agent(agent, prompt, session=agent.create_session(), options=options)
         except Exception as exc:
             run.update(status="failed", error=f"{type(exc).__name__}: {str(exc)[:300]}")
             self._emit(
@@ -655,7 +665,7 @@ class MAFHarnessRuntime:
             tracer.calls.clear()
             self._trace_context = {"stage": stage, "phase": "prime", "attempt": attempt}
             started = time.monotonic()
-            result = await agent.run(prompt, session=session, options={"temperature": 0})
+            result = await self._run_agent(agent, prompt, session=session, options={"temperature": 0})
             if result.user_input_requests:
                 raise AgentOutputError(
                     "The model requested a tool that needs approval; only reviewed skill tools are allowed."
@@ -726,7 +736,7 @@ class MAFHarnessRuntime:
         state.setdefault("invocations", []).append(invocation)
         persist()
         try:
-            result = await agent.run(prompt, session=session, options=run_options)
+            result = await self._run_agent(agent, prompt, session=session, options=run_options)
             invocation["status"] = "returned"
             invocation["response_sha256"] = hashlib.sha256((result.text or "").encode()).hexdigest()
         except Exception as exc:

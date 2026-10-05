@@ -156,7 +156,15 @@ def _child_env(output_dir: Path, inherit_env: bool, extra: dict[str, str] | None
     env = {key: os.environ[key] for key in names if key in os.environ}
     # No bytecode: a regenerated test with the same size and mtime second must never run from a stale .pyc.
     env.update(platform_compat.fake_home_env(output_dir / "home"))
-    env.update({"PYTHONUNBUFFERED": "1", "PYTHONDONTWRITEBYTECODE": "1", "CI": "1"})
+    env.update(
+        {
+            "PYTHONUNBUFFERED": "1",
+            "PYTHONUTF8": "1",
+            "PYTHONIOENCODING": "utf-8",
+            "PYTHONDONTWRITEBYTECODE": "1",
+            "CI": "1",
+        }
+    )
     env.update(extra or {})
     return env
 

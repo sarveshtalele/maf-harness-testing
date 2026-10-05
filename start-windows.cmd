@@ -14,9 +14,7 @@ uv run --no-project --python 3.12 python scripts/start_ui.py --check-only %*
 if errorlevel 1 exit /b %errorlevel%
 uv sync --python 3.12 --extra dev --extra e2e
 if errorlevel 1 exit /b %errorlevel%
-call npm --prefix frontend ci
-if errorlevel 1 exit /b %errorlevel%
-call npm --prefix frontend run build
+uv run python scripts/start_ui.py --prepare %*
 if errorlevel 1 exit /b %errorlevel%
 uv run python scripts/start_ui.py --production %*
 exit /b %errorlevel%

@@ -104,3 +104,9 @@ The application brand is **Agentic QE Platform**. Azure deployment is a document
 Configuration contains gateway status and usage; persona editing is only on **Agent prompts** and each run’s **Prompts** tab. Editor labels, text areas and action rows use consistent spacing in light/dark mode. Mouse resize handles remain; double-click a panel corner or press Home on its handle to restore automatic height and full width.
 
 Run history has a **Delete** action with a confirmation dialog. An active operation or CLI run lock prevents removal. Files move to `.deleted-runs` next to the user’s run directory, so removal from history is recoverable; no existing user run was removed during implementation or verification.
+
+## Step reruns and platform troubleshooting
+
+Skill workflow maps and recorded execution counts appear inside each skill card. **Rerun from step** repeats a selected stage whose upstream approvals are complete, preserving previous evidence under `attempts/<id>` and resetting downstream approvals. Active operations must reach a gate first; tool approvals still apply.
+
+See [Windows setup and debugging](WINDOWS_SETUP_AND_DEBUGGING.md) for Node 24 checks, shim-free Next startup, UTF-8 handling and exact service/run log locations.
