@@ -15,6 +15,9 @@ export default function Workspace() {
   const [page, setPage] = useState('Runs');
   const [id, setId] = useState('');
   const [tab, setTab] = useState('Review');
+  const [selectedStage, setSelectedStage] = useState('');
+  const [stageVisit, setStageVisit] = useState(0);
+  const currentId = useRef(id); currentId.current = id;
   const [runs, setRuns] = useState<RunSummary[]>([]);
   const [run, setRun] = useState<Run | null>(null);
   const [config, setConfig] = useState<Config | null>(null);
@@ -35,8 +38,9 @@ export default function Workspace() {
     const key = params.get('run');
     if (key && /^[A-Za-z0-9_-]{1,100}$/.test(key)) { setId(key); setPage('Run'); }
     if (!key && pages[params.get('page') || '']) setPage(pages[params.get('page') || '']);
+    setSelectedStage(stages.includes(params.get('stage') || '') ? params.get('stage')! : '');
     const value = params.get('tab'); if (value && tabs.includes(value)) setTab(value);
-    const pop = () => { const p = new URLSearchParams(location.search); setId(p.get('run') || ''); setPage(p.has('run') ? 'Run' : pages[p.get('page') || ''] || 'Runs'); setTab(tabs.includes(p.get('tab') || '') ? p.get('tab')! : 'Review'); };
+    const pop = () => { const p = new URLSearchParams(location.search); setId(p.get('run') || ''); setPage(p.has('run') ? 'Run' : pages[p.get('page') || ''] || 'Runs'); setTab(tabs.includes(p.get('tab') || '') ? p.get('tab')! : 'Review'); setSelectedStage(stages.includes(p.get('stage') || '') ? p.get('stage')! : ''); };
     window.addEventListener('popstate', pop); return () => window.removeEventListener('popstate', pop);
   }, []);
   useEffect(() => { document.documentElement.dataset.theme = theme === 'dark' ? 'dark' : 'light'; }, [theme]);
@@ -46,6 +50,7 @@ export default function Workspace() {
       api<Config>('config', undefined, signal),
       id ? api<Run>(`runs/${id}`, undefined, signal) : Promise.resolve(null),
     ]);
+    if (signal?.aborted || currentId.current !== id) return;
     setRuns(listing.runs); setServiceBusy(listing.busy); setConfig(settings); setRun(current); setConnectionError('');
   }, [id]);
   useEffect(() => {
@@ -54,11 +59,12 @@ export default function Workspace() {
     void poll(); return () => { controller.abort(); clearTimeout(timer); };
   }, [refresh]);
   const navigate = (next: string, runId = '', runTab = 'Review') => {
-    setPage(next); setError('');
+    setPage(next); setSelectedStage(''); setError('');
     if (next === 'Run') { if (runId !== id) setRun(null); setId(runId); setTab(runTab); history.pushState({}, '', `?run=${encodeURIComponent(runId)}&tab=${encodeURIComponent(runTab)}`); }
     else { setId(''); setRun(null); history.pushState({}, '', Object.entries(pages).some(([, name]) => name === next) ? `/?page=${Object.entries(pages).find(([, name]) => name === next)![0]}` : '/'); }
   };
-  const changeTab = (next: string) => { setTab(next); history.replaceState({}, '', `?run=${encodeURIComponent(id)}&tab=${encodeURIComponent(next)}`); };
+  const changeTab = (next: string) => { setSelectedStage(''); setTab(next); history.replaceState({}, '', `?run=${encodeURIComponent(id)}&tab=${encodeURIComponent(next)}`); };
+  const showStage = (stage: string) => { setStageVisit(value => value + 1); setSelectedStage(stage); setTab('Artifacts'); history.pushState({}, '', `?run=${encodeURIComponent(id)}&tab=Artifacts&stage=${stage}`); };
   const act = async (path: string, body: Row) => {
     setSending(true); setError('');
     try { const result = await api<{ id: string }>(path, body); await refresh(); return result; }
@@ -83,6 +89,7 @@ export default function Workspace() {
   };
   const response = (decision: string, feedback: string) => run?.pending && act(`runs/${id}/respond`, { request_id: run.pending.id, decision, feedback });
   const active = run?.pending?.stage || text(run?.state.active_stage);
+  const failedStage = run?.pending?.kind === 'error' ? run.pending.stage : (run ? record(record(artifacts(run).test_execution).qa_report).verdict : '') === 'FAIL' ? 'test_execution' : '';
   const visibleRuns = runs.filter(r => `${r.repo_url} ${r.id} ${r.status} ${r.verdict}`.toLowerCase().includes(search.toLowerCase()));
   const style = { '--sidebar': `${Math.max(190, Math.min(340, Number(sidebar) || 236))}px`, '--main-split': `${Math.max(45, Math.min(80, Number(split) || 68))}%` } as CSSProperties;
   return <div className="app-shell" style={style}>
@@ -104,7 +111,7 @@ export default function Workspace() {
         {page === 'Configuration' && config && <><div className="page-header"><div><h1>Configuration</h1><p>Current backend settings and local workspace preferences.</p></div></div><Panel title="Model gateway" storageKey="config:gateway"><DataView value={{ model: config.model, base_url: config.base_url || 'Default provider endpoint', api_key: config.key_configured ? 'Configured' : 'Missing' }} /><p>Set gateway values in the git-ignored .env file and restart. Credentials are never displayed.</p></Panel><Panel title="Daily usage" storageKey="config:daily"><Metrics values={config.daily} /><p>Shared across runs for this OS user; resets at execution-host local midnight.</p></Panel></>}
         {page === 'Run' && !run && !error && <div className="empty-state">Loading run evidence…</div>}
         {page === 'Run' && run && <><div className="page-header"><div><span className="eyebrow">Run {id}</span><h1>{repoName(text(run.state.repo_url))}</h1><p>{text(run.state.repo_ref || 'Default branch')} · <Badge value={run.busy ? 'working' : run.status} /></p></div><div className="header-actions">{run.has_zip && <a className="button primary" href={download(id, 'zip')} download>Download deliverable ZIP ↓</a>}<button disabled={sending || run.service_busy} onClick={() => void act(`runs/${id}/reconnect`, {})}>Reconnect</button></div></div>
-          <div className="stage-progress" aria-label="Workflow stages">{stages.map((s, i) => <div key={s} className={`${active === s ? 'current' : ''} ${record(run.state.approved)[s] ? 'done' : ''}`}><span>{record(run.state.approved)[s] ? '✓' : i + 1}</span><small>{label(s)}</small></div>)}</div>
+          <div className="stage-progress" aria-label="Workflow stages">{(Array.isArray(run.state.stages) ? run.state.stages as string[] : stages).map((s, i) => <button type="button" key={s} onClick={() => showStage(s)} aria-label={`View ${label(s)} evidence`} aria-pressed={selectedStage === s} className={`${active === s ? 'current' : ''} ${failedStage === s ? 'failed' : record(run.state.approved)[s] ? 'done' : ''}`}><span>{failedStage === s ? '!' : record(run.state.approved)[s] ? '✓' : i + 1}</span><small>{label(s)}</small></button>)}</div>
           {run.busy && <div className="notice working" role="status"><span className="spinner" />The harness is working. The next action will be a human review gate.</div>}
           {(run.operation_error || run.error || run.pending?.error) && <div className="notice bad" role="alert">{run.operation_error || run.error || run.pending?.error}</div>}
           {run.status === 'interrupted' && <div className="notice bad">An approved operation was interrupted. Automatic replay is blocked. Inspect the audit and retained artifacts; reconnecting does not repeat the action.</div>}
@@ -113,7 +120,7 @@ export default function Workspace() {
           <div className="tabs" aria-label="Run views">{tabs.map(t => <button className={tab === t ? 'selected' : ''} aria-pressed={tab === t} key={t} onClick={() => changeTab(t)}>{t}{t === 'Review' && run.actions.length > 0 && <span className="tab-dot" />}</button>)}</div>
           {tab === 'Review' && <SplitWorkspace split={split} setSplit={setSplit}><div><Review run={run} /><Panel title="Run context" storageKey={`${id}:context`} defaultOpen={false}><DataView value={{ repository: run.state.repo_url, application_url: run.state.app_url, budget: run.state.budget, repository_knowledge: run.state.repo_knowledge, environment: run.state.environment }} /></Panel></div><Decision key={run.pending?.id || id} run={run} sending={sending} respond={response} /></SplitWorkspace>}
           {tab === 'Prompts' && <Prompts key={`${id}:${run.busy}`} run={run} />}
-          {tab === 'Artifacts' && <Artifacts run={run} />}
+          {tab === 'Artifacts' && <Artifacts run={run} selectedStage={selectedStage} stageVisit={stageVisit} />}
           {tab === 'Generated tests' && <Generated run={run} />}
           {tab === 'QA report' && <QA run={run} />}
           {tab === 'Test reports' && <Reports key={`${id}:reports`} run={run} theme={theme} />}
@@ -156,9 +163,9 @@ function Decision({ run, sending, respond }: { run: Run; sending: boolean; respo
     {run.actions.length ? <><p>{p?.kind === 'tool' ? 'Approval authorizes only the action shown in this request.' : 'Review the complete evidence before continuing.'}</p>{run.actions.includes('revise') && <label>Modification instructions<textarea maxLength={20000} value={feedback} onChange={e => setFeedback(e.target.value)} placeholder={revisionRequired ? 'Required when requesting revision…' : 'Optional instructions…'} /></label>}<div className="decision-buttons">{run.actions.map(action => <button key={action} className={action === 'approve' ? 'primary' : action === 'stop' ? 'danger-button' : ''} disabled={sending || run.service_busy || (action === 'revise' && !!revisionRequired && !feedback.trim())} onClick={() => respond(action, feedback)}>{names[action]}</button>)}</div><small>Request {p?.id.slice(0, 12)} · revision {text(p?.details.revision || '—')}</small></> : <p>{run.busy ? 'Decisions become available when the operation reaches its next gate.' : run.service_busy ? 'Another run is working. Wait before responding.' : 'No available approval. Inspect artifacts and audit for this run.'}</p>}
   </Panel><Panel title="Agent & usage" storageKey={`${run.id}:agent`}><DataView value={{ persona: p?.details.persona, goal: p?.details.goal, tokens: record(run.state.budget).reported_tokens, provider_calls: record(run.state.budget).calls }} /></Panel></div>;
 }
-function Artifacts({ run }: { run: Run }) {
+function Artifacts({ run, selectedStage = '', stageVisit = 0 }: { run: Run; selectedStage?: string; stageVisit?: number }) {
   const data = artifacts(run);
-  return <>{!Object.keys(data).length && <p className="empty-inline">No artifacts yet.</p>}{stages.filter(s => data[s] !== undefined).map(stage => <Panel key={stage} title={`${label(stage)} · revision ${text(record(run.state.revisions)[stage])}`} storageKey={`${run.id}:artifact:${stage}`} defaultOpen={stage === run.pending?.stage} actions={<ExportButtons id={run.id} kind={stage} />}><DataView value={data[stage]} /><details className="raw-json"><summary>Raw JSON</summary><pre>{JSON.stringify(data[stage], null, 2)}</pre></details></Panel>)}</>;
+  return <>{selectedStage && data[selectedStage] === undefined && <p className="notice">{label(selectedStage)} has no saved artifact yet. You can revisit this stage while the run continues.</p>}{!Object.keys(data).length && <p className="empty-inline">No artifacts yet.</p>}{stages.filter(s => data[s] !== undefined && (!selectedStage || s === selectedStage)).map(stage => <Panel key={stage} title={`${label(stage)} · revision ${text(record(run.state.revisions)[stage])}`} storageKey={`${run.id}:artifact:${stage}`} revealKey={selectedStage ? `${selectedStage}:${stageVisit}` : undefined} defaultOpen={!!selectedStage || stage === run.pending?.stage} actions={<ExportButtons id={run.id} kind={stage} />}><DataView value={data[stage]} /><details className="raw-json"><summary>Raw JSON</summary><pre>{JSON.stringify(data[stage], null, 2)}</pre></details></Panel>)}</>;
 }
 function Generated({ run }: { run: Run }) {
   const data = record(artifacts(run).test_generation); const files = rows(data.files); const validation = record(data.validation);

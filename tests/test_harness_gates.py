@@ -43,7 +43,9 @@ def test_workflow_without_execution_stage_ends_after_generation(tmp_path, monkey
 
     monkeypatch.setattr(wf, "clone_repository", clone_fixture)
     runtime = ScriptedStageRuntime()
-    h = Harness(tmp_path, skills_root=Path("skills"), runtime=runtime, execute=False)
+    h = Harness(
+        tmp_path, skills_root=Path("skills"), requirements_mode="model", runtime=runtime, execute=False
+    )
     svc = RuntimeService()
 
     def answer(**response):

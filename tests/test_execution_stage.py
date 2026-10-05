@@ -49,7 +49,11 @@ def drive(tmp_path, monkeypatch):
 
     def make(runtime):
         host = wf.Harness(
-            tmp_path / "run", skills_root=Path("skills"), runtime=runtime, cache_dir=tmp_path / "cache"
+            tmp_path / "run",
+            skills_root=Path("skills"),
+            requirements_mode="model",
+            runtime=runtime,
+            cache_dir=tmp_path / "cache",
         )
         service.submit(host.start("https://github.com/acme/demo")).result(15)
 
@@ -198,7 +202,9 @@ def test_model_stage_is_repaired_with_the_host_error_instead_of_repeating_itself
 
     runtime.run_stage = flaky
     service = RuntimeService()
-    host = wf.Harness(tmp_path / "r", skills_root=Path("skills"), runtime=runtime, execute=False)
+    host = wf.Harness(
+        tmp_path / "r", skills_root=Path("skills"), requirements_mode="model", runtime=runtime, execute=False
+    )
     try:
         service.submit(host.start("https://github.com/acme/demo")).result(15)
         for _ in range(2):
@@ -240,7 +246,9 @@ def test_design_must_cover_every_requirement_or_state_why(tmp_path, monkeypatch)
 
     runtime.run_stage = two_requirements
     service = RuntimeService()
-    host = wf.Harness(tmp_path / "r", skills_root=Path("skills"), runtime=runtime, execute=False)
+    host = wf.Harness(
+        tmp_path / "r", skills_root=Path("skills"), requirements_mode="model", runtime=runtime, execute=False
+    )
     try:
         service.submit(host.start("https://github.com/acme/demo")).result(15)
         for _ in range(4):  # clone, repo, requirements, plan
@@ -329,7 +337,11 @@ def test_missing_system_tools_are_reported_with_install_hints_not_installed(tmp_
     monkeypatch.setattr(execution_steps, "build_environment_plan", lambda *a, **k: fake)
     service = RuntimeService()
     host = wf.Harness(
-        tmp_path / "r", skills_root=Path("skills"), runtime=ScriptedStageRuntime(), cache_dir=tmp_path / "c"
+        tmp_path / "r",
+        skills_root=Path("skills"),
+        requirements_mode="model",
+        runtime=ScriptedStageRuntime(),
+        cache_dir=tmp_path / "c",
     )
     try:
         service.submit(host.start("https://github.com/acme/demo")).result(15)

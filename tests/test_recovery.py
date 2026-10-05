@@ -18,7 +18,7 @@ def test_downstream_failure_becomes_retryable_gate(tmp_path, monkeypatch):
             raise ValueError("provider unavailable")
 
     async def scenario():
-        h = Harness(tmp_path, skills_root=Path("skills"), runtime=BrokenProvider())
+        h = Harness(tmp_path, skills_root=Path("skills"), requirements_mode="model", runtime=BrokenProvider())
         await h.start("https://github.com/acme/repo")
         await h.respond(h.view["pending"]["id"], {"decision": "approve"})
         approved_id = h.view["pending"]["id"]
@@ -29,7 +29,9 @@ def test_downstream_failure_becomes_retryable_gate(tmp_path, monkeypatch):
         assert h.view["pending"]["id"] != approved_id
         assert "repo_analysis" in h.state["approved"]
         # Restore the real MAF checkpoint in a new host before retrying.
-        restored = Harness(tmp_path, skills_root=Path("skills"), runtime=BrokenProvider())
+        restored = Harness(
+            tmp_path, skills_root=Path("skills"), requirements_mode="model", runtime=BrokenProvider()
+        )
         await restored.respond(h.view["pending"]["id"], {"decision": "retry"})
         assert restored.view["pending"]["stage"] == "requirements"
         assert restored.view["pending"]["kind"] == "error"

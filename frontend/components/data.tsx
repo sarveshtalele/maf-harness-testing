@@ -24,10 +24,11 @@ export function usePreference<T>(key: string, initial: T): [T, (value: T) => voi
   return [value, save];
 }
 
-export function Panel({ title, children, storageKey, actions, defaultOpen = true }: { title: string; children: ReactNode; storageKey: string; actions?: ReactNode; defaultOpen?: boolean }) {
+export function Panel({ title, children, storageKey, actions, defaultOpen = true, revealKey }: { title: string; children: ReactNode; storageKey: string; actions?: ReactNode; defaultOpen?: boolean; revealKey?: string }) {
   const [height, setHeight] = usePreference<number>(`panel-height:${storageKey}`, 0);
   const [width, setWidth] = usePreference<number>(`panel-width:${storageKey}`, 100);
   const [collapsed, setCollapsed] = usePreference<boolean>(`panel-closed:${storageKey}`, !defaultOpen);
+  useEffect(() => { if (revealKey) setCollapsed(false); }, [revealKey]);
   const [expanded, setExpanded] = useState(false);
   const dialog = useRef<HTMLDialogElement>(null);
   const panel = useRef<HTMLElement>(null);

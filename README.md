@@ -149,3 +149,7 @@ New runs follow repository analysis → requirements → planning → design →
 Existing runs retain their saved stage order so their checkpoints and approvals keep their original meaning.
 
 The public `Harness` remains in `src/maf_test_harness/workflow.py`. Its implementation is separated into `workflow_steps/planning.py`, `generation.py`, and `execution.py`, with pure helpers in `workflow_support.py`. UI settings and evidence operations live in `ui/settings_api.py` and `ui/evidence_api.py`; shared redaction stays in `ui/presentation.py`. These are modules in one backend, with the same two-server local deployment.
+
+### Deterministic analysis and inspectable runs
+
+New repository analysis and requirements use reviewed host-static skills without model calls. Source paths, lines, hashes and coverage gaps are shown in artifacts. This is a callable surface inventory requiring review, not a guarantee of complete business requirements. Planning, design and generation still use the model. Click any workflow stage to revisit its saved evidence during execution; each run’s Logs also exposes its redacted audit and trace files. See [skill review, findings and limits](docs/DETERMINISTIC_SKILL_REVIEW.md).

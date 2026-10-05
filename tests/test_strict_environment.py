@@ -69,6 +69,7 @@ class Harnessed:
         self.host = wf.Harness(
             tmp_path / "run",
             skills_root=Path("skills"),
+            requirements_mode="model",
             runtime=ScriptedStageRuntime(),
             cache_dir=tmp_path / "cache",
         )

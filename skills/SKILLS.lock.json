@@ -6,6 +6,18 @@
         "tier": "host"
       }
     },
+    "requirement-analysis": {
+      "scripts/analyze.py": {
+        "sha256": "35261628d7a1266a0ebefaeef42787d3b36431867642429e0268d4a4fe497b5a",
+        "tier": "host"
+      }
+    },
+    "reverse-engineering": {
+      "scripts/analyze.py": {
+        "sha256": "3a2b62f287ac65f73c305cb884531e14ad299b46496f890a57547355edb241b4",
+        "tier": "host"
+      }
+    },
     "test-data-generator": {
       "scripts/deterministic_helpers.py": {
         "sha256": "41b820fdba943d59cb4240e56eb24881c3d970745d4f6d0004fab7b5477a87a2",
@@ -109,6 +121,32 @@
       },
       "origin": "upstream",
       "path": "Skills/playwright-test-generator"
+    },
+    "requirement-analysis": {
+      "audit": {
+        "status": "host-reviewed"
+      },
+      "files": {
+        "SKILL.md": "b643a12babc5cc37cc3054a83ed0858d0574a089ef1ac82a7bd9fb4a460d82a4",
+        "scripts/analyze.py": "35261628d7a1266a0ebefaeef42787d3b36431867642429e0268d4a4fe497b5a"
+      },
+      "origin": "host-adapted",
+      "path": "requirement-analysis",
+      "source_commit": "3eae93ae5b5f8d25acc7b0240bf64ee6f75a6f01",
+      "source_repository": "https://github.com/sarveshtalele/requirement-analysis-skill"
+    },
+    "reverse-engineering": {
+      "audit": {
+        "status": "host-reviewed"
+      },
+      "files": {
+        "SKILL.md": "466a0e62c50a6895695b676e615f686392d27551261e4845b45d0e5b03afcfb3",
+        "scripts/analyze.py": "3a2b62f287ac65f73c305cb884531e14ad299b46496f890a57547355edb241b4"
+      },
+      "origin": "host-adapted",
+      "path": "reverse-engineering",
+      "source_commit": "e6139c314e3c89d2e84efe690a8bdfbce3dc17d2",
+      "source_repository": "https://github.com/sarveshtalele/reverse-engineering-skill"
     },
     "test-data-generator": {
       "audit": {

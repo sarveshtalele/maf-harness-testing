@@ -39,6 +39,7 @@ from .repo.analyzer import (
     declared_dependencies,
     validate_github_url,
 )
+from .repo.reverse_engineering import reverse_engineer
 from .repo.stack import detect_stack
 from .settings import (
     AGENT_TOOLS,
@@ -47,6 +48,7 @@ from .settings import (
     STRICT_ENV,
 )
 from .skills.config import skills_for
+from .skills.registry import verify_lock
 from .tools.agent_tools import HarnessToolbox
 from .tools.registry import ToolContext
 from .tools.typed import default_registry
@@ -137,7 +139,11 @@ class Harness(ExecutionSteps, GenerationSteps, PlanningSteps):
         execute: bool = True,
         cache_dir: Path | None = None,
         hooks: HookEngine | None = None,
+        requirements_mode: str = "deterministic",
     ):
+        if requirements_mode not in {"deterministic", "model"}:
+            raise ValueError("Unknown requirements mode.")
+        self.requirements_mode = requirements_mode
         self.stages = list(STAGES if execute else CORE_STAGES)
         self.cache_dir = (cache_dir or Path(run_dir).resolve().parent / ".harness_cache").resolve()
         self.run_dir = run_dir.resolve()
@@ -268,6 +274,7 @@ class Harness(ExecutionSteps, GenerationSteps, PlanningSteps):
             "repo_url": repo_url.strip(),
             "repo_knowledge": repo_knowledge,
             "workflow_version": 2,
+            "requirements_mode": self.requirements_mode,
             "repo_ref": ref,
             "app_url": app_url.strip() if app_url else None,
             "launch_app": bool(start_app and not app_url),
@@ -543,7 +550,26 @@ class Harness(ExecutionSteps, GenerationSteps, PlanningSteps):
             state["evidence"] = build_repository_evidence(
                 self.run_dir / "repo", max_files=60, max_total_chars=120_000
             )
-            await self.review(stage, artifact.model_dump(), state, ctx)
+            problems = verify_lock(self.skills_root, ["reverse-engineering"])
+            if problems:
+                raise ValueError("Reverse-engineering skill integrity failed: " + "; ".join(problems))
+            state.setdefault("skill_tool_trace", {})[stage] = {
+                "execution_mode": "host-static",
+                "skills": ["reverse-engineering"],
+                "verified_host_skill": True,
+                "skill_loaded_via_maf": None,
+            }
+            analyzed = artifact.model_dump()
+            analyzed["reverse_engineering"] = await asyncio.to_thread(
+                reverse_engineer, self.run_dir / "repo", artifact.source_files
+            )
+            atomic_json(self.run_dir / "reverse_engineering.json", analyzed["reverse_engineering"])
+            self.audit(
+                "deterministic_reverse_engineering",
+                model_calls=0,
+                coverage=analyzed["reverse_engineering"]["coverage"],
+            )
+            await self.review(stage, analyzed, state, ctx)
             self.audit("tool_completed", tool="clone_repository", request_id=request["id"])
         except Exception as exc:
             self.audit("stage_error", stage=stage, error=str(exc), trace=traceback.format_exc()[-1800:])

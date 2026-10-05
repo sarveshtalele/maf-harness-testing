@@ -127,7 +127,7 @@ class EvidenceAPI:
     def evidence_file(self, key: str, file_id: str, asset="", *, download=False, theme=None):
         path = file_path(self.run_path(key), file_id, "" if asset == "view.html" else asset)
         mime = MIMES.get(path.suffix.lower(), mimetypes.guess_type(path.name)[0] or "text/plain")
-        if path.suffix.lower() in {".log", ".md", ".xml"} and not download and not asset:
+        if path.suffix.lower() in {".log", ".jsonl", ".md", ".xml"} and not download and not asset:
             with path.open("rb") as stream:
                 content = stream.read(512 * 1024)
             return (

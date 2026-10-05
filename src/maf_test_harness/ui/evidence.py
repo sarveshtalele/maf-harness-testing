@@ -37,11 +37,13 @@ def inventory(run_dir: Path) -> dict:
     root = run_dir.resolve()
     files = []
     visited = 0
-    for folder in ROOTS:
+    for folder in (".", *ROOTS):
         directory = root / folder
         if not directory.resolve().is_relative_to(root):
             continue
         for current, dirs, names in os.walk(directory, followlinks=False):
+            if folder == ".":
+                dirs[:] = []
             dirs[:] = [
                 d
                 for d in sorted(dirs)
@@ -49,6 +51,8 @@ def inventory(run_dir: Path) -> dict:
                 and not (Path(current) / d).is_symlink()
             ]
             for name in sorted(names):
+                if folder == "." and name not in {"audit.jsonl", "trace.jsonl", "workflow.log"}:
+                    continue
                 visited += 1
                 if visited > 20000:
                     return {"files": files, "truncated": True}
@@ -66,7 +70,7 @@ def inventory(run_dir: Path) -> dict:
                     else "junit"
                     if ext == ".xml"
                     else "log"
-                    if name.endswith(".log") or name == "error-context.md"
+                    if name.endswith((".log", ".jsonl")) or name == "error-context.md"
                     else None
                 )
                 if not kind or path.stat().st_size > MAX_FILE_BYTES:

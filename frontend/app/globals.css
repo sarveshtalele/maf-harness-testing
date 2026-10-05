@@ -86,3 +86,7 @@ dialog::backdrop { background: #00000066; backdrop-filter: blur(3px); }
 @media(max-width:700px){.prompt-editor .header-actions>button{flex:1}.panel{width:100%!important}.panel-heading{gap:8px}.panel-actions{gap:4px}}
 
 .setup-guide { padding-left: 24px; }.setup-guide li { padding: 8px 0 16px 8px; border-bottom: 1px solid var(--border); }.setup-guide h4 { margin: 8px 0; }.setup-guide pre { white-space: pre-wrap; overflow-wrap: anywhere; }
+
+.stage-progress button { flex: 1; min-width: 0; border: 0; border-radius: 0; display: flex; flex-direction: column; background: transparent; padding: 0; }.stage-progress button:hover { background: var(--surface-alt); }.stage-progress button.done span { background: var(--good); color: var(--surface); }.stage-progress button.current span { border-color: var(--primary); }.stage-progress button[aria-pressed=true] { box-shadow: inset 0 -2px var(--primary); }
+
+.stage-progress button.failed span { background: var(--bad); color: var(--surface); border-color: var(--bad); }

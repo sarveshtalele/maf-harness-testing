@@ -38,7 +38,7 @@ class SkillSet:
 
 def skills_for(stage: str, state: dict) -> SkillSet:
     """The skills a stage must load for this run (deterministic over the stack profile and approved design)."""
-    primary = SKILL_NAMES[stage]
+    primary = "requirement-analysis" if stage == "requirements" and state.get("requirements_mode") == "deterministic" else SKILL_NAMES[stage]
     companions: list[str] = []
     stack = state.get("stack") or {}
     languages = set((state.get("artifacts", {}).get("repo_analysis") or {}).get("languages") or {})

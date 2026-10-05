@@ -22,6 +22,24 @@ test('complete browser workflow, layouts, evidence, downloads and stale gates', 
   const stale = await request.post(`/api/harness/runs/${key}/respond`, { data: { request_id: original.pending.id, decision: 'approve' } });
   expect(stale.status()).toBe(409);
   await expect(page.getByRole('button', { name: 'Request revision', exact: true })).toBeDisabled();
+  // Keep inspection usable while the API reports a running operation.
+  const runRoute = `**/api/harness/runs/${key}`;
+  await page.route(runRoute, async route => {
+    const response = await route.fetch();
+    const body = await response.json();
+    await route.fulfill({ response, json: { ...body, busy: true } });
+  });
+  await page.reload();
+  await page.getByRole('button', { name: 'View Repo Analysis evidence', exact: true }).click();
+  await expect(page.getByText(/Repo Analysis · revision/).first()).toBeVisible();
+  await page.getByRole('button', { name: 'Logs', exact: true }).click();
+  await page.locator('.evidence-files').getByRole('button', { name: /audit.jsonl/ }).click();
+  await page.getByRole('searchbox', { name: 'Find in output' }).fill('approval');
+  await expect.poll(async () => (await request.get(`/api/harness/runs/${key}`)).ok()).toBeTruthy();
+  await page.waitForTimeout(2200); // Cross a live poll without resetting the search.
+  await expect(page.getByRole('searchbox', { name: 'Find in output' })).toHaveValue('approval');
+  await page.unroute(runRoute);
+  await page.getByRole('button', { name: 'Review', exact: true }).click();
   for (let i = 0; i < 9; i++) {
     const approve = page.getByRole('button', { name: /^(Approve and proceed|Install in isolated environment|Run tests here)$/ });
     await expect(approve).toBeEnabled();
@@ -49,6 +67,13 @@ test('complete browser workflow, layouts, evidence, downloads and stale gates', 
   await page.reload();
   await page.getByRole('button', { name: /1\. Requirements/ }).click();
   await expect(fullPrompt).toHaveValue(originalPrompt);
+  await page.getByRole('button', { name: 'View Repo Analysis evidence', exact: true }).click();
+  await expect(page.getByText(/Repo Analysis · revision/).first()).toBeVisible();
+  await page.getByRole('button', { name: /^Repo Analysis · revision/ }).click();
+  await page.getByRole('button', { name: 'View Repo Analysis evidence', exact: true }).click();
+  await expect(page.getByRole('button', { name: /^Repo Analysis · revision/ })).toHaveAttribute('aria-expanded', 'true');
+  await page.reload();
+  await expect(page.getByRole('button', { name: /^Repo Analysis · revision/ })).toHaveAttribute('aria-expanded', 'true');
   await page.getByRole('button', { name: 'QA report', exact: true }).click();
   await expect(page.getByText('PASS', { exact: true }).first()).toBeVisible();
   await page.getByRole('button', { name: 'Test reports', exact: true }).click();
@@ -184,7 +209,7 @@ test('mouse resizing persists and project skill cards show real package details'
   await expect.poll(async () => (await panel.boundingBox())!.width).toBeCloseTo(resized.width, 0);
   await expect.poll(async () => (await panel.boundingBox())!.height).toBeCloseTo(resized.height, 0);
   await page.getByRole('button', { name: 'Agent skills', exact: true }).click();
-  await expect(page.locator('.skill-card')).toHaveCount(10);
+  await expect(page.locator('.skill-card')).toHaveCount(12);
   await page.getByRole('searchbox', { name: 'Search agent skills' }).fill('playwright');
   await expect(page.locator('.skill-card')).toHaveCount(1);
   await expect(page.getByText('Upstream library provenance', { exact: true })).toHaveCount(0);

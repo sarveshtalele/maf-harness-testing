@@ -23,6 +23,8 @@ def test_all_bundled_skills_follow_the_agent_skills_spec():
         "junit-generator",
         "playwright-test-generator",
         "repository-requirements",
+        "requirement-analysis",
+        "reverse-engineering",
         "test-data-generator",
         "test-design-generator",
         "test-planning",
@@ -95,8 +97,15 @@ def test_vendored_upstream_skills_match_the_lock_and_tampering_is_detected(tmp_p
         "playwright-test-generator",
         "test-data-generator",
         "traceability-generator",
+        "requirement-analysis",
+        "reverse-engineering",
     }
-    assert all(v["audit"]["security_findings"] == 0 for v in lock["skills"].values())
+    assert all(
+        v["audit"].get("security_findings") == 0
+        if v["origin"] == "upstream"
+        else v["audit"]["status"] == "host-reviewed"
+        for v in lock["skills"].values()
+    )
     assert verify_lock(SKILLS) == []
     copy = tmp_path / "skills"
     shutil.copytree(SKILLS, copy)

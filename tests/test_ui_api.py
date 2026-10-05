@@ -24,7 +24,7 @@ def local_api(tmp_path, monkeypatch):
     monkeypatch.setattr(wf, "clone_repository", clone_fixture)
     monkeypatch.setattr(execution_steps, "build_plan", local_pytest_plan)
     monkeypatch.setattr(execution_steps, "build_environment_plan", local_env_plan)
-    api = LocalAPI(tmp_path / "runs", runtime_factory=ScriptedStageRuntime)
+    api = LocalAPI(tmp_path / "runs", requirements_mode="model", runtime_factory=ScriptedStageRuntime)
     yield api
     wait(api)
     api.close()
@@ -73,7 +73,7 @@ def test_api_complete_workflow_and_downloads(local_api):
 def test_project_skill_catalog(local_api):
     catalog = local_api.skills()
     cards = {card["name"]: card for card in catalog["skills"]}
-    assert len(cards) == 10 and all(card["valid"] for card in cards.values())
+    assert len(cards) == 12 and all(card["valid"] for card in cards.values())
     assert cards["repository-requirements"]["primary_stages"] == ["requirements"]
     assert cards["playwright-test-generator"]["role"] == "Companion"
     assert cards["coverage-analyzer"]["role"] == "Host report validator"
@@ -95,7 +95,10 @@ def test_evidence_is_contained_redacted_and_preserves_reports(local_api, tmp_pat
     (api.run_path(key) / "workspace").mkdir()
     (api.run_path(key) / "workspace" / ".env").write_text("not-public")
     files = api.evidence(key)["files"]
-    assert len(files) == 2 and not any(".env" in f["path"] for f in files)
+    assert len([f for f in files if f["path"].startswith("executions/")]) == 2 and not any(
+        ".env" in f["path"] for f in files
+    )
+    assert any(f["path"] == "audit.jsonl" and f["kind"] == "log" for f in files)
     report = next(f for f in files if f["kind"] == "report")
     body, mime, _ = api.evidence_file(key, report["id"], "view.html")
     assert mime == "text/html" and b"private-evidence-value" not in body
@@ -119,7 +122,7 @@ def test_evidence_is_contained_redacted_and_preserves_reports(local_api, tmp_pat
     clean = re.search(r"data:application/zip;base64,([^<]+)", html)[1]
     with zipfile.ZipFile(io.BytesIO(base64.b64decode(clean))) as archive:
         assert "private-evidence-value" not in archive.read("report.json").decode()
-    log = next(f for f in files if f["kind"] == "log")
+    log = next(f for f in files if f["name"] == "stdout.log")
     assert "private-evidence-value" not in api.evidence_file(key, log["id"])[0]["text"]
     assert api.evidence_file(key, report["id"], "data/result.json")[0] == b'{"status":"failed"}'
     for asset in ("../run.json", "../../.env", "data/../index.html", "data\\result.json"):
@@ -131,7 +134,7 @@ def test_evidence_is_contained_redacted_and_preserves_reports(local_api, tmp_pat
         (folder / "outside.log").symlink_to(tmp_path / "outside.log")
     except OSError:
         pass
-    assert len(api.evidence(key)["files"]) == 2
+    assert len([f for f in api.evidence(key)["files"] if f["path"].startswith("executions/")]) == 2
 
 
 def test_boundaries_and_interruption(local_api, tmp_path, monkeypatch):
@@ -213,7 +216,7 @@ def test_skip_reconnect_and_new_runtime_resume(local_api):
     assert api.read(key)["pending"]["id"] == before
     assert before not in json.loads((api.run_path(key) / "run.json").read_text())["consumed"]
     # A fresh adapter restores exactly the saved gate rather than replaying an approved install.
-    resumed = LocalAPI(api.runs, runtime_factory=ScriptedStageRuntime)
+    resumed = LocalAPI(api.runs, requirements_mode="model", runtime_factory=ScriptedStageRuntime)
     try:
         assert resumed.read(key)["pending"]["id"] == before
         resumed.respond(key, {"request_id": before, "decision": "stop"})

@@ -16,6 +16,7 @@ from ..envs.setup_guide import setup_guide
 from ..llm.prompts import build_prompt
 from ..models import GeneratedFilesDraft, RequirementsDraft, TestDesignDraft, TestPlan
 from ..qa.report import design_cases
+from ..repo.requirements import requirements_from_facts
 from ..repo.stack import detect_stack
 from ..settings import (
     EXECUTION_TIMEOUT_SECONDS,
@@ -103,6 +104,48 @@ class PlanningSteps:
         return facts
 
     async def model(self, stage, state, ctx):
+        if stage == "requirements" and state.get("requirements_mode", "model") == "deterministic":
+            repo = state["artifacts"]["repo_analysis"]
+            analysis = dict(repo.get("reverse_engineering", {}))
+            supplied = set(re.findall(r"--- FILE: (.*?) ---", state.get("evidence", "")))
+            original_count = len(analysis.get("facts", []))
+            analysis["facts"] = [
+                fact for fact in analysis.get("facts", []) if fact["source_file"] in supplied
+            ]
+            if len(analysis["facts"]) < original_count:
+                analysis["gaps"] = [
+                    *analysis.get("gaps", []),
+                    "Requirements include only files retained in the host source-evidence budget; inspect repository analysis for omitted declarations.",
+                ]
+            draft = requirements_from_facts(
+                analysis,
+                repo.get("repo_name") or "Repository",
+                state.get("repo_knowledge", ""),
+            )
+            from ..skills.registry import verify_lock
+
+            problems = verify_lock(self.skills_root, ["requirement-analysis"])
+            if problems:
+                raise ValueError("Requirement skill integrity failed: " + "; ".join(problems))
+            state.setdefault("skill_tool_trace", {})[stage] = {
+                "execution_mode": "host-static",
+                "skills": ["requirement-analysis"],
+                "verified_host_skill": True,
+                "skill_loaded_via_maf": None,
+            }
+            state["draft"] = draft
+            artifact = await self.validate(stage, state)
+            artifact["metadata"]["generator"] = "requirement-analysis"
+            artifact["metadata"]["execution_mode"] = "host-static"
+            artifact["analysis_mode"] = "deterministic"
+            artifact["model_calls"] = 0
+            self.audit(
+                "deterministic_requirements",
+                model_calls=0,
+                requirements=len(artifact["requirement_model"]["requirements"]),
+            )
+            await self.review(stage, artifact, state, ctx)
+            return
         if self.runtime is None:
             raise ValueError("Configure API key/model before running this stage, then retry.")
 

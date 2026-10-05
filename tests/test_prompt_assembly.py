@@ -108,7 +108,11 @@ def drive(tmp_path, monkeypatch):
 
     def make(runtime):
         host = wf.Harness(
-            tmp_path / "run", skills_root=Path("skills"), runtime=runtime, cache_dir=tmp_path / "cache"
+            tmp_path / "run",
+            skills_root=Path("skills"),
+            requirements_mode="model",
+            runtime=runtime,
+            cache_dir=tmp_path / "cache",
         )
         service.submit(host.start("https://github.com/acme/demo")).result(15)
 

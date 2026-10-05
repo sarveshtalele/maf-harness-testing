@@ -53,6 +53,7 @@ def drive(tmp_path, monkeypatch):
         host = wf.Harness(
             tmp_path / "run",
             skills_root=Path("skills"),
+            requirements_mode="model",
             runtime=runtime,
             cache_dir=tmp_path / "cache",
             hooks=hooks,

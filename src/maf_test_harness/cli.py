@@ -263,7 +263,7 @@ def main(argv: list[str] | None = None) -> int:
         problems = verify_lock(args.skills_dir)
         _say(
             f"{'OK  ' if not problems else 'FAIL'} SKILLS.lock.json  upstream {lock.get('upstream', {}).get('commit', 'n/a')[:12]}"
-            f" · {len(lock.get('skills', {}))} vendored skills · {len(lock.get('reviewed_scripts', {}))} skills with reviewed scripts"
+            f" · {len(lock.get('skills', {}))} locked packages · {len(lock.get('reviewed_scripts', {}))} skills with reviewed scripts"
         )
         for problem in problems:
             _say(f"FAIL {problem}")

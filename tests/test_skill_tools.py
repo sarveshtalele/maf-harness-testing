@@ -116,7 +116,11 @@ def host(tmp_path, monkeypatch):
     monkeypatch.setattr(execution_steps, "build_environment_plan", local_env_plan)
     service = RuntimeService()
     harness = wf.Harness(
-        tmp_path / "run", skills_root=SKILLS, runtime=ScriptedStageRuntime(), cache_dir=tmp_path / "cache"
+        tmp_path / "run",
+        skills_root=SKILLS,
+        requirements_mode="model",
+        runtime=ScriptedStageRuntime(),
+        cache_dir=tmp_path / "cache",
     )
     service.submit(harness.start("https://github.com/acme/demo")).result(15)
     yield harness

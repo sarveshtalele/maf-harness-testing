@@ -21,7 +21,7 @@ def test_failed_generation_preserves_all_attempt_artifacts(tmp_path):
                 },
             }
 
-    host = Harness(tmp_path, skills_root=Path("skills"), runtime=ImportsOnly())
+    host = Harness(tmp_path, skills_root=Path("skills"), requirements_mode="model", runtime=ImportsOnly())
     state = {
         "artifacts": {
             "repo_analysis": {"languages": {"Python": 1}},
@@ -64,7 +64,7 @@ def test_retry_reuses_accepted_batches_only_with_matching_inputs(tmp_path, monke
             }
 
     provider = Provider()
-    host = Harness(tmp_path, skills_root=Path("skills"), runtime=provider)
+    host = Harness(tmp_path, skills_root=Path("skills"), requirements_mode="model", runtime=provider)
     state = {
         "artifacts": {
             "repo_analysis": {"languages": {"Python": 1}},
@@ -112,7 +112,7 @@ def test_generated_paths_that_exist_in_the_repository_are_repaired_not_overwritt
             }
 
     provider = Provider()
-    host = Harness(tmp_path, skills_root=Path("skills"), runtime=provider)
+    host = Harness(tmp_path, skills_root=Path("skills"), requirements_mode="model", runtime=provider)
     state = {
         "artifacts": {
             "repo_analysis": {"languages": {"Python": 1}},

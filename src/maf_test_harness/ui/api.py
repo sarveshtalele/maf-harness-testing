@@ -32,6 +32,7 @@ PUBLIC_STATE = (
     "repo_ref",
     "repo_knowledge",
     "workflow_version",
+    "requirements_mode",
     "app_url",
     "launch_app",
     "active_stage",
@@ -71,11 +72,14 @@ def decisions(pending: dict | None, status: str, consumed: list) -> list[str]:
 
 
 class LocalAPI(EvidenceAPI, SettingsAPI):
-    def __init__(self, runs: Path, legacy: Path | None = None, runtime_factory=None):
+    def __init__(
+        self, runs: Path, legacy: Path | None = None, runtime_factory=None, requirements_mode="deterministic"
+    ):
         self.runs = runs.resolve()
         self.runs.mkdir(parents=True, exist_ok=True, mode=0o700)
         self.legacy = legacy.resolve() if legacy and legacy.resolve() != self.runs else None
         self.runtime_factory = runtime_factory
+        self.requirements_mode = requirements_mode
         self.lock = RLock()
         self.service = RuntimeService()
         self.host: Harness | None = None
@@ -185,7 +189,12 @@ class LocalAPI(EvidenceAPI, SettingsAPI):
             runtime = MAFHarnessRuntime(
                 api_key=API_KEY, model=MODEL, base_url=BASE_URL, skills_root=ROOT / "skills"
             )
-        self.host = Harness(self.run_path(key), skills_root=ROOT / "skills", runtime=runtime)
+        self.host = Harness(
+            self.run_path(key),
+            skills_root=ROOT / "skills",
+            runtime=runtime,
+            requirements_mode=self.requirements_mode,
+        )
 
     def start(self, body: dict) -> dict:
         with self.lock:

@@ -272,6 +272,7 @@ def test_the_workflow_recovers_a_timed_out_install_and_reports_it(tmp_path, monk
         host = wf.Harness(
             tmp_path / "run",
             skills_root=Path("skills"),
+            requirements_mode="model",
             runtime=ScriptedStageRuntime(),
             cache_dir=tmp_path / "c",
         )

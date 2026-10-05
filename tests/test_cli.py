@@ -59,7 +59,7 @@ def test_lint_skills_command_exit_code(capsys):
     assert cli.main(["lint-skills", str(SKILLS)]) == 0
     out = capsys.readouterr().out
     assert (
-        "OK   generic-test-generator" in out and "OK   SKILLS.lock.json" in out and "6 vendored skills" in out
+        "OK   generic-test-generator" in out and "OK   SKILLS.lock.json" in out and "8 locked packages" in out
     )
 
 
