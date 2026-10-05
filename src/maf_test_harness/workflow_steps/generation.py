@@ -1,0 +1,478 @@
+"""Generation operations extracted from the checkpointed Harness."""
+
+import asyncio
+import json
+from typing import Any
+from uuid import uuid4
+
+from ..agent.personas import persona_instructions
+from ..envs import Provisioned
+from ..llm.prompts import generation_prompt
+from ..models import GeneratedFilesDraft
+from ..qa.report import design_cases
+from ..qa.triage import remedy_for
+from ..repo.analyzer import (
+    build_repository_evidence,
+    collaborator_signatures,
+    extract_target_sources,
+)
+from ..repo.routes import extract_routes
+from ..repo.stack import detect_stack
+from ..settings import (
+    AUTOFIX,
+    BUILD_GATE,
+)
+from ..skills.config import skills_for
+from ..skills.contracts import (
+    ensure_generated_case_markers,
+    expand_generated_lines,
+    flatten_nested_with,
+    validate_generated_files,
+)
+from ..tools.autofix import autofix_files
+from ..tools.build_gate import try_build
+from ..tools.code_intel import RepoContext, source_contracts, static_gate
+from ..workflow_support import (
+    MODEL_REPAIR_ATTEMPTS,
+    TEST_GENERATION_BATCH_SIZE,
+    TEST_GENERATION_MAX_ATTEMPTS,
+    _canonicalize_case_ids,
+    _compact_design,
+    _compact_repo,
+    _generation_policy,
+    _plan_summary,
+    _requirements_for,
+    atomic_json,
+    digest,
+)
+
+
+class GenerationSteps:
+    async def _generate_tests_batched(self, state: dict) -> dict:
+        """Generate approved design cases in small validated batches with bounded repair retries."""
+
+        compact = _compact_design(state["artifacts"]["test_design"])
+        cases = [case for case in compact.get("cases", []) if case.get("id")]
+        if not cases:
+            raise ValueError("Approved test design contains no actionable case IDs.")
+
+        self.state = state
+        signature = digest(
+            {
+                "cases": cases,
+                "repo": state["artifacts"]["repo_analysis"],
+                "requirements": state["artifacts"].get("requirements"),
+                "plan": state["artifacts"].get("test_planning"),
+                "evidence": state.get("evidence"),
+                "batch_size": TEST_GENERATION_BATCH_SIZE,
+                "skills": {
+                    name: (self.skills_root / name / "SKILL.md").read_text()
+                    for name in skills_for("test_generation", state).all
+                },
+            }
+        )
+        cache = state.setdefault("accepted_generation_batches", {})
+        if cache.get("signature") != signature:
+            cache.clear()
+            cache.update(signature=signature, batches={})
+        state["routes"] = await asyncio.to_thread(
+            extract_routes, self.run_dir / "repo", state["artifacts"]["repo_analysis"].get("source_files", [])
+        )
+        policy = _generation_policy(state["artifacts"]["repo_analysis"], state)
+        failed_ids = {str(i) for i in (state.get("heal") or {}).get("failed_case_ids", [])}
+        schema = GeneratedFilesDraft.model_json_schema()
+        accepted_files: list[dict[str, Any]] = []
+        accepted_paths: set[str] = set()
+        covered: set[str] = set()
+        languages: list[str] = []
+        frameworks: list[str] = []
+        rationales: list[str] = []
+        raw_batches: list[str] = []
+
+        total_batches = (len(cases) + TEST_GENERATION_BATCH_SIZE - 1) // TEST_GENERATION_BATCH_SIZE
+        for batch_index, start in enumerate(range(0, len(cases), TEST_GENERATION_BATCH_SIZE), 1):
+            batch = cases[start : start + TEST_GENERATION_BATCH_SIZE]
+            batch_ids = {str(case["id"]) for case in batch}
+            requirements = state["artifacts"].get("requirements", {})
+            linked_ids = {link["id"] for case in batch for link in case.get("traceability_links", [])}
+            preferred = [
+                path
+                for req in requirements.get("requirement_model", {}).get("requirements", [])
+                if req.get("id") in linked_ids
+                for path in req.get("source_files", [])
+            ]
+            target_source = extract_target_sources(
+                self.run_dir / "repo",
+                [str(case.get("target") or "") for case in batch],
+                state["artifacts"]["repo_analysis"].get("source_files", []),
+            )
+            # The complete target code is supplied separately, so the head-truncated excerpts can be smaller.
+            evidence = build_repository_evidence(
+                self.run_dir / "repo",
+                max_files=10 if target_source else 16,
+                max_total_chars=24_000 if target_source else 40_000,
+                preferred_paths=preferred,
+            )
+            repair_feedback = ""
+            accepted = cache["batches"].get(str(batch_index))
+            work, kept_files = batch, []
+            if accepted is not None:
+                cached_ids = {i for f in accepted["files"] for i in f["case_ids"]}
+                regenerate = batch_ids & failed_ids
+                if not cached_ids >= batch_ids:
+                    accepted = None
+                elif regenerate:
+                    # Heal: only the failing cases go back to the model; passing files are kept byte for byte.
+                    kept_files = [f for f in accepted["files"] if not set(f["case_ids"]) & regenerate]
+                    work = [c for c in batch if str(c["id"]) in regenerate]
+                    accepted = None
+                elif validate_generated_files(accepted, batch_ids)["uncovered_case_ids"]:
+                    accepted = None
+            work_ids = {str(case["id"]) for case in work}
+            source_files = state["artifacts"]["repo_analysis"].get("source_files", [])
+            batch_source = (
+                extract_target_sources(
+                    self.run_dir / "repo", [str(case.get("target") or "") for case in work], source_files
+                )
+                or target_source
+            )
+            if any(case.get("level") in {"ui", "e2e", "accessibility"} for case in work):
+                app_sources = self._selected_app_source(state, preferred=preferred, max_chars=96000)
+                batch_source += "\n".join(
+                    f"--- SELECTED APPLICATION SOURCE: {path} ---\n{source}"
+                    for path, source in app_sources.items()
+                )
+            collaborators = collaborator_signatures(self.run_dir / "repo", batch_source, source_files)
+            rounds = state.setdefault("generation_rounds", {})
+            for attempt in range(1, 1 if accepted is not None else TEST_GENERATION_MAX_ATTEMPTS + 1):
+                # A deterministic model repeats a rejected answer verbatim: vary the sampling on every retry.
+                retry_temperature = min(0.8, 0.3 * (attempt - 1) + 0.25 * rounds.get(str(batch_index), 0))
+                prompt = generation_prompt(
+                    {
+                        "assignment": (
+                            "Generate executable test source ONLY for this approved batch. Generate exactly one file per "
+                            "supplied case ID and exactly one concrete test declaration in that file. Set case_ids to a one-item "
+                            "array containing the corresponding supplied ID. The host adds canonical CASE_ID source markers. "
+                            "Use only necessary imports. Never emit placeholders, install dependencies, or execute tests."
+                        ),
+                        "repository": _compact_repo(state["artifacts"]["repo_analysis"], preferred),
+                        "approved_inputs": {
+                            "approved_cases": work,
+                            "requirements": _requirements_for(requirements, linked_ids),
+                            "test_plan": _plan_summary(state["artifacts"].get("test_planning", {})),
+                            "generation_policy": policy,
+                            "batch": {
+                                "index": batch_index,
+                                "total": total_batches,
+                                "path_rule": (
+                                    f"Use unique batch-specific test file names containing batch_{batch_index:02d} "
+                                    "when no existing repository test path clearly applies."
+                                ),
+                            },
+                        },
+                        "target_source": batch_source,
+                        "collaborator_signatures": collaborators or None,
+                        "state_and_schema_source": source_contracts(self._repo_context()),
+                        "repository_evidence": evidence or state.get("evidence", ""),
+                        "revision_feedback": state.get("feedback", {}).get("test_generation"),
+                        "repair_feedback": repair_feedback or None,
+                        "output_contract": schema,
+                        "json_rules": {
+                            "single_complete_object": True,
+                            "markdown_fences": False,
+                            "duplicate_list_items": False,
+                            "respect_schema_limits": True,
+                            "manual_questions": False,
+                        },
+                    }
+                )
+                try:
+                    generation_skills = skills_for("test_generation", state)
+                    result = await self._call_model(
+                        stage="test_generation",
+                        prompt_batch=batch_index,
+                        skill_name=generation_skills.primary,
+                        companions=generation_skills.companions,
+                        persona=persona_instructions("test_generation"),
+                        prompt=prompt,
+                        state=state,
+                        persist=self.save,
+                        response_format=GeneratedFilesDraft,
+                        temperature=retry_temperature,
+                    )
+                    if result.get("status") != "completed":
+                        raise ValueError(f"Unexpected test-generation model status: {result.get('status')}")
+
+                    attempt_dir = self.run_dir / "generation_attempts"
+                    attempt_dir.mkdir(exist_ok=True)
+                    attempt_path = attempt_dir / f"batch-{batch_index:02d}-attempt-{uuid4().hex}.json"
+                    atomic_json(attempt_path, {"batch": batch_index, "attempt": attempt, "result": result})
+                    self.audit(
+                        "generation_attempt_saved",
+                        batch=batch_index,
+                        attempt=attempt,
+                        artifact=str(attempt_path.relative_to(self.run_dir)),
+                    )
+                    candidate = expand_generated_lines(
+                        GeneratedFilesDraft.model_validate(result["artifact"]).model_dump()
+                    )
+                    candidate = _canonicalize_case_ids(candidate, work_ids)
+                    for item in candidate["files"]:
+                        if item["path"].endswith(".py") and (flat := flatten_nested_with(item["content"])):
+                            item["content"] = (
+                                flat  # deep `with patch(...)` chains cannot compile; see skill_contracts
+                            )
+                            self.audit("nested_with_flattened", batch=batch_index, path=item["path"])
+                    candidate = ensure_generated_case_markers(candidate)
+                    if AUTOFIX:
+                        candidate, fixes = autofix_files(self._repo_context(), candidate)
+                        tooling = state.setdefault(
+                            "tooling", {"autofix": 0, "build_checks": 0, "build_failures": 0}
+                        )
+                        tooling["autofix"] += len(fixes)
+                        for fix in fixes:
+                            self.audit("autofix", batch=batch_index, attempt=attempt, **fix)
+                    raw_batches.append(json.dumps(candidate, separators=(",", ":"), default=str))
+                    validation = validate_generated_files(candidate, work_ids)
+                    self._check_imports(candidate, state)
+                    self._check_paths_are_new(candidate)
+                    if validation["uncovered_case_ids"]:
+                        raise ValueError(
+                            "Generated batch does not implement all approved case IDs: "
+                            + ", ".join(validation["uncovered_case_ids"])
+                        )
+                    collisions = (accepted_paths | {f["path"] for f in kept_files}) & {
+                        item["path"] for item in candidate["files"]
+                    }
+                    if collisions:
+                        raise ValueError(
+                            "Generated batch reuses paths from an earlier batch: "
+                            + ", ".join(sorted(collisions))
+                        )
+                    await self._build_gate(candidate, batch_index)
+                    accepted = {**candidate, "files": kept_files + candidate["files"]}
+                    cache["batches"][str(batch_index)] = accepted
+                    self.save()
+                    break
+                except Exception as exc:
+                    repair_feedback = (
+                        f"Attempt {attempt} failed generation or static validation: {exc}. "
+                        + (f"HOW TO FIX: {remedy_for(str(exc))} " if remedy_for(str(exc)) else "")
+                        + "Regenerate ONLY this batch. "
+                        "Return one complete schema-valid JSON object. Generate one file per supplied case ID, exactly one "
+                        "test declaration per file, and one matching case_ids entry. The host supplies CASE_ID comments. "
+                        "Keep imports minimal and source complete. Python files must define a top-level def test_name(...): "
+                        "with a meaningful assertion against the actual application. Imports alone are not a test."
+                    )
+                    self.audit(
+                        "test_generation_repair",
+                        batch=batch_index,
+                        attempt=attempt,
+                        error=str(exc),
+                    )
+                    if attempt == TEST_GENERATION_MAX_ATTEMPTS:
+                        rounds[str(batch_index)] = rounds.get(str(batch_index), 0) + 1
+                        self.save()
+                        raise ValueError(
+                            f"Test generation batch {batch_index}/{total_batches} failed after "
+                            f"{TEST_GENERATION_MAX_ATTEMPTS} attempts: {exc}"
+                        ) from exc
+
+            if accepted is None:
+                raise ValueError(
+                    f"Test generation batch {batch_index}/{total_batches} produced no accepted output."
+                )
+            accepted_files.extend(accepted["files"])
+            accepted_paths.update(item["path"] for item in accepted["files"])
+            covered.update(batch_ids)
+            if accepted["selected_language"] not in languages:
+                languages.append(accepted["selected_language"])
+            if accepted["selected_framework"] not in frameworks:
+                frameworks.append(accepted["selected_framework"])
+            if accepted["rationale"] not in rationales:
+                rationales.append(accepted["rationale"])
+
+        all_ids = {str(case["id"]) for case in cases}
+        final_payload = {
+            "selected_language": ", ".join(languages)[:80] or "Repository native stack",
+            "selected_framework": ", ".join(frameworks)[:120] or "Repository native test framework",
+            "rationale": (
+                f"Generated {len(all_ids)} approved design cases in {total_batches} statically validated batches. "
+                + (" ".join(rationales))
+            )[:600],
+            "case_catalog": [
+                {
+                    "id": str(case.get("id", "")),
+                    "title": str(case.get("title", "")),
+                    "type": str(case.get("type", "")),
+                    "priority": str(case.get("priority", "")),
+                    "expected_result": str(case.get("expected_result", "")),
+                }
+                for case in cases
+            ],
+            "files": accepted_files,
+        }
+        validation = validate_generated_files(final_payload, all_ids)
+        if validation["uncovered_case_ids"]:
+            raise ValueError(
+                "Generated files do not implement all approved case IDs: "
+                + ", ".join(validation["uncovered_case_ids"])
+            )
+        state.pop("heal", None)  # a heal round is finished once every failing case has been regenerated
+        state.setdefault("generation_batches", {})["test_generation"] = {
+            "batch_size": TEST_GENERATION_BATCH_SIZE,
+            "batch_count": total_batches,
+            "approved_case_count": len(all_ids),
+        }
+        state.setdefault("raw_model_output_batches", {})["test_generation"] = raw_batches
+        self.save()
+        return {
+            **final_payload,
+            "validation": validation,
+            "execution_status": "pending_host_execution",
+            "completion_note": "Static traceability validation complete. Each approved case ID is mapped to exactly one generated test file; execution is a separate host step.",
+        }
+
+    def _require_coverage_or_reason(self, design: dict, state: dict) -> None:
+        """Design policy: unit cases exist, every actor has cases, every requirement is covered (or explained).
+
+        Each gap must be explained by citing the requirement ID / actor name in `gaps`. Violations are sent back to the
+        model during the repair attempts; on the last attempt the design is accepted with the problem recorded in
+        gaps_report.notes so a human decides at the review gate instead of the run being blocked.
+        """
+        arts = state["artifacts"]
+        reqs = {r["id"]: r["text"] for r in arts["requirements"]["requirement_model"]["requirements"]}
+        cited = " ".join(str(g) for g in state.get("draft", {}).get("gaps", [])).lower()
+        cases = design_cases(design)
+        problems: list[str] = []
+        if arts["repo_analysis"].get("source_file_count") and not any(
+            c.get("level") == "unit" for c in cases
+        ):
+            problems.append(
+                "The design has no unit-level test case. Add unit cases for the core functions/classes, "
+                "or explain in `gaps` (mention 'unit') why none is possible."
+            )
+        idle = [
+            a["name"]
+            for a in arts["requirements"].get("actors", [])
+            if a["name"].lower() != "system"
+            and not any(c.get("actor") == a["name"] for c in cases)
+            and a["name"].lower() not in cited
+        ]
+        if idle:
+            problems.append(
+                f"Actor(s) without any test case: {', '.join(idle)}. Design cases per actor journey, or "
+                "mention the actor in `gaps` with the reason."
+            )
+        missing = [rid for rid in design["gaps_report"]["uncovered_requirements"] if rid.lower() not in cited]
+        if missing:
+            listing = "; ".join(f"{rid}: {reqs[rid][:110]}" for rid in missing[:12])
+            problems.append(
+                f"{len(missing)} requirement(s) have no test case. Add cases tracing to them, or cite each "
+                f"requirement ID in `gaps` with the reason. Uncovered: {listing}"
+            )
+        if not problems:
+            return
+        if state.get("design_attempt", 1) >= MODEL_REPAIR_ATTEMPTS:
+            design["gaps_report"]["notes"] += ("; " if design["gaps_report"]["notes"] else "") + " | ".join(
+                problems
+            )
+            return
+        raise ValueError(" ".join(problems))
+
+    def _repo_context(self) -> RepoContext:
+        """Live repository facts for the central tools (routes are extracted once and cached in the run state)."""
+        state = self.state
+        analysis = state.get("artifacts", {}).get("repo_analysis", {})
+        files = analysis.get("source_files", [])
+        if "routes" not in state:
+            state["routes"] = extract_routes(self.run_dir / "repo", files)
+        return RepoContext(
+            root=self.run_dir / "repo",
+            source_files=files,
+            test_files=analysis.get("test_files", []),
+            package_files=analysis.get("package_files", []),
+            workspace=self.workspace if self.workspace.exists() else None,
+            routes=state["routes"],
+            app_url=state.get("app_url"),
+        )
+
+    def _build_files(self, files: list[dict]) -> dict:
+        """Compile/collect candidate files in the prepared workspace (only once the environment install is done)."""
+        if self.state.get("workflow_version") == 2 and self.state.get("active_stage") != "test_execution":
+            return {
+                "status": "skipped",
+                "reason": "runtime validation deferred until execution approval",
+                "errors": [],
+            }
+        if not BUILD_GATE:
+            return {"status": "skipped", "reason": "disabled by HARNESS_BUILD_GATE=off", "errors": []}
+        if self.state.get("environment", {}).get("status") != "ready":
+            return {"status": "skipped", "reason": "isolated environment not installed", "errors": []}
+        return try_build(
+            detect_stack(self.workspace),
+            self.workspace,
+            files,
+            cache_dir=self.cache_dir,
+            out_root=self.run_dir / "build_checks" / uuid4().hex[:10],
+            provisioned=Provisioned.from_dicts(self.state.get("toolchains")),
+        )
+
+    async def _build_gate(self, candidate: dict, batch: int) -> None:
+        accepted = [
+            f
+            for artifact in self.state.get("accepted_generation_batches", {}).get("batches", {}).values()
+            for f in artifact.get("files", [])
+        ]
+        by_path = {f["path"]: f for f in [*accepted, *candidate["files"]]}
+        report = await asyncio.to_thread(self._build_files, list(by_path.values()))
+        tooling = self.state.setdefault("tooling", {"autofix": 0, "build_checks": 0, "build_failures": 0})
+        if report["status"] != "skipped":
+            tooling["build_checks"] += 1
+        self.audit(
+            "build_gate",
+            batch=batch,
+            status=report["status"],
+            tool=report.get("tool"),
+            seconds=report.get("seconds"),
+            reason=report.get("reason"),
+            errors=len(report.get("errors", [])),
+        )
+        if report["status"] == "failed":
+            tooling["build_failures"] += 1
+            detail = "; ".join(f"{e['file']}:{e['line']} {e['message']}" for e in report["errors"][:6])
+            raise ValueError(f"Build check ({report['tool']}) failed: {detail}"[:1800])
+
+    def _read_repo_file(self, rel: str) -> str | None:
+        target = self.run_dir / "repo" / rel
+        return target.read_text(encoding="utf-8", errors="replace") if target.is_file() else None
+
+    def _check_paths_are_new(self, candidate: dict) -> None:
+        """Generated tests must be new files: existing repository files (including existing tests) are never replaced."""
+        clash = [i["path"] for i in candidate["files"] if (self.run_dir / "repo" / i["path"]).exists()]
+        if clash:
+            raise ValueError(
+                f"Generated path(s) already exist in the repository: {', '.join(clash)}. Existing files are kept; "
+                "choose a NEW file name (for example add the case topic or batch number) in a new path."
+            )
+
+    def _check_imports(self, candidate: dict, state: dict) -> None:
+        """Static gates (syntax, imports, undefined names, mocks, patch targets, URLs) on every generated file."""
+        from ..envs.runners import repository_components, resolve_ecosystem
+
+        ctx = self._repo_context()
+        source_root = self.workspace if self.workspace.exists() else self.run_dir / "repo"
+        stack = detect_stack(source_root)
+        node_roots = [cwd for kind, cwd in repository_components(stack, source_root) if kind == "node"]
+        for item in candidate["files"]:
+            if (
+                resolve_ecosystem(stack, [item]) == "node"
+                and node_roots
+                and not any(cwd == "." or item["path"].startswith(cwd + "/") for cwd in node_roots)
+            ):
+                raise ValueError(
+                    f"Node test {item['path']} is outside its package.json component. "
+                    f"Place this spec under a NEW tests/ path inside one of {node_roots}; "
+                    "the runner resolves dependencies from that component."
+                )
+            static_gate(ctx, item["path"], item["content"])

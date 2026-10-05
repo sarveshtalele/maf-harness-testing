@@ -16,13 +16,14 @@ from test_execution_stage import local_pytest_plan
 
 import maf_test_harness.workflow as wf
 from maf_test_harness.ui.api import LocalAPI, make_server
+from maf_test_harness.workflow_steps import execution as execution_steps
 
 
 @pytest.fixture
 def local_api(tmp_path, monkeypatch):
     monkeypatch.setattr(wf, "clone_repository", clone_fixture)
-    monkeypatch.setattr(wf, "build_plan", local_pytest_plan)
-    monkeypatch.setattr(wf, "build_environment_plan", local_env_plan)
+    monkeypatch.setattr(execution_steps, "build_plan", local_pytest_plan)
+    monkeypatch.setattr(execution_steps, "build_environment_plan", local_env_plan)
     api = LocalAPI(tmp_path / "runs", runtime_factory=ScriptedStageRuntime)
     yield api
     wait(api)
@@ -199,7 +200,7 @@ def test_skip_reconnect_and_new_runtime_resume(local_api):
     api = local_api
     key = api.start({"repo_url": "https://github.com/acme/demo"})["id"]
     wait(api)
-    for _ in range(3):
+    for _ in range(6):
         approve(api, key)
     gate = api.read(key)["pending"]
     assert gate["stage"] == "environment_setup" and gate["kind"] == "tool"
@@ -307,3 +308,15 @@ def test_delete_run_requires_confirmation_idle_and_preserves_recoverable_files(l
     assert (preserved / "evidence.txt").read_text() == "preserved report"
     with pytest.raises(FileNotFoundError):
         api.read(key)
+
+
+def test_repository_knowledge_is_bounded_and_preserved(local_api):
+    import pytest
+
+    with pytest.raises(ValueError, match="Repository knowledge"):
+        local_api.start({"repo_url": "https://github.com/acme/demo", "repo_knowledge": "x" * 32001})
+    key = local_api.start(
+        {"repo_url": "https://github.com/acme/demo", "repo_knowledge": "Use Python 3.11; see README."}
+    )["id"]
+    wait(local_api)
+    assert local_api.read(key)["state"]["repo_knowledge"] == "Use Python 3.11; see README."

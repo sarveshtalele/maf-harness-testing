@@ -18,6 +18,7 @@ from test_execution_stage import local_pytest_plan
 import maf_test_harness.workflow as wf
 from maf_test_harness.envs import env_check, recovery, spec, toolchains
 from maf_test_harness.ui.runtime_service import RuntimeService
+from maf_test_harness.workflow_steps import execution as execution_steps
 
 CONFLICT = {
     "package": "fastapi",
@@ -56,11 +57,11 @@ class Harnessed:
             return json.loads(json.dumps(self.report))
 
         monkeypatch.setattr(wf, "clone_repository", clone_fixture)
-        monkeypatch.setattr(wf, "build_plan", local_pytest_plan)
-        monkeypatch.setattr(wf, "build_environment_plan", plan)
-        monkeypatch.setattr(wf, "execute_setup", execute)
-        monkeypatch.setattr(wf, "provision_for", lambda *a, **k: self._provision(k))
-        monkeypatch.setattr(wf.env_check, "missing_packages", lambda ws: list(self.missing))
+        monkeypatch.setattr(execution_steps, "build_plan", local_pytest_plan)
+        monkeypatch.setattr(execution_steps, "build_environment_plan", plan)
+        monkeypatch.setattr(execution_steps, "execute_setup", execute)
+        monkeypatch.setattr(execution_steps, "provision_for", lambda *a, **k: self._provision(k))
+        monkeypatch.setattr(execution_steps.env_check, "missing_packages", lambda ws: list(self.missing))
         monkeypatch.setattr(
             wf.env_recovery, "wipe_venv", lambda ws: self.calls["wipe"].append(str(ws)) or True
         )
@@ -83,7 +84,7 @@ class Harnessed:
         return self.service.submit(self.host.respond(self.host.view["pending"]["id"], response)).result(120)
 
     def to_env_gate(self):
-        for _ in range(3):  # clone, repo, requirements
+        for _ in range(6):  # clone, repo, requirements
             self.answer(decision="approve")
         assert (
             self.host.view["pending"]["stage"] == "environment_setup"
@@ -155,7 +156,7 @@ def test_a_complete_environment_proceeds_to_the_review_and_the_next_stage(env):
     env.answer(decision="approve")
     assert env.pending["kind"] == "review"
     env.answer(decision="approve")
-    assert env.pending["stage"] == "test_planning"
+    assert env.pending["stage"] == "test_execution"
     assert env.host.state["environment"]["status"] == "ready"
 
 
@@ -230,7 +231,7 @@ def test_without_a_fallback_the_gate_says_what_to_install(env, monkeypatch):
 
 
 def test_strict_mode_can_be_switched_off_for_the_old_behaviour(env, monkeypatch):
-    monkeypatch.setattr(wf, "STRICT_ENV", False)
+    monkeypatch.setattr(execution_steps, "STRICT_ENV", False)
     env.missing = ["chromadb"]
     env.to_env_gate()
     env.answer(decision="approve")

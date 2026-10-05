@@ -14,6 +14,7 @@ from maf_test_harness.agent.runtime import BudgetGuard
 from maf_test_harness.llm.usage import DailyLimitError, DailyUsageLedger
 from maf_test_harness.settings import DAILY_TOKEN_LIMIT
 from maf_test_harness.ui.runtime_service import RuntimeService
+from maf_test_harness.workflow_steps import generation as generation_steps
 
 
 class Msg:
@@ -200,7 +201,7 @@ def test_unresolved_policy_gaps_reach_the_human_instead_of_blocking(drive):
     host, answer = drive(runtime)
     for _ in range(4):
         answer(decision="approve")
-    assert len(prompts) == wf.MODEL_REPAIR_ATTEMPTS
+    assert len(prompts) == generation_steps.MODEL_REPAIR_ATTEMPTS
     assert host.view["pending"]["kind"] == "review"
     assert "no unit-level test case" in host.view["pending"]["details"]["artifact"]["gaps_report"]["notes"]
     json.dumps(host.view["pending"]["details"])

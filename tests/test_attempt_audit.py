@@ -5,6 +5,7 @@ from pathlib import Path
 import pytest
 
 from maf_test_harness.workflow import Harness
+from maf_test_harness.workflow_steps import generation as generation_steps
 
 
 def test_failed_generation_preserves_all_attempt_artifacts(tmp_path):
@@ -37,9 +38,8 @@ def test_failed_generation_preserves_all_attempt_artifacts(tmp_path):
 
 
 def test_retry_reuses_accepted_batches_only_with_matching_inputs(tmp_path, monkeypatch):
-    import maf_test_harness.workflow as wf
 
-    monkeypatch.setattr(wf, "TEST_GENERATION_BATCH_SIZE", 1)
+    monkeypatch.setattr(generation_steps, "TEST_GENERATION_BATCH_SIZE", 1)
 
     class Provider:
         fail_second = True

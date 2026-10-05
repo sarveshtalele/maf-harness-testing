@@ -260,7 +260,11 @@ def test_browser_generation_receives_shared_source_and_rejects_wrong_component(t
     host.state.update({"app_component": "frontend", "artifacts": {"repo_analysis": {"source_files": paths}}})
     source = host._selected_app_source(host.state, preferred=[paths[1]], max_chars=96000)
     assert set(source) == set(paths) and "<div>Requests</div>" in source[paths[0]]
-    monkeypatch.setattr(workflow, "static_gate", lambda *args: None)
+    monkeypatch.setattr(
+        __import__("maf_test_harness.workflow_steps.generation", fromlist=["static_gate"]),
+        "static_gate",
+        lambda *args: None,
+    )
     candidate = {
         "files": [{"path": "tests/browser.spec.ts", "content": "import {test} from '@playwright/test';"}]
     }

@@ -21,6 +21,7 @@ from maf_test_harness.hooks import (
     HookSpec,
 )
 from maf_test_harness.ui.runtime_service import RuntimeService
+from maf_test_harness.workflow_steps import execution as execution_steps
 
 
 class Recorder:
@@ -44,8 +45,8 @@ class Recorder:
 @pytest.fixture
 def drive(tmp_path, monkeypatch):
     monkeypatch.setattr(wf, "clone_repository", clone_fixture)
-    monkeypatch.setattr(wf, "build_plan", local_pytest_plan)
-    monkeypatch.setattr(wf, "build_environment_plan", local_env_plan)
+    monkeypatch.setattr(execution_steps, "build_plan", local_pytest_plan)
+    monkeypatch.setattr(execution_steps, "build_environment_plan", local_env_plan)
     service = RuntimeService()
 
     def make(runtime, hooks=None):
@@ -104,7 +105,7 @@ def test_gates_and_stop_reach_hooks_across_a_whole_run(drive):
 def test_a_stage_gate_veto_keeps_the_approval_pending_until_the_hook_allows_it(drive):
     recorder = Recorder(veto=lambda e: e.stage == "environment_setup" and e.data["kind"] == "tool")
     host, answer = drive(ScriptedStageRuntime(), recorder.engine)
-    for _ in range(3):  # clone, repo, requirements
+    for _ in range(6):  # clone, repo, requirements
         answer(decision="approve")
     pending = host.view["pending"]
     assert pending["stage"] == "environment_setup" and pending["kind"] == "tool"
@@ -131,10 +132,10 @@ def test_a_failed_environment_install_fires_on_env_error(drive, monkeypatch):
     def refuse(*args, **kwargs):
         raise ToolchainError("jdk 17 is not installed and downloading was not approved.")
 
-    monkeypatch.setattr(wf, "provision_for", refuse)
+    monkeypatch.setattr(execution_steps, "provision_for", refuse)
     recorder = Recorder()
     host, answer = drive(ScriptedStageRuntime(), recorder.engine)
-    for _ in range(3):
+    for _ in range(6):
         answer(decision="approve")
     answer(decision="approve")  # install
     env = [(stage, data) for name, stage, data in recorder.events if name == ON_ENV_ERROR]

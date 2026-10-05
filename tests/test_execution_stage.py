@@ -15,6 +15,8 @@ from fakes import ScriptedStageRuntime, clone_fixture, local_env_plan
 import maf_test_harness.workflow as wf
 from maf_test_harness.envs.runners import RunPlan, Step
 from maf_test_harness.ui.runtime_service import RuntimeService
+from maf_test_harness.workflow_steps import execution as execution_steps
+from maf_test_harness.workflow_steps import generation as generation_steps
 
 
 def local_pytest_plan(stack, workspace, files, *, cache_dir, timeout=900, env_ready=False, **kwargs):
@@ -41,8 +43,8 @@ def local_pytest_plan(stack, workspace, files, *, cache_dir, timeout=900, env_re
 @pytest.fixture
 def drive(tmp_path, monkeypatch):
     monkeypatch.setattr(wf, "clone_repository", clone_clone := clone_fixture)
-    monkeypatch.setattr(wf, "build_plan", local_pytest_plan)
-    monkeypatch.setattr(wf, "build_environment_plan", local_env_plan)
+    monkeypatch.setattr(execution_steps, "build_plan", local_pytest_plan)
+    monkeypatch.setattr(execution_steps, "build_environment_plan", local_env_plan)
     service = RuntimeService()
 
     def make(runtime):
@@ -113,7 +115,7 @@ def test_failing_test_yields_fail_verdict_and_human_approved_heal_loop(drive):
 
 
 def test_passing_case_is_not_regenerated_during_heal(drive, monkeypatch):
-    monkeypatch.setattr(wf, "TEST_GENERATION_BATCH_SIZE", 1)
+    monkeypatch.setattr(generation_steps, "TEST_GENERATION_BATCH_SIZE", 1)
     bad_case = {
         "title": "add rejects wrong total",
         "priority": "P1",
@@ -281,7 +283,9 @@ def assert_deliverable(host):
 
 def test_environment_is_planned_then_installed_only_after_tool_approval(drive):
     host, answer = drive(ScriptedStageRuntime())
-    for _ in range(3):  # clone, repo, requirements
+    for _ in range(6):  # clone, source review, requirements, planning, design, generation
+        assert not host.workspace.exists()
+        assert not (host.run_dir / "environment").exists()
         answer(decision="approve")
     assert host.state["artifacts"]["requirements"]["environment_plan"][
         "ecosystem"
@@ -295,12 +299,12 @@ def test_environment_is_planned_then_installed_only_after_tool_approval(drive):
     review = host.view["pending"]
     assert review["kind"] == "review" and review["details"]["artifact"]["status"] == "ready"
     answer(decision="approve")
-    assert host.view["pending"]["stage"] == "test_planning"
+    assert host.view["pending"]["stage"] == "test_execution"
 
 
 def test_environment_install_can_be_skipped_and_plan_tampering_is_refused(drive):
     host, answer = drive(ScriptedStageRuntime())
-    for _ in range(3):
+    for _ in range(6):
         answer(decision="approve")
     host.view["pending"]["state"]["environment"]["hash"] = "tampered"
     answer(decision="approve")
@@ -322,14 +326,14 @@ def test_missing_system_tools_are_reported_with_install_hints_not_installed(tmp_
         ],
         "missing_prerequisites": ["mvn"],
     }
-    monkeypatch.setattr(wf, "build_environment_plan", lambda *a, **k: fake)
+    monkeypatch.setattr(execution_steps, "build_environment_plan", lambda *a, **k: fake)
     service = RuntimeService()
     host = wf.Harness(
         tmp_path / "r", skills_root=Path("skills"), runtime=ScriptedStageRuntime(), cache_dir=tmp_path / "c"
     )
     try:
         service.submit(host.start("https://github.com/acme/demo")).result(15)
-        for _ in range(3):
+        for _ in range(6):
             service.submit(host.respond(host.view["pending"]["id"], {"decision": "approve"})).result(30)
     finally:
         service.close()

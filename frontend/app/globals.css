@@ -84,3 +84,5 @@ dialog::backdrop { background: #00000066; backdrop-filter: blur(3px); }
 .panel-actions{flex-wrap:wrap}.panel-title{min-width:0;text-align:left}.brand>span:last-child{min-width:0;line-height:1.5}
 .run-name{min-width:0;overflow-wrap:anywhere}.delete-run{color:var(--bad)}
 @media(max-width:700px){.prompt-editor .header-actions>button{flex:1}.panel{width:100%!important}.panel-heading{gap:8px}.panel-actions{gap:4px}}
+
+.setup-guide { padding-left: 24px; }.setup-guide li { padding: 8px 0 16px 8px; border-bottom: 1px solid var(--border); }.setup-guide h4 { margin: 8px 0; }.setup-guide pre { white-space: pre-wrap; overflow-wrap: anywhere; }

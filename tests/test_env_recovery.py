@@ -10,6 +10,7 @@ import pytest
 
 from maf_test_harness.envs import platform_compat, recovery
 from maf_test_harness.envs.runners import VENV_DIR, Step, execute_setup
+from maf_test_harness.workflow_steps import execution as execution_steps
 
 
 def diag(code):
@@ -264,8 +265,8 @@ def test_the_workflow_recovers_a_timed_out_install_and_reports_it(tmp_path, monk
         return base
 
     monkeypatch.setattr(wf, "clone_repository", clone_fixture)
-    monkeypatch.setattr(wf, "build_plan", local_pytest_plan)
-    monkeypatch.setattr(wf, "build_environment_plan", plan)
+    monkeypatch.setattr(execution_steps, "build_plan", local_pytest_plan)
+    monkeypatch.setattr(execution_steps, "build_environment_plan", plan)
     service = RuntimeService()
     try:
         host = wf.Harness(
@@ -275,13 +276,13 @@ def test_the_workflow_recovers_a_timed_out_install_and_reports_it(tmp_path, monk
             cache_dir=tmp_path / "c",
         )
         service.submit(host.start("https://github.com/acme/demo")).result(15)
-        for _ in range(4):  # clone, repo, requirements, approve the install
+        for _ in range(7):  # clone, repo, requirements, planning, design, generation, approve the install
             service.submit(host.respond(host.view["pending"]["id"], {"decision": "approve"})).result(120)
         artifact = host.view["pending"]["details"]["artifact"]
         assert artifact["status"] == "ready"
         assert [r["recipe"] for r in artifact["report"]["recoveries"]] == ["retry-longer"]
         automation = build_report(host.run_dir)["automation"]
         assert any(r.get("recipe") == "retry-longer" and "note" in r for r in automation["recoveries"])
-        assert automation["hooks"]["events"]["StageGate"] == 4
+        assert automation["hooks"]["events"]["StageGate"] == 7
     finally:
         service.close()

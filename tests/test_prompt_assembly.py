@@ -10,6 +10,8 @@ from test_execution_stage import local_pytest_plan
 import maf_test_harness.workflow as wf
 from maf_test_harness.llm import prompts
 from maf_test_harness.ui.runtime_service import RuntimeService
+from maf_test_harness.workflow_steps import execution as execution_steps
+from maf_test_harness.workflow_steps import generation as generation_steps
 
 # --- the assembler -------------------------------------------------------------------------------------------
 
@@ -99,9 +101,9 @@ class Recording(ScriptedStageRuntime):
 @pytest.fixture
 def drive(tmp_path, monkeypatch):
     monkeypatch.setattr(wf, "clone_repository", clone_fixture)
-    monkeypatch.setattr(wf, "build_plan", local_pytest_plan)
-    monkeypatch.setattr(wf, "build_environment_plan", local_env_plan)
-    monkeypatch.setattr(wf, "TEST_GENERATION_BATCH_SIZE", 1)
+    monkeypatch.setattr(execution_steps, "build_plan", local_pytest_plan)
+    monkeypatch.setattr(execution_steps, "build_environment_plan", local_env_plan)
+    monkeypatch.setattr(generation_steps, "TEST_GENERATION_BATCH_SIZE", 1)
     service = RuntimeService()
 
     def make(runtime):

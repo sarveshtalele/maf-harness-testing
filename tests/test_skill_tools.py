@@ -12,6 +12,7 @@ import maf_test_harness.workflow as wf
 from maf_test_harness.tools.registry import ToolContext
 from maf_test_harness.tools.typed import TYPED_STAGE_TOOLS, TYPED_TOOL_NAMES, default_registry
 from maf_test_harness.ui.runtime_service import RuntimeService
+from maf_test_harness.workflow_steps import execution as execution_steps
 
 SKILLS = Path("skills")
 
@@ -111,8 +112,8 @@ def test_the_tool_is_registered_for_the_design_stage_only():
 @pytest.fixture
 def host(tmp_path, monkeypatch):
     monkeypatch.setattr(wf, "clone_repository", clone_fixture)
-    monkeypatch.setattr(wf, "build_plan", local_pytest_plan)
-    monkeypatch.setattr(wf, "build_environment_plan", local_env_plan)
+    monkeypatch.setattr(execution_steps, "build_plan", local_pytest_plan)
+    monkeypatch.setattr(execution_steps, "build_environment_plan", local_env_plan)
     service = RuntimeService()
     harness = wf.Harness(
         tmp_path / "run", skills_root=SKILLS, runtime=ScriptedStageRuntime(), cache_dir=tmp_path / "cache"

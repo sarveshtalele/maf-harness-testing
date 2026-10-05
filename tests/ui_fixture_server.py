@@ -10,10 +10,11 @@ from test_execution_stage import local_pytest_plan
 
 import maf_test_harness.ui.api as module
 import maf_test_harness.workflow as wf
+from maf_test_harness.workflow_steps import execution as execution_steps
 
 wf.clone_repository = clone_fixture
-wf.build_plan = local_pytest_plan
-wf.build_environment_plan = local_env_plan
+execution_steps.build_plan = local_pytest_plan
+execution_steps.build_environment_plan = local_env_plan
 module.API_KEY = "fixture-configured-flag"
 
 

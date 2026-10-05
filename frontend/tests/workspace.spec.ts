@@ -11,10 +11,12 @@ test('complete browser workflow, layouts, evidence, downloads and stale gates', 
   await expect.poll(async () => (await page.locator('.sidebar').boundingBox())!.width).toBeCloseTo(sidebarWidth, 0);
   await page.getByRole('button', { name: 'New run', exact: true }).click();
   await page.getByRole('textbox', { name: 'Public GitHub repository URL' }).fill('https://github.com/acme/demo');
+  await page.getByRole('textbox', { name: 'Repository knowledge' }).fill('Use the repository README and Python 3.12.');
   await page.getByRole('button', { name: 'Start repository review →' }).click();
   await expect(page.getByRole('button', { name: 'Approve repository inspection' })).toBeEnabled();
   const key = new URL(page.url()).searchParams.get('run')!;
   const original = await (await request.get(`/api/harness/runs/${key}`)).json();
+  expect(original.state.repo_knowledge).toBe('Use the repository README and Python 3.12.');
   await page.getByRole('button', { name: 'Approve repository inspection' }).click();
   await expect(page.getByRole('button', { name: 'Approve and proceed', exact: true })).toBeEnabled();
   const stale = await request.post(`/api/harness/runs/${key}/respond`, { data: { request_id: original.pending.id, decision: 'approve' } });
@@ -24,6 +26,10 @@ test('complete browser workflow, layouts, evidence, downloads and stale gates', 
     const approve = page.getByRole('button', { name: /^(Approve and proceed|Install in isolated environment|Run tests here)$/ });
     await expect(approve).toBeEnabled();
     const before = await (await request.get(`/api/harness/runs/${key}`)).json();
+    if (before.pending.stage === 'environment_setup' && before.pending.kind === 'tool') {
+      await expect(page.getByRole('heading', { name: 'Step-by-step repository setup' })).toBeVisible();
+      await expect(page.getByRole('region', { name: 'Repository setup guide' })).toBeVisible();
+    }
     await approve.click();
     await expect.poll(async () => { const next = await (await request.get(`/api/harness/runs/${key}`)).json(); return !next.busy && (next.status === 'complete' || next.pending?.id !== before.pending?.id); }, { timeout: 60000 }).toBeTruthy();
   }

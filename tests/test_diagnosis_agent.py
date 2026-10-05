@@ -24,6 +24,7 @@ from maf_test_harness.hooks import Decision, HookConfig, HookSpec, build_engine
 from maf_test_harness.tools.registry import ToolContext
 from maf_test_harness.tools.typed import default_registry
 from maf_test_harness.ui.runtime_service import RuntimeService
+from maf_test_harness.workflow_steps import execution as execution_steps
 
 USAGE = {"input_token_count": 10, "output_token_count": 10, "total_token_count": 20}
 NOTE = {
@@ -204,9 +205,9 @@ def drive(tmp_path, monkeypatch):
         return report
 
     monkeypatch.setattr(wf, "clone_repository", clone_fixture)
-    monkeypatch.setattr(wf, "build_plan", local_pytest_plan)
-    monkeypatch.setattr(wf, "build_environment_plan", local_env_plan)
-    monkeypatch.setattr(wf, "execute_setup", failing_setup)
+    monkeypatch.setattr(execution_steps, "build_plan", local_pytest_plan)
+    monkeypatch.setattr(execution_steps, "build_environment_plan", local_env_plan)
+    monkeypatch.setattr(execution_steps, "execute_setup", failing_setup)
     service = RuntimeService()
 
     def make(runtime):
@@ -218,7 +219,7 @@ def drive(tmp_path, monkeypatch):
         def answer(**response):
             return service.submit(host.respond(host.view["pending"]["id"], response)).result(120)
 
-        for _ in range(4):  # clone, repo, requirements, environment install
+        for _ in range(7):  # clone, repo, requirements, planning, design, generation, environment install
             answer(decision="approve")
         return host
 
@@ -227,7 +228,7 @@ def drive(tmp_path, monkeypatch):
 
 
 def test_a_failed_install_gets_an_agent_note_at_the_review_gate_when_enabled(drive, monkeypatch):
-    monkeypatch.setattr(wf, "DIAGNOSIS_AGENT", True)
+    monkeypatch.setattr(execution_steps, "DIAGNOSIS_AGENT", True)
     runtime = ScriptedStageRuntime()
     host = drive(runtime)
     pending = host.view["pending"]
@@ -254,7 +255,7 @@ def test_the_agent_is_off_by_default(drive):
 
 
 def test_a_failing_agent_never_blocks_the_gate(drive, monkeypatch):
-    monkeypatch.setattr(wf, "DIAGNOSIS_AGENT", True)
+    monkeypatch.setattr(execution_steps, "DIAGNOSIS_AGENT", True)
     runtime = ScriptedStageRuntime()
     runtime.tool_agent_note = RuntimeError("model gateway unreachable")
     host = drive(runtime)

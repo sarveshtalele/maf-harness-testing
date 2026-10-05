@@ -5,7 +5,7 @@ export type RunSummary = { id: string; repo_url?: string; status: string; stage?
 export type Config = { model: string; base_url: string; key_configured: boolean; daily: { used: number; remaining: number; limit: number }; stages: string[]; personas: Record<string, { name: string; role: string; goal: string }> };
 export const record = (value: unknown): Row => value && typeof value === 'object' && !Array.isArray(value) ? value as Row : {};
 export const rows = (value: unknown): Row[] => Array.isArray(value) ? value.map(record) : [];
-export const label = (value: unknown) => String(value ?? '—').replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
+export const label = (value: unknown) => (value === 'environment_setup' ? 'Test execution · Setup' : String(value ?? '—')).replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
 export const text = (value: unknown): string => value == null ? '—' : typeof value === 'object' ? JSON.stringify(value) : String(value);
 export const number = (value: unknown) => typeof value === 'number' ? value.toLocaleString() : text(value);
 export const artifacts = (run: Run) => record(run.state.artifacts);
