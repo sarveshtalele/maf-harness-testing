@@ -23,6 +23,7 @@ from ..agent.runtime import MAFHarnessRuntime
 from ..monitoring.report import build_report
 from ..repo.analyzer import validate_github_url
 from ..settings import API_KEY, BASE_URL, MODEL, validate_gateway_settings
+from ..storage import read_json
 from ..workflow import Harness
 from ..workflow_support import atomic_json
 from .evidence_api import EvidenceAPI
@@ -105,17 +106,25 @@ class LocalAPI(EvidenceAPI, SettingsAPI):
 
     def harvest(self):
         if self.job and self.job.done():
+            completed = self.job
+            self.job = None
             try:
-                self.job.result()
+                completed.result()
             except Exception as exc:
                 self.errors[self.job_run] = public(str(exc))
                 self.operation_log(self.job_run, "failed", public(traceback.format_exc()))
                 path = self.run_path(self.job_run) / "run.json"
-                view = json.loads(path.read_text(encoding="utf-8"))
-                if not view.get("pending"):
-                    view.update(status="interrupted", error=public(str(exc)))
-                    atomic_json(path, view)
-            self.job = None
+                try:
+                    view = read_json(path)
+                    if not view.get("pending"):
+                        view.update(status="interrupted", error=public(str(exc)))
+                        atomic_json(path, view)
+                except PermissionError:
+                    # The operation is finished even when its state directory is persistently inaccessible.
+                    # Do not report it as an indefinitely running job or replay the approved action.
+                    self.errors[self.job_run] += (
+                        " State file is inaccessible; check directory permissions and retry the connection."
+                    )
 
     def operation_log(self, key, status, error=""):
         path = self.run_path(key) / "workflow.log"
@@ -129,7 +138,7 @@ class LocalAPI(EvidenceAPI, SettingsAPI):
     def read(self, key: str) -> dict:
         with self.lock:
             self.harvest()
-            view = json.loads((self.run_path(key) / "run.json").read_text(encoding="utf-8"))
+            view = read_json(self.run_path(key) / "run.json")
             state = view.get("state", {})
             pending = view.get("pending")
             actions = decisions(pending, view.get("status", "new"), view.get("consumed", []))
@@ -253,9 +262,7 @@ class LocalAPI(EvidenceAPI, SettingsAPI):
                 path / "prompts.json", prompt_settings.load(self.runs.parent / "prompts.json")
             )
             # Persist a visible new run before dispatch; Harness.start will populate the real checkpoint.
-            (path / "run.json").write_text(
-                json.dumps({"status": "new", "state": {"repo_url": url}, "consumed": []}), encoding="utf-8"
-            )
+            atomic_json(path / "run.json", {"status": "new", "state": {"repo_url": url}, "consumed": []})
 
             async def begin():
                 await self.replace_host(key)

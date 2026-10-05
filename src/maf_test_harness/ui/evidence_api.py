@@ -12,6 +12,7 @@ import yaml
 from ..monitoring.report import build_report, render_markdown
 from ..skills.config import COMPANION_PURPOSE, HOST_SKILL_NAMES, SKILL_NAMES
 from ..skills.registry import FRONTMATTER_RE, lint_all, load_lock, verify_lock
+from ..storage import read_json
 from .artifact_presenter import json_to_markdown
 from .evidence import MIMES, file_path, inventory
 from .presentation import public
@@ -76,9 +77,7 @@ class EvidenceAPI:
         executions = []
         for run in self.list_runs()["runs"][:100]:
             try:
-                state = json.loads((self.run_path(run["id"]) / "run.json").read_text(encoding="utf-8")).get(
-                    "state", {}
-                )
+                state = read_json(self.run_path(run["id"]) / "run.json").get("state", {})
             except (OSError, ValueError):
                 continue
             for stage, info in state.get("skill_tool_trace", {}).items():
@@ -122,7 +121,7 @@ class EvidenceAPI:
         kind = query.get("kind", [""])[0]
         fmt = query.get("format", ["json"])[0]
         if kind == "zip":
-            state = json.loads((self.run_path(key) / "run.json").read_text(encoding="utf-8")).get("state", {})
+            state = read_json(self.run_path(key) / "run.json").get("state", {})
             raw = state.get("deliverable_zip")
             if not raw:
                 raise FileNotFoundError("Deliverable is not available.")

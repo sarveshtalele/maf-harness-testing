@@ -142,6 +142,7 @@ def build_qa_report(
         "case_status_counts": counts,
         "cases": cases,
         "requirement_coverage": coverage,
+        "coverage_scope": "Requirement-to-test traceability; not measured line, branch or behavior coverage.",
         "failures": [
             c
             for c in cases
@@ -225,7 +226,15 @@ def render_markdown(report: dict[str, Any]) -> str:
         lines.append(
             f"| {c['title'][:70]} | {c['level']} | {c['actor']} | {c['priority']} | {c['status']} | {c['file'] or ''} |"
         )
-    lines += ["", "## Requirement coverage", "", "| State | Requirement |", "|---|---|"]
+    lines += [
+        "",
+        "## Requirement traceability",
+        "",
+        "Linked generated tests are not measured line, branch or complete behavior coverage.",
+        "",
+        "| State | Requirement |",
+        "|---|---|",
+    ]
     lines += [f"| {r['state']} | {r['text'][:110]} |" for r in report["requirement_coverage"]]
     if report["failures"]:
         lines += ["", "## Failures", ""]

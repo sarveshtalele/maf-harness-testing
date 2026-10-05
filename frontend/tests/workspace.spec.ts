@@ -27,9 +27,13 @@ test('complete browser workflow, layouts, evidence, downloads and stale gates', 
   await page.route(runRoute, async route => {
     const response = await route.fetch();
     const body = await response.json();
-    await route.fulfill({ response, json: { ...body, busy: true } });
+    await route.fulfill({ response, json: { ...body, busy: true, state: { ...body.state, active_stage: 'test_generation' } } });
   });
   await page.reload();
+  await expect(page.getByRole('status').filter({ hasText: 'Generating tests…' })).toBeVisible();
+  await expect(page.locator('.working .spinner')).toBeVisible();
+  expect(await page.locator('.working .spinner').evaluate(el => getComputedStyle(el).animationName)).toBe('spin');
+  await page.screenshot({ path: testInfo.outputPath('generation-in-progress.png') });
   await page.getByRole('button', { name: 'View Repo Analysis evidence', exact: true }).click();
   await expect(page.getByText(/Repo Analysis · revision/).first()).toBeVisible();
   await page.getByRole('button', { name: 'Logs', exact: true }).click();

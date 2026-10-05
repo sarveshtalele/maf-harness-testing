@@ -19,6 +19,7 @@ export default function Workspace() {
   const [stageVisit, setStageVisit] = useState(0);
   const [rerunStage, setRerunStage] = useState<string | null>(null);
   const currentId = useRef(id); currentId.current = id;
+  const refreshVersion = useRef(0);
   const [runs, setRuns] = useState<RunSummary[]>([]);
   const [run, setRun] = useState<Run | null>(null);
   const [config, setConfig] = useState<Config | null>(null);
@@ -46,12 +47,13 @@ export default function Workspace() {
   }, []);
   useEffect(() => { document.documentElement.dataset.theme = theme === 'dark' ? 'dark' : 'light'; }, [theme]);
   const refresh = useCallback(async (signal?: AbortSignal) => {
+    const version = ++refreshVersion.current;
     const [listing, settings, current] = await Promise.all([
       api<{ runs: RunSummary[]; busy: boolean }>('runs', undefined, signal),
       api<Config>('config', undefined, signal),
       id ? api<Run>(`runs/${id}`, undefined, signal) : Promise.resolve(null),
     ]);
-    if (signal?.aborted || currentId.current !== id) return;
+    if (signal?.aborted || currentId.current !== id || refreshVersion.current !== version) return;
     setRuns(listing.runs); setServiceBusy(listing.busy); setConfig(settings); setRun(current); setConnectionError('');
   }, [id]);
   useEffect(() => {
@@ -67,6 +69,7 @@ export default function Workspace() {
   const changeTab = (next: string) => { setSelectedStage(''); setTab(next); history.replaceState({}, '', `?run=${encodeURIComponent(id)}&tab=${encodeURIComponent(next)}`); };
   const showStage = (stage: string) => { setStageVisit(value => value + 1); setSelectedStage(stage); setTab('Artifacts'); history.pushState({}, '', `?run=${encodeURIComponent(id)}&tab=Artifacts&stage=${stage}`); };
   const act = async (path: string, body: Row) => {
+    ++refreshVersion.current;
     setSending(true); setError('');
     try { const result = await api<{ id: string }>(path, body); await refresh(); return result; }
     catch (e) { setError((e as Error).message); }
@@ -89,7 +92,7 @@ export default function Workspace() {
     if (result) navigate('Run', result.id);
   };
   const response = (decision: string, feedback: string) => run?.pending && act(`runs/${id}/respond`, { request_id: run.pending.id, decision, feedback });
-  const active = run?.pending?.stage || text(run?.state.active_stage);
+  const active = run?.busy ? text(run.state.active_stage) : run?.pending?.stage || text(run?.state.active_stage);
   const failedStage = run?.pending?.kind === 'error' ? run.pending.stage : (run ? record(record(artifacts(run).test_execution).qa_report).verdict : '') === 'FAIL' ? 'test_execution' : '';
   const visibleRuns = runs.filter(r => `${r.repo_url} ${r.id} ${r.status} ${r.verdict}`.toLowerCase().includes(search.toLowerCase()));
   const style = { '--sidebar': `${Math.max(190, Math.min(340, Number(sidebar) || 236))}px`, '--main-split': `${Math.max(45, Math.min(80, Number(split) || 68))}%` } as CSSProperties;
@@ -115,7 +118,7 @@ export default function Workspace() {
           {rerunStage !== null && <section className="rerun-choice" aria-label="Rerun workflow step"><h2>Rerun from a step</h2><p>Previous evidence is retained in the run’s attempts folder. This step and all later approvals are reset. Clone, installation and execution still require their normal review gates.</p><div className="step-picker">{(run.state.stages as string[]).map((stage, index, all) => <button key={stage} aria-pressed={rerunStage === stage} disabled={sending || run.service_busy || all.slice(0,index).some(s => !record(run.state.approved)[s])} onClick={() => setRerunStage(stage)}>{label(stage)}</button>)}</div><div className="header-actions"><button onClick={() => setRerunStage(null)}>Cancel</button><button className="primary" disabled={sending || run.service_busy} onClick={async () => { const result = await act(`runs/${id}/rerun`, { stage: rerunStage, request_id: run.pending?.id || null }); if(result) { setRerunStage(null); changeTab('Review'); } }}>Rerun {label(rerunStage)} →</button></div></section>}
           <div className="run-completion"><span>Workflow progress · {text(record(record(run).progress).percent) || 0}%</span><progress aria-label="Workflow completion" max={100} value={Number(record(record(run).progress).percent) || 0} /><small>Approved stage milestones; test verdict is reported separately.</small></div>
           <div className="stage-progress" aria-label="Workflow stages">{(Array.isArray(run.state.stages) ? run.state.stages as string[] : stages).map((s, i) => <button type="button" key={s} onClick={() => showStage(s)} aria-label={`View ${label(s)} evidence`} aria-pressed={selectedStage === s} className={`${active === s ? 'current' : ''} ${failedStage === s ? 'failed' : record(run.state.approved)[s] ? 'done' : ''}`}><span>{failedStage === s ? '!' : record(run.state.approved)[s] ? '✓' : i + 1}</span><small>{label(s)}</small></button>)}</div>
-          {run.busy && <div className="notice working" role="status"><span className="spinner" />The harness is working. The next action will be a human review gate.</div>}
+          {(run.busy || sending) && <WorkingStatus stage={active} />}
           {(run.operation_error || run.error || run.pending?.error) && <div className="notice bad" role="alert">{run.operation_error || run.error || run.pending?.error}</div>}
           {run.status === 'interrupted' && <div className="notice bad">An approved operation was interrupted. Automatic replay is blocked. Inspect the audit and retained artifacts; reconnecting does not repeat the action.</div>}
           {run.status === 'stopped' && <div className="notice">Workflow stopped. Approved evidence remains available.</div>}
@@ -145,6 +148,11 @@ function SplitWorkspace({ children, split, setSplit }: { children: [ReactNode, R
 }
 
 function repoName(url: string) { return url.replace(/^https?:\/\/github\.com\//, '').replace(/\.git$/, ''); }
+function WorkingStatus({ stage }: { stage: string }) {
+  const [elapsed, setElapsed] = useState(0);
+  useEffect(() => { const start = Date.now(); const timer = setInterval(() => setElapsed(Math.floor((Date.now() - start) / 1000)), 1000); return () => clearInterval(timer); }, [stage]);
+  return <div className="notice working" role="status" aria-live="polite"><span className="spinner" aria-hidden="true" /><div><strong>{stage === 'test_generation' ? 'Generating tests…' : `${label(stage || 'workflow')} is running…`}</strong><div>Waiting for the next saved output · {elapsed}s observed. Updates refresh automatically; earlier evidence remains available.</div></div></div>;
+}
 function Review({ run }: { run: Run }) {
   const p = run.pending;
   if (!p) return <Panel title="Review" storageKey={`${run.id}:review`}><p>No pending approval for this run.</p></Panel>;
@@ -190,7 +198,7 @@ function QA({ run }: { run: Run }) {
       })}</div> : <div className="success-note"><span>✓</span><div><b>No failed cases in the saved QA report</b><p>Review requirement coverage and warnings before treating this run as complete coverage.</p></div></div>}
     </Panel>
     <Panel title="Case results" storageKey={`${run.id}:qa:Case results`}><DataTable data={rows(qa.cases)} columns={['title', 'level', 'actor', 'priority', 'status', 'file']} /></Panel>
-    <Panel title="Requirement coverage" storageKey={`${run.id}:qa:Requirement coverage`}><DataTable data={rows(qa.requirement_coverage)} columns={['state', 'category', 'actor', 'text']} /></Panel>
+    <Panel title="Requirement traceability" storageKey={`${run.id}:qa:Requirement coverage`}><p>Links between requirements and generated tests. This is not measured line, branch or complete behavior coverage. A requirement is verified only when its linked tests passed.</p><DataTable data={rows(qa.requirement_coverage)} columns={['state', 'category', 'actor', 'text']} /></Panel>
     <Panel title="Improvement worklist" storageKey={`${run.id}:qa:updates`}><DataTable data={[...actions, ...rows(updates.requirements_needing_tests), ...rows(updates.environment_actions)]} columns={['classification', 'file', 'case', 'detail', 'action']} /></Panel>
     <Panel title="Warnings & limitations" storageKey={`${run.id}:qa:limits`}><DataView value={{ warnings: qa.warnings, limitations: qa.limitations, unmapped_results: qa.unmapped_results }} /></Panel>
     <Panel title="Skill contract checks" storageKey={`${run.id}:qa:checks`}><DataView value={qa.skill_checks} /></Panel>

@@ -48,6 +48,7 @@ from .settings import (
 )
 from .skills.config import skills_for
 from .skills.host import execute_host_skill
+from .storage import read_json
 from .tools.agent_tools import HarnessToolbox
 from .tools.registry import ToolContext
 from .tools.typed import default_registry
@@ -157,7 +158,7 @@ class Harness(RerunSteps, ExecutionSteps, GenerationSteps, PlanningSteps):
             runtime.recorder = TraceRecorder(self.run_dir / "trace.jsonl")
         self.view_path = self.run_dir / "run.json"
         self.view = (
-            json.loads(self.view_path.read_text())
+            read_json(self.view_path)
             if self.view_path.exists()
             else {
                 "status": "new",
@@ -314,7 +315,7 @@ class Harness(RerunSteps, ExecutionSteps, GenerationSteps, PlanningSteps):
 
     async def respond(self, request_id: str, response: dict):
         with FileLock(str(self.run_dir / "run.lock")):
-            fresh = json.loads(self.view_path.read_text())
+            fresh = read_json(self.view_path)
             pending = fresh.get("pending")
             if not pending or pending["id"] != request_id or request_id in fresh.get("consumed", []):
                 raise ValueError("Stale or already consumed approval request.")

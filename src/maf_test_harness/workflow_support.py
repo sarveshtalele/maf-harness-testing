@@ -2,10 +2,7 @@
 
 import hashlib
 import json
-import os
 import re
-import time
-from pathlib import Path
 from typing import Any
 
 from .settings import (
@@ -16,6 +13,8 @@ from .skills.contracts import (
     extra_import_roots,
     resolve_id,
 )
+from .storage import atomic_json as atomic_json
+from .storage import read_json as read_json
 
 CORE_STAGES = ["repo_analysis", "requirements", "test_planning", "test_design", "test_generation"]
 
@@ -54,22 +53,6 @@ LIVE_APP_LEVELS = {"ui", "e2e", "accessibility"}
 
 def digest(value: Any) -> str:
     return hashlib.sha256(json.dumps(value, sort_keys=True, default=str).encode()).hexdigest()
-
-
-def atomic_json(path: Path, data: dict):
-    temp = path.with_suffix(".tmp")
-    temp.write_text(json.dumps(data, indent=2, default=str), encoding="utf-8")
-    os.chmod(temp, 0o600)
-    # Windows readers/antivirus can briefly deny atomic replacement even after a complete write.
-    # Keep the previous valid JSON visible until replacement succeeds; never truncate it in place.
-    for attempt in range(40):
-        try:
-            temp.replace(path)
-            return
-        except PermissionError as exc:
-            if getattr(exc, "winerror", None) not in {5, 32, 33} or attempt == 39:
-                raise
-            time.sleep(0.05)
 
 
 def _canonicalize_case_ids(candidate: dict[str, Any], known: set[str]) -> dict[str, Any]:
@@ -211,7 +194,7 @@ def _generation_policy(repo: dict[str, Any], state: dict[str, Any] | None = None
         "selected_application_component": state.get("app_component"),
         "component_path_rule": "Place Node tests inside the component containing its package.json. For the selected frontend, write new specs under <selected_application_component>/tests/. Root tests/ cannot resolve nested frontend dependencies. Other ecosystems belong to their own manifest component.",
         "python_import_roots": extra_import_roots(repo.get("source_files") or []),
-        "python_contract_rule": "Inspect collaborator signatures before constructing fixtures, including all required dataclass fields. Follow the actual returned representation: dictionary keys are not object attributes. Never infer return types from an internal helper dataclass if the function serializes it to a dictionary. Read the implementation before writing assertions.",
+        "python_contract_rule": "Inspect collaborator signatures before constructing fixtures, including all required dataclass fields. Follow the actual returned representation: dictionary keys are not object attributes. Never infer return types from an internal helper dataclass if the function serializes it to a dictionary. Expected enum/tag strings must match source constants verbatim, not natural-language synonyms. Normalize filesystem expectations with pathlib rather than hard-coding POSIX strings on Windows. Explicitly import unittest.mock when using it. Read the implementation before writing assertions.",
         "declared_dependencies": (state.get("declared_dependencies") or [])[:120],
         "forbidden_imports": _undeclared_libraries(state.get("declared_dependencies") or []),
         "dependency_rule": (

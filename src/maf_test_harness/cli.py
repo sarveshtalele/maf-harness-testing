@@ -23,6 +23,7 @@ from .monitoring.report import build_report, render_markdown
 from .settings import API_KEY, BASE_URL, MODEL, SKILL_MODE, validate_gateway_settings
 from .skills.config import SKILL_NAMES
 from .skills.registry import lint_all, load_lock, tree_sha256, verify_lock
+from .storage import read_json
 from .workflow import ENV_STAGE, EXECUTION_STAGE, Harness
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -127,7 +128,7 @@ async def run(args) -> int:
 
 def verify_run(run_dir: Path, skills_root: Path) -> int:
     """Evidence check: did this run really use the MAF harness and the Agent Skills provider?"""
-    state = json.loads((run_dir / "run.json").read_text(encoding="utf-8"))["state"]
+    state = read_json(run_dir / "run.json")["state"]
     runtime = state.get("runtime_provenance", {})
     rows = [
         (

@@ -107,6 +107,18 @@ If the OpenSSL command reports an untrusted corporate certificate, obtain the ap
 
 Windows can also briefly deny replacing `run.json` while a reader or antivirus holds it. State writes retry that sharing conflict for up to two seconds while retaining the previous valid file. Persistent permission failures remain visible errors; the harness does not bypass directory permissions.
 
+`[Errno 13] Permission denied` when **reading** `run.json` is handled by the same bounded retry policy in the API, workflow restore, approvals, reruns and evidence views. Writes use unique staging files and preserve the previous valid state until replacement succeeds. A completed operation is no longer left marked busy if failure-state persistence itself encounters a permission error.
+
+If access remains denied after updating and restarting, inspect the actual run file without modifying its permissions:
+
+```cmd
+whoami
+icacls "%USERPROFILE%\.maf-harness\runs\e9681c3fb20d\run.json"
+attrib "%USERPROFILE%\.maf-harness\runs\e9681c3fb20d\run.json"
+```
+
+Check whether the directory belongs to the same Windows account and whether antivirus or folder-protection software is blocking the process. Do not delete `run.json` or take ownership of another user's files. A persistent ACL denial needs the account/directory configuration corrected; retries cannot grant missing permissions.
+
 ## Verification scope
 
 The CI matrix uses Node 24 on Windows and macOS, installs with npm command shims disabled to reproduce this class of failure, checks build/types and then runs the actual platform launcher smoke test and browser workflow. Only a successful Windows CI run confirms those checks ran on Windows; macOS tests do not certify an arbitrary Windows machine or corporate network.

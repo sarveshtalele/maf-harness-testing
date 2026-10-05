@@ -35,6 +35,7 @@ from ..skills.contracts import (
     check_route_literals,
 )
 from .mock_pitfalls import check_mock_pitfalls
+from .python_contracts import check_fixture_contracts
 
 MAX_FILE_BYTES = 512_000
 READ_LINE_LIMIT = 160
@@ -412,6 +413,7 @@ def static_gate(ctx: RepoContext, path: str, content: str) -> None:
                 installed=installed,
             )
         check_python_test_hygiene(content, path, ctx.source_files, read_source=ctx.read)
+        check_fixture_contracts(content, path, ctx)
         check_mock_pitfalls(content, path, ctx)
         check_stateful_fixtures(ctx, path, content)
     elif path.endswith((".java", ".kt")):

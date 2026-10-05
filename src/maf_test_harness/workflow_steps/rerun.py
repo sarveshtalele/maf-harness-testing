@@ -1,17 +1,17 @@
 """Explicit stage replay with retained evidence and fresh workflow checkpoints."""
 
-import json
 from uuid import uuid4
 
 from filelock import FileLock
 
+from ..storage import read_json
 from ..workflow_support import atomic_json
 
 
 class RerunSteps:
     async def rerun(self, stage: str, request_id: str | None):
         with FileLock(str(self.run_dir / "run.lock"), timeout=0):
-            view = json.loads(self.view_path.read_text(encoding="utf-8"))
+            view = read_json(self.view_path)
             pending = view.get("pending")
             if (pending or {}).get("id") != request_id:
                 raise ValueError("Run changed. Refresh before rerunning a step.")
