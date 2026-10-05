@@ -4,11 +4,13 @@ import ast
 import json
 import os
 import re
-import shutil
 import subprocess
+import sys
+import time
 from collections import Counter
 from pathlib import Path
 from urllib.parse import urlparse
+from uuid import uuid4
 
 from ..models import RepoAnalysis
 
@@ -148,9 +150,15 @@ def validate_github_url(raw_url: str, with_ref: bool = False):
 def clone_repository(repo_url: str, destination: Path, timeout_seconds: int = 180) -> tuple[str, str]:
     normalized, _, repo, ref = validate_github_url(repo_url, with_ref=True)
     destination = destination.resolve()
-    if destination.exists():
-        shutil.rmtree(destination)
     destination.parent.mkdir(parents=True, exist_ok=True)
+
+    def preserve_partial_clone():
+        if destination.exists():
+            archive = destination.parent / "clone-attempts" / uuid4().hex
+            archive.mkdir(parents=True)
+            destination.rename(archive / destination.name)
+
+    preserve_partial_clone()
 
     cmd = [
         "git",
@@ -169,18 +177,74 @@ def clone_repository(repo_url: str, destination: Path, timeout_seconds: int = 18
     ]
     # Never block on a credential prompt (private/nonexistent repos fail fast instead of hanging).
     env = {**os.environ, "GIT_TERMINAL_PROMPT": "0", "GIT_ASKPASS": "true"}
-    try:
-        proc = subprocess.run(
-            cmd, capture_output=True, text=True, timeout=timeout_seconds, check=False, env=env
-        )
-    except FileNotFoundError as exc:
-        raise RepoCloneError("git is not installed or is not on PATH.") from exc
-    except subprocess.TimeoutExpired as exc:
-        raise RepoCloneError(f"Repository clone exceeded {timeout_seconds} seconds.") from exc
-    if proc.returncode != 0:
-        detail = (proc.stderr or proc.stdout or "git clone failed").strip().splitlines()[-1]
-        raise RepoCloneError(detail)
-    return normalized, repo
+    # Never inherit a certificate-verification bypass. Retry transport failures, not trust failures.
+    env.pop("GIT_SSL_NO_VERIFY", None)
+    deadline = time.monotonic() + timeout_seconds
+    schannel_failure = False
+    transient = (
+        "missing close_notify",
+        "connection reset",
+        "server closed abruptly",
+        "early eof",
+        "http/2 stream",
+        "recv failure",
+        "remote end hung up",
+    )
+    for attempt in range(3):
+        options = ["-c", "http.sslVerify=true", "-c", f"http.{normalized}.sslVerify=true"]
+        if attempt:
+            options += ["-c", "http.version=HTTP/1.1"]
+        if attempt == 2 and sys.platform == "win32" and schannel_failure:
+            options += ["-c", "http.sslBackend=openssl"]
+        mode = "configured TLS" if not attempt else "HTTP/1.1"
+        if "http.sslBackend=openssl" in options:
+            mode += " with OpenSSL certificate verification"
+        message = f"Repository clone attempt {attempt + 1}/3: {mode}"
+        print(message, flush=True)
+        with (destination.parent / "clone.log").open("a", encoding="utf-8") as log:
+            log.write(message + "\n")
+        try:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise subprocess.TimeoutExpired(cmd, timeout_seconds)
+            proc = subprocess.run(
+                [cmd[0], *options, *cmd[1:]],
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                timeout=remaining,
+                check=False,
+                env=env,
+            )
+        except FileNotFoundError as exc:
+            raise RepoCloneError("git is not installed or is not on PATH.") from exc
+        except subprocess.TimeoutExpired as exc:
+            raise RepoCloneError(f"Repository clone exceeded {timeout_seconds} seconds.") from exc
+        if proc.returncode == 0:
+            with (destination.parent / "clone.log").open("a", encoding="utf-8") as log:
+                log.write(f"Repository clone succeeded on attempt {attempt + 1}.\n")
+            return normalized, repo
+        output = (proc.stderr or proc.stdout or "git clone failed").strip()
+        detail = output.splitlines()[-1]
+        lower = output.lower()
+        with (destination.parent / "clone.log").open("a", encoding="utf-8") as log:
+            log.write(
+                f"Attempt {attempt + 1} failed (git exit {proc.returncode}); "
+                f"transport retry eligible: {any(marker in lower for marker in transient)}.\n"
+            )
+        schannel_failure |= "schannel" in lower and "missing close_notify" in lower
+        if not any(marker in lower for marker in transient) or attempt == 2:
+            advice = ""
+            if schannel_failure or any(marker in lower for marker in ("ssl", "certificate", "tls")):
+                advice = (
+                    " Git HTTPS/TLS failed. Update Git for Windows and check your proxy/VPN "
+                    "and trusted certificates. Certificate verification remains enabled. "
+                    "See docs/WINDOWS_SETUP_AND_DEBUGGING.md, then Retry stage."
+                )
+            raise RepoCloneError(detail + advice)
+        preserve_partial_clone()
+    raise RepoCloneError("Repository clone failed.")
 
 
 def _safe_source(root: Path, path: Path) -> bool:

@@ -4,6 +4,7 @@ import hashlib
 import json
 import os
 import re
+import time
 from pathlib import Path
 from typing import Any
 
@@ -59,7 +60,16 @@ def atomic_json(path: Path, data: dict):
     temp = path.with_suffix(".tmp")
     temp.write_text(json.dumps(data, indent=2, default=str), encoding="utf-8")
     os.chmod(temp, 0o600)
-    temp.replace(path)
+    # Windows readers/antivirus can briefly deny atomic replacement even after a complete write.
+    # Keep the previous valid JSON visible until replacement succeeds; never truncate it in place.
+    for attempt in range(40):
+        try:
+            temp.replace(path)
+            return
+        except PermissionError as exc:
+            if getattr(exc, "winerror", None) not in {5, 32, 33} or attempt == 39:
+                raise
+            time.sleep(0.05)
 
 
 def _canonicalize_case_ids(candidate: dict[str, Any], known: set[str]) -> dict[str, Any]:

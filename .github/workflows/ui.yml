@@ -23,6 +23,10 @@ jobs:
       - run: uv sync --extra dev --extra e2e
       - run: uv run pytest tests/test_ui_api.py tests/test_platform_compat.py -q
       - run: uv run ruff check src tests scripts
+      - run: uv run pytest tests/test_clone_transport.py -q
+      - name: Real GitHub clone (Windows Schannel, macOS default TLS)
+        run: >-
+          uv run python -c "import os, tempfile; from pathlib import Path; from maf_test_harness.repo.analyzer import clone_repository; os.environ.update({'GIT_CONFIG_COUNT':'1','GIT_CONFIG_KEY_0':'http.sslBackend','GIT_CONFIG_VALUE_0':'schannel'} if os.name == 'nt' else {}); root = Path(tempfile.mkdtemp(prefix='qe-github-clone-')); print(clone_repository('https://github.com/sarveshtalele/requirement-analysis-skill', root / 'repo'))"
       - name: Install without npm command shims (Windows regression)
         run: npm ci --include=dev --bin-links=false
         working-directory: frontend

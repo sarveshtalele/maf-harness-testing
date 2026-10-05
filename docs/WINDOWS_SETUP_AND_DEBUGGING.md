@@ -89,6 +89,24 @@ Get-Content $qeLog.FullName -Tail 80 -Wait
 6. Runtime installation occurs only at Test execution setup. Missing Java/Maven/WildFly or other prerequisites are separate from a frontend startup defect. Review the repository-specific setup guide and command output.
 7. Use **Rerun from step** after the active operation reaches a gate. Prior evidence is archived under `attempts/<id>`; downstream approvals are reset and normal tool approvals apply. Reconnect restores saved state; it does not automatically replay an interrupted command.
 
+## GitHub clone: Schannel `missing close_notify`
+
+This is Git's TLS connection closing unexpectedly, after the application has started. A proxy, VPN, security software or an interrupted network connection may cause it; the error alone does not identify which one.
+
+The harness retries interrupted transport operations within one 180-second deadline: configured TLS, then HTTP/1.1, then on Windows only an OpenSSL retry for the specific Schannel `missing close_notify` failure. Certificate verification stays enabled. No global Git settings change. Certificate-trust or repository-authentication failures are not retried. Partial clones and previous source are preserved in `clone-attempts`; `clone.log` records attempts in the run folder, and the final error is shown at the Retry gate.
+
+Update Git for Windows from https://git-scm.com/download/win, reopen the terminal, then test connectivity without cloning or changing configuration:
+
+```cmd
+git --version
+git -c http.version=HTTP/1.1 ls-remote https://github.com/sarveshtalele/requirement-analysis-skill.git HEAD
+git -c http.version=HTTP/1.1 -c http.sslBackend=openssl -c http.sslVerify=true ls-remote https://github.com/sarveshtalele/requirement-analysis-skill.git HEAD
+```
+
+If the OpenSSL command reports an untrusted corporate certificate, obtain the approved CA configuration from your network administrator; OpenSSL may use a different trust store from Schannel. Do not disable certificate verification or revocation checking. After connectivity works, choose **Retry stage** in the application. A network outage cannot be repaired by changing the Node or Next version.
+
+Windows can also briefly deny replacing `run.json` while a reader or antivirus holds it. State writes retry that sharing conflict for up to two seconds while retaining the previous valid file. Persistent permission failures remain visible errors; the harness does not bypass directory permissions.
+
 ## Verification scope
 
 The CI matrix uses Node 24 on Windows and macOS, installs with npm command shims disabled to reproduce this class of failure, checks build/types and then runs the actual platform launcher smoke test and browser workflow. Only a successful Windows CI run confirms those checks ran on Windows; macOS tests do not certify an arbitrary Windows machine or corporate network.
