@@ -37,6 +37,16 @@ Both services use the same launcher. Open http://127.0.0.1:3000 and keep the ter
 start-windows.cmd --smoke-test
 ```
 
+Running the start script again reuses a healthy platform and prints its URL, without reinstalling dependencies or starting duplicate servers. Stop the original terminal with Ctrl+C before updating code or `.env`. If only a leftover service or another program occupies a default port, startup automatically chooses a free port and prints the actual URL. It does not kill the existing program. Explicit `--port` / `--api-port` values remain strict; choose a different value when occupied. A reused application stays owned by its original terminal, including when `--smoke-test` is used.
+
+For an older downloaded version still rejecting port 8765, update to the latest ZIP. As an immediate workaround, after stopping the original terminal if it is available:
+
+```cmd
+start-windows.cmd --api-port 8766 --port 3001
+```
+
+Open the URL printed by the launcher. This does not erase any saved runs or stop unrelated processes.
+
 The launcher checks occupied ports before reinstalling or building, pins Python 3.12 with uv, installs locked dependencies and builds Next. Missing prerequisites fail visibly. UTF-8 is enabled for Python services and executed Python scripts, including paths and skill instructions containing non-ASCII text.
 
 ## Where to find every kind of log

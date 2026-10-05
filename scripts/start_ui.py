@@ -22,6 +22,48 @@ from urllib.request import urlopen
 ROOT = Path(__file__).resolve().parents[1]
 
 
+def port_available(port):
+    with socket.socket() as probe:
+        if os.name != "nt":
+            probe.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        try:
+            probe.bind(("127.0.0.1", port))
+            return True
+        except OSError:
+            return False
+
+
+def running_application(port):
+    """Reuse only a responding platform UI with a working authenticated API proxy."""
+    if port_available(port):
+        return False
+    try:
+        with urlopen(f"http://127.0.0.1:{port}/", timeout=2) as response:
+            if b"Agentic QE Platform" not in response.read():
+                return False
+        with urlopen(f"http://127.0.0.1:{port}/api/harness/config", timeout=2) as response:
+            config = json.load(response)
+        return isinstance(config, dict) and {"model", "key_configured", "stages"}.issubset(config)
+    except (OSError, ValueError):
+        return False
+
+
+def choose_port(port, explicit, excluded=()):
+    if explicit:
+        if port in excluded or not port_available(port):
+            raise RuntimeError(f"Port {port} is already in use. Choose another port.")
+        return port
+    for candidate in range(port, min(port + 100, 65536)):
+        if candidate not in excluded and port_available(candidate):
+            if candidate != port:
+                print(
+                    f"Port {port} is occupied; using {candidate}. Existing processes are left running.",
+                    flush=True,
+                )
+            return candidate
+    raise RuntimeError(f"No free local port found near {port}.")
+
+
 def node_runtime():
     node = shutil.which("node")
     if not node:
@@ -80,23 +122,33 @@ def main():
         "--prepare", action="store_true", help="Install frontend dependencies and build with Node 24"
     )
     parser.add_argument("--smoke-test", action="store_true", help="Verify both servers, then stop")
-    parser.add_argument("--port", type=int, default=3000)
-    parser.add_argument("--api-port", type=int, default=8765)
+    parser.add_argument("--port", type=int, help="UI port; default 3000, with automatic conflict recovery")
+    parser.add_argument(
+        "--api-port", type=int, help="API port; default 8765, with automatic conflict recovery"
+    )
     args = parser.parse_args()
+    explicit_port, explicit_api_port = args.port is not None, args.api_port is not None
+    args.port = args.port if explicit_port else 3000
+    args.api_port = args.api_port if explicit_api_port else 8765
     try:
         node = node_runtime()
     except (RuntimeError, OSError, subprocess.TimeoutExpired) as exc:
         parser.error(str(exc))
     if args.port == args.api_port or not all(0 < p < 65536 for p in (args.port, args.api_port)):
         parser.error("Choose two different ports between 1 and 65535.")
-    for port in (args.port, args.api_port):
-        with socket.socket() as probe:
-            if os.name != "nt":
-                probe.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-            try:
-                probe.bind(("127.0.0.1", port))
-            except OSError:
-                parser.error(f"Port {port} is already in use.")
+    for candidate in range(args.port, args.port + (1 if explicit_port else 10)):
+        if running_application(candidate):
+            print(
+                f"Agentic QE Platform is already running. Open http://127.0.0.1:{candidate}\nNo rebuild or duplicate servers started. Stop it with Ctrl+C in its original terminal before updating.",
+                flush=True,
+            )
+            # Platform wrappers distinguish reuse from preflight success and skip installation/build.
+            return 10 if args.check_only else 0
+    try:
+        args.port = choose_port(args.port, explicit_port, (args.api_port,))
+        args.api_port = choose_port(args.api_port, explicit_api_port, (args.port,))
+    except RuntimeError as exc:
+        parser.error(str(exc))
     if args.check_only:
         return
     env = {
@@ -174,6 +226,15 @@ def main():
         if os.name == "nt"
         else {"start_new_session": True}
     )
+
+    def interrupt(signum, frame):
+        raise KeyboardInterrupt
+
+    previous_handlers = {}
+    for name in ("SIGTERM", "SIGBREAK"):
+        if hasattr(signal, name):
+            signum = getattr(signal, name)
+            previous_handlers[signum] = signal.signal(signum, interrupt)
     try:
         if args.prepare:
             install = launch(
@@ -253,7 +314,9 @@ def main():
         for worker in threads:
             worker.join(timeout=5)
         log.close()
+        for signum, handler in previous_handlers.items():
+            signal.signal(signum, handler)
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

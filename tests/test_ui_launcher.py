@@ -2,9 +2,11 @@
 
 import os
 import shutil
+import signal
 import socket
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 import pytest
@@ -138,3 +140,77 @@ def test_npm_uses_the_selected_node_executable(monkeypatch, tmp_path):
     node.touch()
     monkeypatch.setattr(launcher.shutil, "which", lambda _: str(root / "npm.cmd"))
     assert launcher.npm_command(str(node)) == [str(node), str(cli)]
+
+
+def test_default_port_conflict_recovers_without_stopping_owner():
+    launcher = launcher_module()
+    with socket.socket() as owner:
+        owner.bind(("127.0.0.1", 0))
+        owner.listen()
+        port = owner.getsockname()[1]
+        chosen = launcher.choose_port(port, False)
+        assert chosen != port and launcher.port_available(chosen)
+        with socket.create_connection(("127.0.0.1", port), timeout=2):
+            pass
+
+
+def test_repeated_start_reuses_healthy_app_and_signal_shutdown_frees_ports(tmp_path):
+    root = Path(__file__).resolve().parents[1]
+    if not (root / "frontend/.next/BUILD_ID").is_file():
+        pytest.skip("Build the frontend before the startup integration check")
+    launcher = launcher_module()
+    ports = []
+    for _ in range(2):
+        with socket.socket() as probe:
+            probe.bind(("127.0.0.1", 0))
+            ports.append(probe.getsockname()[1])
+    command = [
+        sys.executable,
+        str(root / "scripts/start_ui.py"),
+        "--production",
+        "--port",
+        str(ports[0]),
+        "--api-port",
+        str(ports[1]),
+    ]
+    env = {
+        **os.environ,
+        "HARNESS_RUNS_DIR": str(tmp_path / "runs"),
+        "HARNESS_USAGE_DIR": str(tmp_path / "usage"),
+    }
+    with (tmp_path / "console.log").open("w", encoding="utf-8") as console:
+        process = subprocess.Popen(
+            command,
+            cwd=root,
+            env=env,
+            stdout=console,
+            stderr=subprocess.STDOUT,
+            **({"creationflags": subprocess.CREATE_NEW_PROCESS_GROUP} if os.name == "nt" else {}),
+        )
+        try:
+            deadline = time.monotonic() + 120
+            while time.monotonic() < deadline and process.poll() is None:
+                if launcher.running_application(ports[0]):
+                    break
+                time.sleep(0.5)
+            else:
+                pytest.fail((tmp_path / "console.log").read_text(encoding="utf-8"))
+            for preflight in (True, False):
+                result = subprocess.run(
+                    [*command, *(["--check-only"] if preflight else [])],
+                    cwd=root,
+                    env=env,
+                    capture_output=True,
+                    text=True,
+                    timeout=15,
+                )
+                assert result.returncode == (10 if preflight else 0), result.stderr
+                assert "already running" in result.stdout
+                assert process.poll() is None
+        finally:
+            if process.poll() is None:
+                process.send_signal(signal.CTRL_BREAK_EVENT if os.name == "nt" else signal.SIGTERM)
+                process.wait(timeout=30)
+    assert process.returncode == 0
+    for port in ports:
+        assert launcher.port_available(port), f"Shutdown left port {port} occupied"
