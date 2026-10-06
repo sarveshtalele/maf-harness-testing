@@ -174,6 +174,7 @@ def clone_repository(repo_url: str, destination: Path, timeout_seconds: int = 18
         "-c",
         "core.hooksPath=/dev/null",
         "clone",
+        "--template=",  # no init.templateDir copy: user/global hook templates never enter the target clone
         "--progress",
         "--depth",
         "1",
