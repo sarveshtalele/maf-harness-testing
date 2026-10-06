@@ -22,6 +22,7 @@ from .agent import prompt_settings
 from .agent.personas import PERSONAS
 from .envs import app_launcher
 from .envs import recovery as env_recovery
+from .envs.platform_compat import is_cancelled
 from .hooks import (
     SESSION_START,
     STAGE_GATE,
@@ -257,7 +258,7 @@ class Harness(RerunSteps, ExecutionSteps, GenerationSteps, PlanningSteps):
             self.view.pop("error", None)
         else:
             self.view["pending"] = None
-            if self.view["status"] != "stopped":
+            if self.view["status"] not in {"stopped", "stopping"}:
                 self.view["status"] = "complete"
                 self.hooks.notify(STOP, reason="complete")
         self.save()
@@ -352,6 +353,8 @@ class Harness(RerunSteps, ExecutionSteps, GenerationSteps, PlanningSteps):
                 self._restored = True
                 return await self._collect(result)
             except Exception as exc:
+                if is_cancelled():  # a Stop, not a failure: the stop handler records "stopped"
+                    raise
                 self.view["status"] = "interrupted"
                 self.view["error"] = str(exc)
                 self.save()

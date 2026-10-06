@@ -137,8 +137,10 @@ def _probe(tool: str) -> dict:
     if path:
         command = [exe, *command[1:]]
         try:
-            proc = subprocess.run(command, capture_output=True, text=True, timeout=20, check=False)
+            proc = platform_compat.run_cancellable(command, timeout=20)
             entry["version"] = ((proc.stdout or proc.stderr).strip().splitlines() or [""])[0][:120]
+        except InterruptedError:
+            raise
         except (OSError, subprocess.TimeoutExpired):
             entry["version"] = "unknown"
     return entry

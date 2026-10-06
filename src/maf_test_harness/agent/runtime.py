@@ -26,6 +26,7 @@ from agent_framework import (
 )
 from agent_framework.openai import OpenAIChatClient, OpenAIChatCompletionClient
 
+from ..envs.platform_compat import raise_if_cancelled
 from ..hooks.agent_hooks_bridge import BACKENDS, hook_bundle, sdk_available
 from ..hooks.maf_bridge import hook_middleware
 from ..llm.usage import DailyUsageLedger
@@ -418,6 +419,7 @@ class MAFHarnessRuntime:
         return client
 
     async def _run_agent(self, agent, prompt, **kwargs):
+        raise_if_cancelled()
         try:
             return await asyncio.wait_for(agent.run(prompt, **kwargs), timeout=MODEL_TIMEOUT_SECONDS)
         except TimeoutError as exc:

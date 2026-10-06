@@ -48,7 +48,7 @@ export function Panel({ title, children, storageKey, actions, defaultOpen = true
 
 export function Badge({ value }: { value: unknown }) {
   const str = text(value); const lower = str.toLowerCase();
-  const kind = /fail|error|interrupted|inconclusive|blocked/.test(lower) ? 'bad' : /pass|verified|complete|ready|true/.test(lower) ? 'good' : /wait|review|skip|stopped|pending/.test(lower) ? 'warn' : '';
+  const kind = /fail|error|interrupted|inconclusive|blocked/.test(lower) ? 'bad' : /pass|verified|complete|ready|true/.test(lower) ? 'good' : /wait|review|skip|stopp|pending/.test(lower) ? 'warn' : '';
   return <span className={`badge ${kind}`}>{label(str)}</span>;
 }
 export function Metrics({ values }: { values: Row }) {

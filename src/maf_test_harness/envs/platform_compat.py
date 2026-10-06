@@ -17,6 +17,20 @@ IS_WINDOWS = sys.platform == "win32"
 RUN_CANCEL = ContextVar("harness_run_cancel", default=None)
 
 
+def is_cancelled() -> bool:
+    """True when the current run's Stop (or Ctrl-C) event is set."""
+    event = RUN_CANCEL.get()
+    return event is not None and event.is_set()
+
+
+def raise_if_cancelled() -> None:
+    """Explicit cancellation point for long loops between batches/model calls."""
+    if is_cancelled():
+        import asyncio
+
+        raise asyncio.CancelledError("run stopped by user")
+
+
 def venv_python(venv_dir: str | Path) -> str:
     """Path to the interpreter inside a venv created at ``venv_dir``, as a string suitable for argv[0].
 
@@ -134,6 +148,39 @@ def kill_process_tree(process) -> None:
             os.killpg(process.pid, signal.SIGKILL)
         except ProcessLookupError:
             pass
+
+
+def run_cancellable(argv, *, input=None, timeout: float, env=None):
+    """subprocess.run(capture_output, text) that Stop can interrupt: own process group, polled RUN_CANCEL, whole
+    tree killed on cancel or timeout. Raises subprocess.TimeoutExpired on timeout, InterruptedError on cancel."""
+    import subprocess
+    import time
+
+    if is_cancelled():
+        raise InterruptedError("Run stopped by user; no command was started.")
+    process = subprocess.Popen(
+        argv,
+        stdin=subprocess.PIPE if input is not None else subprocess.DEVNULL,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        env=env,
+        **new_process_group_kwargs(),
+    )
+    deadline = time.monotonic() + timeout
+    while True:
+        try:
+            out, err = process.communicate(input, timeout=min(0.25, max(deadline - time.monotonic(), 0.01)))
+            return subprocess.CompletedProcess(argv, process.returncode, out, err)
+        except subprocess.TimeoutExpired:
+            expired = time.monotonic() >= deadline
+            if expired or is_cancelled():
+                kill_process_tree(process)
+                process.communicate()
+                if expired:
+                    raise
+                raise InterruptedError("Run stopped by user.") from None
+        input = None  # already written; communicate() resumes the pending write on retry
 
 
 def fake_home_env(fake_home: Path) -> dict[str, str]:

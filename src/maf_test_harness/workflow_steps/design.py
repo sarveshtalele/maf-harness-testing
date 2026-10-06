@@ -3,6 +3,7 @@
 from collections import defaultdict
 from pathlib import PurePosixPath
 
+from ..envs.platform_compat import raise_if_cancelled
 from ..workflow_support import digest
 
 SECTIONS = ("positive", "negative", "boundary", "validation", "contract")
@@ -55,6 +56,7 @@ async def design_tests_batched(host, state):
     merged = {f"{section}_tests": [] for section in SECTIONS}
     merged["gaps"] = []
     for index, (component, subset) in enumerate(batches, 1):
+        raise_if_cancelled()
         draft = cache["batches"].get(str(index))
         if draft is None:
             await host._model_artifact("test_design", state, subset, prompt_batch=index)

@@ -351,6 +351,14 @@ test('stop active model work preserves repository analysis after reload', async 
   await expect(page.getByRole('button', { name: 'Approve and proceed', exact: true })).toBeEnabled();
   await page.getByRole('button', { name: 'Approve and proceed', exact: true }).click();
   await expect(page.getByRole('button', { name: 'Stop run', exact: true })).toBeEnabled();
+  const stopPosts: string[] = [];
+  page.on('request', r => { if (r.method() === 'POST' && r.url().endsWith('/stop')) stopPosts.push(r.url()); });
+  page.once('dialog', d => d.dismiss());
+  await page.getByRole('button', { name: 'Stop run', exact: true }).click();
+  await page.waitForTimeout(500);
+  expect(stopPosts).toHaveLength(0);
+  await expect(page.getByRole('button', { name: 'Stop run', exact: true })).toBeEnabled();
+  page.once('dialog', d => d.accept());
   await page.getByRole('button', { name: 'Stop run', exact: true }).click();
   await expect(page.getByText('Workflow stopped. Approved evidence remains available.', { exact: true })).toBeVisible();
   await page.reload();

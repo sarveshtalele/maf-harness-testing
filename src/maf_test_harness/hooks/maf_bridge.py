@@ -18,10 +18,12 @@ from typing import Any
 
 from agent_framework import ChatMiddleware, Content, FunctionMiddleware, MiddlewareFailure
 
+from ..envs.platform_compat import is_cancelled
 from .engine import HookEngine
 from .events import PRE_MODEL
 
 StageGetter = Callable[[], str]
+STOPPED_MESSAGE = "run stopped by user"
 
 
 def _as_dict(arguments: Any) -> dict[str, Any]:
@@ -46,6 +48,8 @@ class HookFunctionMiddleware(FunctionMiddleware):
         self.engine, self.stage = engine, stage
 
     async def process(self, context, call_next):
+        if is_cancelled():  # MiddlewareFailure stops the tool loop and cancels in-flight sibling tool calls
+            raise MiddlewareFailure(STOPPED_MESSAGE)
         name = context.function.name
         stage = self.stage()
         try:

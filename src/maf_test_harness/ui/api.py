@@ -350,18 +350,26 @@ class LocalAPI(EvidenceAPI, SettingsAPI):
             if not self.job or self.job_run != key:
                 raise RuntimeError("No active operation for this run. Use its pending Stop decision.")
 
-            def stopped():
+            path = self.run_path(key) / "run.json"
+            if read_json(path).get("status") == "stopping":
+                return {"id": key}  # already stopping
+
+            def mark(status, **extra):
                 if self.host and self.host.run_dir == self.run_path(key):
-                    self.host.view.update(status="stopped", pending=None)
-                    self.host.audit("run_stopped_by_user", stage=self.host.state.get("active_stage"))
+                    self.host.view.update(status=status, **extra)
+                    if status == "stopped":
+                        self.host.audit("run_stopped_by_user", stage=self.host.state.get("active_stage"))
                     self.host.save()
                 else:
-                    path = self.run_path(key) / "run.json"
                     view = read_json(path)
-                    view.update(status="stopped", pending=None)
+                    view.update(status=status, **extra)
                     atomic_json(path, view)
+
+            def stopped():
+                mark("stopped", pending=None)
                 self.operation_log(key, "stopped by user; retained saved evidence")
 
+            mark("stopping")
             self.job = self.service.stop_active(stopped)
             return {"id": key}
 
