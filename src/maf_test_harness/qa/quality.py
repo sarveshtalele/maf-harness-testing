@@ -126,20 +126,96 @@ def require_complete_intake(state):
         )
 
 
+_GENERIC_SYMBOLS = {"main", "run", "get", "set", "init", "__init__", "index", "test", "setup", "call"}
+_GENERIC_STEMS = {
+    "main",
+    "index",
+    "utils",
+    "util",
+    "__init__",
+    "app",
+    "server",
+    "client",
+    "test",
+    "tests",
+    "setup",
+}
+_DEF_BEFORE = re.compile(
+    r"\b(?:def|function|fun|func|class|interface|struct|fn|void|public|private|protected|static)\s+(?:[\w<>\[\],.?]+\s+)*$"
+)
+
+
+def _read_tests(root, test_files, max_bytes=2_000_000):
+    root = Path(root).resolve()
+    out, used = {}, 0
+    for path in test_files:
+        target = (root / path).resolve()
+        if not target.is_relative_to(root) or target.is_symlink() or not target.is_file():
+            continue
+        text = target.read_text(encoding="utf-8", errors="replace")[: max(0, max_bytes - used)]
+        used += len(text)
+        out[path] = text
+        if used >= max_bytes:
+            break
+    return out
+
+
+def existing_requirement_witnesses(root, test_files, requirements, max_bytes=2_000_000):
+    """Static witnesses: existing tests that directly invoke a requirement's source symbol. Not measured coverage."""
+    texts = _read_tests(root, test_files, max_bytes)
+    witnesses: dict[str, list[dict]] = {}
+    for req in requirements:
+        symbol = str(req.get("source_symbol") or "")
+        base = symbol.rsplit(".", 1)[-1]
+        qualifiers = [q for q in symbol.split(".")[:-1] if q] + [
+            Path(p).stem for p in req.get("source_files", [])
+        ]
+        if len(base) < 3 or not re.fullmatch(r"\w+", base):
+            continue
+        call = re.compile(r"(?:\.\s*|\b)" + re.escape(base) + r"\s*\(")
+        found = []
+        for path, text in texts.items():
+            if base in _GENERIC_SYMBOLS and not any(q in text for q in qualifiers):
+                continue
+            for number, line in enumerate(text.splitlines(), 1):
+                if line.lstrip().startswith(("#", "//", "*")):
+                    continue
+                for m in call.finditer(line):
+                    if not _DEF_BEFORE.search(line[: m.start()]):
+                        found.append(
+                            {"test_file": path, "symbol": symbol, "line": number, "kind": "direct_invocation"}
+                        )
+                        break
+                if len(found) >= 5:
+                    break
+        if found:
+            witnesses[req["id"]] = found[:5]
+    return witnesses
+
+
 def existing_test_evidence(root, paths, requirements, limit=18000):
-    names = {Path(path).stem for requirement in requirements for path in requirement.get("source_files", [])}
-    snippets = []
+    hits: dict[str, int] = {}
+    for rows in existing_requirement_witnesses(root, paths, requirements).values():
+        for row in rows:
+            hits[row["test_file"]] = hits.get(row["test_file"], 0) + 1
+    names = {
+        Path(path).stem for requirement in requirements for path in requirement.get("source_files", [])
+    } - _GENERIC_STEMS
+    ranked = []
     for path in paths:
         target = (root / path).resolve()
         if not target.is_relative_to(root.resolve()) or target.is_symlink() or not target.is_file():
             continue
         text = target.read_text(encoding="utf-8", errors="replace")
-        if any(re.search(r"\b" + re.escape(name) + r"\b", text) for name in names):
-            snippet = f"--- EXISTING TEST: {path} ---\n{text[:6000]}"
-            snippets.append(snippet[:limit])
-            limit -= len(snippets[-1])
-            if limit <= 0:
-                break
+        if hits.get(path) or any(re.search(r"\b" + re.escape(name) + r"\b", text) for name in names):
+            ranked.append((-hits.get(path, 0), path, text))
+    snippets = []
+    for _, path, text in sorted(ranked, key=lambda r: r[:2]):
+        snippet = f"--- EXISTING TEST: {path} ---\n{text[:6000]}"
+        snippets.append(snippet[:limit])
+        limit -= len(snippets[-1])
+        if limit <= 0:
+            break
     return "\n".join(snippets)
 
 

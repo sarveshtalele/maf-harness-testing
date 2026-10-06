@@ -29,6 +29,7 @@ STAGE_ORDER = (
     "approved_inputs",
     "repository_evidence",
     "existing_tests",
+    "existing_test_witnesses",
     "evidence_file_paths",
     "approved_traceability_ids",
     "traceability_rule",
