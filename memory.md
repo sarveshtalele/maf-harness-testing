@@ -292,3 +292,32 @@ Final verification on `new-ui`:
   - A running UI whose build ID does not match is not reused; a new instance starts on the next free port.
 - **Verification:** 834 passed (13 sandbox EPERM baseline). `tsc` and `next build` are OK. The test `test_a_running_ui_from_other_code_is_not_reused` was added.
 - **Live runs:** still blocked in this sandbox, which denies `.git/config` writes and port binding. The user runs them locally.
+
+### 2026-10-06 Wave A–E (Sonnet ×4, Haiku ×1; orchestrated and merged by Opus)
+- **Run analysis (`add278f4c106`):**
+  - test_design was not stuck. It was on batch 13 of 37 at about 40 s per batch, but the UI showed no batch progress.
+  - The prompt prefix broke at about 2.7k characters, because `output_contract` carried a per-batch requirement-ID enum.
+  - `repository_evidence` was 38k characters per design call.
+  - Two false retargets came from the `[*/]` cue matching paths. Fixed in a201dc2.
+- **A, tokens and cache:**
+  - The ID enum is gone from the prompt schema. Design repeats about 5.2k characters of prefix now, up from 2.7k on the fixture.
+  - Section order is now stable sections first, then per-batch sections.
+  - Design evidence is capped at 14k characters.
+  - New response cache in `.maf-harness/cache/responses`. It applies only at temperature 0, stores an answer only after host validation, records a `cache_hit` trace event, and is turned off with `HARNESS_RESPONSE_CACHE=0`.
+- **B, progress:** `ui/eta.py` adds per-stage batch done/total, elapsed time, ETA, and estimates for later stages based on past runs. The run view shows "Batch X of Y · ~N min left".
+- **C, autofill:**
+  - `repo/preview.py` reads the repository through the GitHub REST API without cloning. It is capped at 12 files and 200 KB.
+  - New route `POST /repo-preview`. The New run form fills only fields the user has not touched.
+  - The Playwright fixture server stubs the preview.
+- **D, validators:**
+  - `chief_architect_persona` builds its expertise blocks from the detected stack.
+  - The generation reviewer now uses that persona.
+  - New `design_review.py` gives confidence, verdict and reason for each design case. A case that is rejected or scores below 60 gets one repair, and is then kept and marked. `HARNESS_DESIGN_REVIEW=0` turns it off.
+- **E, launcher text:** the Node 16 and "separate framework version" wording is removed from the launcher and docs.
+- **Merge note:** in planning.py, the design review runs before `_settle_response_cache`, so a flagged batch is never cached.
+- **Verification:** 856 passed. The 14 failures are the sandbox EPERM baseline plus the new socket-based `test_route_400` preview route test. `tsc`, ruff and format all pass.
+- **Not done (usage limit):**
+  - final Opus whole-project review and gap table;
+  - live runs on all target repos;
+  - frontend display of design-case confidence;
+  - checking that design case IDs match between the per-batch and final review.
