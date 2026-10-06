@@ -30,6 +30,7 @@ STAGE_ORDER = (
     "repository_evidence",
     "existing_tests",
     "existing_test_witnesses",
+    "testability",
     "evidence_file_paths",
     "approved_traceability_ids",
     "traceability_rule",
@@ -44,6 +45,7 @@ GENERATION_ORDER = (
     "approved_inputs",  # its own keys are ordered stable-first too (see GENERATION_INPUT_ORDER)
     "repository",
     "target_source",
+    "testability",
     "collaborator_signatures",
     "state_and_schema_source",
     "repository_evidence",

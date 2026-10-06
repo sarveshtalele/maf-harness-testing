@@ -25,6 +25,7 @@ from ..qa.quality import existing_requirement_witnesses, existing_test_evidence
 from ..qa.report import design_cases
 from ..repo.analyzer import build_repository_evidence
 from ..repo.stack import detect_stack
+from ..repo.testability import retarget_cases, testability_for_targets
 from ..settings import (
     EXECUTION_TIMEOUT_SECONDS,
 )
@@ -276,6 +277,21 @@ class PlanningSteps:
                     }
                     if stage == "test_design"
                     else None,
+                    "testability": testability_for_targets(
+                        state["artifacts"]["repo_analysis"].get("testability"),
+                        [
+                            *(
+                                p
+                                for r in requirements_source.get("requirement_model", {}).get(
+                                    "requirements", []
+                                )
+                                for p in [*r.get("source_files", []), str(r.get("source_symbol") or "")]
+                            )
+                        ],
+                    )
+                    or None
+                    if stage == "test_design"
+                    else None,
                     "stack_profile": state.get("stack", {}),
                     "selected_application": {
                         "component": state.get("app_component"),
@@ -429,6 +445,13 @@ class PlanningSteps:
                 self.skills_root,
                 allowed_levels=_allowed_levels(state),
             )
+            for note in retarget_cases(
+                design_cases(design),
+                self.run_dir / "repo",
+                state["artifacts"].get("repo_analysis", {}).get("source_files", []),
+            ):
+                self.audit("design_case_retargeted", stage=stage, note=note)
+                design.setdefault("host_notes", []).append(note)
             self._require_coverage_or_reason(design, state, requirements_source=requirements_source)
             if (
                 requirements_source is None

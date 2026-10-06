@@ -41,6 +41,7 @@ from .repo.analyzer import (
     validate_github_url,
 )
 from .repo.stack import detect_stack
+from .repo.testability import analyze_testability
 from .settings import (
     AGENT_TOOLS,
     HOOKS,
@@ -586,6 +587,9 @@ class Harness(RerunSteps, ExecutionSteps, GenerationSteps, PlanningSteps):
                 self.audit,
             )
             atomic_json(self.run_dir / "reverse_engineering.json", analyzed["reverse_engineering"])
+            analyzed["testability"] = await asyncio.to_thread(
+                analyze_testability, self.run_dir / "repo", artifact.source_files
+            )
             self.audit(
                 "deterministic_reverse_engineering",
                 stage=stage,
