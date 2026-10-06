@@ -164,6 +164,8 @@ def run_cancellable(argv, *, input=None, timeout: float, env=None):
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         text=True,
+        encoding="utf-8",  # locale code pages (cp1252) garble non-ASCII hook payloads on Windows
+        errors="replace",
         env=env,
         **new_process_group_kwargs(),
     )
