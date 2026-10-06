@@ -77,6 +77,7 @@ class SettingsAPI:
         return public(
             {
                 "model": MODEL,
+                "build_id": os.getenv("HARNESS_BUILD_ID", ""),
                 "base_url": BASE_URL,
                 "key_configured": bool(API_KEY),
                 "run_directory": str(self.runs),

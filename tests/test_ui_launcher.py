@@ -214,3 +214,30 @@ def test_repeated_start_reuses_healthy_app_and_signal_shutdown_frees_ports(tmp_p
     assert process.returncode == 0
     for port in ports:
         assert launcher.port_available(port), f"Shutdown left port {port} occupied"
+
+
+def test_a_running_ui_from_other_code_is_not_reused(monkeypatch, capsys):
+    import io
+    import json as _json
+
+    launcher = launcher_module()
+    pages = {
+        "/": b"<title>Agentic QE Platform</title>",
+        "/api/harness/config": _json.dumps(
+            {"model": "m", "key_configured": True, "stages": [], "build_id": "old"}
+        ).encode(),
+    }
+
+    class Reply(io.BytesIO):
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+    monkeypatch.setattr(launcher, "port_available", lambda port: False)
+    monkeypatch.setattr(launcher, "urlopen", lambda url, timeout: Reply(pages[url.split(":3000", 1)[1]]))
+    assert launcher.running_application(3000, "old") is True
+    assert launcher.running_application(3000, "new") is False
+    assert "older Agentic QE Platform build" in capsys.readouterr().out
+    assert launcher.build_id() == launcher.build_id()

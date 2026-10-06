@@ -283,3 +283,12 @@ Final verification on `new-ui`:
   - A triage remedy covers "replicates" and "not exported".
   - Checked on the real run repo: it flags mcpUrl, CLIENTS, CopyBtn, refresh, ConnectorCards and Dashboard, but not the exported Page and RootLayout.
 - **Verification:** 833 passed, plus the 13 sandbox EPERM baseline failures.
+
+### 2026-10-06 UI "This page couldn't load" (orchestrator)
+- **Cause 1:** the UI proxy streamed the backend body with `new Response(response.body)`. The backend is a stdlib HTTP/1.0 server that closes the socket after each reply. On Node 24 undici, that close threw `AssertionError assert(!this.paused)` in `Parser.finish`, an uncaughtException that broke the frontend (launch log 19:37–19:42). **Fix:** `route.ts` now buffers the reply with `arrayBuffer()` before returning it.
+- **Cause 2:** the launcher reused any responding UI on port 3000, so a crashed instance from an older checkout kept being served. **Fix:**
+  - `start_ui.build_id()` fingerprints `src` and `frontend/{app,components,lib}` by path, size and mtime.
+  - The backend now returns it as `config.build_id`, taken from `HARNESS_BUILD_ID`.
+  - A running UI whose build ID does not match is not reused; a new instance starts on the next free port.
+- **Verification:** 834 passed (13 sandbox EPERM baseline). `tsc` and `next build` are OK. The test `test_a_running_ui_from_other_code_is_not_reused` was added.
+- **Live runs:** still blocked in this sandbox, which denies `.git/config` writes and port binding. The user runs them locally.

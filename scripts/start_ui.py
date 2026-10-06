@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import re
@@ -33,8 +34,24 @@ def port_available(port):
             return False
 
 
-def running_application(port):
-    """Reuse only a responding platform UI with a working authenticated API proxy."""
+def build_id():
+    """Fingerprint of the code a launch would serve; a running UI from other code is never reused."""
+    digest = hashlib.sha256()
+    roots = [
+        ROOT / "src",
+        ROOT / "frontend" / "app",
+        ROOT / "frontend" / "components",
+        ROOT / "frontend" / "lib",
+    ]
+    for path in sorted(p for root in roots if root.is_dir() for p in root.rglob("*") if p.is_file()):
+        if "__pycache__" not in path.parts:
+            stat = path.stat()
+            digest.update(f"{path.relative_to(ROOT).as_posix()}:{stat.st_size}:{stat.st_mtime_ns}\n".encode())
+    return digest.hexdigest()[:16]
+
+
+def running_application(port, expected_build=None):
+    """Reuse only a responding platform UI, with a working authenticated API proxy, built from this checkout."""
     if port_available(port):
         return False
     try:
@@ -43,7 +60,16 @@ def running_application(port):
                 return False
         with urlopen(f"http://127.0.0.1:{port}/api/harness/config", timeout=2) as response:
             config = json.load(response)
-        return isinstance(config, dict) and {"model", "key_configured", "stages"}.issubset(config)
+        if not (isinstance(config, dict) and {"model", "key_configured", "stages"}.issubset(config)):
+            return False
+        if expected_build and config.get("build_id") != expected_build:
+            print(
+                f"An older Agentic QE Platform build is running on port {port}; it is left running and a new "
+                "instance starts on another port. Stop the old one with Ctrl+C in its terminal.",
+                flush=True,
+            )
+            return False
+        return True
     except (OSError, ValueError):
         return False
 
@@ -136,8 +162,9 @@ def main():
         parser.error(str(exc))
     if args.port == args.api_port or not all(0 < p < 65536 for p in (args.port, args.api_port)):
         parser.error("Choose two different ports between 1 and 65535.")
+    current_build = build_id()
     for candidate in range(args.port, args.port + (1 if explicit_port else 10)):
-        if running_application(candidate):
+        if running_application(candidate, current_build):
             print(
                 f"Agentic QE Platform is already running. Open http://127.0.0.1:{candidate}\nNo rebuild or duplicate servers started. Stop it with Ctrl+C in its original terminal before updating.",
                 flush=True,
@@ -161,6 +188,7 @@ def main():
         **os.environ,
         "HARNESS_API_TOKEN": secrets.token_urlsafe(48),
         "HARNESS_API_PORT": str(args.api_port),
+        "HARNESS_BUILD_ID": current_build,
         "NEXT_TELEMETRY_DISABLED": "1",
         "PYTHONUTF8": "1",
         "PYTHONIOENCODING": "utf-8",

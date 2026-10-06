@@ -28,7 +28,9 @@ async function proxy(request: NextRequest, context: { params: Promise<{ path: st
       const value = response.headers.get(name);
       if (value) headers.set(name, value);
     }
-    return new Response(response.body, { status: response.status, headers });
+    // Buffer the reply: streaming an HTTP/1.0 close-delimited body crashed undici (assert(!this.paused)) on Node 24.
+    const payload = await response.arrayBuffer();
+    return new Response(payload, { status: response.status, headers });
   } catch {
     return Response.json({ error: 'Local backend is unavailable. Check the launcher terminal and reconnect.' }, { status: 503 });
   }
