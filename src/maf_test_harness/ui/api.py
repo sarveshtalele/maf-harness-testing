@@ -23,6 +23,7 @@ from ..agent.runtime import MAFHarnessRuntime
 from ..monitoring.report import build_report
 from ..repo.analyzer import validate_github_url
 from ..repo.git_transport import read_operation
+from ..repo.preview import preview_repository
 from ..settings import API_KEY, BASE_URL, MODEL, validate_gateway_settings
 from ..storage import read_json
 from ..workflow import Harness
@@ -553,7 +554,9 @@ def make_server(api: LocalAPI, token: str, port: int = 8765):
                     body = json.loads(self.rfile.read(length))
                     if not isinstance(body, dict):
                         raise ValueError("JSON object required.")
-                    if parts == ["prompts"]:
+                    if parts == ["repo-preview"]:
+                        self.reply(200, public(preview_repository(str(body.get("repo_url", "")))))
+                    elif parts == ["prompts"]:
                         self.reply(200, api.save_prompts(body))
                     elif len(parts) == 3 and parts[0] == "runs" and parts[2] == "prompts":
                         self.reply(200, api.save_prompts(body, parts[1]))
