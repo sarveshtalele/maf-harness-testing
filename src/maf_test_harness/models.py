@@ -23,6 +23,20 @@ class TestReviewDraft(BaseModel):
     reviews: list[TestCaseReview] = Field(min_length=1, max_length=8)
 
 
+class DesignCaseReview(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    case_id: str = Field(min_length=1)
+    verdict: Literal["approved", "revise", "reject"]
+    confidence: int = Field(ge=0, le=100)
+    reason: str = Field(min_length=1, max_length=1500)
+    suggested_target: str | None = Field(default=None, max_length=300)
+
+
+class DesignReviewDraft(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    reviews: list[DesignCaseReview] = Field(min_length=1, max_length=60)
+
+
 class RepoAnalysis(BaseModel):
     repo_url: str
     repo_name: str

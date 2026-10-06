@@ -164,7 +164,7 @@ def design_runtime(mutate):
 
     async def run(**kwargs):
         result = await original(**kwargs)
-        if kwargs["stage"] == "test_design":
+        if kwargs["stage"] == "test_design" and "cases_under_review" not in kwargs["prompt"]:
             prompts.append(kwargs["prompt"])
             mutate(result["artifact"], len(prompts))
         return result

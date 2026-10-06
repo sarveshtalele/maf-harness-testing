@@ -154,7 +154,8 @@ def test_stage_prompts_start_with_the_assignment_and_the_schema_and_end_with_fee
 
     class Spy(ScriptedStageRuntime):
         async def run_stage(self, *, stage, state, **kwargs):
-            seen.append((stage, kwargs["prompt"]))
+            if "cases_under_review" not in kwargs["prompt"]:
+                seen.append((stage, kwargs["prompt"]))
             return await super().run_stage(stage=stage, state=state, **kwargs)
 
     host, answer = drive(Spy())

@@ -236,7 +236,7 @@ def test_design_must_cover_every_requirement_or_state_why(tmp_path, monkeypatch)
                 evidence="service.py: no type check",
             )
             result["artifact"]["requirements"].append(extra)
-        if kwargs["stage"] == "test_design":
+        if kwargs["stage"] == "test_design" and "cases_under_review" not in kwargs["prompt"]:
             prompts.append(kwargs["prompt"])
             if (
                 len(prompts) == 2

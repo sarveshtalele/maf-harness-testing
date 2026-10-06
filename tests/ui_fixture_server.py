@@ -9,9 +9,6 @@ from fakes import ScriptedStageRuntime, clone_fixture, local_env_plan
 from test_execution_stage import local_pytest_plan
 
 import maf_test_harness.ui.api as module
-
-# Playwright never reaches GitHub: the New-run autofill gets an empty preview.
-module.preview_repository = lambda url: {"warnings": []}
 import maf_test_harness.workflow as wf
 from maf_test_harness.workflow_steps import execution as execution_steps
 
@@ -19,6 +16,10 @@ wf.clone_repository = clone_fixture
 execution_steps.build_plan = local_pytest_plan
 execution_steps.build_environment_plan = local_env_plan
 module.API_KEY = "fixture-configured-flag"
+
+
+# Playwright never reaches GitHub: the New-run autofill gets an empty preview.
+module.preview_repository = lambda url: {"warnings": []}
 
 
 class BrowserRuntime(ScriptedStageRuntime):

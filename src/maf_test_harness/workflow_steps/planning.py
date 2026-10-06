@@ -46,6 +46,7 @@ from ..workflow_support import (
     _plan_summary,
     atomic_json,
 )
+from . import design_review
 from .design import design_tests_batched
 
 
@@ -168,7 +169,10 @@ class PlanningSteps:
         ):
             artifact = await design_tests_batched(self, state)
         else:
+            state["design_reviews"] = {}
             artifact = await self._model_artifact(stage, state)
+        if stage == "test_design":
+            design_review.apply_design_reviews(artifact, state)
         await self.review(stage, artifact, state, ctx)
 
     async def _model_artifact(self, stage, state, requirements_override=None, prompt_batch=None):
@@ -226,6 +230,7 @@ class PlanningSteps:
             )
         evidence_paths = re.findall(r"--- FILE: (.*?) ---", state.get("evidence", ""))
         repair = ""
+        review_repaired = False
         for attempt in range(1, MODEL_REPAIR_ATTEMPTS + 1):
             prompt = build_prompt(
                 {
@@ -378,6 +383,16 @@ class PlanningSteps:
                     "complete JSON object that fixes exactly this problem and keeps everything else valid."
                 )
                 continue
+            if stage == "test_design" and design_review.enabled():
+                reviews = await design_review.review_design_cases(
+                    self, state, design_cases(artifact), prompt_batch or 0
+                )
+                weak = design_review.flagged(reviews)
+                if weak and not review_repaired and attempt < MODEL_REPAIR_ATTEMPTS:
+                    review_repaired = True  # one reviewer-driven repair per batch, then keep and mark
+                    self.audit("design_review_repair", stage=stage, batch=prompt_batch, cases=len(weak))
+                    repair = design_review.repair_feedback(weak)
+                    continue
             self._settle_response_cache(stage, True)
             break
         return artifact

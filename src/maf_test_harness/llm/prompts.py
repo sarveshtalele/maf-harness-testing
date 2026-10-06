@@ -35,6 +35,8 @@ STAGE_ORDER = (
     "existing_tests",
     "existing_test_witnesses",
     "testability",
+    "cases_under_review",
+    "target_source",
     "approved_traceability_ids",
     "revision_feedback",
     "repair_feedback",
