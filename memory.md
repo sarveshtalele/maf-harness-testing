@@ -259,3 +259,13 @@ Wave 1 verification: 815 passed. The 13 failures are the sandbox EPERM baseline.
 - **Per-stage models:** `HARNESS_STAGE_MODELS` takes a strict JSON object. The runtime uses `STAGE_MODELS.get(stage) or self.model`, and `state["stage_models"]` records the model used.
 - **Dropped:** the separate reviewer budget, as YAGNI. Once failures are fail-soft, a reviewer rejection no longer aborts the stage.
 - **Tests:** `tests/test_fail_soft_generation.py` covers continue, ratio abort, report verdict, stage-model parsing and the tool budget. `test_attempt_audit` now pins the ratio at 0. 832 passed.
+
+### 2026-10-06 T9 CLAUDE.md (Haiku, merged)
+- CLAUDE.md grew from 49 to 74 lines. It now covers the module map, gate order, coverage states, prompts and skills conventions, stop semantics, strict cross-OS rules, and the orchestration and memory convention. Every symbol it names was checked to exist.
+
+Final verification on `new-ui`:
+- pytest: 832 passed, 13 failed. All 13 failures are the sandbox socket EPERM baseline.
+- ruff check and format: clean. lint-skills: OK, including the lock. `tsc`: OK. `next build`: OK on Node v24.21.0.
+- Not run here:
+  - Playwright and the launcher smoke tests, because the sandbox blocks local port binding. CI runs both on all 3 OSes.
+  - The live re-runs against the mcp-server-market-v2, mcp-skills-registry and store-pos repos, which need the gateway.
