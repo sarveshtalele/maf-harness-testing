@@ -51,7 +51,7 @@ To use different ports:
 
 Stop the current launcher with Ctrl+C before updating or rebuilding. A second launch reuses a verified running application without rebuilding its assets. Default ports can recover from unrelated conflicts; explicitly selected occupied ports report an error. If a browser was open during an older rebuild, reload it after restarting.
 
-The launcher requires Node 24, invokes Next directly without relying on Windows npm shims, and prints a saved setup/service log path. Configuration → Debugging logs shows the actual log directories.
+The launcher requires Node 24 (Next.js 16 is the framework version, not the Node version). It invokes Next directly without relying on Windows npm shims, and prints a saved setup/service log path. Configuration → Debugging logs shows the actual log directories. If you find Node 16 first on PATH, remove it and install Node.js 24 LTS from https://nodejs.org/.
 
 The scripts install/build on each launch to keep the checkout and dependencies consistent. For faster development after initial setup: `uv run python scripts/start_ui.py`.
 
