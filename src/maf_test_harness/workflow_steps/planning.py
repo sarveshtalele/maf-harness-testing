@@ -195,7 +195,11 @@ class PlanningSteps:
                 "with distinct source-backed cases; do not manufacture boundaries or contracts. Every supplied requirement "
                 "needs a case or an explicit ID-linked exclusion reason. A method link requires actually invoking that method; "
                 "constructors do not cover setters. Use source-valid positive fixtures and complement existing tests. "
-                "Do not claim full application coverage from a declaration inventory."
+                "Do not claim full application coverage from a declaration inventory. "
+                "Every supplied requirement must be accounted for by exactly one of: a new traceable case; an existing "
+                "repository test that directly invokes and asserts it (cite path::test name in gaps with the exact "
+                "requirement ID); or an ID-linked gap with a concrete reason. Target the method that actually implements "
+                "the expected behavior (arithmetic done in a callee belongs to the callee)."
             )
             upstream = {
                 "requirements": _compact_requirements(requirements_source),

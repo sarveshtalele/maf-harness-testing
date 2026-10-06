@@ -82,11 +82,12 @@ def lint_skill(skill_dir: Path) -> SkillReport:
             report.errors.append("metadata must be a mapping")
         elif any(not isinstance(v, (str, int, float, bool)) for v in metadata.values()):
             report.warnings.append("metadata values should be scalars; nested values are skipped by MAF")
-    body_lines = len(text[match.end() :].splitlines())
-    if body_lines > 500:
-        report.warnings.append(
-            f"SKILL.md body has {body_lines} lines; keep under 500 and move detail to references/"
-        )
+    allowed = meta.get("allowed-tools")
+    if allowed is not None and not isinstance(allowed, str):
+        report.errors.append("allowed-tools must be a single space-delimited string, not a list")
+    lines = len(text.splitlines())
+    if lines > 500:
+        report.errors.append(f"SKILL.md has {lines} lines; keep at most 500 and move detail to references/")
     return report
 
 

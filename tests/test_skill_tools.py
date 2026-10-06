@@ -155,3 +155,30 @@ def test_the_offered_tool_runs_through_a_real_maf_function_tool(host, monkeypatc
     skill = sorted(host.typed.context.allowed_skills)[0]
     content = asyncio.run(tool.invoke(arguments={"skill": skill, "script": "scripts/nothing.py"}))
     assert json.loads(content[0].text)["code"] == "SCRIPT-REFUSED"
+
+
+def test_skill_reads_are_auto_approved_but_running_scripts_stays_gated():
+    from agent_framework import Content, SkillsProvider
+
+    from maf_test_harness.skills.scripts import HarnessScriptRunner, script_approval_rule
+
+    def call(name, **arguments):
+        return Content.from_function_call("c1", name, arguments=json.dumps(arguments))
+
+    read_only = SkillsProvider.read_only_tools_auto_approval_rule
+    assert read_only(call("load_skill", skill_name="junit-generator"))
+    assert read_only(call("read_skill_resource", skill_name="junit-generator", resource_name="x"))
+    assert not read_only(call("run_skill_script", skill_name="test-data-generator", script_name="s.py"))
+
+    rule = script_approval_rule(HarnessScriptRunner(SKILLS))
+    reviewed = call(
+        "run_skill_script", skill_name="test-data-generator", script_name="scripts/deterministic_helpers.py"
+    )
+    assert rule(reviewed)
+    assert not rule(
+        call("run_skill_script", skill_name="test-data-generator", script_name="scripts/other.py")
+    )
+    assert not rule(
+        call("run_skill_script", skill_name="test-data-generator", script_name="scripts/validate_fixtures.py")
+    )  # host-tier validators are never model-callable
+    assert not rule(call("load_skill", skill_name="test-data-generator"))

@@ -1,12 +1,7 @@
 ---
 name: test-data-generator
 description: "Generate deterministic test-data fixtures and payloads from test cases, validation rules, and API contracts. Use when test cases have been designed and concrete fixture data is needed for execution."
-allowed-tools:
-  - Read
-  - Write
-  - Edit
-  - Glob
-  - Grep
+allowed-tools: Read Write Edit Glob Grep
 metadata:
   version: 1.2
   category: Test Case Generation
@@ -15,13 +10,13 @@ metadata:
 
 # Test Data Generator
 
-## Purpose
+## Goal
 
 Generate deterministic test-data fixtures and payloads for generated test cases.
 
 ## Inputs
 
-- Test Cases (from test-design pipeline step)
+- Test cases from `test-design-generator`
 - Validation Rules
 - API Contracts (optional)
 
@@ -184,7 +179,7 @@ When the schema defines array-type properties with constraints, apply boundary-v
 - Do not fabricate API endpoints, HTTP methods, status codes, or response schemas — only use what is given.
 - When input is ambiguous or insufficient, flag it in the gaps_report rather than inventing missing details.
 
-## Self-Check / Validation
+## Self-check
 
 Before returning any output, Claude MUST perform the following checks:
 
@@ -197,7 +192,7 @@ Before returning any output, Claude MUST perform the following checks:
 
 If any check fails, correct the output before returning it and note the correction in `summary_metadata.notes`.
 
-## Pipeline Integration
+## Integration
 
 This skill is designed to consume output from the `test-design-generator` skill. The expected handoff contract is:
 
@@ -233,7 +228,7 @@ The output of this skill is consumed by test-execution tooling. Downstream consu
 - `api_payload_examples.requests` and `.responses` — for API-level test assertions
 - `summary_metadata` — for coverage reporting and gap visibility
 
-### Troubleshooting pipeline breaks
+### Troubleshooting missing inputs
 
 - If the input `test_cases` array is empty or missing entirely, treat the `validation_rules` and `api_contracts` as the sole source of fixture generation.
 - If `validation_rules` is an empty array but test cases exist, generate fixtures from the API contract only and flag missing validation rules in the gaps report.
