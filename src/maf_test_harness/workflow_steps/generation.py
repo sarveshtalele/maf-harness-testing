@@ -7,6 +7,7 @@ from uuid import uuid4
 
 from ..agent.personas import persona_instructions
 from ..envs import Provisioned
+from ..envs.platform_compat import raise_if_cancelled
 from ..llm.prompts import generation_prompt
 from ..models import GeneratedFilesDraft
 from ..qa.quality import existing_test_evidence, require_complete_intake, validate_java_traceability
@@ -95,6 +96,7 @@ class GenerationSteps:
 
         total_batches = (len(cases) + TEST_GENERATION_BATCH_SIZE - 1) // TEST_GENERATION_BATCH_SIZE
         for batch_index, start in enumerate(range(0, len(cases), TEST_GENERATION_BATCH_SIZE), 1):
+            raise_if_cancelled()
             batch = cases[start : start + TEST_GENERATION_BATCH_SIZE]
             batch_ids = {str(case["id"]) for case in batch}
             requirements = state["artifacts"].get("requirements", {})

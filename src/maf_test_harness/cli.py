@@ -14,11 +14,14 @@ import argparse
 import asyncio
 import json
 import os
+import signal
 import sys
+import threading
 import uuid
 from pathlib import Path
 
 from .agent.runtime import MAFHarnessRuntime
+from .envs.platform_compat import RUN_CANCEL
 from .llm.usage import DailyUsageLedger
 from .monitoring.report import build_report, render_markdown
 from .settings import API_KEY, BASE_URL, MODEL, SKILL_MODE, validate_gateway_settings
@@ -90,6 +93,13 @@ async def run(args) -> int:
     host = Harness(run_dir, skills_root=ROOT / "skills", runtime=runtime, execute=not args.no_execution)
     _say(f"run dir: {run_dir}\nmodel: {args.model or MODEL}  skill mode: {args.skill_mode}")
     retries: dict[str, int] = {}
+    cancel = (
+        threading.Event()
+    )  # child process trees started by run_command watch this and are killed on Ctrl-C
+    RUN_CANCEL.set(cancel)
+    if hasattr(signal, "SIGBREAK"):  # Windows Ctrl-Break: same as Ctrl-C instead of killing the process
+        signal.signal(signal.SIGBREAK, signal.default_int_handler)
+    stopped = False
     try:
         # An existing run directory resumes at its pending gate; a stopped or finished run is reported as it is.
         view = (
@@ -105,8 +115,17 @@ async def run(args) -> int:
                 + (f"  ({pending['error'][:160]})" if pending.get("error") else "")
             )
             view = await host.respond(pending["id"], response)
+    except (KeyboardInterrupt, asyncio.CancelledError):
+        cancel.set()
+        host.view.update(status="stopped", pending=None)
+        host.audit("run_stopped_by_user", stage=host.state.get("active_stage"))
+        host.save()
+        stopped = True
     finally:
         await runtime.close()
+    if stopped:
+        _say(f"\nrun stopped by user; saved evidence kept in {run_dir}")
+        return 130
     state = host.state
     budget = state.get("budget", {})
     _say(
@@ -274,7 +293,9 @@ def main(argv: list[str] | None = None) -> int:
         return 0 if all(r.ok for r in reports) and not problems else 1
     try:
         return asyncio.run(run(args))
-    except (Exception, KeyboardInterrupt) as exc:
+    except KeyboardInterrupt:
+        return 130
+    except Exception as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 2
 

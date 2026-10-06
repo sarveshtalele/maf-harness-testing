@@ -22,6 +22,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
 
+from ..envs.platform_compat import run_cancellable
 from .events import (
     ALLOW,
     ASK,
@@ -61,14 +62,8 @@ def command_handler(argv: list[str], timeout: float = 10, env: dict[str, str] | 
 
     def run(event: HookEvent) -> Decision:
         try:
-            proc = subprocess.run(
-                argv,
-                input=json.dumps(event.to_dict(), default=str),
-                capture_output=True,
-                text=True,
-                timeout=timeout,
-                env=env,
-                check=False,
+            proc = run_cancellable(
+                argv, input=json.dumps(event.to_dict(), default=str), timeout=timeout, env=env
             )
         except subprocess.TimeoutExpired as exc:
             raise TimeoutError(f"hook command timed out after {timeout}s") from exc

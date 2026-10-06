@@ -8,6 +8,8 @@ from threading import Event, Thread
 
 from ..envs.platform_compat import RUN_CANCEL
 
+STOP_GRACE_SECONDS = 30
+
 
 class RuntimeService:
     def __init__(self):
@@ -62,9 +64,11 @@ class RuntimeService:
             try:
                 if task and not task.done():
                     task.cancel()
-                    await task
-            except asyncio.CancelledError:
-                pass
+                    # "stopped" only once the operation really ended (bounded: a thread stuck in a blocking call
+                    # cannot be force-killed, and must not keep the UI in "stopping" forever).
+                    await asyncio.wait({task}, timeout=STOP_GRACE_SECONDS)
+                if task and task.done() and not task.cancelled():
+                    task.exception()  # mark retrieved; a failure caused by the stop is not an error
             finally:
                 on_stopped()
 

@@ -10,6 +10,7 @@ from ..envs import Provisioned, ToolchainError, app_launcher, env_check, provisi
 from ..envs import recovery as env_recovery
 from ..envs.environment import build_environment_plan, steps_from_plan
 from ..envs.execution import copy_repo, write_generated
+from ..envs.platform_compat import raise_if_cancelled
 from ..envs.runners import RunPlan, Step, build_plan, execute_plan, execute_setup
 from ..envs.setup_guide import setup_guide
 from ..envs.toolchains import apply_toolchains
@@ -194,6 +195,7 @@ class ExecutionSteps:
         )
 
     async def run_environment(self, state: dict, request: dict, ctx) -> None:
+        raise_if_cancelled()
         info = state["environment"]
         if request["details"].get("plan_hash") != info["hash"]:
             raise ValueError("Environment plan changed after it was shown for approval.")
@@ -462,6 +464,7 @@ class ExecutionSteps:
         )
 
     async def run_execution(self, state: dict, request: dict, ctx) -> None:
+        raise_if_cancelled()
         info = state["execution_plan"]
         if request["details"].get("plan_hash") != info["hash"]:
             raise ValueError("Execution plan changed after it was shown for approval.")
