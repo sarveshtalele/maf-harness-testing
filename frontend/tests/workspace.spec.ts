@@ -370,3 +370,22 @@ test('stop active model work preserves repository analysis after reload', async 
   expect(body.state.artifacts.repo_analysis.source_files).toContain('service.py');
   await page.screenshot({ path: testInfo.outputPath('stopped-run-analysis.png'), fullPage: true });
 });
+
+test('repository URL auto-fills optional fields without overwriting edits', async ({ page }) => {
+  const preview = { app_component: 'frontend', app_url: 'http://localhost:3000', start_app_suggested: true, repo_knowledge: 'Auto-detected from GitHub (unverified)\nNext.js', detected: {}, warnings: [] };
+  let calls = 0;
+  await page.route('**/api/harness/repo-preview', route => { calls++; return route.fulfill({ json: preview }); });
+  await page.goto('/?page=new');
+  const url = page.getByRole('textbox', { name: 'Public GitHub repository URL' });
+  await url.fill('https://github.com/acme/demo');
+  await expect(page.getByText('Auto-filled from repository — review before starting.')).toBeVisible();
+  await expect(page.getByRole('textbox', { name: /Application component/ })).toHaveValue('frontend');
+  await expect(page.getByRole('textbox', { name: /Running application URL/ })).toHaveValue('http://localhost:3000');
+  await expect(page.getByRole('textbox', { name: /Repository knowledge/ })).toHaveValue(/Next\.js/);
+  await expect(page.getByRole('checkbox', { name: 'Start the application for me' })).toBeChecked();
+  await page.getByRole('textbox', { name: /Application component/ }).fill('web');
+  await url.fill('https://github.com/acme/other');
+  await expect.poll(() => calls).toBe(2);
+  await expect(page.getByRole('textbox', { name: /Application component/ })).toHaveValue('web');
+  await expect(page.getByRole('textbox', { name: /Running application URL/ })).toHaveValue('http://localhost:3000');
+});
