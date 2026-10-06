@@ -523,3 +523,18 @@ def test_ui_tooling_reads_the_installed_distributions(tmp_path, monkeypatch):
     }
     monkeypatch.setattr(env_check, "installed_distributions", lambda ws: None)
     assert env_check.ui_tooling(tmp_path) is None
+
+
+def test_language_rules_reach_only_the_detected_stack():
+    from maf_test_harness.workflow_support import retry_reminder
+
+    py = wf._generation_policy({"languages": {"Python": 10}}, {"stack": {"primary": "python"}})
+    assert list(py["language_rules"]) == ["python"] and "python_import_roots" in py
+    assert "collectable" in " ".join(py["language_rules"]["python"])
+    java = wf._generation_policy({"languages": {"Java": 10}}, {"stack": {"primary": "java"}})
+    assert list(java["language_rules"]) == ["java"] and "python_import_roots" not in java
+    assert "@InjectMocks" in " ".join(java["language_rules"]["java"])
+    ts = wf._generation_policy({"languages": {"TypeScript": 10}}, {"stack": {"primary": "typescript"}})
+    assert list(ts["language_rules"]) == ["typescript"]
+    assert "pytest" not in ts["structure_rule"] and "JDK" not in ts["dependency_rule"]
+    assert retry_reminder(java).startswith("Java files") and "Python" not in retry_reminder(java)

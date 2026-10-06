@@ -176,12 +176,91 @@ def _undeclared_libraries(declared: list[str]) -> list[str]:
     return [name for name, token in _COMMON_LIBRARIES.items() if token not in text]
 
 
+LANGUAGE_RULES: dict[str, dict[str, Any]] = {
+    "python": {
+        "declaration": "`def test_...`",
+        "parametrize": "`@pytest.mark.parametrize(('value', 'expected'), [(...), (...)])`",
+        "stdlib": "the standard library",
+        "retry": "Python files must define a top-level def test_name(...): with a meaningful assertion against the actual application. Imports alone are not a test.",
+        "rules": [
+            "Inspect collaborator signatures before constructing fixtures, including all required dataclass fields. Follow the actual returned representation: dictionary keys are not object attributes. Never infer return types from an internal helper dataclass if the function serializes it to a dictionary. Expected enum/tag strings must match source constants verbatim, not natural-language synonyms. Normalize filesystem expectations with pathlib rather than hard-coding POSIX strings on Windows. Explicitly import unittest.mock when using it. Read the implementation before writing assertions.",
+            "`generation_policy.python_import_roots` lists directories the runner adds to the test import path: a module in one of them is imported by its bare module name (for `skill-packages/03-x/mod.py` write `import mod`; never `sys.path` hacks). Import only names defined at module level in `target_source`; a name that exists only as a local variable or nested function inside another function cannot be imported, so exercise that code by calling the enclosing function with its collaborators patched.",
+            "Output must contain a real collectable top-level `def test_name(...)` with assertions against application results. Use the supplied signatures and source bodies; never invent a `main()` or any member absent from the evidence.",
+        ],
+    },
+    "java": {
+        "declaration": "`@Test` method",
+        "parametrize": "JUnit `@ParameterizedTest` with `@ValueSource`/`@MethodSource`",
+        "stdlib": "the JDK/standard library",
+        "retry": "Java files must declare exactly one @Test method that invokes the class under test and asserts its result.",
+        "rules": [
+            "Every claimed Java unit method requirement must be invoked on its actual source type and asserted. Constructor initialization does not cover setters.",
+            "Select JUnit 4 or 5 imports/annotations from the build files (pom.xml/build.gradle); never introduce another JUnit generation.",
+            "Do not use @InjectMocks when the constructor acquires static or external resources (singletons, JNDI, files); construct the object explicitly or test through the repository's existing public API.",
+            "JavaFX code needs toolkit initialisation (for example `new JFXPanel()` or `Platform.startup`) and FX-thread execution for node access.",
+        ],
+    },
+    "javascript": {
+        "declaration": "`test(...)`/`it(...)` call",
+        "parametrize": "`test.each` / `it.each`",
+        "stdlib": "the Node.js standard library",
+        "retry": "JavaScript files must contain exactly one test(...)/it(...) call that imports and exercises the real module and asserts its result.",
+        "rules": [
+            "Use the runner declared in package.json (jest, vitest or mocha) and match the module system (ESM `import` vs CommonJS `require`) of the nearest package.json and the source under test.",
+        ],
+    },
+    "typescript": {
+        "declaration": "`test(...)`/`it(...)` call",
+        "parametrize": "`test.each` / `it.each`",
+        "stdlib": "the Node.js standard library",
+        "retry": "TypeScript files must contain exactly one test(...)/it(...) call that imports and exercises the real module and asserts its result.",
+        "rules": [
+            "Use the runner declared in package.json (jest, vitest or mocha) and the repository tsconfig/ESM settings; import only exports that exist in the source.",
+        ],
+    },
+    "csharp": {
+        "declaration": "`[Fact]`/`[Test]`/`[TestMethod]` method",
+        "parametrize": "`[Theory]`/`[TestCase]`/`[DataRow]`",
+        "stdlib": "the .NET base class library",
+        "retry": "C# files must declare exactly one test method that invokes the class under test and asserts its result.",
+        "rules": [
+            "Use xUnit, NUnit or MSTest according to the PackageReference entries in the test project's csproj; never mix frameworks.",
+        ],
+    },
+}
+_FAMILY_BY_LANGUAGE = {
+    "python": "python",
+    "java": "java",
+    "kotlin": "java",
+    "javascript": "javascript",
+    "typescript": "typescript",
+    "c#": "csharp",
+    "csharp": "csharp",
+}
+
+
+def language_families(repo: dict[str, Any], state: dict[str, Any] | None = None) -> list[str]:
+    """Rule families for the detected stack: the stack's primary language plus every analyzed language."""
+    names = [((state or {}).get("stack") or {}).get("primary"), *(repo.get("languages") or {})]
+    found = [_FAMILY_BY_LANGUAGE.get(str(n).lower()) for n in names if n]
+    return list(dict.fromkeys(f for f in found if f))
+
+
+def language_rules(repo: dict[str, Any], state: dict[str, Any] | None = None) -> dict[str, list[str]]:
+    return {f: LANGUAGE_RULES[f]["rules"] for f in language_families(repo, state)}
+
+
+def retry_reminder(policy: dict[str, Any]) -> str:
+    return " ".join(LANGUAGE_RULES[f]["retry"] for f in policy.get("language_rules") or {})
+
+
 def _generation_policy(repo: dict[str, Any], state: dict[str, Any] | None = None) -> dict[str, Any]:
     languages = repo.get("languages") or {}
     dominant = max(languages, key=languages.get) if languages else "Unknown"
     state = state or {}
     stack = state.get("stack") or {}
-    is_jvm = stack.get("primary") == "java" or dominant.lower() in {"java", "kotlin"}
+    families = language_families(repo, state)
+    lang = LANGUAGE_RULES.get(_FAMILY_BY_LANGUAGE.get(str(stack.get("primary") or dominant).lower(), ""), {})
     return {
         "dominant_language": dominant,
         "languages": languages,
@@ -193,29 +272,26 @@ def _generation_policy(repo: dict[str, Any], state: dict[str, Any] | None = None
         "package_files": (repo.get("package_files") or [])[:30],
         "selected_application_component": state.get("app_component"),
         "component_path_rule": "Place Node tests inside the component containing its package.json. For the selected frontend, write new specs under <selected_application_component>/tests/. Root tests/ cannot resolve nested frontend dependencies. Other ecosystems belong to their own manifest component.",
-        "python_import_roots": extra_import_roots(repo.get("source_files") or []),
-        "python_contract_rule": "Inspect collaborator signatures before constructing fixtures, including all required dataclass fields. Follow the actual returned representation: dictionary keys are not object attributes. Never infer return types from an internal helper dataclass if the function serializes it to a dictionary. Expected enum/tag strings must match source constants verbatim, not natural-language synonyms. Normalize filesystem expectations with pathlib rather than hard-coding POSIX strings on Windows. Explicitly import unittest.mock when using it. Read the implementation before writing assertions.",
+        "language_rules": language_rules(repo, state),
+        **(
+            {"python_import_roots": extra_import_roots(repo.get("source_files") or [])}
+            if "python" in families
+            else {}
+        ),
         "declared_dependencies": (state.get("declared_dependencies") or [])[:120],
         "forbidden_imports": _undeclared_libraries(state.get("declared_dependencies") or []),
         "dependency_rule": (
-            (
-                "Use only the JDK/standard library and the declared_dependencies. "
-                if is_jvm
-                else "Use only the standard library and the declared_dependencies. "
-            )
+            f"Use only {lang.get('stdlib', 'the language standard library')} and the declared_dependencies. "
             + "Any other import is rejected by the host before you are asked again, which wastes a call."
         ),
         "structure_rule": (
-            "One file, one case ID, one test declaration: literally one `def test_...` / `@Test` method in the file. "
+            "One file, one case ID, one test declaration: literally one test declaration "
+            f"({lang.get('declaration', 'one test function/method')}) in the file. "
             "When a case covers more than one variant of the same behavior - a different input (a flag and its alias "
             "such as --help/-h, GET vs HEAD), a different expected outcome, or a different exception/error type (the "
             "same function raising ValueError vs RuntimeError for two invalid inputs) - that is still ONE test: assert "
             "every variant inside that single function, or parametrize it"
-            + (
-                " (JUnit `@ParameterizedTest` with `@ValueSource`/`@MethodSource`)"
-                if is_jvm
-                else " (`@pytest.mark.parametrize(('value', 'expected'), [(...), (...)])`)"
-            )
+            + (f" ({lang['parametrize']})" if "parametrize" in lang else "")
             + " - never write a second function for the second variant. The host rejects a second declaration before "
             "you are asked again, which wastes a call."
         ),

@@ -44,6 +44,7 @@ from ..workflow_support import (
     _requirements_for,
     atomic_json,
     digest,
+    retry_reminder,
 )
 from .test_review import review_generated_tests
 
@@ -199,7 +200,10 @@ class GenerationSteps:
                         if work
                         else "",
                         "strict_quality_rules": [
-                            "Every claimed Java unit method requirement must be invoked on its actual source type and asserted. Constructor initialization does not cover setters.",
+                            "Never convert a filesystem path into an import by normalising '-', spaces or leading digits; import only modules proven by source_files.",
+                            "Prefer the repository's existing public execution API and existing test patterns/fixtures (for example a registry fixture) over importing internals.",
+                            "Never inject or reference fields/members absent from the source. Never use tautological assertions (for example a property map that is always non-null).",
+                            "Respect a supplied `testability` section: low testability targets need an integration/behaviour-level test, not mocks of static acquisition.",
                             "Use source-valid fixture values for positive cases. Invalid values belong only in explicit boundary/negative/validation cases with a real rejection assertion.",
                             "Read existing tests; add complementary behavior instead of repeating an existing assertion. Constant assertions and mock-only assertions do not qualify application behavior.",
                             "Static links are not measured behavior, line, branch or mutation coverage. Never claim those measurements without executed tool evidence.",
@@ -300,8 +304,7 @@ class GenerationSteps:
                         + "Regenerate ONLY this batch. "
                         "Return one complete schema-valid JSON object. Generate one file per supplied case ID, exactly one "
                         "test declaration per file, and one matching case_ids entry. The host supplies CASE_ID comments. "
-                        "Keep imports minimal and source complete. Python files must define a top-level def test_name(...): "
-                        "with a meaningful assertion against the actual application. Imports alone are not a test."
+                        "Keep imports minimal and source complete. " + retry_reminder(policy)
                     )
                     self.audit(
                         "test_generation_repair",

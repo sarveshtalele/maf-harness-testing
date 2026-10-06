@@ -5,36 +5,37 @@ description: "Analyze evidence-based test coverage and identify actionable gaps 
 
 # Coverage Analyzer
 
-## Purpose and Pipeline Position
+## Goal
 
-Act as pipeline step 10, after test design and—when available—test execution. Compare only supplied source IDs and explicit test links; produce the final quantitative coverage and gap report. The canonical skill lives in `.github/skills/coverage-analyzer`; do not use the legacy `.agents` mirror as a source of truth.
+Compare supplied source IDs with explicit test links, after test design and, when available, test execution, and produce a quantitative coverage and gap report. Static traceability is never measured coverage: never label a link-based figure as line, branch, mutation or runtime coverage; report those only from executed tool evidence.
 
-## Input Sources
+## Inputs
 
 | Input | Canonical source | Produced by | Required contract |
 |---|---|---|---|
-| Requirement model | `output/requirements-analysis/requirements.json` | `requirement-analyzer` | Stable requirement and acceptance-criterion IDs. |
-| Validation rules | `input/validation-rules.md` or normalized rules in the requirement model | User / `requirement-analyzer` | Stable validation IDs and explicit constraints. |
-| API contracts | `output/api-analysis/api_contracts.json` or `input/api-spec.yaml` | `api-contract-analyzer` / user | Stable endpoint or contract IDs; optional. |
-| Test design | `output/test-design/test_cases.json` | `test-design-generator` | Unique test IDs and explicit traceability links. |
-| Execution evidence | `output/test-results/results.json` | `playwright-test-executor` or CI | Optional; use it only to report execution status, not to infer linkage. |
+| Requirement model | Requirement model supplied by the host | requirement analysis | Stable requirement and acceptance-criterion IDs. |
+| Validation rules | Normalized rules in the requirement model | requirement analysis | Stable validation IDs and explicit constraints. |
+| API contracts | Normalized contract model, when supplied | `api-contract-analyzer` | Stable endpoint or contract IDs; optional. |
+| Test design | Test cases with traceability links | `test-design-generator` | Unique test IDs and explicit traceability links. |
+| Execution evidence | Host execution results | host test run or CI | Optional; use it only to report execution status, not to infer linkage. |
 
 Return `INVALID_INPUT` when the requirement model or test design is absent, malformed, or lacks stable IDs. Treat missing validation rules, API contracts, and execution evidence as unavailable dimensions: report their status in `gaps_report.notes`; never treat them as 100% covered.
 
-## Output Contract
+## Output contract
 
-`assets/coverage_templates.yaml` is the single authoritative schema. Write one schema-valid report to `output/coverage/coverage-summary.json`. Include all required sections, including empty arrays and maps where a supplied dimension has no items.
+`assets/coverage_templates.yaml` is the single authoritative schema. Return one schema-valid report. Include all required sections, including empty arrays and maps where a supplied dimension has no items.
 
 Each `coverage_details` entry maps a supplied source ID to the test IDs that explicitly cover it. Use its entries to derive both the aggregated metrics and the gap lists; do not hand-maintain conflicting totals.
 
-## Processing Rules
+## Steps
 
 1. Normalize source IDs and test IDs by trimming whitespace; compare IDs exactly after normalization and preserve their original case in output.
 2. Mark an item covered only when at least one test explicitly links to that same source ID and link type. Aggregate multiple matching tests into one coverage item and count that item once.
 3. Calculate each percentage as `(covered / total) * 100`, rounded to two decimal places. For a supplied dimension with zero items, set `percentage` to `0`, not `100`.
 4. Treat partial coverage as uncovered unless an explicit, separately linked source ID exists for the covered portion. Do not award fractional coverage.
 5. Include every uncovered supplied ID in the matching `gaps_report` array. Create deterministic gap IDs using `GAP-<dimension>-<source-id>` when a consumer needs issue identifiers.
-6. Keep API coverage absent from the assessment when no API source was supplied; state that limitation in `gaps_report.notes`.
+6. Assign each source item one coverage state: `new` (covered by a generated test linked to it), `pre_existing_witness` (an existing repository test that directly invokes and asserts it, cited as `path::test name`), `excluded` (ID-linked reason it cannot be tested), or `unexplained` (none of these; an error that must be resolved or reported). Only `new` and `pre_existing_witness` count as covered; report the four counts separately.
+7. Keep API coverage absent from the assessment when no API source was supplied; state that limitation in `gaps_report.notes`.
 
 ## Ambiguity Resolution and Evidence Rules
 
@@ -44,7 +45,7 @@ Each `coverage_details` entry maps a supplied source ID to the test IDs that exp
 - Do not infer coverage from matching prose, similar names, test proximity, test execution success, or an "assumed covered" claim.
 - Do not invent source IDs, tests, validation rules, endpoints, execution outcomes, or explanations for missing evidence.
 
-## Self-Check Before Delivery
+## Self-check
 
 1. Validate the output against `assets/coverage_templates.yaml`.
 2. Recalculate every `covered`, `total`, and percentage from `coverage_details` and reconcile the result with `summary`.
@@ -61,7 +62,7 @@ For unrecoverable input failures, return this object instead of a coverage repor
   "error": true,
   "code": "INVALID_INPUT",
   "message": "Test design is missing stable test IDs.",
-  "missing_files": ["output/test-design/test_cases.json"],
+  "missing_files": ["test_cases"],
   "details": {"field": "test_cases[].id", "issue": "missing or duplicate"}
 }
 ```

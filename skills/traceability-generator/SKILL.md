@@ -5,13 +5,13 @@ description: Generate a requirement-to-test traceability matrix and gap report f
 
 # Traceability Matrix Generator
 
-Aggregate verified links produced by the test-generation pipeline into an auditable requirement-to-test-to-artifact matrix. Preserve source IDs and report evidence gaps rather than inferring links.
+Aggregate verified links produced by test design and test generation into an auditable requirement-to-test-to-artifact matrix. Preserve source IDs and report evidence gaps rather than inferring links.
 
-## Scope Boundaries
+## Goal and scope
 
-This skill consumes existing `traceability_links`; it does not generate or guess links, modify requirements, or change test cases. It aggregates outputs from `test-design-generator`, `gherkin-generator`, `playwright-generator`, and `junit-generator`.
+This skill consumes existing `traceability_links`; it does not generate or guess links, modify requirements, or change test cases. It aggregates outputs from `test-design-generator` and the test-source generators (`playwright-test-generator`, `junit-generator`, `generic-test-generator`). The matrix is static traceability: never label it as measured line, branch, mutation or runtime coverage, and mark each requirement `new`, `pre_existing_witness` (existing repository test cited as `path::test name`), `excluded` (ID-linked reason) or `unexplained` in `gaps_report.notes`.
 
-## Input Contract and Normalization
+## Inputs
 
 | Source | Required fields consumed | Normalization |
 | --- | --- | --- |
@@ -21,14 +21,14 @@ This skill consumes existing `traceability_links`; it does not generate or guess
 
 Accept `test_id` as an alias for `test_case_id` in `traceability_links[]`. Keep all source IDs exactly as supplied. If no link evidence is supplied, do not create a matrix entry.
 
-## Output Contract
+## Output contract
 
 ```json
 {
   "metadata": {
     "generated_at": "ISO-8601 UTC timestamp",
     "generator_version": "1.1",
-    "source_skill_names": ["test-design-generator", "playwright-generator"]
+    "source_skill_names": ["test-design-generator", "playwright-test-generator"]
   },
   "traceability_matrix": [{
     "requirement_id": "string, required",
@@ -49,7 +49,7 @@ Accept `test_id` as an alias for `test_case_id` in `traceability_links[]`. Keep 
 
 `metadata`, `traceability_matrix`, and non-null `gaps_report` are required. Emit one entry for each evidenced requirement/test/artifact relation. When a linked test has no artifact, set `artifact_id` to `null` and `status` to `missing_artifact`; when it has one or more artifacts, set `status` to `covered`.
 
-## Processing Rules
+## Steps
 
 1. Validate unique requirement and test IDs before aggregation; report duplicate or malformed IDs as diagnostics and do not merge them silently.
 2. Build links only from `traceability_links[]` or `linked_requirements[]` supplied by test design.
@@ -71,7 +71,7 @@ Accept `test_id` as an alias for `test_case_id` in `traceability_links[]`. Keep 
 - Never create a requirement-to-test or test-to-artifact relationship without an explicit source link or matching artifact back-reference.
 - Never convert an unresolved ID, duplicate ID, or missing artifact into a covered status.
 
-## Verification
+## Self-check
 
 Before returning output, verify that:
 

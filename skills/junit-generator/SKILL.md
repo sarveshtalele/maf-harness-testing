@@ -5,13 +5,13 @@ description: Generate executable Java tests in the repository’s declared JUnit
 
 # JUnit Generator
 
-Generate executable tests using the repository’s declared JUnit version without inventing application behavior. Petstore uses JUnit 4, not Jupiter. Read [JUnit guidance](references/junit_best_practices.md) when selecting annotations, fixtures, or assertions.
+Generate executable tests using the repository’s declared JUnit version without inventing application behavior. Detect JUnit 4 (`org.junit.Test`) vs JUnit 5 (`org.junit.jupiter`) from `pom.xml` or `build.gradle` and never override it. Read [JUnit guidance](references/junit_best_practices.md) when selecting annotations, fixtures, or assertions.
 
 ## Input and pipeline integration
 
 Accept either `{ "test_cases": [...] }` or test-design-generator output. Normalize each upstream array into `test_cases`, setting `type` as follows: `positive_tests` → `positive`, `negative_tests` → `negative`, `boundary_tests` → `boundary`, and all other `*_tests` arrays → their prefix. Preserve `id`, `title`/`name`, `steps`, `expected_result`, `fixture_id`, and traceability links. Supply fixtures as `{ "fixtures": [{ "id": "FX-1", "data": {...} }] }`.
 
-The bundled `scripts/generate_junit.js` is a JUnit 5 scaffold example, not a qualifying test generator. It is not an approved model-executable script. The harness receives structured source output, rejects placeholders and validates the repository’s actual framework. Do not run that script or introduce JUnit 5 into a JUnit 4 repository.
+The bundled `scripts/generate_junit.js` is a JUnit 5 scaffold example, not a qualifying test generator. It is not an approved model-executable script. The harness receives structured source output, rejects placeholders and validates the repository’s actual framework. Do not run that script or introduce a different JUnit generation than the build files declare.
 
 ## Output contract
 
@@ -26,6 +26,8 @@ The bundled `scripts/generate_junit.js` is a JUnit 5 scaffold example, not a qua
 - Implement `expected_result` as a meaningful assertion. A comment, TODO, placeholder or constant assertion is not a test.
 - Build fixtures using real constructors and methods, obeying source constraints. If a required fixture or behavior cannot be established, return an explicit design/evidence gap instead of inventing it.
 - Do not invent endpoints, payload fields, method calls, expected values, or domain classes.
+- Do not use `@InjectMocks` when the constructor acquires static or external resources (singletons, JNDI, files); construct the object explicitly or use the repository's public API.
+- JavaFX code needs toolkit initialisation (for example `new JFXPanel()` or `Platform.startup`) and FX-thread execution for node access.
 
 ## Edge cases and failures
 

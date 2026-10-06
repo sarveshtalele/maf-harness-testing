@@ -5,27 +5,27 @@ description: "Generate structured, deterministic test cases from analyzed requir
 
 # Test Design Generator
 
-## Purpose
+## Goal
 
-Generate evidence-based, deterministic, and traceable test cases from the normalized requirement model. This is pipeline step 4: it follows `requirement-analyzer` (and optionally `api-contract-analyzer`) and supplies test design to the test-data, Gherkin, automation, traceability, and coverage skills.
+Generate evidence-based, deterministic, and traceable test cases from the normalized requirement model. It consumes the approved requirement model (and optionally an API contract model) and supplies test design to test-data, generation, traceability, and coverage consumers.
 
-## Input Sources
+## Inputs
 
 | Input | Canonical source | Required | Contract |
 |---|---|---|---|
-| Requirement model | `output/requirements-analysis/requirements.json` from `requirement-analyzer` | Yes | Every requirement and acceptance criterion must have a stable ID and evidence text. |
-| Validation rules | `input/validation-rules.md` or normalized rules in the requirement model | No | Each usable rule must have a stable ID, target, and explicit constraint or outcome. |
-| API contracts | `output/api-analysis/api_contracts.json` from `api-contract-analyzer`, or `input/api-spec.yaml` | No | Generate contract tests only for supplied endpoints and documented responses. |
+| Requirement model | Approved requirement model supplied by the host | Yes | Every requirement and acceptance criterion must have a stable ID and evidence text. |
+| Validation rules | Normalized rules in the requirement model | No | Each usable rule must have a stable ID, target, and explicit constraint or outcome. |
+| API contracts | Normalized contract model from `api-contract-analyzer`, when supplied | No | Generate contract tests only for supplied endpoints and documented responses. |
 
 Return `INVALID_INPUT` when the requirement model is missing, malformed, or lacks stable IDs. A missing optional source is not an error; record its effect in `gaps_report.notes` instead.
 
-## Output Contract
+## Output contract
 
 `assets/testcase_templates.yaml` is the single authoritative schema. Emit all top-level sections defined there, including empty arrays/objects where no evidence exists. Each test must contain an ID, title, type, priority, expected result, and at least one `traceability_links` entry.
 
-Write the final design to `output/test-design/test_cases.json` (or the source-ID-specific equivalent). The human-readable report, when requested, belongs alongside it.
+Return the design in the host-supplied structured output; any human-readable report accompanies it.
 
-## Processing Rules
+## Steps
 
 1. Generate at least one positive test for each explicit acceptance criterion.
 2. Generate at least one negative or validation test for each explicit validation rule.
@@ -33,7 +33,9 @@ Write the final design to `output/test-design/test_cases.json` (or the source-ID
 4. Generate contract tests only when API contracts exist and only for documented methods, schemas, and responses.
 5. Generate deterministic test IDs with UUID v5 using `deterministic_namespace`; never use random IDs.
 6. Give every test a `traceability_links` entry for each source artifact it directly verifies. Valid link types are `requirement`, `acceptance_criterion`, `validation`, and `api_contract`.
-7. Assign priority from source impact: `P0` for release-blocking, security, payment, or data-loss behavior explicitly identified in evidence; `P1` for core behavior and validations; `P2` otherwise. Do not infer criticality when source evidence is silent; use `P1` and note the default in `gaps_report.notes`.
+7. Account for every supplied requirement with exactly one of: a new traceable case; an existing repository test that directly invokes and asserts it (cite `path::test name` in `gaps` with the exact requirement ID); or an ID-linked gap with a concrete reason. Unexplained omissions are errors.
+8. Target the method that actually implements the expected behavior (arithmetic done in a callee belongs to the callee), and invoke the method each case claims.
+9. Assign priority from source impact: `P0` for release-blocking, security, payment, or data-loss behavior explicitly identified in evidence; `P1` for core behavior and validations; `P2` otherwise. Do not infer criticality when source evidence is silent; use `P1` and note the default in `gaps_report.notes`.
 
 ## Ambiguity Resolution and Anti-Hallucination
 
@@ -43,7 +45,7 @@ Write the final design to `output/test-design/test_cases.json` (or the source-ID
 - Do not create stub tests to make coverage metrics look complete.
 - Treat absent API contracts as unavailable evidence, not permission to infer an API.
 
-## Self-Check Before Delivery
+## Self-check
 
 1. Validate the output against `assets/testcase_templates.yaml`.
 2. Confirm every test ID is unique and reproducible for the same normalized input.
@@ -90,6 +92,6 @@ python scripts/validate_design.py --input test_cases.json --source requirements.
 - Every usable validation rule has a negative/validation test or a documented gap.
 - Every coverage shortfall and ambiguity is visible in `gaps_report`.
 
-## Agentic QE Platform integration
+## Host integration
 
-The host processes the full discovered inventory in component batches of at most 12 requirements, then merges and validates the complete design. Each supplied ID needs a linked case or an explicit ID-linked exclusion reason; unexplained omissions remain errors after the final retry. Preserve distinct method-level evidence: constructor initialization does not cover setter behavior. Design positive fixtures from real source constraints, and complement existing repository tests. Static declaration intake and test traceability do not establish full application or measured runtime coverage.
+The host processes the full discovered inventory in component batches of at most 12 requirements, then merges and validates the complete design. Each supplied ID needs a linked case, a cited existing test, or an explicit ID-linked gap; unexplained omissions remain errors after the final retry. Preserve distinct method-level evidence: constructor initialization does not cover setter behavior. Design positive fixtures from real source constraints, and complement existing repository tests. Static declaration intake and test traceability do not establish full application or measured runtime coverage.

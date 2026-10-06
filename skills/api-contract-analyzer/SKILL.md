@@ -5,13 +5,11 @@ description: Extract normalized API contracts from OpenAPI 3.x, Swagger 2.0, or 
 
 # API Contract Analyzer
 
-## Purpose and Pipeline Position
+## Goal
 
 Parse a supplied API specification into one deterministic, machine-readable contract model. This skill is optional in the overall platform: when no API specification is supplied, skip it and allow downstream skills to use requirement-analysis outputs only.
 
-The canonical skill lives in `.github/skills/api-contract-analyzer`; do not use the legacy `.agents` mirror as a source of truth.
-
-## Inputs and Outputs
+## Inputs
 
 Accept OpenAPI 3.x YAML or JSON, Swagger 2.0 YAML or JSON, and JSON Schema in request or response payloads. **AsyncAPI, webhook, and event-driven contracts are explicitly out of scope.** Parse raw YAML/JSON directly when no local parser is available. Prefer resolving local `$ref` values inline when possible.
 
@@ -23,7 +21,7 @@ Write one contract report conforming to `assets/schema_templates.yaml`. The repo
 
 Downstream consumers are `test-design-generator`, `coverage-analyzer`, and `traceability-generator`.
 
-## Processing Rules
+## Steps
 
 1. Extract every supported HTTP operation under every `paths` entry. Preserve its path, lowercase method, summary, descriptions, explicit status codes, tags, request body schema, response schemas, response headers, parameters, security, and deprecation status. Never silently drop an operation.
 2. Use the supplied `operationId` when present. Otherwise create the stable fallback `<method>_<normalized-path>`, replacing path parameters and non-alphanumeric separators with single underscores and trimming underscores; for example, `POST /accounts/{accountId}/balance` becomes `post_accounts_accountid_balance`.
@@ -48,7 +46,7 @@ Downstream consumers are `test-design-generator`, `coverage-analyzer`, and `trac
 - Extract deprecated operations and set `deprecated: true`; add a deterministic note identifying the operation ID.
 - A response without a body still belongs in `status_codes`; record its missing schema in `gaps_report.missing_schemas` rather than inventing one.
 
-## Error Handling
+## Output contract and errors
 
 - Return the structured error object below for an unparseable document, unsupported top-level version, or a document without a usable `paths` section. Do not return a partial contract in those cases.
 - For a missing request or response schema on an otherwise usable operation, continue extraction and add a specific entry to `gaps_report.missing_schemas`.
@@ -67,7 +65,7 @@ Downstream consumers are `test-design-generator`, `coverage-analyzer`, and `trac
 
 Use `MISSING_INPUT`, `INVALID_INPUT`, or `SCHEMA_VALIDATION_FAILED` with a specific message and only affected fields or files.
 
-## Self-Check Before Delivery
+## Self-check
 
 1. Validate the completed report against `assets/schema_templates.yaml`.
 2. Confirm every extracted operation has `path`, `method`, a non-empty `operationId`, `status_codes`, and a corresponding `response_schemas` entry for each response that supplies a schema.

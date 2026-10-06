@@ -58,9 +58,18 @@ def test_missing_frontmatter_and_missing_file(tmp_path):
     assert "missing" in lint_skill(tmp_path / "empty").errors[0]
 
 
-def test_long_body_is_a_warning_not_an_error(tmp_path):
+def test_skill_file_over_500_lines_is_an_error(tmp_path):
     report = lint_skill(make(tmp_path, "skill", "name: skill\ndescription: d", "line\n" * 600))
-    assert report.ok and "under 500" in report.warnings[0]
+    assert not report.ok and "at most 500" in report.errors[0]
+    assert lint_skill(make(tmp_path, "ok", "name: ok\ndescription: d", "line\n" * 400)).ok
+
+
+def test_allowed_tools_must_be_a_space_delimited_string(tmp_path):
+    bad = lint_skill(
+        make(tmp_path, "skill", "name: skill\ndescription: d\nallowed-tools:\n  - Read\n  - Write")
+    )
+    assert not bad.ok and "allowed-tools" in bad.errors[0]
+    assert lint_skill(make(tmp_path, "good", "name: good\ndescription: d\nallowed-tools: Read Write")).ok
 
 
 def test_require_valid_returns_package_hashes_and_rejects_bad_assignments(tmp_path):
