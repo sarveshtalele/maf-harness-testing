@@ -57,7 +57,7 @@ flag is needed; the measurement above tells you whether it is working.
 ## 4. How to check a run
 
 ```bash
-uv run maf-harness trace .harness_runs/<run>          # Prompt cache table per stage
+uv run maf-harness trace .maf-harness/runs/<run>          # Prompt cache table per stage
 ```
 
 Compare `Hit %` and `Prompt prefix repeated %` per stage with the baseline above. The planned target for generation

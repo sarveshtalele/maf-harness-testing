@@ -68,7 +68,7 @@ The scripts install/build on each launch to keep the checkout and dependencies c
 9. Use **Delete** in run history to remove an idle run after confirmation. Files move to the local `.deleted-runs` folder for recovery; active operations cannot be removed.
 10. Download the deliverable ZIP when available. Browse **Agent skills** to open each package’s readable instruction page, resources and integrity checks.
 
-Drag sidebar/column edges and panel corners; use arrow keys for accessible resizing. Double-click a panel corner or press Home on its resize handle to restore its original size. Preferences persist in your browser. Runs default to `~/.maf-harness/runs`, separately for each OS user. This is a local app without shared-server login.
+Drag sidebar/column edges and panel corners; use arrow keys for accessible resizing. Double-click a panel corner or press Home on its resize handle to restore its original size. Preferences persist in your browser. New UI and CLI runs default to `<repo-root>/.maf-harness/runs`, inside this checkout. Use separate checkouts for separate users. This is a local app without shared-server login.
 
 [Windows troubleshooting and log locations](docs/WINDOWS_SETUP_AND_DEBUGGING.md) · [Detailed setup and UI guide](docs/NEXTJS_UI.md) · [Backend findings and limits](docs/BACKEND_REVIEW_2026-10-01.md) · [Approved cleanup status](docs/DEAD_CODE_REVIEW_2026-10-01.md)
 
@@ -105,7 +105,7 @@ uv run maf-harness trace /path/to/run
 uv run maf-harness lint-skills
 ```
 
-The CLI defaults to project-local `.harness_runs`. Set `HARNESS_RUNS_DIR` to the UI's run directory to share checkpoints; stop an active UI operation before another process changes that run. `--auto-approve` explicitly authorizes clone/install/test commands as your OS user.
+The CLI and UI share `<repo-root>/.maf-harness/runs` by default. `HARNESS_RUNS_DIR` overrides this path; stop an active UI operation before another process changes that run. `--auto-approve` explicitly authorizes clone/install/test commands as your OS user.
 
 ## Configuration and troubleshooting
 
@@ -163,4 +163,4 @@ New repository analysis and requirements use reviewed host-static skills without
 
 Use `bash start-linux.sh` (or `bash start-linux.sh --smoke-test`) with Node 24 and uv installed. Windows and macOS keep their existing launchers. All use the same Python API and Next launcher.
 
-The clone view shows the actual run directory, attempt, timeout and live Git output. **Cancel clone** stops only that run's Git process tree and returns a retry/stop gate with logs retained. The default history directory is `~/.maf-harness/runs` (`%USERPROFILE%\.maf-harness\runs` on Windows); it is not a folder inside the downloaded checkout. See [clone diagnostics](docs/CLONE_AND_PLATFORM_DIAGNOSTICS.md).
+The clone view shows the actual run directory, attempt, timeout and live Git output. **Cancel clone** stops only that run's Git process tree and returns a retry/stop gate with logs retained. The default history directory is `<repo-root>/.maf-harness/runs`, inside the downloaded checkout. Service logs use `<repo-root>/.maf-harness/logs`. Older profile-based and `.harness_runs` history remains available in place; no files are moved or deleted. See [clone diagnostics](docs/CLONE_AND_PLATFORM_DIAGNOSTICS.md).

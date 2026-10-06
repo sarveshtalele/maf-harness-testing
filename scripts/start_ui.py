@@ -151,6 +151,12 @@ def main():
         parser.error(str(exc))
     if args.check_only:
         return
+    # Preflight runs before dependencies are installed; normal launch follows uv sync.
+    # Load .env before choosing storage so launcher and API honor the same overrides.
+    sys.path.insert(0, str(ROOT / "src"))
+    from maf_test_harness.settings import load_dotenv
+
+    load_dotenv(ROOT / ".env")
     env = {
         **os.environ,
         "HARNESS_API_TOKEN": secrets.token_urlsafe(48),
@@ -161,10 +167,15 @@ def main():
         "PYTHONUNBUFFERED": "1",
         "PATH": str(Path(node).parent) + os.pathsep + os.environ.get("PATH", ""),
     }
-    # Keep each operating-system user's data separate; an explicit runs directory still takes precedence.
-    env.setdefault("HARNESS_RUNS_DIR", str(Path.home() / ".maf-harness" / "runs"))
-    Path(env["HARNESS_RUNS_DIR"]).mkdir(parents=True, exist_ok=True, mode=0o700)
+    # New runs belong to this checkout; an explicit directory still takes precedence.
+    env.setdefault("HARNESS_RUNS_DIR", str(ROOT / ".maf-harness" / "runs"))
+    runs = Path(env["HARNESS_RUNS_DIR"]).expanduser()
+    runs = (runs if runs.is_absolute() else ROOT / runs).resolve()
+    runs.mkdir(parents=True, exist_ok=True, mode=0o700)
+    env["HARNESS_RUNS_DIR"] = str(runs)
     log_dir = Path(env.get("HARNESS_LOG_DIR") or Path(env["HARNESS_RUNS_DIR"]).parent / "logs")
+    log_dir = log_dir.expanduser()
+    log_dir = (log_dir if log_dir.is_absolute() else ROOT / log_dir).resolve()
     log_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
     env["HARNESS_LOG_DIR"] = str(log_dir)
     log_path = log_dir / ("launch-" + datetime.now().strftime("%Y%m%d-%H%M%S-%f") + ".log")

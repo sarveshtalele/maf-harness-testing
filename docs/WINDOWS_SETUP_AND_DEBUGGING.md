@@ -51,12 +51,12 @@ The launcher checks occupied ports before reinstalling or building, pins Python 
 
 ## Where to find every kind of log
 
-The launcher prints the exact paths, including overrides. Default locations are:
+Run the following commands from the checkout root. The launcher prints exact paths, including overrides. New runs and logs are created in this checkout; older profile-based history remains available at its original location. Default locations are:
 
 | Evidence | Location |
 |---|---|
-| Frontend installation/build, API and Next startup/service output | `%USERPROFILE%\.maf-harness\logs\launch-*.log` |
-| API dispatch and failures, before a model or command runs | `%USERPROFILE%\.maf-harness\runs\<run-id>\workflow.log` |
+| Frontend installation/build, API and Next startup/service output | `%CD%\.maf-harness\logs\launch-*.log` |
+| API dispatch and failures, before a model or command runs | `%CD%\.maf-harness\runs\<run-id>\workflow.log` |
 | Approvals, stage transitions, repairs and host errors | Run folder `audit.jsonl` |
 | Model/tool invocations, durations and token usage | Run folder `trace.jsonl` |
 | Installation command stdout/stderr | Run folder `environment\attempt-*\...\stdout.log` and `stderr.log` |
@@ -68,14 +68,14 @@ The launcher prints the exact paths, including overrides. Default locations are:
 Open logs in Explorer:
 
 ```cmd
-explorer "%USERPROFILE%\.maf-harness\logs"
-explorer "%USERPROFILE%\.maf-harness\runs"
+explorer "%CD%\.maf-harness\logs"
+explorer "%CD%\.maf-harness\runs"
 ```
 
 Follow the latest service log in PowerShell:
 
 ```powershell
-$qeLog = Get-ChildItem "$env:USERPROFILE\.maf-harness\logs\launch-*.log" | Sort-Object LastWriteTime -Descending | Select-Object -First 1
+$qeLog = Get-ChildItem ".\.maf-harness\logs\launch-*.log" | Sort-Object LastWriteTime -Descending | Select-Object -First 1
 Get-Content $qeLog.FullName -Tail 80 -Wait
 ```
 
@@ -113,12 +113,12 @@ If access remains denied after updating and restarting, inspect the actual run f
 
 ```cmd
 whoami
-icacls "%USERPROFILE%\.maf-harness\runs\e9681c3fb20d\run.json"
-attrib "%USERPROFILE%\.maf-harness\runs\e9681c3fb20d\run.json"
+icacls "%CD%\.maf-harness\runs\e9681c3fb20d\run.json"
+attrib "%CD%\.maf-harness\runs\e9681c3fb20d\run.json"
 ```
 
 Check whether the directory belongs to the same Windows account and whether antivirus or folder-protection software is blocking the process. Do not delete `run.json` or take ownership of another user's files. A persistent ACL denial needs the account/directory configuration corrected; retries cannot grant missing permissions.
 
 ## Verification scope
 
-The CI matrix uses Node 24 on Windows and macOS, installs with npm command shims disabled to reproduce this class of failure, checks build/types and then runs the actual platform launcher smoke test and browser workflow. Only a successful Windows CI run confirms those checks ran on Windows; macOS tests do not certify an arbitrary Windows machine or corporate network.
+The CI matrix uses Node 24 on Windows, macOS and Linux, installs with npm command shims disabled to reproduce this class of failure, checks build/types and then runs the actual platform launcher smoke test and browser workflow. Only a successful Windows CI run confirms those checks ran on Windows; macOS tests do not certify an arbitrary Windows machine or corporate network.

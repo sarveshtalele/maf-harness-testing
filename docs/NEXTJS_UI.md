@@ -36,11 +36,11 @@ Optional launcher flags: `--port 3001 --api-port 8766`. Port values are validate
 
 ## Data and compatibility
 
-New UI runs default to `~/.maf-harness/runs` for each operating-system user; `.harness_runs` in this checkout remains discoverable so existing runs can be inspected and resumed. An explicit `HARNESS_RUNS_DIR` overrides the default. Use separate OS accounts or separate machines for separate users. There is no application login or shared team server in this phase.
+New UI and CLI runs default to `<repo-root>/.maf-harness/runs`, with service logs in `<repo-root>/.maf-harness/logs`. Existing `~/.maf-harness/runs` and project-local `.harness_runs` history remains discoverable in place, without moving or deleting files. An explicit `HARNESS_RUNS_DIR` overrides the default; relative overrides are resolved from this checkout. Use separate checkouts for separate users. There is no application login or shared team server in this phase.
 
 The API reads the existing checkpoint format and passes decisions to `Harness.respond`. Browser reloads do not kill an operation. One operation runs at a time, matching the previous local UI. Old runs without full traces show summary observability. Interrupted consumed gates are never automatically replayed. Reconnect rebuilds the runtime connection, not the approved action.
 
-The CLI defaults to project-local storage. Set their `HARNESS_RUNS_DIR` to the UI directory if you want to work on the same runs. Stop the UI operation before using another host to mutate that run. No checkpoint migration is required.
+The CLI and UI use the same default run directory. `--run-dir` selects one explicit CLI checkpoint; `HARNESS_RUNS_DIR` overrides their common storage root. Stop the UI operation before using another host to mutate that run. No checkpoint migration is required.
 
 ## Layout and evidence
 

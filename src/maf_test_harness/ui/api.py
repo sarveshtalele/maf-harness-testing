@@ -80,11 +80,16 @@ def decisions(pending: dict | None, status: str, consumed: list) -> list[str]:
 
 class LocalAPI(EvidenceAPI, SettingsAPI):
     def __init__(
-        self, runs: Path, legacy: Path | None = None, runtime_factory=None, requirements_mode="deterministic"
+        self,
+        runs: Path,
+        legacy: Path | tuple[Path, ...] | None = None,
+        runtime_factory=None,
+        requirements_mode="deterministic",
     ):
         self.runs = runs.resolve()
         self.runs.mkdir(parents=True, exist_ok=True, mode=0o700)
-        self.legacy = legacy.resolve() if legacy and legacy.resolve() != self.runs else None
+        roots = () if legacy is None else (legacy,) if isinstance(legacy, Path) else legacy
+        self.legacy_roots = tuple(dict.fromkeys(p.resolve() for p in roots if p.resolve() != self.runs))
         self.runtime_factory = runtime_factory
         self.requirements_mode = requirements_mode
         self.lock = RLock()
@@ -98,8 +103,12 @@ class LocalAPI(EvidenceAPI, SettingsAPI):
         if not re.fullmatch(r"[A-Za-z0-9_-]{1,100}", key):
             raise ValueError("Invalid run ID.")
         path = self.runs / key
-        if not create and not (path / "run.json").is_file() and self.legacy:
-            path = self.legacy / key
+        if not create and not (path / "run.json").is_file():
+            for root in self.legacy_roots:
+                candidate = root / key
+                if (candidate / "run.json").is_file():
+                    path = candidate
+                    break
         root = path.parent
         if path.resolve().parent != root or (not create and not (path / "run.json").is_file()):
             raise FileNotFoundError("Run not found.")
@@ -175,7 +184,7 @@ class LocalAPI(EvidenceAPI, SettingsAPI):
         with self.lock:
             self.harvest()
             rows, seen = [], set()
-            for root in (self.runs, self.legacy):
+            for root in (self.runs, *self.legacy_roots):
                 if not root:
                     continue
                 for file in root.glob("*/run.json"):
@@ -560,11 +569,12 @@ def main():
         parser.error(
             "Set HARNESS_API_TOKEN to a random value of at least 32 characters (the launcher does this)."
         )
-    runs = Path(os.getenv("HARNESS_RUNS_DIR") or Path.home() / ".maf-harness" / "runs")
+    runs = Path(os.getenv("HARNESS_RUNS_DIR") or ROOT / ".maf-harness" / "runs").expanduser()
+    runs = (runs if runs.is_absolute() else ROOT / runs).resolve()
     runs.mkdir(parents=True, exist_ok=True, mode=0o700)
     # ponytail: one local API owns this user's run store; a shared service needs explicit job ownership.
     with FileLock(str(runs.parent / f".{runs.name}-api.lock"), timeout=0):
-        api = LocalAPI(runs, ROOT / ".harness_runs")
+        api = LocalAPI(runs, (ROOT / ".harness_runs", Path.home() / ".maf-harness" / "runs"))
         server = make_server(api, token, args.port)
         print(f"Local harness API: http://127.0.0.1:{args.port}", flush=True)
         try:

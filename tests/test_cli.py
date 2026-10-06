@@ -1,10 +1,42 @@
 import json
 from pathlib import Path
+from types import SimpleNamespace
+
+import pytest
 
 from maf_test_harness import cli
 from maf_test_harness.skills.registry import tree_sha256
 
 SKILLS = Path("skills")
+
+
+@pytest.mark.parametrize("override", [None, "custom runs"])
+def test_cli_creates_default_run_in_checkout_or_explicit_storage(tmp_path, monkeypatch, override):
+    monkeypatch.setattr(cli, "ROOT", tmp_path)
+    monkeypatch.delenv("HARNESS_RUNS_DIR", raising=False)
+    if override:
+        monkeypatch.setenv("HARNESS_RUNS_DIR", override)
+    monkeypatch.setattr(cli, "validate_gateway_settings", lambda: None)
+
+    class Runtime:
+        async def close(self):
+            pass
+
+    paths = []
+
+    def host(path, **kwargs):
+        paths.append(path)
+        path.mkdir(parents=True)
+        return SimpleNamespace(view={"status": "stopped"}, state={})
+
+    monkeypatch.setattr(cli, "MAFHarnessRuntime", lambda **kwargs: Runtime())
+    monkeypatch.setattr(cli, "Harness", host)
+    monkeypatch.setattr(
+        cli, "DailyUsageLedger", lambda: SimpleNamespace(limit=100, snapshot=lambda: {"used": 0})
+    )
+    assert cli.main(["run", "https://github.com/acme/demo"]) == 2
+    expected = tmp_path / override if override else tmp_path / ".maf-harness" / "runs"
+    assert paths[0].parent == expected and paths[0].is_dir()
 
 
 def write_run(tmp_path, loaded=True, mode_ok=True, stale_hash=False):

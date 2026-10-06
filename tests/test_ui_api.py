@@ -93,6 +93,29 @@ def test_stalled_clone_has_live_operation_directory_and_can_be_cancelled_then_re
     assert not api.errors
 
 
+def test_checkout_storage_discovers_both_legacy_locations_without_moving_files(tmp_path):
+    runs = tmp_path / "checkout" / ".maf-harness" / "runs"
+    legacy = (tmp_path / "checkout" / ".harness_runs", tmp_path / "profile" / ".maf-harness" / "runs")
+    for root, key in zip((runs, *legacy), ("newrun", "oldcheckout", "oldprofile"), strict=True):
+        path = root / key
+        path.mkdir(parents=True)
+        (path / "run.json").write_text(
+            json.dumps({"status": "stopped", "state": {"repo_url": "https://github.com/acme/demo"}})
+        )
+    api = LocalAPI(runs, legacy)
+    try:
+        assert {run["id"] for run in api.list_runs()["runs"]} == {"newrun", "oldcheckout", "oldprofile"}
+        assert api.read("oldprofile")["run_directory"] == str(legacy[1] / "oldprofile")
+        assert api.run_path("fresh", create=True) == runs / "fresh"
+        assert all(
+            (root / key / "run.json").is_file()
+            for root, key in zip((runs, *legacy), ("newrun", "oldcheckout", "oldprofile"), strict=True)
+        )
+        assert not (runs / "oldprofile").exists()
+    finally:
+        api.close()
+
+
 def test_api_complete_workflow_and_downloads(local_api):
     api = local_api
     key = api.start({"repo_url": "https://github.com/acme/demo"})["id"]

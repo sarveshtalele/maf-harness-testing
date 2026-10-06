@@ -13,7 +13,7 @@ The reported Windows log shows real Git clone attempts followed by a second Ctrl
 
 ## Actual files and directories
 
-Default run history is `%USERPROFILE%\.maf-harness\runs` on Windows and `~/.maf-harness/runs` on macOS/Linux. It is **not `.mdaf-harness`** and is outside the downloaded checkout. `HARNESS_RUNS_DIR` may override it. The run page displays the actual backend-resolved directory.
+New run history is `<repo-root>/.maf-harness/runs` on Windows, macOS and Linux. For a checkout at `C:\Users\SarveshTalele\Documents\maf-harness-testing-new-ui`, runs are created in `C:\Users\SarveshTalele\Documents\maf-harness-testing-new-ui\.maf-harness\runs\<run-id>`. Service logs are in `<repo-root>/.maf-harness/logs`. These folders are git-ignored and created automatically. Older `~/.maf-harness/runs` and `.harness_runs` checkpoints remain discoverable in place; opening an old run shows its original path. `HARNESS_RUNS_DIR` may override the default. The run page displays the actual backend-resolved directory.
 
 For each run:
 
@@ -29,7 +29,7 @@ For each run:
 
 The UI displays live Git output and offers **Cancel clone** while Git is active. Logs → clone output remains available after cancellation, failure or completion. After Git completes, source inspection and the deterministic reverse-engineering skill run before the repository review gate; model calls remain zero for this phase.
 
-If Windows cannot find a run directory, compare the UI's actual path with `echo %USERPROFILE%` and Configuration → Debugging logs. Do not delete a run or create a substitute empty directory to repair saved state. If the process reports a proxy/TLS/permission failure, address that specific error using [Windows diagnostics](WINDOWS_SETUP_AND_DEBUGGING.md), then Retry stage.
+If Windows cannot find a run directory, compare the UI's actual path with the checkout location (`cd` in Command Prompt) and Configuration → Debugging logs. Do not delete a run or create a substitute empty directory to repair saved state. If the process reports a proxy/TLS/permission failure, address that specific error using [Windows diagnostics](WINDOWS_SETUP_AND_DEBUGGING.md), then Retry stage.
 
 ## Starting and verifying
 

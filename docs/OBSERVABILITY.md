@@ -26,7 +26,7 @@ The harness's own record exists because a UI must be able to open **any past run
 
 ```mermaid
 flowchart LR
-  subgraph run[".harness_runs/&lt;run&gt;/"]
+  subgraph run[".maf-harness/runs/&lt;run&gt;/"]
     T[trace.jsonl<br/>MAF middleware]
     A[audit.jsonl<br/>host events]
     R[run.json<br/>state: provenance, budget, artifacts]
@@ -67,7 +67,7 @@ Runs made before this file existed still render: tools come from the recorded mo
 | **Integrity checks** | Every assigned skill loaded via MAF · no unexpected tools · tool and provider calls succeeded · reviewed-script policy · trace tokens equal the ledger-accounted tokens · OpenTelemetry mode |
 | **Export** | Markdown and JSON download of the same report |
 
-Command line: `maf-harness trace .harness_runs/<run> [--format md|json] [--out FILE]` (exit code 1 when an integrity check fails, 2 for a missing run).
+Command line: `maf-harness trace .maf-harness/runs/<run> [--format md|json] [--out FILE]` (exit code 1 when an integrity check fails, 2 for a missing run).
 
 ## 4. Interpreting it
 

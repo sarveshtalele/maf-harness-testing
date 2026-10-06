@@ -158,7 +158,7 @@ sequenceDiagram
 | A green verdict means something | `envs.runners.execute_plan` (fresh reports only), `qa.report.verdict_for` |
 | Every failure names the files/lines to change | `qa.triage.build_updates` → `qa_report["updates"]` |
 
-## 5. Run directory (`.harness_runs/<run>/`)
+## 5. Run directory (`.maf-harness/runs/<run>/`)
 
 | Path | Content |
 |---|---|
@@ -360,7 +360,7 @@ its own artifacts. Everything else is refused, and every run is recorded in `sta
 | `HARNESS_GENERATION_BATCH_SIZE` / `_MAX_ATTEMPTS` | env | 3 / 3 | cases per model call / repair attempts |
 | `HARNESS_MAX_OUTPUT_TOKENS` | env | 16384 | per-response cap (not a workflow limit) |
 | `HARNESS_EXECUTION_TIMEOUT` | env | 900 s | per install/test command |
-| `HARNESS_RUNS_DIR` | env | `.harness_runs` | run storage for the UI |
+| `HARNESS_RUNS_DIR` | env | `.maf-harness/runs` | run storage for the UI |
 | `HARNESS_HOOKS` / `HARNESS_HOOKS_BACKEND` | env | `enforce` / `inhouse` | hooks on, evaluate-only or off / in-house or AGENT-HOOKS-0.1 middleware (`[hooks]` extra) |
 | `HARNESS_DIAGNOSIS_AGENT` / `HARNESS_SKILL_EVALUATORS` | env | `off` | opt-in diagnosis agent / skill validators as a design-stage tool |
 | `HARNESS_TOOLCHAIN_DIR` / `HARNESS_TOOLCHAIN_MIRROR` | env | `~/.maf-harness/toolchains` / — | where provisioned JDK/Maven/Gradle/.NET/Python live / a mirror serving the same download paths |

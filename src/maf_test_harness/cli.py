@@ -13,6 +13,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
+import os
 import sys
 import uuid
 from pathlib import Path
@@ -76,7 +77,9 @@ def _auto(pending: dict, state: dict, args, retries: dict) -> dict:
 
 async def run(args) -> int:
     validate_gateway_settings()
-    run_dir = Path(args.run_dir or ROOT / ".harness_runs" / uuid.uuid4().hex[:12])
+    runs = Path(os.getenv("HARNESS_RUNS_DIR") or ROOT / ".maf-harness" / "runs").expanduser()
+    runs = (runs if runs.is_absolute() else ROOT / runs).resolve()
+    run_dir = Path(args.run_dir).expanduser() if args.run_dir else runs / uuid.uuid4().hex[:12]
     runtime = MAFHarnessRuntime(
         api_key=API_KEY,
         model=args.model or MODEL,
@@ -201,7 +204,7 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="Let the harness start the application itself for ui/e2e (Playwright) cases; shown in the run approval",
     )
-    runp.add_argument("--run-dir", help="Run directory (default .harness_runs/<id>)")
+    runp.add_argument("--run-dir", help="Run directory (default <repo-root>/.maf-harness/runs/<id>)")
     runp.add_argument("--model", help=f"Model name (default {MODEL})")
     runp.add_argument("--skill-mode", choices=["progressive", "preloaded"], default=SKILL_MODE)
     runp.add_argument(

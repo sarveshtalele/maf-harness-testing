@@ -169,5 +169,5 @@ table per file.
 * `uv run maf-harness lint-skills` — Agent Skills spec lint + lock verification.
 * `uv run pytest -q --ignore=tests/targets` — unit, component (real MAF, scripted transport) and workflow e2e
   tests; no network, no model.
-* `uv run maf-harness trace .harness_runs/<run>` — proves, from a saved run's own trace, that every assigned
+* `uv run maf-harness trace .maf-harness/runs/<run>` — proves, from a saved run's own trace, that every assigned
   skill was really loaded and every listed tool was really available (see [OBSERVABILITY.md](OBSERVABILITY.md)).
