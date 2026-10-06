@@ -43,6 +43,7 @@ def test_failed_generation_preserves_all_attempt_artifacts(tmp_path):
 def test_retry_reuses_accepted_batches_only_with_matching_inputs(tmp_path, monkeypatch):
 
     monkeypatch.setattr(generation_steps, "TEST_GENERATION_BATCH_SIZE", 1)
+    monkeypatch.setattr(generation_steps, "MAX_FAILED_BATCH_RATIO", 0.0)  # any failed batch fails the stage
 
     class Provider:
         fail_second = True

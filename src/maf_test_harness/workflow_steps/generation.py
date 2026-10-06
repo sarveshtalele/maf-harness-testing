@@ -30,6 +30,7 @@ from ..repo.testability import testability_for_targets
 from ..settings import (
     AUTOFIX,
     BUILD_GATE,
+    MAX_FAILED_BATCH_RATIO,
 )
 from ..skills.config import skills_for
 from ..skills.contracts import (
@@ -95,6 +96,7 @@ class GenerationSteps:
         schema = GeneratedFilesDraft.model_json_schema()
         accepted_files: list[dict[str, Any]] = []
         accepted_paths: set[str] = set()
+        failures: list[dict[str, Any]] = []  # fail-soft: batches that exhausted their attempts
         covered: set[str] = set()
         languages: list[str] = []
         frameworks: list[str] = []
@@ -328,12 +330,23 @@ class GenerationSteps:
                     )
                     if attempt == TEST_GENERATION_MAX_ATTEMPTS:
                         rounds[str(batch_index)] = rounds.get(str(batch_index), 0) + 1
+                        failures.append(
+                            {
+                                "batch": batch_index,
+                                "case_ids": sorted(work_ids),
+                                "attempts": attempt,
+                                "last_error": str(exc)[:1000],
+                            }
+                        )
+                        self.audit("test_generation_batch_failed", batch=batch_index, error=str(exc)[:300])
                         self.save()
-                        raise ValueError(
-                            f"Test generation batch {batch_index}/{total_batches} failed after "
-                            f"{TEST_GENERATION_MAX_ATTEMPTS} attempts: {exc}"
-                        ) from exc
 
+            if accepted is None and failures and failures[-1]["batch"] == batch_index:
+                # Recorded; a stage rerun (or heal) retries it. Heal rounds keep the batch's passing files.
+                accepted_files.extend(kept_files)
+                case_reviews.extend(kept_reviews)
+                accepted_paths.update(item["path"] for item in kept_files)
+                continue
             if accepted is None:
                 raise ValueError(
                     f"Test generation batch {batch_index}/{total_batches} produced no accepted output."
@@ -349,6 +362,12 @@ class GenerationSteps:
             if accepted["rationale"] not in rationales:
                 rationales.append(accepted["rationale"])
 
+        failed_case_ids = {cid for failure in failures for cid in failure["case_ids"]}
+        if failures and (len(failures) / total_batches > MAX_FAILED_BATCH_RATIO or not accepted_files):
+            raise ValueError(
+                f"Test generation failed for {len(failures)}/{total_batches} batches "
+                f"(limit {MAX_FAILED_BATCH_RATIO:.0%}). Last error: {failures[-1]['last_error']}"
+            )
         all_ids = {str(case["id"]) for case in cases}
         final_payload = {
             "selected_language": ", ".join(languages)[:80] or "Repository native stack",
@@ -368,6 +387,7 @@ class GenerationSteps:
                 for case in cases
             ],
             "files": accepted_files,
+            "generation_failures": failures,
             "case_reviews": sorted(case_reviews, key=lambda r: (-r["confidence"], r["case_id"])),
         }
         reviews_by_id = {r["case_id"]: r for r in case_reviews}
@@ -375,11 +395,14 @@ class GenerationSteps:
             review = reviews_by_id.get(case["id"], {})
             case.update(
                 confidence=review.get("confidence"),
-                reviewer_verdict=review.get("verdict"),
+                reviewer_verdict="generation_failed"
+                if case["id"] in failed_case_ids
+                else review.get("verdict"),
                 reviewer_reason=review.get("reason"),
             )
         final_payload["case_catalog"].sort(key=lambda c: -(c.get("confidence") or 0))
-        validation = validate_generated_files(final_payload, all_ids)
+        validation = validate_generated_files(final_payload, all_ids - failed_case_ids)
+        validation["generation_failed_case_ids"] = sorted(failed_case_ids)
         validation["quality"] = validate_java_traceability(
             final_payload, cases, state["artifacts"].get("requirements", {}), self.run_dir / "repo"
         )

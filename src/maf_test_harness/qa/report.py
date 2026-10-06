@@ -39,6 +39,7 @@ def build_qa_report(
     files = generation.get("files", [])
     reviews = {r["case_id"]: r for r in generation.get("case_reviews", [])}
     file_for_case = {f["case_ids"][0]: f["path"] for f in files}
+    generation_failed = {cid for f in generation.get("generation_failures", []) for cid in f["case_ids"]}
     execution_cases = (execution or {}).get("cases", [])
     results = map_results_to_cases(
         [c for c in execution_cases if c.get("scope", "generated") == "generated"], files
@@ -76,6 +77,8 @@ def build_qa_report(
                 "status": (
                     result["status"]
                     if result
+                    else "generation_failed"
+                    if case["id"] in generation_failed and not file_for_case.get(case["id"])
                     else "error"
                     if file_for_case.get(case["id"]) in quarantined
                     else "not_executed"
@@ -143,7 +146,11 @@ def build_qa_report(
     if counts.get("failed") or counts.get("error"):
         verdict = "FAIL"
     elif verdict.startswith("PASS") and (
-        not cases or counts.get("not_executed") or counts.get("not_run") or unmapped
+        not cases
+        or counts.get("not_executed")
+        or counts.get("not_run")
+        or counts.get("generation_failed")
+        or unmapped
     ):
         verdict = "INCONCLUSIVE"
     elif verdict == "PASS" and counts.get("skipped"):
@@ -159,7 +166,11 @@ def build_qa_report(
             for step in (execution or {}).get("steps", [])
         )
         else "INCONCLUSIVE"
-        if not cases or counts.get("not_executed") or counts.get("not_run") or unmapped
+        if not cases
+        or counts.get("not_executed")
+        or counts.get("not_run")
+        or counts.get("generation_failed")
+        or unmapped
         else "PASS_WITH_SKIPS"
         if counts.get("skipped")
         else "PASS"

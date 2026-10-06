@@ -7,6 +7,7 @@ a variable that is already set in the environment always wins. Every tunable has
 
 from __future__ import annotations
 
+import json
 import os
 import re
 from pathlib import Path
@@ -91,6 +92,28 @@ MAX_OUTPUT_TOKENS = int(os.getenv("HARNESS_MAX_OUTPUT_TOKENS", "16384"))
 # Approved design cases implemented per provider call during test generation.
 GENERATION_BATCH_SIZE = min(8, max(1, int(os.getenv("HARNESS_GENERATION_BATCH_SIZE", "3"))))
 GENERATION_MAX_ATTEMPTS = max(1, int(os.getenv("HARNESS_GENERATION_MAX_ATTEMPTS", "3")))
+
+# Test generation: fail-soft batches. If failed_batches / total > this ratio, or zero files generated, raise.
+# Default 0.5 allows up to half the batches to fail; clamp to [0, 1].
+MAX_FAILED_BATCH_RATIO = max(0.0, min(1.0, float(os.getenv("HARNESS_MAX_FAILED_BATCH_RATIO", "0.5"))))
+
+# Per-stage model overrides: JSON object {stage_name: model_id}. Unset or invalid JSON defaults to MODEL.
+# Example: {"test_generation": "claude-opus-4", "test_design": "claude-sonnet-4"}
+STAGE_MODELS: dict[str, str] = {}
+if _stage_models_env := os.getenv("HARNESS_STAGE_MODELS", "").strip():
+    try:
+        _parsed = json.loads(_stage_models_env)
+    except ValueError as exc:
+        raise ValueError(f"HARNESS_STAGE_MODELS must be a JSON object: {exc}") from exc
+    if not isinstance(_parsed, dict):
+        raise ValueError("HARNESS_STAGE_MODELS must be a JSON object {stage: model}.")
+    STAGE_MODELS = {str(k): str(v).strip() for k, v in _parsed.items() if str(v).strip()}
+
+
+def model_for(stage: str) -> str:
+    """The model for a stage: its HARNESS_STAGE_MODELS entry, else the default MODEL."""
+    return STAGE_MODELS.get(stage, MODEL)
+
 
 # Wall-clock limit for each host-run setup/test command.
 EXECUTION_TIMEOUT_SECONDS = float(os.getenv("HARNESS_EXECUTION_TIMEOUT", "900"))
