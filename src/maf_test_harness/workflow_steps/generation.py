@@ -20,6 +20,7 @@ from ..repo.analyzer import (
 )
 from ..repo.routes import extract_routes
 from ..repo.stack import detect_stack
+from ..repo.testability import testability_for_targets
 from ..settings import (
     AUTOFIX,
     BUILD_GATE,
@@ -187,6 +188,11 @@ class GenerationSteps:
                             },
                         },
                         "target_source": batch_source,
+                        "testability": testability_for_targets(
+                            state["artifacts"]["repo_analysis"].get("testability"),
+                            [str(case.get("target") or "") for case in work],
+                        )
+                        or None,
                         "failed_generated_source": failed_source or None,
                         "collaborator_signatures": collaborators or None,
                         "state_and_schema_source": source_contracts(self._repo_context()),
