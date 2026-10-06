@@ -202,7 +202,7 @@ def test_maven_regression_scopes_and_report_do_not_confuse_baseline_with_generat
 def test_bad_hyphenated_python_import_gets_source_backed_repair_guidance():
     from maf_test_harness.skills.contracts import check_python_imports
 
-    with pytest.raises(ValueError, match="Hyphenated paths.*spec_from_file_location"):
+    with pytest.raises(ValueError, match="not a valid Python identifier.*Do not translate"):
         check_python_imports(
             "from skills.text_statistics.scripts.main import run",
             ["skills/text-statistics/scripts/main.py"],

@@ -48,6 +48,18 @@ from ..workflow_support import (
 from .test_review import review_generated_tests
 
 
+def _retry_reminder(state: dict[str, Any]) -> str:
+    langs = {str(k).lower() for k in (state["artifacts"]["repo_analysis"].get("languages") or {})}
+    if "python" in langs:
+        return (
+            "Python files must define a top-level def test_name(...): with a meaningful assertion against the actual "
+            "application. Imports alone are not a test."
+        )
+    if "java" in langs:
+        return "Java test classes must contain one @Test method invoking the claimed method on its real type."
+    return "Each file must contain a real test with a meaningful assertion against the actual application."
+
+
 class GenerationSteps:
     async def _generate_tests_batched(self, state: dict) -> dict:
         """Generate approved design cases in small validated batches with bounded repair retries."""
@@ -300,8 +312,7 @@ class GenerationSteps:
                         + "Regenerate ONLY this batch. "
                         "Return one complete schema-valid JSON object. Generate one file per supplied case ID, exactly one "
                         "test declaration per file, and one matching case_ids entry. The host supplies CASE_ID comments. "
-                        "Keep imports minimal and source complete. Python files must define a top-level def test_name(...): "
-                        "with a meaningful assertion against the actual application. Imports alone are not a test."
+                        "Keep imports minimal and source complete. " + _retry_reminder(state)
                     )
                     self.audit(
                         "test_generation_repair",
