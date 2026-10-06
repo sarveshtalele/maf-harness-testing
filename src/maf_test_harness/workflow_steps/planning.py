@@ -95,6 +95,12 @@ class PlanningSteps:
             ]
             atomic_json(folder / f"{identifier}.json", record)
 
+    def _settle_response_cache(self, stage, validated: bool) -> None:
+        """Tell the runtime whether the host accepted the last model result (only accepted ones are cached)."""
+        settle = getattr(self.runtime, "settle_response_cache", None)
+        if settle is not None:
+            settle(stage, validated)
+
     def _selected_app_source(
         self, state: dict, *, preferred: list[str] | None = None, max_chars: int = 14000
     ) -> dict[str, str]:
@@ -212,14 +218,9 @@ class PlanningSteps:
         schema = response_format.model_json_schema()
         if stage == "test_design":
             requirements = _compact_requirements(requirements_source)
-            ids = sorted(
-                {
-                    item["id"]
-                    for key in ("requirements", "acceptance_criteria", "validation_rules", "api_contracts")
-                    for item in requirements[key]
-                }
-            )
-            schema["$defs"]["TraceabilityLinkDraft"]["properties"]["id"]["enum"] = ids
+            # No per-batch ID enum here: it sits in the schema near the top of the prompt and would make every batch
+            # miss the provider prefix cache. The allowed IDs are in `approved_traceability_ids` (late) and host
+            # validation (finalize_design) rejects unknown ones. The actor enum is identical for every batch.
             schema["$defs"]["TestDesignCaseDraft"]["properties"]["actor"]["enum"] = sorted(
                 {a["name"] for a in requirements["actors"]} | {"System"}
             )
@@ -250,7 +251,8 @@ class PlanningSteps:
                                 }
                             ),
                         ),
-                        max_total_chars=40000,
+                        # The batch's own source files are preferred and the requirements already carry their evidence.
+                        max_total_chars=14000,
                         preferred_paths=[
                             p
                             for r in requirements_source.get("requirement_model", {}).get("requirements", [])
@@ -342,6 +344,7 @@ class PlanningSteps:
                     response_format=response_format,
                 )
             except ValidationError as exc:
+                self._settle_response_cache(stage, False)
                 self.audit(
                     "stage_repair", stage=stage, attempt=attempt, error="Invalid model JSON/schema output"
                 )
@@ -352,6 +355,8 @@ class PlanningSteps:
                     + str(exc.errors(include_input=False))[:900]
                 )
                 continue
+            if result["status"] != "completed":
+                self._settle_response_cache(stage, False)
             if result["status"] == "needs_input":
                 raise ValueError(
                     "The agent requested manual configuration, but this workflow is autonomous. "
@@ -364,6 +369,7 @@ class PlanningSteps:
             try:
                 artifact = await self.validate(stage, state, requirements_source=requirements_override)
             except ValueError as exc:  # temperature 0 repeats itself, so the retry must carry the reason
+                self._settle_response_cache(stage, False)
                 self.audit("stage_repair", stage=stage, attempt=attempt, error=str(exc)[:600])
                 if attempt == MODEL_REPAIR_ATTEMPTS:
                     raise
@@ -372,6 +378,7 @@ class PlanningSteps:
                     "complete JSON object that fixes exactly this problem and keeps everything else valid."
                 )
                 continue
+            self._settle_response_cache(stage, True)
             break
         return artifact
 

@@ -305,6 +305,7 @@ class GenerationSteps:
                             + ", ".join(sorted(collisions))
                         )
                     await self._build_gate(candidate, batch_index)
+                    self._settle_response_cache("test_generation", True)  # accepted: cache this model answer
                     candidate["case_reviews"] = await review_generated_tests(
                         self, state, candidate, work, batch_index
                     )
@@ -317,6 +318,7 @@ class GenerationSteps:
                     self.save()
                     break
                 except Exception as exc:
+                    self._settle_response_cache("test_generation", False)
                     repair_feedback = (
                         f"Attempt {attempt} failed generation or static validation: {exc}. "
                         + (f"HOW TO FIX: {remedy_for(str(exc))} " if remedy_for(str(exc)) else "")

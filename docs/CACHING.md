@@ -73,3 +73,22 @@ generation prompt went from 60.7 % to 82.2 %. On a real repository the effect is
 ## Strict generation update — October 6, 2026
 
 [Current intake, batching, Java quality gates and scoped QA](PETSTORE_STRICT_TEST_GENERATION.md) supersede earlier truncation and final-retry acceptance behavior. New deterministic requirements retain all discovered declarations; installation/runtime checks remain at Test execution. Maven baseline unit/integration and generated results are separate, and runtime coverage is explicitly unmeasured. Run logs default to the checkout’s `.maf-harness` directory.
+
+## Batch-independent schema and the local response cache
+
+**Prefix cache.** The test-design `output_contract` no longer embeds the per-batch requirement-ID `enum`; the allowed IDs
+are only in the late `approved_traceability_ids` section (host validation in `finalize_design` still rejects unknown IDs).
+`STAGE_ORDER` / `GENERATION_ORDER` put every section that is identical across batches of a stage before any per-batch
+section (`approved_inputs`, `repository_evidence`, `existing_tests`, `testability`, `approved_traceability_ids`). On the
+fixture, two design batches now share 5183 leading chars instead of 2733 (everything before `approved_inputs`). Design
+`repository_evidence` for a batch is capped at 14k chars (was 40k), preferring the batch's own source files.
+
+**Response cache** (`agent/runtime.py`, `MAFHarnessRuntime.run_stage`). A stage answer that the host *accepted* is stored as
+JSON under `HARNESS_RESPONSE_CACHE_DIR` (default `<repo-root>/.maf-harness/cache/responses`), keyed by
+sha256(model, stage, skills, persona, prompt, response-format schema, temperature, skill mode). Only `temperature == 0`
+calls are cached, so repair/retry attempts (temperature > 0) always call the provider. The host calls
+`settle_response_cache(stage, validated)` after its own validation: accepted fresh answers are written, rejected answers
+are never written, and a cached answer the host rejects is deleted. A hit goes through the same validators, records a
+`cache_hit` trace event (stage, `prompt_sha256`, zero tokens) and spends no provider tokens or daily budget.
+`HARNESS_RESPONSE_CACHE=0` disables it. Not cached: the independent test reviewer and tool agents (their tools read live
+state that is not part of the key). Delete the directory to clear it.
