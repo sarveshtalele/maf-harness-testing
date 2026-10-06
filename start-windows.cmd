@@ -5,6 +5,7 @@ where uv >nul 2>nul
 if errorlevel 1 (echo Install uv first: https://docs.astral.sh/uv/getting-started/installation/ & exit /b 1)
 where npm >nul 2>nul
 if errorlevel 1 (echo Install Node.js 24 LTS first: https://nodejs.org/ & exit /b 1)
+set "NODE_VERSION="
 for /f "tokens=*" %%i in ('node --version 2^>nul') do set NODE_VERSION=%%i
 if not defined NODE_VERSION (echo Node.js not found. Install Node.js 24 LTS: https://nodejs.org/ & exit /b 1)
 echo %NODE_VERSION% | findstr /R "^v24\." >nul 2>nul
