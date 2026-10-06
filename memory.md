@@ -217,3 +217,18 @@ Root causes being fixed:
 - **Follow-up:** `docs/PETSTORE_STRICT_TEST_GENERATION.md` still mentions JUnit 4. It is historical and was left alone.
 
 Wave 1 verification: 815 passed. The 13 failures are the sandbox EPERM baseline. ruff, format, lint-skills and tsc all pass.
+
+### 2026-10-06 T4 Existing-test witnesses (Sonnet, merged)
+- **What changed:**
+  - `qa/quality.existing_requirement_witnesses` scans test files in any language for direct calls to each requirement's `source_symbol`. It skips definitions and comments. Generic symbols only count when the class or module name appears in the same file. Reads are capped at 2 MB.
+  - `existing_test_evidence` ranks test files by witness hits first, then by non-generic file stems.
+  - The coverage gate now does four things:
+    - drops witnessed requirements from the missing list;
+    - matches requirement IDs as exact tokens, so REQ-1 is no longer satisfied by REQ-10;
+    - requires at least 10 characters of reason for every gap;
+    - writes `gaps_report.pre_existing_test_witnesses` and `excluded_requirements`.
+  - The design prompt gets an `existing_test_witnesses` section.
+  - The QA report adds `requirement_state` per requirement (new / pre_existing_witness / excluded / unexplained) and `requirement_state_counts`.
+- **Decision:** `uncovered_requirements` is unchanged, because existing consumers read it. A witness is a static call match, not measured coverage.
+- **Follow-up:** `skills/reports.py` does not report witness states yet.
+- **Tests:** `tests/test_requirement_witnesses.py` replays the mcp-server-market-v2 case and the REQ-1/REQ-10 regression. 820 passed after the merge.
