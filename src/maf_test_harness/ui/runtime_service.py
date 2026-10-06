@@ -6,6 +6,8 @@ import asyncio
 from concurrent.futures import Future
 from threading import Event, Thread
 
+from ..envs.platform_compat import RUN_CANCEL
+
 
 class RuntimeService:
     def __init__(self):
@@ -29,6 +31,8 @@ class RuntimeService:
         self.thread.start()
         ready.wait()
         self.active: Future | None = None
+        self.task = None
+        self.cancel_event = Event()
 
     def submit(self, coroutine) -> Future:
         if self.loop.is_closed():
@@ -37,7 +41,34 @@ class RuntimeService:
         if self.active and not self.active.done():
             coroutine.close()
             raise RuntimeError("An operation is already running.")
-        self.active = asyncio.run_coroutine_threadsafe(coroutine, self.loop)
+        self.cancel_event = Event()
+
+        async def owned():
+            self.task = asyncio.current_task()
+            token = RUN_CANCEL.set(self.cancel_event)
+            try:
+                return await coroutine
+            finally:
+                RUN_CANCEL.reset(token)
+
+        self.active = asyncio.run_coroutine_threadsafe(owned(), self.loop)
+        return self.active
+
+    def stop_active(self, on_stopped) -> Future:
+        self.cancel_event.set()
+
+        async def stop():
+            task = self.task
+            try:
+                if task and not task.done():
+                    task.cancel()
+                    await task
+            except asyncio.CancelledError:
+                pass
+            finally:
+                on_stopped()
+
+        self.active = asyncio.run_coroutine_threadsafe(stop(), self.loop)
         return self.active
 
     def close(self):

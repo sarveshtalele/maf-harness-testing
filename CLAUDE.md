@@ -1,143 +1,48 @@
-# CLAUDE.md
+# Agentic QE Platform — contributor guidance
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
-
-## What this is
-
-MAF Test Harness: given a public GitHub repository URL, it clones and analyzes the repo, infers
-requirements/actors/environment needs via an LLM agent (Microsoft Agent Framework + Agent Skills), installs
-dependencies into an isolated environment (after approval), designs and generates a test suite in the target
-repo's native framework, runs the tests, and returns a QA report + ZIP. Every model-authored artifact passes a
-human approval gate; every action that touches the machine (clone, install, run) needs its own tool-call approval.
-
-Full design: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md). Every stage persona, central tool and Agent Skill:
-[docs/CATALOG.md](docs/CATALOG.md). Roadmap: [docs/IMPLEMENTATION_PLAN.md](docs/IMPLEMENTATION_PLAN.md).
+Current branch: `new-ui`. Next.js frontend plus a loopback Python HTTP adapter over the checkpointed Microsoft Agent Framework Harness. The CLI uses the same workflow. Windows, macOS and Linux launchers use Node.js 24 and Python 3.12; Next.js has its own framework version.
 
 ## Commands
 
 ```bash
-uv sync --extra dev                                          # install deps into .venv
-uv run streamlit run app.py                                  # launch the UI at localhost:8501
-uv run maf-harness run https://github.com/owner/repo         # CLI, interactive gates
-uv run maf-harness run <repo> --auto-approve --auto-heal 2   # unattended; exit 0 pass / 1 fail / 2 inconclusive
-uv run maf-harness run <repo> --run-dir .harness_runs/<run>  # resume an existing run at its pending gate
-uv run maf-harness verify-run .harness_runs/<run>             # evidence the MAF harness + Agent Skills were really used
-uv run maf-harness trace .harness_runs/<run>                  # skills/tools/cost/traceability report
-uv run maf-harness lint-skills                                 # Agent Skills spec lint + lock verification
-
-uv run ruff check src tests app.py scripts && uv run ruff format --check src tests app.py scripts
-uv run pytest -q --ignore=tests/targets                       # unit + component (real MAF) + workflow e2e; no network, no model
-uv run pytest tests/test_workflow.py -q                       # single test file
-uv run pytest tests/test_workflow.py::test_name -q             # single test
-HARNESS_BROWSER=1 PLAYWRIGHT_BROWSERS_PATH=$PWD/.browser-cache uv run pytest tests/targets/test_harness_browser.py -q   # UI in a real browser
+uv sync --extra dev
+./start-macos.command                 # macOS; Windows: start-windows.cmd; Linux: bash start-linux.sh
+uv run maf-harness run https://github.com/owner/repo
+uv run maf-harness trace .maf-harness/runs/<run-id>
+uv run maf-harness verify-run .maf-harness/runs/<run-id>
+uv run maf-harness lint-skills
+uv run ruff check src tests scripts
+uv run ruff format --check src tests scripts
+uv run pytest -q --ignore=tests/targets
+cd frontend
+npm ci --include=dev
+npm run typecheck
+npm run build
+npm test
 ```
 
-`.env` (copy from `.env.example`) holds `OPENAI_API_KEY` / `OPENAI_BASE_URL` / `OPENAI_MODEL` for the model
-gateway — git-ignored, read at startup, shell env wins over the file. Tests run without network or a model.
+Gateway settings belong in the git-ignored `.env`. Never print or commit credentials, local run evidence or `agent-framework.pdf`. Do not delete files or rewrite user evidence without explicit authorization.
 
-## Guardrails (strict, do not weaken)
+## Workflow and guardrails
 
-1. **Install every requirement, then proceed.** `environment_setup` must install every declared requirement and leave the
-   installed set consistent (`pip check` clean) before *any* later stage starts (`HARNESS_STRICT_ENV`, default on). An incomplete
-   environment is a blocking error gate (retry or stop), never a warning the reviewer can approve past; `Harness.enter` refuses to
-   start a later stage while `state["environment"]["status"] == "incomplete"`. Do not add a way around it. Skipping the install is
-   only ever the reviewer's explicit *Skip* decision.
-2. **Fix the environment, not the tests.** When a pinned package cannot be installed on the current Python, the harness proposes
-   another interpreter (`envs.recovery.python_fallback`); the download is listed in the next install plan and needs its own approval.
-   Never loosen a repository pin, never install under a different name, never let generated tests stub a declared dependency to
-   hide an environment failure.
-3. **When working on this repository:** run the live checks (real repositories, real installs) with every requirement of the target
-   installed first; do not start test generation or report results from a half-installed environment.
-4. **Same rule for development:** `uv sync --extra dev` (and `--extra hooks` for the SDK tests) before running the gate.
-5. **Static gates must know the real environment, not just the declared one.** Once `environment_setup` is `ready`, the installed
-   set is guaranteed complete (rule 1), so `tools.code_intel.static_gate` trusts it: `check_python_imports` accepts an import that
-   resolves against the packages actually installed (`tools.code_intel._installed_python_modules`), not only ones the repository
-   pins directly — a declared package's transitive dependency (`langchain` -> `langchain_core`) is real and must not be rejected as
-   "not a declared dependency" (that previously blocked the harness's own remedy for the mocked-LLM pitfall and produced the exact
-   repeated failure this rule exists to stop). Every hint a static gate gives for a rejected pattern must name the concrete fix
-   (e.g. `skills.contracts.check_python_test_hygiene` naming the constructor call to patch instead of a local variable it assigns),
-   not a generic pointer — a vague hint is what makes the model guess again and hit the same gate on the next attempt.
+Clone tool approval → repository analysis review → deterministic requirements review → planning review → component-batched design review → generated source review → Test execution setup/install approval → execution approval → scoped QA review and ZIP.
 
-## Architecture
+New runs use workflow version 2. `environment_setup` follows generation, and no target workspace, installation or runtime collection is created in earlier phases. Existing runs retain their saved stage order. An incomplete installation remains a blocking error; never relax repository dependency pins or replace missing application dependencies with fake tests. Runtime collection/build checks run only after execution approval. Static source checks can run during generation.
 
-The harness is a **checkpointed MAF workflow** (`src/maf_test_harness/workflow.py`) of seven `Executor` stages,
-driven identically by the Streamlit UI (`app.py`) and the CLI (`cli.py`). Human gates are MAF `request_info`
-events; state checkpoints to disk (`FileCheckpointStorage`) under `.harness_runs/<run>/`.
+The two deterministic host skills execute reviewed scripts and record hashes, duration and output. Model stages use the assigned skills through the recorded Microsoft Agent Framework provider. Unverified repository knowledge cannot grant permissions or become executable commands. Model artifacts and machine actions retain their existing approval gates; explicit CLI auto-approval is an authorized alternative.
 
-| # | Stage | Actor | Human gate |
-|---|---|---|---|
-| 1 | `repo_analysis` | host (`repo_analyzer`, `stack`) | tool approval (clone) → review |
-| 2 | `requirements` | agent + `repository-requirements` skill | review / revise |
-| 3 | `environment_setup` | host (`environment`, `runners`) | **tool approval (install)** → review; can skip |
-| 4 | `test_planning` | agent + `test-planning` skill | review / revise |
-| 5 | `test_design` | agent + `test-design-generator`/`test-data-generator` | review / revise; generation blocked until approved |
-| 6 | `test_generation` | agent + `generic-test-generator` (+ `junit-generator`, `playwright-test-generator`) | review / revise |
-| 7 | `test_execution` | host (`runners`, `qa_report`, `triage`, `packaging`) | **tool approval (run)** → review; regenerate failing tests ≤3 rounds |
+Retain the complete discovered declaration inventory, batch model work, and reject unexplained coverage omissions even on the final retry. Tests must exercise actual source behavior, use valid positive fixtures, preserve native framework conventions and complement existing tests. Scope generated, baseline unit and baseline integration evidence separately. Static traceability must never be labelled measured line/branch/mutation or complete application coverage.
 
-`execute=False` skips stages 3 and 7 (generation-only workflow).
+## Ownership
 
-**Central deterministic tools over model guessing** (`tools/code_intel.py`, `tools/autofix.py`, `tools/build_gate.py`,
-`tools/agent_tools.py`): things the host can compute exactly — import resolution, class constructors, URL routes,
-whether a file compiles — are answered by these instead of asking the model again. `tools/autofix.py` only applies
-fixes that cannot change what a test means (unambiguous missing import, correcting a module path). Static gates
-(imports, undefined names, mocked `sys.exit`, bad patch targets, unused setup, non-existent routes) always run;
-`tools/build_gate.py` (`pytest --collect-only` / `mvn test-compile`) runs after the approved environment install.
+- `workflow.py`: checkpointed Harness, MAF stages, gates and transitions.
+- `workflow_steps/{planning,design,generation,execution}.py`: stage operations and resumable batches.
+- `repo/{analyzer,git_transport,reverse_engineering,requirements,stack,routes}.py`: clone and static intake.
+- `qa/{quality,report,triage,packaging}.py`: source witnesses, scoped results, remediation and exports.
+- `envs/{environment,regression,runners,execution,platform_compat,toolchains}.py`: approved setup/execution and platform behavior.
+- `ui/`: authenticated loopback adapter, presentation and evidence APIs; `frontend/`: Next.js interface.
+- `skills/`: locked skill packages and reviewed script hashes. Refresh only the hashes for files intentionally edited; never bypass lock verification.
 
-**Generation pipeline** (stage 6, per batch): model call (temperature rises each retry) → normalize (canonical
-case IDs, `CASE_ID` markers) → `autofix` → `skills.contracts.validate_generated_files` (structure/placeholders/
-syntax/compile) → `tools.code_intel.static_gate` → `tools.build_gate.try_build`. Failures produce a concrete remedy
-(`qa.triage.remedy_for`) and loop back into the model; accepted batches are cached so retries/heals only regenerate
-what failed.
+Run history defaults to `<repo-root>/.maf-harness/runs`, service logs to `<repo-root>/.maf-harness/logs`; explicit overrides and old history discovery are retained. Shared toolchain/usage caches have their separate configured locations. Local execution isolation is not a security sandbox.
 
-**Agent Skills**: loaded through MAF's `SkillsProvider` (progressive disclosure), one skill assignment per
-stage (table in `docs/ARCHITECTURE.md` §8). Vendored skills under `skills/` are pinned in
-`skills/SKILLS.lock.json` (SHA-256 per file) — `lint-skills` fails if a vendored file was hand-edited; re-vendor
-via `scripts/vendor_skills.py`. Only scripts recorded in the lock may execute
-(`skills.scripts.HarnessScriptRunner`: allow-list, SHA-256, argv-only, temp dir, sanitized env, timeout).
-`maf-harness verify-run` checks that every assigned skill was actually loaded via a tool-trace audit, not just
-claimed.
-
-**Budget**: a single daily token cap (`HARNESS_DAILY_TOKEN_LIMIT`, default 50,000,000) shared by all runs on the
-machine — no per-run/per-call limits — enforced by `llm.usage.DailyUsageLedger` + `agent.runtime.BudgetGuard`
-(reserve → call → settle).
-
-**Safety boundary**: credentials come only from env/`.env`, never forwarded to install/test commands
-(`envs.execution._child_env` is an allow-list with a fake `HOME`); install/run commands are argv-only with timeouts
-and a `plan_hash` re-checked after approval; npm lifecycle scripts are disabled during install; execution is a
-local process, not a sandboxed one — see `docs/ARCHITECTURE.md` §4 ("Guarantees and where they are enforced")
-before changing anything in `envs/runners.py`, `envs/execution.py`, or `envs/environment.py`.
-
-## Module map (`src/maf_test_harness/`)
-
-Subpackages by concern (`repo/`, `envs/`, `skills/`, `tools/`, `agent/`, `llm/`, `qa/`, `monitoring/`, `ui/`, plus the
-existing `errors/`); `workflow.py`, `cli.py`, `settings.py`, `models.py` stay at the top. Every module import uses its
-subpackage path (`maf_test_harness.envs.runners`, `.skills.contracts`, `.agent.runtime`, …) — the flat pre-refactor
-names (`maf_test_harness.runners`, `.skill_contracts`, `.maf_runtime`) no longer exist; this is a private repo with no
-external consumers of the old paths, so the compatibility shims that briefly bridged the Phase 1 subpackage refactor
-were removed once every caller (all of them internal, in `tests/`) was updated to the new path. Roughly in pipeline
-order:
-- `workflow.py` — the MAF workflow graph, stage orchestration, prompts, repair loops (the core file)
-- `repo/analyzer.py`, `repo/stack.py` — clone + static analysis, framework/stack detection
-- `envs/environment.py`, `envs/runners.py`, `envs/execution.py` — environment planning, isolated install, command execution
-- `envs/platform_compat.py` — every OS-specific decision (Windows vs POSIX venv layout, tool resolution, process-tree
-  kill, fake-HOME isolation) centralized here; other modules never branch on `sys.platform` directly
-- `skills/config.py`, `skills/registry.py`, `skills/contracts.py`, `skills/scripts.py`, `skills/reports.py` — Agent
-  Skills loading, spec/lock validation, contract enforcement, sandboxed script execution
-- `tools/code_intel.py`, `tools/autofix.py`, `tools/build_gate.py`, `tools/agent_tools.py` — the deterministic central tools
-- `tools/registry.py`, `tools/env_tools.py`, `tools/file_tools.py`, `tools/typed.py` — typed tools: schema-validated
-  arguments, one `ToolResult` envelope, hook-aware `ToolRegistry` (see [docs/HOOKS.md](docs/HOOKS.md))
-- `hooks/` — hook events, the fail-closed verdict engine, built-in hooks (secret redaction, write scope, download
-  consent, audit), `.harness/hooks.json` loader, MAF middleware bridge, optional AGENT-HOOKS-0.1 backend;
-  `HARNESS_HOOKS=enforce|evaluate_only|off`, `HARNESS_HOOKS_BACKEND=inhouse|sdk`
-- `envs/recovery.py` — bounded automatic recovery of failed setup steps (allow-listed recipes, see
-  [docs/AUTOMATION.md](docs/AUTOMATION.md)); `agent/diagnosis.py` — opt-in read-only diagnosis agent;
-  `llm/prompts.py` — stable-first prompt assembly for the provider's prefix cache; `tools/skill_tools.py` — skill validators as a tool
-- `agent/runtime.py` — MAF agent construction, `SkillsProvider` wiring, tool-trace middleware, `BudgetGuard`
-- `qa/report.py`, `qa/triage.py`, `qa/packaging.py` — verdict computation, files-to-update, ZIP assembly
-- `monitoring/report.py`, `monitoring/ui.py`, `monitoring/trace.py`, `monitoring/telemetry.py` — run tracing and the Observability tab
-- `llm/usage.py`, `settings.py`, `models.py`, `agent/personas.py`, `repo/routes.py` — token ledger, config, schemas, actor
-  personas, app-route extraction
-- `cli.py` — `maf-harness` entry point; `app.py` (repo root) — Streamlit UI, drives the same `workflow.py`
-
-Tests mirror these modules 1:1 (`tests/test_<module>.py`); `tests/targets/` holds real target repos/apps used by
-browser-driven (Playwright) tests, excluded from the default `pytest` run.
+See [strict generation and QA scope](docs/PETSTORE_STRICT_TEST_GENERATION.md), [architecture](docs/ARCHITECTURE.md), [setup](README.md), [Windows debugging](docs/WINDOWS_SETUP_AND_DEBUGGING.md) and [modular workflow](docs/MODULAR_WORKFLOW_IMPLEMENTATION.md). Dated plans and audit reports describe historical evidence; their old counts are not current release claims.

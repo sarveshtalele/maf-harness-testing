@@ -20,6 +20,10 @@ module.API_KEY = "fixture-configured-flag"
 
 class BrowserRuntime(ScriptedStageRuntime):
     async def run_stage(self, *, stage, state, **kwargs):
+        if state["repo_url"].endswith("/slow"):
+            import asyncio
+
+            await asyncio.sleep(30)
         if state["repo_url"].endswith("/failure"):
             self.test_body = "assert add(1, 2) == 4"
         return await super().run_stage(stage=stage, state=state, **kwargs)

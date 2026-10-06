@@ -40,3 +40,7 @@ Planning, design, test generation and optional diagnosis still use the configure
 ## Verification
 
 `tests/test_deterministic_analysis.py` checks stable facts, containment, comment/private-symbol handling, explicit unknowns, and a default workflow reaching requirements with zero runtime model calls and no target workspace. Backend regressions preserve legacy model-mode tests explicitly. Browser tests revisit repository analysis, reload its URL, inspect failed execution evidence, switch runs, and exercise reports/logs. CI covers Windows and macOS startup; scripts continue using portable pathlib/subprocess APIs.
+
+## Strict generation update — October 6, 2026
+
+[Current intake, batching, Java quality gates and scoped QA](PETSTORE_STRICT_TEST_GENERATION.md) supersede earlier truncation and final-retry acceptance behavior. New deterministic requirements retain all discovered declarations; installation/runtime checks remain at Test execution. Maven baseline unit/integration and generated results are separate, and runtime coverage is explicitly unmeasured. Run logs default to the checkout’s `.maf-harness` directory.

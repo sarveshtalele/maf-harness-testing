@@ -41,3 +41,7 @@ If an adapter or startup procedure cannot be inferred, the guide explicitly requ
 - Windows/macOS CI remains the cross-platform gate; local verification was on macOS. Model responses in workflow regression tests use scripted transports; no fresh model-driven GitHub qualification run is claimed by these results.
 
 The first macOS CI startup check exposed the launcher's old ten-second API readiness budget during cold imports. The launcher now uses a bounded 90-second monotonic deadline and still fails immediately if the backend process exits. The startup test retains actual homepage/proxy and shutdown assertions.
+
+## Strict generation update — October 6, 2026
+
+[Current intake, batching, Java quality gates and scoped QA](PETSTORE_STRICT_TEST_GENERATION.md) supersede earlier truncation and final-retry acceptance behavior. New deterministic requirements retain all discovered declarations; installation/runtime checks remain at Test execution. Maven baseline unit/integration and generated results are separate, and runtime coverage is explicitly unmeasured. Run logs default to the checkout’s `.maf-harness` directory.

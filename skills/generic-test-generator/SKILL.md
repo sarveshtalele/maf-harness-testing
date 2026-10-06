@@ -30,5 +30,9 @@ For browser-based UI applications, preserve an existing browser E2E framework wh
 9. Python output must contain a real collectable `def test_name(...):` declaration and assertions against application results. An imports-only file or constant-only assertion is invalid. Use supplied function signatures and source bodies; never invent a `main()` or method absent from evidence.
 10. Use descriptive file and test names derived from the approved case title. Never invent opaque IDs; use the supplied descriptive case ID exactly in `case_ids`.
 
+11. Directly invoke each Java method claimed by a unit requirement on its actual source type; constructors, comments and imports do not cover setters. Assert observable results. Positive constructor/setter fixtures must obey source constraints. Do not infer that annotations automatically reject setter input.
+12. Read relevant existing tests supplied by the host. Do not repeat exact test bodies or an existing EqualsVerifier check; add distinct behavior or revise the design with an explicit reason. Do not claim measured runtime coverage from static links.
+13. Response limits apply to the current batch only. Implement every supplied case; never silently drop later cases or requirements.
+
 ## Output
 Return exactly one JSON object matching the host schema. No Markdown fences, preamble, trailing explanation, or wrapper object.

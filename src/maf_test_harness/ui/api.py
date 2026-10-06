@@ -57,6 +57,7 @@ PUBLIC_STATE = (
     "telemetry",
     "heal_rounds",
     "prompt_records",
+    "test_reviews",
 )
 
 
@@ -155,6 +156,7 @@ class LocalAPI(EvidenceAPI, SettingsAPI):
             status = view.get("status", "new")
             if (
                 pending
+                and status not in {"stopped", "complete"}
                 and pending["id"] in view.get("consumed", [])
                 and not (self.job and self.job_run == key)
             ):
@@ -341,6 +343,28 @@ class LocalAPI(EvidenceAPI, SettingsAPI):
             self.operation_log(key, "clone cancellation requested")
             return {"id": key}
 
+    def stop_run(self, key: str):
+        with self.lock:
+            self.harvest()
+            self.run_path(key)
+            if not self.job or self.job_run != key:
+                raise RuntimeError("No active operation for this run. Use its pending Stop decision.")
+
+            def stopped():
+                if self.host and self.host.run_dir == self.run_path(key):
+                    self.host.view.update(status="stopped", pending=None)
+                    self.host.audit("run_stopped_by_user", stage=self.host.state.get("active_stage"))
+                    self.host.save()
+                else:
+                    path = self.run_path(key) / "run.json"
+                    view = read_json(path)
+                    view.update(status="stopped", pending=None)
+                    atomic_json(path, view)
+                self.operation_log(key, "stopped by user; retained saved evidence")
+
+            self.job = self.service.stop_active(stopped)
+            return {"id": key}
+
     def rerun(self, key: str, body: dict):
         with self.lock:
             if self.busy():
@@ -524,6 +548,8 @@ def make_server(api: LocalAPI, token: str, port: int = 8765):
                         self.reply(200, api.delete_run(parts[1], body))
                     elif len(parts) == 3 and parts[0] == "runs" and parts[2] == "cancel-clone":
                         self.reply(202, api.cancel_clone(parts[1]))
+                    elif len(parts) == 3 and parts[0] == "runs" and parts[2] == "stop":
+                        self.reply(202, api.stop_run(parts[1]))
                     elif (
                         len(parts) == 3
                         and parts[0] == "runs"

@@ -168,6 +168,7 @@ def finalize_discovered_requirements(document: dict[str, Any], repo_url: str) ->
                 "source_files": _clean_paths(item.get("source_files"), "inferred requirement"),
                 "category": item.get("category", "functional"),
                 "actor": actor,
+                **({"source_symbol": item["source_symbol"], "source_line": item.get("source_line", 0)} if item.get("source_symbol") else {}),
             }
         )
     criteria = []
@@ -226,6 +227,7 @@ def finalize_discovered_requirements(document: dict[str, Any], repo_url: str) ->
         "exclusions": list(document.get("exclusions") or []),
         "assumptions": list(document.get("assumptions") or []),
         "gaps": list(document.get("gaps") or []),
+        **({"intake": document["intake"]} if document.get("intake") else {}),
         "metadata": {
             "generator": "repository-requirements",
             "repository_url": repo,
@@ -1082,7 +1084,8 @@ def check_python_imports(
                     continue
                 raise ValueError(
                     f"import '{name}' in {path or 'generated test'} does not match any repository path "
-                    f"(top-level '{top}' exists; check the sub-module against source_files)"
+                    f"(top-level '{top}' exists). "
+                    + _repository_import_hint(dotted, modules_in_repo)
                 )
             if top.lower().replace("_", "-") in dependencies:
                 continue
@@ -1109,6 +1112,18 @@ def check_python_imports(
                 f"import '{name}' in {path or 'generated test'} is not stdlib, not a repository module "
                 f"and not a declared dependency.{hint} Derive import paths from source_files."
             )
+
+
+def _repository_import_hint(dotted: str, modules: set[str]) -> str:
+    from difflib import get_close_matches
+
+    candidates = get_close_matches(dotted, sorted(modules), n=3, cutoff=0.35)
+    if not candidates:
+        return "No matching source module was found. Derive the target from source_files; revise an unsupported case instead of inventing a module."
+    paths = ", ".join(f"{candidate}.py" for candidate in candidates)
+    if any(not all(part.isidentifier() for part in candidate.split("/")) for candidate in candidates):
+        return f"Closest actual source paths: {paths}. Hyphenated paths are not Python dotted packages. Load the verified file with importlib.util.spec_from_file_location using Path.cwd(), or use its documented entry point. Never rename path segments to underscores."
+    return f"Closest actual source paths: {paths}. Verify the target and imported symbol against that source before using its dotted module path."
 
 
 def _call_name(node: ast.Call) -> str:

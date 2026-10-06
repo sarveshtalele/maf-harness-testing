@@ -28,6 +28,7 @@ STAGE_ORDER = (
     "selected_application",
     "approved_inputs",
     "repository_evidence",
+    "existing_tests",
     "evidence_file_paths",
     "approved_traceability_ids",
     "traceability_rule",
@@ -38,12 +39,15 @@ GENERATION_ORDER = (
     "assignment",
     "output_contract",
     "json_rules",
+    "strict_quality_rules",
     "approved_inputs",  # its own keys are ordered stable-first too (see GENERATION_INPUT_ORDER)
     "repository",
     "target_source",
     "collaborator_signatures",
     "state_and_schema_source",
     "repository_evidence",
+    "existing_tests",
+    "failed_generated_source",
     "revision_feedback",
     "repair_feedback",
 )

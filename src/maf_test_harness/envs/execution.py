@@ -182,6 +182,9 @@ def run_command(
     if not argv or not all(isinstance(arg, str) and "\0" not in arg for arg in argv) or timeout <= 0:
         raise ValueError("Provide explicit argv and a positive timeout.")
     cwd, output_dir = cwd.resolve(), output_dir.resolve()
+    cancel = platform_compat.RUN_CANCEL.get()
+    if cancel is not None and cancel.is_set():
+        raise InterruptedError("Run stopped by user; no command was started.")
     if not cwd.is_dir():
         raise ValueError("Execution working directory does not exist.")
     if output_dir.exists():
@@ -208,15 +211,30 @@ def run_command(
                 **platform_compat.new_process_group_kwargs(),
             )
             try:
-                result["exit_code"] = process.wait(timeout=timeout)
-                result["status"] = "command_succeeded" if process.returncode == 0 else "failed"
+                deadline = time.monotonic() + timeout
+                while process.poll() is None:
+                    if cancel is not None and cancel.is_set():
+                        platform_compat.kill_process_tree(process)
+                        process.wait(timeout=10)
+                        result["status"] = "cancelled"
+                        break
+                    remaining = deadline - time.monotonic()
+                    if remaining <= 0:
+                        raise subprocess.TimeoutExpired(argv, timeout)
+                    try:
+                        process.wait(timeout=min(0.25, remaining))
+                    except subprocess.TimeoutExpired:
+                        pass
+                result["exit_code"] = process.returncode
+                if result["status"] != "cancelled":
+                    result["status"] = "command_succeeded" if process.returncode == 0 else "failed"
             except subprocess.TimeoutExpired:
                 platform_compat.kill_process_tree(process)
                 process.wait()
                 result["status"] = "timeout"
         except OSError as exc:
             result.update(status="blocked", error=str(exc))
-    if junit_glob and result["status"] not in {"timeout", "blocked"}:
+    if junit_glob and result["status"] not in {"timeout", "blocked", "cancelled"}:
         try:
             reports = sorted(p for p in cwd.glob(junit_glob) if p.is_file() and p.stat().st_mtime >= started)
             summary = read_junit(reports)

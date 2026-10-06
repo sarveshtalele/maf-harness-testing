@@ -1,5 +1,7 @@
 # Next.js UI migration — approval draft
 
+> Historical plan/evidence. Counts and earlier UI/setup descriptions are preserved as observations from that date. See [current branch behavior](../docs/PETSTORE_STRICT_TEST_GENERATION.md); current UI is Next.js and setup/runtime checks occur at Test execution.
+
 Status: approved and implemented. Local verification is documented in `../docs/UI_VERIFICATION.md`. The original concept remains for design comparison.
 
 ## Confirmed scope

@@ -49,7 +49,7 @@ To use different ports:
 .\start-windows.cmd --port 3001 --api-port 8766
 ```
 
-Stop the current launcher with Ctrl+C before updating or rebuilding. The startup scripts now reject occupied ports before installing/building, so a second launch cannot replace a running server’s assets. If a browser was open during an older rebuild, reload it after restarting.
+Stop the current launcher with Ctrl+C before updating or rebuilding. A second launch reuses a verified running application without rebuilding its assets. Default ports can recover from unrelated conflicts; explicitly selected occupied ports report an error. If a browser was open during an older rebuild, reload it after restarting.
 
 The launcher requires Node 24, invokes Next directly without relying on Windows npm shims, and prints a saved setup/service log path. Configuration → Debugging logs shows the actual log directories.
 
@@ -67,6 +67,8 @@ The scripts install/build on each launch to keep the checkout and dependencies c
 8. Use **Rerun from step** on a run to repeat any step whose preceding approvals are complete. Previous evidence and environments are retained under `attempts/<id>`; downstream approvals reset and normal tool review gates apply. Active operations must reach a gate first.
 9. Use **Delete** in run history to remove an idle run after confirmation. Files move to the local `.deleted-runs` folder for recovery; active operations cannot be removed.
 10. Download the deliverable ZIP when available. Browse **Agent skills** to open each package’s readable instruction page, resources and integrity checks.
+
+During active work, **Stop run** cancels model work and signals owned clone/setup/test processes to stop while retaining saved evidence. Each generated case receives an independent source-based review, a confidence judgment and a reason; accepted cases appear in descending confidence order. Scores do not replace execution results. Unsupported imports receive repository-path repair guidance, and rejected batches retain earlier accepted work. See [strict generation and evidence scope](docs/PETSTORE_STRICT_TEST_GENERATION.md).
 
 Drag sidebar/column edges and panel corners; use arrow keys for accessible resizing. Double-click a panel corner or press Home on its resize handle to restore its original size. Preferences persist in your browser. New UI and CLI runs default to `<repo-root>/.maf-harness/runs`, inside this checkout. Use separate checkouts for separate users. This is a local app without shared-server login.
 
@@ -164,3 +166,7 @@ New repository analysis and requirements use reviewed host-static skills without
 Use `bash start-linux.sh` (or `bash start-linux.sh --smoke-test`) with Node 24 and uv installed. Windows and macOS keep their existing launchers. All use the same Python API and Next launcher.
 
 The clone view shows the actual run directory, attempt, timeout and live Git output. **Cancel clone** stops only that run's Git process tree and returns a retry/stop gate with logs retained. The default history directory is `<repo-root>/.maf-harness/runs`, inside the downloaded checkout. Service logs use `<repo-root>/.maf-harness/logs`. Older profile-based and `.harness_runs` history remains available in place; no files are moved or deleted. See [clone diagnostics](docs/CLONE_AND_PLATFORM_DIAGNOSTICS.md).
+
+## Strict generation update — October 6, 2026
+
+[Current intake, batching, Java quality gates and scoped QA](docs/PETSTORE_STRICT_TEST_GENERATION.md) supersede earlier truncation and final-retry acceptance behavior. New deterministic requirements retain all discovered declarations; installation/runtime checks remain at Test execution. Maven baseline unit/integration and generated results are separate, and runtime coverage is explicitly unmeasured. Run logs default to the checkout’s `.maf-harness` directory.

@@ -1,5 +1,7 @@
 # Live end-to-end results
 
+> Historical plan/evidence. Counts and earlier UI/setup descriptions are preserved as observations from that date. See [current branch behavior](../PETSTORE_STRICT_TEST_GENERATION.md); current UI is Next.js and setup/runtime checks occur at Test execution.
+
 All runs below used the real harness (`maf-harness run … --auto-approve`) against a real model gateway
 (`deepseek-v4-flash-global`, progressive skill mode) and real repositories. Nothing in these runs was scripted except the human clicks
 (`--auto-approve`, `--auto-heal N`). Credentials came from the environment; none are stored in the repository.

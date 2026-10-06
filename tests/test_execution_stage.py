@@ -143,7 +143,10 @@ def test_passing_case_is_not_regenerated_during_heal(drive, monkeypatch):
     original = runtime.run_stage
 
     async def spy(**kwargs):
-        if kwargs["stage"] == "test_generation":
+        if (
+            kwargs["stage"] == "test_generation"
+            and kwargs.get("response_format").__name__ != "TestReviewDraft"
+        ):
             import json
 
             seen.extend(c["id"] for c in json.loads(kwargs["prompt"])["approved_inputs"]["approved_cases"])
@@ -433,10 +436,15 @@ def test_heal_regenerates_only_failing_cases_even_inside_a_shared_batch(drive):
     passing = {f["path"]: f["content"] for f in host.state["artifacts"]["test_generation"]["files"]}
     good_id = next(c["id"] for c in qa["cases"] if c["status"] == "passed")
     sent, original = [], runtime.run_stage
+    failed_sources = []
 
     async def spy(**kwargs):
-        if kwargs["stage"] == "test_generation":
+        if (
+            kwargs["stage"] == "test_generation"
+            and getattr(kwargs.get("response_format"), "__name__", "") != "TestReviewDraft"
+        ):
             body = json.loads(kwargs["prompt"])
+            failed_sources.extend(body.get("failed_generated_source") or [])
             sent.append([c["id"] for c in body["approved_inputs"]["approved_cases"]])
             sent_requirements.append(
                 [r["id"] for r in body["approved_inputs"]["requirements"]["requirements"]]
@@ -447,6 +455,8 @@ def test_heal_regenerates_only_failing_cases_even_inside_a_shared_batch(drive):
     runtime.run_stage = spy
     answer(decision="revise", feedback="")
     assert sent == [[next(c["id"] for c in qa["cases"] if c["status"] == "failed")]]  # only the failing case
+    assert len(failed_sources) == 1 and good_id not in failed_sources[0]["case_ids"]
+    assert "assert add(2, 2) == 5" in failed_sources[0]["content"]
     assert (
         host.state["feedback"]["test_generation"].count("REMEDY") == 0
         or "Recompute the expected value" in host.state["feedback"]["test_generation"]

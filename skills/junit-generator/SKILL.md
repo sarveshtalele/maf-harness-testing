@@ -1,44 +1,46 @@
 ---
 name: junit-generator
-description: Generate standalone JUnit 5 Java test skeletons and a traceability manifest from structured test cases, fixtures, or test-design-generator output. Use when creating new JUnit automation from requirements or test designs; do not use for TestNG, Spock, Kotlin tests, or extending existing handwritten JUnit classes.
+description: Generate executable Java tests in the repository’s declared JUnit version from approved test cases and source-backed fixtures. Use for JUnit 4 or 5 test generation; do not invent framework dependencies or emit placeholder skeletons for application qualification.
 ---
 
 # JUnit Generator
 
-Generate reviewable JUnit Jupiter scaffolds without inventing application behavior. Read [JUnit guidance](references/junit_best_practices.md) when selecting annotations, fixtures, or assertions.
+Generate executable tests using the repository’s declared JUnit version without inventing application behavior. Petstore uses JUnit 4, not Jupiter. Read [JUnit guidance](references/junit_best_practices.md) when selecting annotations, fixtures, or assertions.
 
 ## Input and pipeline integration
 
 Accept either `{ "test_cases": [...] }` or test-design-generator output. Normalize each upstream array into `test_cases`, setting `type` as follows: `positive_tests` → `positive`, `negative_tests` → `negative`, `boundary_tests` → `boundary`, and all other `*_tests` arrays → their prefix. Preserve `id`, `title`/`name`, `steps`, `expected_result`, `fixture_id`, and traceability links. Supply fixtures as `{ "fixtures": [{ "id": "FX-1", "data": {...} }] }`.
 
-For programmatic output, run `node scripts/generate_junit.js --input <input.json> --output <dir> [--package <java.package>]`. The script requires Node.js; generated projects require JUnit 5 Jupiter.
+The bundled `scripts/generate_junit.js` is a JUnit 5 scaffold example, not a qualifying test generator. It is not an approved model-executable script. The harness receives structured source output, rejects placeholders and validates the repository’s actual framework. Do not run that script or introduce JUnit 5 into a JUnit 4 repository.
 
 ## Output contract
 
-- Write one `Test{sanitized-id}.java` class per test case and `test_classes.json` beside it.
-- Write files directly to `--output`; include `package <value>;` only when `--package` is supplied.
-- Record `{ id, class, file, path, type }` for every generated class in the manifest.
-- Use Java-valid identifiers, JUnit 5 imports, a class-level traceability comment, and AAA method bodies.
+- Return structured source files under the harness generation contract, one concrete test per approved case/file, with stable case IDs and repository-compatible paths/packages.
+- Use Java-valid identifiers, imports for the repository's JUnit version, a traceability comment, and arrange/act/assert method bodies. The host writes approved files after validation.
 
 ## Generation rules
 
 - Generate a standard `@Test` for positive and unclassified cases.
-- Generate `@Test`, `@Tag("negative")`, and `assertThrows` scaffolding for negative cases.
-- Generate `@ParameterizedTest` plus `@MethodSource` scaffolding for boundary cases.
-- Preserve a non-empty `expected_result` in a TODO-linked assertion comment; never claim an unverified assertion is implemented.
-- Map scalar fixture values to private fields initialized in `@BeforeEach`; map lists to `@MethodSource` candidates; map nested objects to static inner data classes/placeholders. Omit fixture references when the fixture is absent and emit a warning.
+- Negative cases must assert the actual source-supported rejection or error; use exception APIs supported by the declared JUnit version.
+- Boundary cases must supply real values and assert behavior established by source. Use parameterized annotations only when available in the repository's dependencies and permitted by the one-test-per-case contract.
+- Implement `expected_result` as a meaningful assertion. A comment, TODO, placeholder or constant assertion is not a test.
+- Build fixtures using real constructors and methods, obeying source constraints. If a required fixture or behavior cannot be established, return an explicit design/evidence gap instead of inventing it.
 - Do not invent endpoints, payload fields, method calls, expected values, or domain classes.
 
 ## Edge cases and failures
 
-- If a test has no steps, produce one placeholder test method.
-- If no test cases are present, write an empty manifest and exit successfully with a warning.
-- Treat a missing input file as `MISSING_INPUT`, invalid JSON as `INVALID_JSON` (include parse location when available), and a case missing `id` as `MISSING_REQUIRED_FIELD`; return a non-zero exit code for the first two and skip invalid individual cases for the third.
+- If a case lacks executable steps, revise the design or report the missing evidence; never emit placeholders.
+- If no approved cases are present, stop with an explicit missing-input error; an empty suite cannot pass.
+- Return an explicit input error for missing inputs, invalid JSON or missing case IDs. Never silently skip an approved case.
 
 ## Worked example
 
-`{ "negative_tests": [{ "id": "TC-9", "title": "Reject bad token", "expected_result": "Unauthorized" }] }` produces `TestTC_9.java` with `@Tag("negative")`, `assertThrows`, and a `// TODO: Expected result: Unauthorized` assertion note.
+A case titled "Reject bad token" with only "Unauthorized" as its expected result is insufficient to generate code. Read the real authentication method, fixture contract and exception/response behavior first. If those are unavailable, request a design revision; do not turn the title into a guessed API or an assertion comment.
 
 ## Self-check
 
-Before returning output, verify every valid input case appears in the manifest, Java identifiers and filenames are deterministic, imports match generated annotations, traceability is present, and no assertion or API detail was invented.
+Before returning output, verify every approved case appears exactly once in the structured files, Java identifiers and filenames are deterministic, imports match available dependencies, traceability is present, and assertions use verified APIs and source-backed behavior.
+
+## Strict source evidence
+
+Invoke and assert each method claimed by a Java unit requirement on its source type. Constructors and comments do not cover setters. Positive literal fixtures must obey source `@Size` constraints. Complement existing tests; exact duplicate test bodies and constant assertions are rejected. Existing unit/integration regression and generated-case execution are separate evidence scopes. Static links and invocation witnesses never imply measured line, branch, mutation or complete application coverage.

@@ -102,3 +102,35 @@ def test_regenerated_files_replace_the_previous_attempt_and_run_from_source_not_
         outcomes.append(report["status"])
     assert outcomes == ["passed", "failed"]
     assert not (repo / "test_add.py").exists()
+
+
+def test_run_stop_kills_command_and_preserves_cancelled_result(tmp_path):
+    import asyncio
+    import time
+
+    from maf_test_harness.ui.runtime_service import RuntimeService
+
+    service = RuntimeService()
+    out = tmp_path / "stopped"
+
+    async def run():
+        return await asyncio.to_thread(
+            execution.run_command,
+            [sys.executable, "-c", "import time; print('started', flush=True); time.sleep(30)"],
+            tmp_path,
+            out,
+        )
+
+    service.submit(run())
+    try:
+        deadline = time.monotonic() + 10
+        while not (out / "stdout.log").exists() or not (out / "stdout.log").read_text():
+            assert time.monotonic() < deadline
+            time.sleep(0.02)
+        service.stop_active(lambda: None).result(10)
+        while not (out / "result.json").exists():
+            assert time.monotonic() < deadline
+            time.sleep(0.02)
+        assert json.loads((out / "result.json").read_text())["status"] == "cancelled"
+    finally:
+        service.close()

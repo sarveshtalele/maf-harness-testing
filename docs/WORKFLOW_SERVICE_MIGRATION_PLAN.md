@@ -1,5 +1,7 @@
 # Workflow and service migration proposal
 
+> Historical plan/evidence. Counts and earlier UI/setup descriptions are preserved as observations from that date. See [current branch behavior](PETSTORE_STRICT_TEST_GENERATION.md); current UI is Next.js and setup/runtime checks occur at Test execution.
+
 Status: implementation approved; implementation and verification in progress. The proposal below records the approved scope. Existing source files will not be deleted without explicit approval.
 
 ## Reviewed implementation

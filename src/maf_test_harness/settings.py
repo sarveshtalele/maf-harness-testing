@@ -89,7 +89,7 @@ DIAGNOSIS_AGENT = os.getenv("HARNESS_DIAGNOSIS_AGENT", "off").strip().lower() ==
 MAX_OUTPUT_TOKENS = int(os.getenv("HARNESS_MAX_OUTPUT_TOKENS", "16384"))
 
 # Approved design cases implemented per provider call during test generation.
-GENERATION_BATCH_SIZE = max(1, int(os.getenv("HARNESS_GENERATION_BATCH_SIZE", "3")))
+GENERATION_BATCH_SIZE = min(8, max(1, int(os.getenv("HARNESS_GENERATION_BATCH_SIZE", "3"))))
 GENERATION_MAX_ATTEMPTS = max(1, int(os.getenv("HARNESS_GENERATION_MAX_ATTEMPTS", "3")))
 
 # Wall-clock limit for each host-run setup/test command.

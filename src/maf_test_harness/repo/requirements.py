@@ -1,6 +1,9 @@
 """Evidence-bound requirements from deterministic reverse-engineering facts."""
 
-from ..models import RequirementsDraft
+from collections import defaultdict
+from pathlib import PurePosixPath
+
+from ..models import RequirementsDraft, RequirementsInventoryDraft
 
 
 def requirements_from_facts(analysis: dict, app_name: str, knowledge: str = "") -> dict:
@@ -11,27 +14,25 @@ def requirements_from_facts(analysis: dict, app_name: str, knowledge: str = "") 
         )
     requirements = []
     gaps = list(analysis.get("gaps", []))
-    selected = facts[:30]
+    selected = sorted(facts, key=lambda f: (f["source_file"], f["line"], f["symbol"]))
     for fact in selected:
         confidence = fact["confidence"]
         requirements.append(
             {
-                "text": f"{fact['source_file']} contains {'a declaration candidate' if confidence != 'ast' else 'a callable declaration'} for {fact['symbol']}; review its source-defined behavior before designing tests.",
+                "text": f"{fact['source_file']}:{fact['line']} contains {'a declaration candidate' if confidence != 'ast' else 'a callable declaration'} for {fact['symbol']}; review its source-defined behavior before designing tests.",
                 "evidence": f"{fact['source_file']}:{fact['line']} ({confidence} declaration): {fact['evidence']}"[
                     :900
                 ],
                 "source_files": [fact["source_file"]],
                 "category": "functional",
                 "actor": "System",
+                "source_symbol": fact["symbol"],
+                "source_line": fact["line"],
             }
         )
     if any(f["confidence"] != "ast" for f in selected):
         gaps.append(
             "Non-Python declaration candidates use heuristics and need human verification; they are not semantic guarantees."
-        )
-    if len(facts) > 30:
-        gaps.append(
-            f"Requirement limit reached: 30/{len(facts)} declarations represented. Remaining declarations are retained in repository analysis."
         )
     if knowledge:
         gaps.append(
@@ -57,4 +58,22 @@ def requirements_from_facts(analysis: dict, app_name: str, knowledge: str = "") 
         "assumptions": [],
         "gaps": gaps[:12],
     }
-    return RequirementsDraft.model_validate(draft).model_dump()
+    # Validate bounded component batches, then merge all declarations without a total-run cap.
+    components = defaultdict(list)
+    for requirement in requirements:
+        components[str(PurePosixPath(requirement["source_files"][0]).parent)].append(requirement)
+    batches = []
+    for component, items in sorted(components.items()):
+        for start in range(0, len(items), 30):
+            batch = RequirementsDraft.model_validate({**draft, "requirements": items[start : start + 30]})
+            batches.append({"component": component, "requirements": len(batch.requirements)})
+    draft["intake"] = {
+        "discovered_declarations": len(facts),
+        "represented_declarations": len(requirements),
+        "declaration_intake_percent": round(100 * len(requirements) / len(facts), 2),
+        "represented_source_files": len({f["source_file"] for f in facts}),
+        "source_inventory": analysis.get("coverage", {}),
+        "batches": batches,
+        "scope": "All discovered declarations, not measured behavior or runtime coverage.",
+    }
+    return RequirementsInventoryDraft.model_validate(draft).model_dump()

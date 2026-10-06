@@ -5,6 +5,24 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field
 
 
+class TestCaseReview(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    case_id: str = Field(min_length=1)
+    confidence: int = Field(ge=0, le=100)
+    verdict: Literal["supported", "needs_revision", "insufficient_evidence"]
+    reason: str = Field(min_length=1, max_length=1500)
+    source_files: list[str] = Field(
+        min_length=1,
+        max_length=8,
+        description="Existing repository implementation paths supporting the judgment; never newly generated test paths.",
+    )
+
+
+class TestReviewDraft(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    reviews: list[TestCaseReview] = Field(min_length=1, max_length=8)
+
+
 class RepoAnalysis(BaseModel):
     repo_url: str
     repo_name: str
@@ -55,6 +73,8 @@ class RequirementEvidenceDraft(BaseModel):
     source_files: list[str] = Field(min_length=1, max_length=8)
     category: RequirementCategory
     actor: str = Field(min_length=1, max_length=80, description="Actor name from `actors`, or 'system'.")
+    source_symbol: str = ""
+    source_line: int = Field(default=0, ge=0)
 
 
 class AcceptanceCriterionDraft(BaseModel):
@@ -107,6 +127,13 @@ class RequirementsDraft(BaseModel):
     exclusions: list[str] = Field(max_length=12)
     assumptions: list[str] = Field(max_length=12)
     gaps: list[str] = Field(max_length=12)
+
+
+class RequirementsInventoryDraft(RequirementsDraft):
+    """Merged host inventory; provider limits apply to batches, not the repository."""
+
+    requirements: list[RequirementEvidenceDraft] = Field(min_length=1)
+    intake: dict = Field(default_factory=dict)
 
 
 class TestArea(BaseModel):

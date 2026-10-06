@@ -40,3 +40,7 @@ If Windows cannot find a run directory, compare the UI's actual path with the ch
 | Linux | `bash start-linux.sh` | `bash start-linux.sh --smoke-test` |
 
 All launchers use the same Python/Next launcher, Node 24 and Python 3.12. CI covers real GitHub clones of requirement-analysis-skill and Petstore, descendant-process timeout/cancellation, actual launcher startup/shutdown, backend workflow tests and browser journeys on all three platforms. These checks verify the harness; they do not certify every target application or a particular corporate network.
+
+## Strict generation update — October 6, 2026
+
+[Current intake, batching, Java quality gates and scoped QA](PETSTORE_STRICT_TEST_GENERATION.md) supersede earlier truncation and final-retry acceptance behavior. New deterministic requirements retain all discovered declarations; installation/runtime checks remain at Test execution. Maven baseline unit/integration and generated results are separate, and runtime coverage is explicitly unmeasured. Run logs default to the checkout’s `.maf-harness` directory.

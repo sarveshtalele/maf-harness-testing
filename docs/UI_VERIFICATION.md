@@ -83,3 +83,7 @@ The new-ui dependency lock, startup documentation and CI no longer install or la
 Restored the approved concept’s neutral light palette (`--primary: #202024`) and original dark palette (`#eeeeef`), removing blue overrides. Skill cards now link to distinct reloadable documentation URLs. Their Markdown is rendered as React nodes with headings, lists, tables and fenced code; embedded HTML remains inert text, and links permit HTTP(S) only. Upstream branch/commit/library provenance is omitted from the website; offline lock validation remains unchanged.
 
 Production build and TypeScript passed; **4 browser journeys passed**, including skill-page reloads, Markdown tables/code, exact light/dark theme values, mouse resizing and 390px layout. Both main servers restarted on ports 3000/8765. Screenshots: [light](ui/skill-document-light.png), [dark](ui/skill-document-dark.png). The preceding cleanup commit’s GitHub backend and macOS/Windows UI workflows all completed successfully.
+
+## Strict generation update — October 6, 2026
+
+[Current intake, batching, Java quality gates and scoped QA](PETSTORE_STRICT_TEST_GENERATION.md) supersede earlier truncation and final-retry acceptance behavior. New deterministic requirements retain all discovered declarations; installation/runtime checks remain at Test execution. Maven baseline unit/integration and generated results are separate, and runtime coverage is explicitly unmeasured. Run logs default to the checkout’s `.maf-harness` directory.

@@ -81,6 +81,9 @@ test('complete browser workflow, layouts, evidence, downloads and stale gates', 
   await expect(page.getByRole('button', { name: /^Repo Analysis · revision/ })).toHaveAttribute('aria-expanded', 'true');
   await page.getByRole('button', { name: 'QA report', exact: true }).click();
   await expect(page.getByText('PASS', { exact: true }).first()).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Repository evidence scope', exact: true })).toBeVisible();
+  await expect(page.getByText('not_measured', { exact: true }).first()).toBeVisible();
+  await page.screenshot({ path: testInfo.outputPath('qa-evidence-scope.png'), fullPage: true });
   await page.getByRole('button', { name: 'Test reports', exact: true }).click();
   const report = page.frameLocator('iframe[title="Playwright report"]');
   await expect(report.getByRole('heading', { name: 'Browser report fixture' })).toBeVisible();
@@ -96,6 +99,16 @@ test('complete browser workflow, layouts, evidence, downloads and stale gates', 
   expect((await downloadPromise).suggestedFilename()).toMatch(/\.zip$/);
   await page.getByRole('button', { name: 'Generated tests', exact: true }).click();
   await expect(page.locator('.source-code')).toContainText('def test_');
+  const review = page.locator('.panel').filter({ has: page.getByRole('button', { name: 'Independent test review', exact: true }) });
+  await expect(review.getByRole('columnheader', { name: 'Confidence', exact: false })).toBeVisible();
+  await expect(review.getByRole('cell', { name: '90', exact: true })).toBeVisible();
+  await expect(review.getByRole('cell', { name: 'Supported', exact: true })).toBeVisible();
+  await page.getByRole('button', { name: 'Dark appearance' }).click();
+  const expandReview = page.getByRole('button', { name: 'Expand Independent test review', exact: true });
+  await expect.poll(() => expandReview.evaluate(el => getComputedStyle(el).backgroundColor)).toBe('rgb(31, 31, 34)');
+  await expect(expandReview).toHaveCSS('color', 'rgb(237, 237, 240)');
+  await page.screenshot({ path: testInfo.outputPath('review-confidence-dark.png'), fullPage: true, animations: 'disabled' });
+  await page.getByRole('button', { name: 'Light appearance' }).click();
   await page.getByRole('button', { name: 'Observability', exact: true }).click();
   await expect(page.getByRole('group', { name: 'Workflow step' })).toBeVisible();
   await page.getByRole('button', { name: 'Expand Stage activity & token usage' }).click();
@@ -327,4 +340,25 @@ test('clone progress has a stage, actual directory, live output and cancellation
   await page.getByRole('button', { name: 'Cancel clone', exact: true }).click();
   await expect(page.getByRole('button', { name: 'Retry stage', exact: true })).toBeEnabled();
   await expect(page.getByRole('button', { name: 'Cancel clone', exact: true })).toHaveCount(0);
+});
+
+test('stop active model work preserves repository analysis after reload', async ({ page, request }, testInfo) => {
+  await page.goto('/');
+  await page.getByRole('button', { name: 'New run', exact: true }).click();
+  await page.getByRole('textbox', { name: 'Public GitHub repository URL' }).fill('https://github.com/acme/slow');
+  await page.getByRole('button', { name: 'Start repository review →' }).click();
+  await page.getByRole('button', { name: 'Approve repository inspection', exact: true }).click();
+  await expect(page.getByRole('button', { name: 'Approve and proceed', exact: true })).toBeEnabled();
+  await page.getByRole('button', { name: 'Approve and proceed', exact: true }).click();
+  await expect(page.getByRole('button', { name: 'Stop run', exact: true })).toBeEnabled();
+  await page.getByRole('button', { name: 'Stop run', exact: true }).click();
+  await expect(page.getByText('Workflow stopped. Approved evidence remains available.', { exact: true })).toBeVisible();
+  await page.reload();
+  await page.getByRole('button', { name: 'View Repo Analysis evidence', exact: true }).click();
+  await expect(page.getByText(/Repo Analysis · revision/).first()).toBeVisible();
+  const id = new URL(page.url()).searchParams.get('run')!;
+  const body = await (await request.get(`/api/harness/runs/${id}`)).json();
+  expect(body.status).toBe('stopped');
+  expect(body.state.artifacts.repo_analysis.source_files).toContain('service.py');
+  await page.screenshot({ path: testInfo.outputPath('stopped-run-analysis.png'), fullPage: true });
 });

@@ -1,5 +1,7 @@
 # TokenTelemetry live qualification — 1 October 2026
 
+> Historical plan/evidence. Counts and earlier UI/setup descriptions are preserved as observations from that date. See [current branch behavior](../PETSTORE_STRICT_TEST_GENERATION.md); current UI is Next.js and setup/runtime checks occur at Test execution.
+
 Target: https://github.com/sarveshtalele/tokentelemetry at `276f37789304ca6d61a3923301f141c13ccd5a1b`.
 
 - Harness run: `94b999567172` completed analysis, requirements, environment, planning, design, generation, execution and QA, with a deliverable ZIP. Final generated-suite verdict: **FAIL — 9 passed, 26 errors, 1 failed** across 36 Python cases. The adapter selected Python; it did not generate a React browser suite.

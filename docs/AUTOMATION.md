@@ -114,3 +114,7 @@ Not a sandbox: setup steps still run as local processes with the harness's privi
 §4). Not autonomous end to end: every model-authored artifact and every install or run still waits for a human. Not verified
 against a live model: the agent loops are covered with a real MAF pipeline and a scripted transport, so tool-calling
 reliability of your gateway model in the diagnosis loop is untested here; the loop is capped and advisory for that reason.
+
+## Strict generation update — October 6, 2026
+
+[Current intake, batching, Java quality gates and scoped QA](PETSTORE_STRICT_TEST_GENERATION.md) supersede earlier truncation and final-retry acceptance behavior. New deterministic requirements retain all discovered declarations; installation/runtime checks remain at Test execution. Maven baseline unit/integration and generated results are separate, and runtime coverage is explicitly unmeasured. Run logs default to the checkout’s `.maf-harness` directory.

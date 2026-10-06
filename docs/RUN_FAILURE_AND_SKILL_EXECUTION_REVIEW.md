@@ -26,3 +26,7 @@ Application validation: 749 backend tests passed (15 skipped), all seven Playwri
 Static analysis remains bounded declaration evidence, not complete semantic requirements. Unknowns must remain visible. Planning/design/generation still require a model for arbitrary repositories; scripts/skills are not interchangeable with a trained semantic test generator. Test execution, report parsing and progress calculation remain host-controlled; optional model diagnosis is separately traceable. Source ID failures remain blocked rather than accepted as accurate.
 
 Checks include real script subprocesses with zero model calls for the first two stages, containment rejection, static-stage observability, progress behavior, stable prompt ordering, and Playwright navigation/reporting/progress/skill-map verification. The standalone verification run uses the existing repository without rewriting the stopped run.
+
+## Strict generation update — October 6, 2026
+
+[Current intake, batching, Java quality gates and scoped QA](PETSTORE_STRICT_TEST_GENERATION.md) supersede earlier truncation and final-retry acceptance behavior. New deterministic requirements retain all discovered declarations; installation/runtime checks remain at Test execution. Maven baseline unit/integration and generated results are separate, and runtime coverage is explicitly unmeasured. Run logs default to the checkout’s `.maf-harness` directory.

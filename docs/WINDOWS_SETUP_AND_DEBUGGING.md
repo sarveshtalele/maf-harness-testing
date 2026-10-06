@@ -122,3 +122,7 @@ Check whether the directory belongs to the same Windows account and whether anti
 ## Verification scope
 
 The CI matrix uses Node 24 on Windows, macOS and Linux, installs with npm command shims disabled to reproduce this class of failure, checks build/types and then runs the actual platform launcher smoke test and browser workflow. Only a successful Windows CI run confirms those checks ran on Windows; macOS tests do not certify an arbitrary Windows machine or corporate network.
+
+## Strict generation update — October 6, 2026
+
+[Current intake, batching, Java quality gates and scoped QA](PETSTORE_STRICT_TEST_GENERATION.md) supersede earlier truncation and final-retry acceptance behavior. New deterministic requirements retain all discovered declarations; installation/runtime checks remain at Test execution. Maven baseline unit/integration and generated results are separate, and runtime coverage is explicitly unmeasured. Run logs default to the checkout’s `.maf-harness` directory.

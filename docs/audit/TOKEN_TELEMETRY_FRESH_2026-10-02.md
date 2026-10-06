@@ -1,5 +1,7 @@
 # TokenTelemetry verification — 2 October 2026
 
+> Historical plan/evidence. Counts and earlier UI/setup descriptions are preserved as observations from that date. See [current branch behavior](../PETSTORE_STRICT_TEST_GENERATION.md); current UI is Next.js and setup/runtime checks occur at Test execution.
+
 Target: [`sarveshtalele/tokentelemetry`](https://github.com/sarveshtalele/tokentelemetry), commit `276f37789304ca6d61a3923301f141c13ccd5a1b`.
 
 Harness run: `426265c41efa`. The selected application is the React frontend in `frontend/`, backed by FastAPI. Target production source was not changed.

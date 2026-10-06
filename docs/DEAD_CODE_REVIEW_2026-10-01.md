@@ -1,5 +1,7 @@
 # Cleanup review — 1 October 2026
 
+> Historical plan/evidence. Counts and earlier UI/setup descriptions are preserved as observations from that date. See [current branch behavior](PETSTORE_STRICT_TEST_GENERATION.md); current UI is Next.js and setup/runtime checks occur at Test execution.
+
 Historical review status on 1 October: no files had been deleted. On 2 October the user explicitly approved the exact retired GUI cleanup described below; only that cleanup has now been performed. Further file deletion still requires explicit approval. The requested shared **Adjust panel** form and its CSS were removed; mouse drag handles, keyboard resizing and fullscreen remain.
 
 ## Review scope and limits

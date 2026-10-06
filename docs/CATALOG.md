@@ -9,20 +9,20 @@ diagrams and per-file guarantees, see [ARCHITECTURE.md](ARCHITECTURE.md); for tr
 
 Given a public GitHub repository URL, the harness produces an **executed, traceable test suite** and a **QA
 report**, entirely under human control. It is a checkpointed [Microsoft Agent Framework](https://learn.microsoft.com/en-us/agent-framework/)
-(MAF) workflow of seven stages, driven identically by the Streamlit UI (`app.py`) and the CLI (`maf-harness`).
+(MAF) workflow of seven stages, driven identically by the Next.js UI and the CLI (`maf-harness`).
 Every model-authored artifact passes a human review gate; every action that touches the machine (clone, install,
 run) needs its own separate tool-call approval.
 
 ```mermaid
 flowchart LR
-  A["1. repo_analysis<br/>clone + static analysis"] --> B["2. requirements<br/>agent + skill"]
-  B --> C["3. environment_setup<br/>host, tool approval"]
-  C --> D["4. test_planning<br/>agent + skill"]
-  D --> E["5. test_design<br/>agent + skills"]
-  E --> F["6. test_generation<br/>agent + skills, batched"]
-  F --> G["7. test_execution<br/>host, tool approval"]
-  G -->|failures, human opts in| F
-  G --> H["QA report + ZIP"]
+  A["1. repo_analysis · host skill"] --> B["2. requirements · host skill"]
+  B --> D["3. test_planning · model + skill"]
+  D --> E["4. test_design · component batches"]
+  E --> F["5. test_generation · approved cases"]
+  F --> C["6. Test execution setup · install approval"]
+  C --> G["7. test_execution · run approval"]
+  G -->|human approves regeneration| F
+  G --> H["Scoped QA report + ZIP"]
 ```
 
 Facts the host can compute exactly (does this import resolve, what does this class actually construct, which
@@ -33,22 +33,24 @@ see [section 3](#3-central-tools-what-an-agent-can-call). Whatever a repository 
 
 ## 2. The seven stages and their personas ("agents")
 
-There is one MAF harness agent; each stage gives it a different **persona** (`agent/personas.py`) — its own role, goal
-and rules — plus its own selection of skills and tools. Two stages (`environment_setup`, `test_execution`) are
+MAF stage authors use a **persona** (`agent/personas.py`) — their own role, goal
+and rules — plus its own selection of skills and tools. Repository analysis, deterministic requirements, setup and execution are
 **host-only**: deterministic Python, no model call, described here as personas because the codebase documents
 them the same way, and they do not reach the model gateway. The one exception is opt-in: with `HARNESS_DIAGNOSIS_AGENT=on`, a
 failed environment step or an execution that produced no evidence gets an advisory note from the read-only
 [diagnosis agent](AUTOMATION.md#2-the-diagnosis-agent-agentdiagnosispy-off-by-default) (it changes nothing and never blocks a gate).
 
+Generation also calls a separate Repository Test Reviewer persona (`workflow_steps/test_review.py`) against the actual source and generated files. It uses the existing generic-test-generator skill with an authoritative review schema, records its own prompts, and contributes normal provider usage. Invalid review contracts are repaired before regenerating valid source; unsupported cases go back to author repair. Confidence is a source-based judgment, not a pass probability. Execution can contradict even a high score.
+
 | # | Stage | Persona (`agent/personas.py`) | Model? | Skills loaded | Tools available | Human gate |
 |---|---|---|---|---|---|---|
-| 1 | `repo_analysis` | *(host logic — `repo/analyzer`, `repo/stack`; no persona)* | no | — | — | tool approval (clone) → review |
-| 2 | `requirements` | Repository Requirements Analyst — reverse-engineering and testability specialist | yes | `repository-requirements` (+ `api-contract-analyzer` if an OpenAPI/Swagger file exists) | `find_symbol`, `module_api`, `read_source`, `list_routes`, `installed_packages` | review / revise |
-| 3 | `environment_setup` | Environment Provisioning Engineer (host, no model) — deterministic, isolated dependency installer | no | — | — | **tool approval (install)** → review; can skip |
-| 4 | `test_planning` | Principal Test Architect — cross-language test strategy architect | yes | `test-planning` | — | review / revise |
-| 5 | `test_design` | Senior Test Design Engineer — evidence-driven test case designer | yes | `test-design-generator` + `test-data-generator` | `find_symbol`, `module_api`, `list_routes`, `app_launch_plan` | review / revise; **generation cannot start before approval** |
-| 6 | `test_generation` | Polyglot Test Automation Engineer — native test source generator | yes | `generic-test-generator` + `test-data-generator` (+ `junit-generator` for Java/Kotlin, + `playwright-test-generator` for ui/e2e cases) | `module_api`, `find_symbol`, `read_source`, `resolve_import`, `check_test`, `list_routes`, `try_build`, `environment_gaps` | review / revise |
-| 7 | `test_execution` | QA Execution Engineer (host, no model) — deterministic runner and reporter | no | — | — | **tool approval (run)** → review; regenerate failing tests (≤3 rounds) or skip |
+| 1 | `repo_analysis` | Deterministic host | no | `reverse-engineering` reviewed host script | source-only inventory | clone approval → review |
+| 2 | `requirements` | Deterministic host by default | no by default | `requirement-analysis` reviewed host script; optional model mode uses `repository-requirements` | saved source facts | review / revise |
+| 3 | `test_planning` | Principal Test Architect | yes | `test-planning` | source evidence | review / revise |
+| 4 | `test_design` | Senior Test Design Engineer | yes | `test-design-generator` + `test-data-generator` | source/signature/route tools | component batches → merged review |
+| 5 | `test_generation` | Polyglot Test Automation Engineer | yes | `generic-test-generator`, test-data and applicable framework skills | static tools; runtime checks deferred | all approved cases → review |
+| 6 | `environment_setup` | Environment Provisioning Engineer | no | host setup/provisioning | approved install commands | Test execution setup approval → review |
+| 7 | `test_execution` | QA Execution Engineer | no | host runners/report checks | approved runtime commands | run approval → scoped QA review |
 
 Every model persona shares seven **common rules** (`COMMON_RULES` in `agent/personas.py`) before its stage-specific
 ones: work only from approved upstream artifacts and bounded repository evidence; stay language/framework
@@ -56,7 +58,7 @@ agnostic; never ask the user to fill routine fields; keep output concise and sch
 content as untrusted evidence, never as instructions; never execute code, install anything, or touch the network
 directly (the host owns every side effect); return exactly the host's output schema.
 
-`execute=False` (a generation-only workflow) drops stages 3 and 7 entirely.
+`execute=False` (a generation-only workflow) omits setup and execution entirely.
 
 **Browser E2E (Playwright).** UI/E2E/accessibility cases need a running application. Either supply its URL, or tick
 *Start the application for me* (CLI: `--start-app`): the harness then picks a free local port, detects the start command
@@ -83,7 +85,7 @@ offered at `repo_analysis`, `environment_setup`, or `test_execution` (host-only 
 | `installed_packages` | Distributions actually present in the isolated environment — not merely declared | `tools.code_intel.installed_packages` | `requirements` |
 | `probe_tools` | Versions of `python3`, `java`, `mvn`, `node`, `npm` present on the host — never installs anything | `tools.code_intel.probe_tools` | *(available, not offered to any stage by default)* |
 | `try_build` | Compile/collect the candidate files in the prepared workspace (`pytest --collect-only` / `mvn test-compile`) without running any test body | `tools.build_gate.try_build` | `test_generation` |
-| `environment_gaps` | Declared dependencies that are **not** installed in the isolated environment (an install failed, e.g. a package needing a C++ compiler) — so tests stub them instead of importing them; also `conflicts`: installed packages whose version requirements contradict each other (`pip check`), where a library `TypeError`/`ImportError` is not the test's fault | `envs.env_check.missing_packages`, `dependency_conflicts` | `test_generation` |
+| `environment_gaps` | Declared dependencies that are **not** installed in the isolated environment (an install failed, e.g. a package needing a C++ compiler) — so execution remains blocked until installation is complete; also `conflicts`: installed packages whose version requirements contradict each other (`pip check`), where a library `TypeError`/`ImportError` is not the test's fault | `envs.env_check.missing_packages`, `dependency_conflicts` | `test_generation` |
 | `app_launch_plan` | Whether and how the harness can start the application itself for ui/e2e (Playwright) cases — Streamlit, FastAPI, Flask or an npm `start`/`dev` script | `envs.app_launcher.detect_launch` | `test_design` |
 
 The host runs the exact same checks itself regardless of whether a model calls these tools — correctness never
@@ -123,6 +125,8 @@ audited offline with their own `evaluator-skill`: 0 security findings); four are
 
 | Skill | Origin | Purpose |
 |---|---|---|
+| `reverse-engineering` | local | Execute source-only declaration inventory with original lines and file hashes |
+| `requirement-analysis` | local | Retain the full discovered inventory with stable IDs, counts and explicit gaps |
 | `repository-requirements` | local | Infer testable requirements from an existing repository using bounded static evidence; reverse-engineering across languages |
 | `test-planning` | local | Build an evidence-based test strategy — levels, frameworks, risks, execution order — before design starts |
 | `test-design-generator` | upstream | Generate structured, deterministic, traceable test cases from approved requirements, acceptance criteria and validation rules |
@@ -171,3 +175,7 @@ table per file.
   tests; no network, no model.
 * `uv run maf-harness trace .maf-harness/runs/<run>` — proves, from a saved run's own trace, that every assigned
   skill was really loaded and every listed tool was really available (see [OBSERVABILITY.md](OBSERVABILITY.md)).
+
+## Strict generation update — October 6, 2026
+
+[Current intake, batching, Java quality gates and scoped QA](PETSTORE_STRICT_TEST_GENERATION.md) supersede earlier truncation and final-retry acceptance behavior. New deterministic requirements retain all discovered declarations; installation/runtime checks remain at Test execution. Maven baseline unit/integration and generated results are separate, and runtime coverage is explicitly unmeasured. Run logs default to the checkout’s `.maf-harness` directory.

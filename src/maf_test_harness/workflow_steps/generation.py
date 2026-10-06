@@ -9,6 +9,7 @@ from ..agent.personas import persona_instructions
 from ..envs import Provisioned
 from ..llm.prompts import generation_prompt
 from ..models import GeneratedFilesDraft
+from ..qa.quality import existing_test_evidence, require_complete_intake, validate_java_traceability
 from ..qa.report import design_cases
 from ..qa.triage import remedy_for
 from ..repo.analyzer import (
@@ -33,7 +34,6 @@ from ..tools.autofix import autofix_files
 from ..tools.build_gate import try_build
 from ..tools.code_intel import RepoContext, source_contracts, static_gate
 from ..workflow_support import (
-    MODEL_REPAIR_ATTEMPTS,
     TEST_GENERATION_BATCH_SIZE,
     TEST_GENERATION_MAX_ATTEMPTS,
     _canonicalize_case_ids,
@@ -45,12 +45,14 @@ from ..workflow_support import (
     atomic_json,
     digest,
 )
+from .test_review import review_generated_tests
 
 
 class GenerationSteps:
     async def _generate_tests_batched(self, state: dict) -> dict:
         """Generate approved design cases in small validated batches with bounded repair retries."""
 
+        require_complete_intake(state)
         compact = _compact_design(state["artifacts"]["test_design"])
         cases = [case for case in compact.get("cases", []) if case.get("id")]
         if not cases:
@@ -65,6 +67,7 @@ class GenerationSteps:
                 "plan": state["artifacts"].get("test_planning"),
                 "evidence": state.get("evidence"),
                 "batch_size": TEST_GENERATION_BATCH_SIZE,
+                "quality_policy": "strict-source-invocation-reviewed-v2",
                 "skills": {
                     name: (self.skills_root / name / "SKILL.md").read_text()
                     for name in skills_for("test_generation", state).all
@@ -87,6 +90,7 @@ class GenerationSteps:
         languages: list[str] = []
         frameworks: list[str] = []
         rationales: list[str] = []
+        case_reviews: list[dict] = []
         raw_batches: list[str] = []
 
         total_batches = (len(cases) + TEST_GENERATION_BATCH_SIZE - 1) // TEST_GENERATION_BATCH_SIZE
@@ -115,7 +119,7 @@ class GenerationSteps:
             )
             repair_feedback = ""
             accepted = cache["batches"].get(str(batch_index))
-            work, kept_files = batch, []
+            work, kept_files, kept_reviews, failed_source = batch, [], [], []
             if accepted is not None:
                 cached_ids = {i for f in accepted["files"] for i in f["case_ids"]}
                 regenerate = batch_ids & failed_ids
@@ -123,7 +127,11 @@ class GenerationSteps:
                     accepted = None
                 elif regenerate:
                     # Heal: only the failing cases go back to the model; passing files are kept byte for byte.
+                    failed_source = [f for f in accepted["files"] if set(f["case_ids"]) & regenerate]
                     kept_files = [f for f in accepted["files"] if not set(f["case_ids"]) & regenerate]
+                    kept_reviews = [
+                        r for r in accepted.get("case_reviews", []) if r["case_id"] not in regenerate
+                    ]
                     work = [c for c in batch if str(c["id"]) in regenerate]
                     accepted = None
                 elif validate_generated_files(accepted, batch_ids)["uncovered_case_ids"]:
@@ -154,6 +162,11 @@ class GenerationSteps:
                             "supplied case ID and exactly one concrete test declaration in that file. Set case_ids to a one-item "
                             "array containing the corresponding supplied ID. The host adds canonical CASE_ID source markers. "
                             "Use only necessary imports. Never emit placeholders, install dependencies, or execute tests."
+                            + (
+                                " Repair the provided failed_generated_source using the recorded execution differences in revision_feedback. Verify the actual implementation before correcting an expectation; preserve meaningful assertions and passing files."
+                                if failed_source
+                                else ""
+                            )
                         ),
                         "repository": _compact_repo(state["artifacts"]["repo_analysis"], preferred),
                         "approved_inputs": {
@@ -171,8 +184,26 @@ class GenerationSteps:
                             },
                         },
                         "target_source": batch_source,
+                        "failed_generated_source": failed_source or None,
                         "collaborator_signatures": collaborators or None,
                         "state_and_schema_source": source_contracts(self._repo_context()),
+                        "existing_tests": existing_test_evidence(
+                            self.run_dir / "repo",
+                            state["artifacts"]["repo_analysis"].get("test_files", []),
+                            [
+                                r
+                                for r in requirements.get("requirement_model", {}).get("requirements", [])
+                                if r["id"] in linked_ids
+                            ],
+                        )
+                        if work
+                        else "",
+                        "strict_quality_rules": [
+                            "Every claimed Java unit method requirement must be invoked on its actual source type and asserted. Constructor initialization does not cover setters.",
+                            "Use source-valid fixture values for positive cases. Invalid values belong only in explicit boundary/negative/validation cases with a real rejection assertion.",
+                            "Read existing tests; add complementary behavior instead of repeating an existing assertion. Constant assertions and mock-only assertions do not qualify application behavior.",
+                            "Static links are not measured behavior, line, branch or mutation coverage. Never claim those measurements without executed tool evidence.",
+                        ],
                         "repository_evidence": evidence or state.get("evidence", ""),
                         "revision_feedback": state.get("feedback", {}).get("test_generation"),
                         "repair_feedback": repair_feedback or None,
@@ -234,6 +265,7 @@ class GenerationSteps:
                             self.audit("autofix", batch=batch_index, attempt=attempt, **fix)
                     raw_batches.append(json.dumps(candidate, separators=(",", ":"), default=str))
                     validation = validate_generated_files(candidate, work_ids)
+                    validate_java_traceability(candidate, work, requirements, self.run_dir / "repo")
                     self._check_imports(candidate, state)
                     self._check_paths_are_new(candidate)
                     if validation["uncovered_case_ids"]:
@@ -250,7 +282,14 @@ class GenerationSteps:
                             + ", ".join(sorted(collisions))
                         )
                     await self._build_gate(candidate, batch_index)
-                    accepted = {**candidate, "files": kept_files + candidate["files"]}
+                    candidate["case_reviews"] = await review_generated_tests(
+                        self, state, candidate, work, batch_index
+                    )
+                    accepted = {
+                        **candidate,
+                        "files": kept_files + candidate["files"],
+                        "case_reviews": kept_reviews + candidate["case_reviews"],
+                    }
                     cache["batches"][str(batch_index)] = accepted
                     self.save()
                     break
@@ -283,6 +322,7 @@ class GenerationSteps:
                     f"Test generation batch {batch_index}/{total_batches} produced no accepted output."
                 )
             accepted_files.extend(accepted["files"])
+            case_reviews.extend(accepted.get("case_reviews", []))
             accepted_paths.update(item["path"] for item in accepted["files"])
             covered.update(batch_ids)
             if accepted["selected_language"] not in languages:
@@ -311,8 +351,21 @@ class GenerationSteps:
                 for case in cases
             ],
             "files": accepted_files,
+            "case_reviews": sorted(case_reviews, key=lambda r: (-r["confidence"], r["case_id"])),
         }
+        reviews_by_id = {r["case_id"]: r for r in case_reviews}
+        for case in final_payload["case_catalog"]:
+            review = reviews_by_id.get(case["id"], {})
+            case.update(
+                confidence=review.get("confidence"),
+                reviewer_verdict=review.get("verdict"),
+                reviewer_reason=review.get("reason"),
+            )
+        final_payload["case_catalog"].sort(key=lambda c: -(c.get("confidence") or 0))
         validation = validate_generated_files(final_payload, all_ids)
+        validation["quality"] = validate_java_traceability(
+            final_payload, cases, state["artifacts"].get("requirements", {}), self.run_dir / "repo"
+        )
         if validation["uncovered_case_ids"]:
             raise ValueError(
                 "Generated files do not implement all approved case IDs: "
@@ -333,19 +386,20 @@ class GenerationSteps:
             "completion_note": "Static traceability validation complete. Each approved case ID is mapped to exactly one generated test file; execution is a separate host step.",
         }
 
-    def _require_coverage_or_reason(self, design: dict, state: dict) -> None:
+    def _require_coverage_or_reason(self, design: dict, state: dict, requirements_source=None) -> None:
         """Design policy: unit cases exist, every actor has cases, every requirement is covered (or explained).
 
-        Each gap must be explained by citing the requirement ID / actor name in `gaps`. Violations are sent back to the
-        model during the repair attempts; on the last attempt the design is accepted with the problem recorded in
-        gaps_report.notes so a human decides at the review gate instead of the run being blocked.
+        Each excluded requirement needs an explicit ID-linked reason. Unexplained gaps
+        are rejected on every attempt, including the last repair attempt.
         """
         arts = state["artifacts"]
         cited = " ".join(str(g) for g in state.get("draft", {}).get("gaps", [])).lower()
         cases = design_cases(design)
         problems: list[str] = []
-        if arts["repo_analysis"].get("source_file_count") and not any(
-            c.get("level") == "unit" for c in cases
+        if (
+            arts["repo_analysis"].get("source_file_count")
+            and "unit" not in cited
+            and not any(c.get("level") == "unit" for c in cases)
         ):
             problems.append(
                 "The design has no unit-level test case. Add unit cases for the core functions/classes, "
@@ -353,7 +407,7 @@ class GenerationSteps:
             )
         idle = [
             a["name"]
-            for a in arts["requirements"].get("actors", [])
+            for a in (requirements_source or arts["requirements"]).get("actors", [])
             if a["name"].lower() != "system"
             and not any(c.get("actor") == a["name"] for c in cases)
             and a["name"].lower() not in cited
@@ -371,11 +425,6 @@ class GenerationSteps:
                 f"requirement ID in `gaps` with the reason. Uncovered: {listing}"
             )
         if not problems:
-            return
-        if state.get("design_attempt", 1) >= MODEL_REPAIR_ATTEMPTS:
-            design["gaps_report"]["notes"] += ("; " if design["gaps_report"]["notes"] else "") + " | ".join(
-                problems
-            )
             return
         raise ValueError(" ".join(problems))
 

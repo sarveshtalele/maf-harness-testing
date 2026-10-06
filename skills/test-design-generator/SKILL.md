@@ -89,3 +89,7 @@ python scripts/validate_design.py --input test_cases.json --source requirements.
 - Every explicit acceptance criterion has a positive test or a documented gap.
 - Every usable validation rule has a negative/validation test or a documented gap.
 - Every coverage shortfall and ambiguity is visible in `gaps_report`.
+
+## Agentic QE Platform integration
+
+The host processes the full discovered inventory in component batches of at most 12 requirements, then merges and validates the complete design. Each supplied ID needs a linked case or an explicit ID-linked exclusion reason; unexplained omissions remain errors after the final retry. Preserve distinct method-level evidence: constructor initialization does not cover setter behavior. Design positive fixtures from real source constraints, and complement existing repository tests. Static declaration intake and test traceability do not establish full application or measured runtime coverage.

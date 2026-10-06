@@ -72,9 +72,7 @@ new install plan in which that Python is listed as a download (`exact` requireme
 any toolchain, and the venv is rebuilt with it. Each interpreter is tried once. With no candidate the gate says what to install (Microsoft
 C++ Build Tools, `xcode-select --install`, `build-essential`, or a Python that has wheels).
 
-The model is told the truth about the environment: the generation prompt carries `environment` (Python version, `unavailable_packages`,
-`ui_tooling`), and live UI levels are offered only when the environment can run them (Playwright installed for `e2e`/`accessibility`;
-Streamlit's in-process `AppTest` for `ui`).
+New runs design and generate from source before installation. Live UI cases require a supplied application URL or an approved launch plan. Installation, application readiness and runtime checks occur at Test execution; unsupported startup is an explicit setup gap, not a fabricated successful browser run.
 
 ## 3.1 Consistency of the installed Python packages
 
@@ -110,3 +108,7 @@ reason in `report.json` and the audit log (`toolchains_failed`); successful prov
 
 Scaffolding a Java or .NET *test project* for the generated tests, and provisioning Node or Go toolchains. Both are
 listed in [../memory.md](../memory.md).
+
+## Strict generation update — October 6, 2026
+
+[Current intake, batching, Java quality gates and scoped QA](PETSTORE_STRICT_TEST_GENERATION.md) supersede earlier truncation and final-retry acceptance behavior. New deterministic requirements retain all discovered declarations; installation/runtime checks remain at Test execution. Maven baseline unit/integration and generated results are separate, and runtime coverage is explicitly unmeasured. Run logs default to the checkout’s `.maf-harness` directory.

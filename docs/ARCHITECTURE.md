@@ -11,12 +11,12 @@ Companion documents: [README](../README.md) (setup and usage), [CATALOG](CATALOG
 
 Given a public GitHub repository, the harness produces an **executed, traceable test suite** and a **QA report**, under human control:
 
-1. clone and statically analyze the repository (host),
-2. infer requirements, actors and the environment needed to run the repo (agent + Agent Skill),
-3. install dependencies into an **isolated environment** after a tool-call approval (host): a venv for Python, private caches for Maven/Gradle/NuGet, and, when the machine lacks the right JDK, Maven, Gradle, .NET SDK or Python, a checksum-verified toolchain in `~/.maf-harness/toolchains` (listed in the same approval); a failed step is classified and, where the playbook allows, retried automatically within fixed bounds,
-4. plan tests, design test cases per actor (agents + Agent Skills), and — only after the design is approved — generate test source,
-5. run the tests after a second tool-call approval, and report per case / per requirement, with the **files and lines to update** (host),
-6. hand back a **ZIP** with the complete repository, all generated and executed tests, and the evidence.
+1. approve cloning, then statically analyze the repository with the reviewed reverse-engineering host skill,
+2. retain all discovered declarations as source-linked candidates using the requirement-analysis host skill, with zero requirements model calls,
+3. review model planning, component-batched design and generated source; reject unexplained omissions and misleading invocation claims,
+4. at Test execution only, create the isolated target workspace and approve dependency/toolchain installation; incomplete installation blocks execution,
+5. approve runtime build/collection and tests, then report generated, existing unit and existing integration results separately,
+6. deliver a ZIP containing source and saved evidence; traceability is not measured runtime or complete application coverage.
 
 Every model-authored artifact passes a human review gate. Anything that touches the machine (clone, install, run) needs its own approval.
 
@@ -63,32 +63,32 @@ flowchart LR
 
 Seven stages, each a MAF `Executor`; gates are MAF `request_info` events; state is checkpointed to disk.
 
-| # | Stage | Actor | Consumes | Produces | Human gate | Code |
-|---|---|---|---|---|---|---|
-| 1 | `repo_analysis` | host | URL | clone, inventory, frameworks, stack profile, evidence | tool approval (clone) → review | `workflow.answer`, `repo.analyzer`, `repo.stack` |
-| 2 | `requirements` | agent · `repository-requirements` (+ `api-contract-analyzer` when an OpenAPI/Swagger file exists) | analysis, evidence | actors, requirements, acceptance criteria, rules, API contracts, **environment needs** + deterministic environment plan | review / revise | `workflow.model`, `skills.contracts.finalize_discovered_requirements` |
-| 3 | `environment_setup` | host | requirements, stack | isolated environment with dependencies installed | **tool approval (install)** → review; can skip | `workflow.plan_environment/run_environment`, `environment`, `envs.runners.setup_steps/execute_setup` |
-| 4 | `test_planning` | agent · `test-planning` | requirements | levels, frameworks, risks, order | review / revise | `workflow.model` |
-| 5 | `test_design` | agent · `test-design-generator` + `test-data-generator` | requirements, plan | cases with level/actor/target, traceability, coverage | review / revise; **generation cannot start before approval** | `skills.contracts.finalize_design`, `workflow._require_coverage_or_reason` |
-| 6 | `test_generation` | agent · `generic-test-generator` + `test-data-generator` (+ `junit-generator` for Java/Kotlin, + `playwright-test-generator` for ui/e2e cases) | approved cases, evidence | one test file per case (validated) | review / revise | `workflow._generate_tests_batched`, `skills.contracts.validate_generated_files` |
-| 7 | `test_execution` | host | generated files, environment | results, QA report, files to update, skill-contract reports (`traceability-generator`, `coverage-analyzer`), ZIP | **tool approval (run)** → review; regenerate failing tests (≤3 rounds) or skip | `workflow.plan_execution/run_execution/heal`, `envs.runners.execute_plan`, `qa.report`, `qa.triage`, `qa.packaging` |
+| # | Stage | Actor | Result and approval | Code |
+|---|---|---|---|---|
+| 1 | `repo_analysis` | host · reverse-engineering | Clone approval, static inventory and source-linked facts, then review | `repo.analyzer`, `skills.host` |
+| 2 | `requirements` | host · requirement-analysis | Complete discovered declaration inventory and preview setup plan, then review | `repo.requirements`, `skills.contracts` |
+| 3 | `test_planning` | MAF agent · test-planning | Source-first strategy, levels and explicit gaps, then review | `workflow_steps.planning` |
+| 4 | `test_design` | MAF agent · test-design-generator + test-data-generator | Component-batched cases, linked requirements or exclusions, then review | `workflow_steps.design`, `skills.contracts` |
+| 5 | `test_generation` | MAF author + independent Repository Test Reviewer | Per-case source, static gates, confidence and repair; then source review | `workflow_steps.generation`, `workflow_steps.test_review`, `qa.quality` |
+| 6 | `environment_setup` | host | Test execution · Setup: approve exact installation plan before creating the isolated workspace or installing dependencies; then review | `workflow_steps.execution`, `envs.runners` |
+| 7 | `test_execution` | host | Approve exact runtime/collection/test commands; fresh results, scoped QA, reports and ZIP; bounded healing where applicable | `envs.runners`, `qa.report`, `qa.packaging` |
 
-`execute=False` removes stages 3 and 7 (generation-only workflow).
+Generation-only runs omit stages 6 and 7. Legacy checkpoints retain their recorded stage order for compatibility. Earlier stages inspect source and generated text; dependency installation, runtime imports, collection and compilation wait for execution approval.
 
-### 3.1 Generation pipeline (stage 6, per batch of approved cases)
+### 3.1 Generation pipeline (stage 5, per batch of approved cases)
 
 ```mermaid
 flowchart TD
   P["prompt: approved cases, target_source, collaborator_signatures,<br/>routes + base_url, forbidden_imports, declared_dependencies"] --> M[model call<br/>temperature rises on every retry]
   M --> N["normalize: lines[] to source, canonical case IDs, flatten deep with-chains, CASE_ID markers"]
   N --> F[autofix: unambiguous missing imports, module paths]
-  F --> V[validate_generated_files: one declaration per file, no skips/placeholders, syntax, compile]
+  F --> V[validate_generated_files: one declaration per file, no skips/placeholders, static syntax]
   V --> S[static_gate: imports, undefined names, sys.exit mocks, patch targets, unused setup, routes, Arquillian]
-  S --> B[build_gate: pytest --collect-only / mvn test-compile in the prepared workspace]
-  B -->|ok| A[accepted batch, cached]
+  S --> B[Independent reviewer: source, assertions, fixtures, confidence]
+  B -->|supported| A[accepted batch, cached]
   V -->|error + remedy| R[repair feedback]
   S -->|error + remedy| R
-  B -->|file:line diagnostics + remedy| R
+  B -->|unsupported or insufficient evidence| R
   R --> M
 ```
 
@@ -106,20 +106,21 @@ sequenceDiagram
   W->>H: tool approval: clone
   H->>W: approve
   W->>W: analyze, stack profile
-  W->>A: prompt + output schema
-  A->>A: load_skill (verified) then structured answer
-  A-->>W: requirements draft
+  W->>W: run locked static analysis and requirement skills
+  W->>W: retain all discovered declaration requirements
   W->>W: validate, repair loop, assign IDs
   W->>H: review requirements + environment plan
   H->>W: approve
-  W->>H: tool approval: install into isolated env
-  H->>W: approve
-  W->>X: create venv / node_modules / caches, install
   W->>A: test plan, then test design
   W->>H: review design
   H->>W: approve (generation starts only now)
   W->>A: generate one file per approved case (batched, validated)
+  W->>A: independent source review, confidence and bounded repair
   W->>H: review generated source
+  H->>W: approve
+  W->>H: tool approval: install into isolated env
+  H->>W: approve
+  W->>X: create venv / node_modules / caches, install
   W->>H: tool approval: run tests (exact commands, plan hash)
   H->>W: approve
   W->>X: run tests, parse reports
@@ -135,7 +136,7 @@ sequenceDiagram
 | Skills follow the Agent Skills spec and vendored upstream skills are unmodified | `skills.registry.lint_skill`, `verify_lock` against `skills/SKILLS.lock.json` (per-file SHA-256), both inside `require_valid` before each stage |
 | Skill scripts run only if reviewed and unchanged | `skills.scripts.HarnessScriptRunner` (allow-list + SHA-256 per run, argv-only, temp dir, sanitized env, timeout); MAF `run_skill_script` is auto-approved only for model-tier scripts (`script_approval_rule`) |
 | Only a daily cap of 50,000,000 tokens (all runs on the machine); no per-run, per-call or call-count limits | `llm.usage.DailyUsageLedger` (locked JSON file per local day), `agent.runtime.BudgetGuard` (reserve → call → settle), `settings.DAILY_TOKEN_LIMIT` |
-| Design cases exist at unit level, per actor, and per requirement (or the gap is explained) | `workflow._require_coverage_or_reason` (repair loop, last attempt reaches the human with the gap recorded) |
+| Design cases exist at unit level, per actor, and per requirement (or the gap is explained) | `workflow._require_coverage_or_reason` (repair loop; unexplained gaps remain blocked on the last attempt) |
 | Test source only after the design is approved | graph edge `test_design → test_generation` only fires on approve; `state.approved` hash checked; `tests/test_policies.py` |
 | Generated source is structurally sound | `skills.contracts.validate_generated_files`: paths, markers, one declaration per file, no placeholders/skips, syntax (Python AST + `compile()`; javac/node/gofmt or brace balance) |
 | Generated tests cannot fail for reasons the host can see in advance | `tools.code_intel.static_gate`: import resolution (Python names and modules, Java libraries), undefined names, mocked `sys.exit`, patch targets that do not exist, setup collections never used, URL paths that are not application routes, Arquillian; then `tools.build_gate.try_build` (collect/compile) after the approved install |
@@ -181,7 +182,7 @@ sequenceDiagram
 
 Modules are grouped in subpackages: `repo/` (intake), `envs/` (environment, execution, toolchains), `skills/` (Agent Skills),
 `tools/` (central tools), `agent/` (MAF runtime, personas), `llm/` (token ledger), `qa/` (report, triage, packaging),
-`monitoring/` (trace, report, telemetry), `ui/` (Streamlit helpers) and `errors/` (taxonomy and playbook). The pre-refactor
+`monitoring/` (trace, report, telemetry), `ui/` (loopback API and evidence helpers) and `errors/` (taxonomy and playbook). The pre-refactor
 flat module names no longer exist; every import uses its subpackage path. They were bridged by `sys.modules` compatibility
 shims for one phase of the Phase 1 restructure, then removed once every caller (all internal, in `tests/`) was updated —
 this is a private repo with no external consumers of the old paths, so there was nothing left for the shims to protect.
@@ -221,7 +222,7 @@ this is a private repo with no external consumers of the old paths, so there was
 | `skills/scripts.py` | Reviewed-script execution | `HarnessScriptRunner` (MAF `SkillScriptRunner` + host executor), `script_approval_rule`, `ScriptRefused` | Two tiers: model-callable and host-only |
 | `skills/reports.py` | Skill-contract QA reports | `build_traceability`, `build_coverage`, `run_skill_checks` | Validated by the upstream `validate_traceability.py` and `coverage_templates.yaml` |
 | `agent/runtime.py` | MAF integration | `MAFHarnessRuntime` (per-stage `create_harness_agent`, `SkillsProvider`, central tools via `tool_provider`, priming, verification, per-call `temperature`), `ToolTraceMiddleware`, `BudgetGuard`, `extract_json_object` | See §7 |
-| `ui/runtime_service.py` | One asyncio loop thread | `RuntimeService.submit/close` | Keeps MAF clients on one loop for the Streamlit UI |
+| `ui/runtime_service.py` | One asyncio loop thread | `RuntimeService.submit/close` | Keeps MAF clients on one loop for the Next.js HTTP adapter |
 | `workflow.py` | Checkpointed workflow | `Harness` (stages, gates, repair loops, heal loop, environment/execution stages), `StageExecutor`, batched generation with caching and the autofix → gate → build-gate pipeline (`_generate_tests_batched`, `_repo_context`, `_build_gate`), `_generation_policy`, `friendly_error` | Central orchestration |
 | `qa/report.py` | QA report | `build_qa_report`, `verdict_for`, `render_markdown` | requirement → case → file → result |
 | `qa/triage.py` | Files/lines to update | `locations`, `classify`, `build_updates`, `REMEDIES` / `remedy_for` (concrete fix per failure pattern) | Test-defect vs application-first classification; remedies feed regeneration and the QA report |
@@ -229,7 +230,6 @@ this is a private repo with no external consumers of the old paths, so there was
 | `ui/artifact_presenter.py` | JSON → readable UI/Markdown | `json_to_markdown`, `render_json_ui`, `artifact_downloads`, `humanize` | Shared by UI and `scripts/json_to_markdown.py` |
 | `monitoring/trace.py` | Run trace recorder | `TraceRecorder` (thread-safe JSON Lines), `read_trace`, `summarize_arguments` / `redact`, `tool_category` | Never stores prompts, responses or complete files |
 | `monitoring/report.py` | Observability and traceability report | `build_report` (from `trace.jsonl`, `audit.jsonl`, `run.json`, `qa_report.json`), `render_markdown` | Works for runs made before tracing existed (summary level); integrity checks |
-| `monitoring/ui.py` | Streamlit page for the report | `render_observability` (Overview, Skills, Tools, Timeline, Traceability, Integrity checks, Export) | Imported lazily by `app.py` |
 | `monitoring/telemetry.py` | Optional OpenTelemetry export | `configure_telemetry` (`HARNESS_OTEL` = off, console or otlp; sensitive data always off) | See OBSERVABILITY.md §5 |
 | `llm/usage.py` | Daily token ledger | `DailyUsageLedger` (`reserve`, `settle`, `snapshot`), `DailyLimitError` | File lock makes concurrent runs safe |
 | `cli.py` | Headless driver | `run` (resumes an existing `--run-dir` at its pending gate), `verify-run`, `trace`, `lint-skills` | Exit codes 0 pass, 1 fail, 2 inconclusive/error |
@@ -238,7 +238,6 @@ this is a private repo with no external consumers of the old paths, so there was
 
 | File | Responsibility |
 |---|---|
-| `app.py` | Streamlit UI: start form (URL, optional app URL), review/tool gates, QA tab with files to update, generated tests, **Observability** tab, audit/provenance, ZIP download, daily token meter |
 | `scripts/json_to_markdown.py` | Convert any saved JSON artifact to Markdown with the same formatter as the UI |
 | `scripts/vendor_skills.py` | Vendor selected skills from the upstream repository: copy, audit (upstream `evaluator-skill`, offline), hash, write `skills/SKILLS.lock.json` incl. the reviewed-script allow-list |
 | `pyproject.toml` | Package metadata, pinned MAF versions, `maf-harness` script, ruff lint/format and pytest config |
@@ -304,7 +303,6 @@ its own artifacts. Everything else is refused, and every run is recorded in `sta
 | `test_hooks_maf.py`, `test_hooks_sdk.py`, `test_hooks_workflow.py` | hooks in a real MAF loop (in-house and AGENT-HOOKS backends; the SDK file skips without the extra) and in the real workflow gates |
 | `test_typed_tools.py`, `test_skill_tools.py`, `test_diagnosis_agent.py` | typed tool envelope/registry/scopes, reviewed-script validators as a tool, the diagnosis agent in a real MAF loop |
 | `test_prompt_assembly.py`, `test_cache_metrics.py`, `test_automation_report.py` | stable-first prompts and the measured prefix share, cached-token accounting, the Automation report and tab |
-| `targets/test_harness_browser.py` | Streamlit UI in a real browser (`HARNESS_BROWSER=1`) |
 | `targets/test_reverse_engineering.py`, `targets/test_petstore_browser.py` | Opt-in acceptance suites for the two qualification targets |
 
 ### 6.5 Documentation and evidence

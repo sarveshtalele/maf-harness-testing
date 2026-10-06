@@ -1,5 +1,7 @@
 # Defect register — MAF test harness (audit of 2026-09-19, updated through the central-tools and browser-review work)
 
+> Historical plan/evidence. Counts and earlier UI/setup descriptions are preserved as observations from that date. See [current branch behavior](../PETSTORE_STRICT_TEST_GENERATION.md); current UI is Next.js and setup/runtime checks occur at Test execution.
+
 Method: reviewed every first-party module, skill, test and script; ran the suite; compared behavior with the Microsoft Learn
 *Agent Skills* documentation and the agentskills.io specification; ran live end-to-end workflows through a real model
 gateway. "Found by" tells you how each defect was established. All rows are **fixed** in this repository unless marked

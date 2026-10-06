@@ -3,6 +3,7 @@ import json
 from pathlib import Path
 
 import pytest
+from fakes import review_response
 
 from maf_test_harness.workflow import Harness
 from maf_test_harness.workflow_steps import generation as generation_steps
@@ -11,6 +12,8 @@ from maf_test_harness.workflow_steps import generation as generation_steps
 def test_failed_generation_preserves_all_attempt_artifacts(tmp_path):
     class ImportsOnly:
         async def run_stage(self, **kwargs):
+            if review := review_response(kwargs):
+                return review
             return {
                 "status": "completed",
                 "artifact": {
@@ -46,6 +49,8 @@ def test_retry_reuses_accepted_batches_only_with_matching_inputs(tmp_path, monke
         calls = []
 
         async def run_stage(self, **kwargs):
+            if review := review_response(kwargs):
+                return review
             case = json.loads(kwargs["prompt"])["approved_inputs"]["approved_cases"][0]["id"]
             self.calls.append(case)
             code = (
@@ -63,6 +68,8 @@ def test_retry_reuses_accepted_batches_only_with_matching_inputs(tmp_path, monke
                 },
             }
 
+    (tmp_path / "repo").mkdir(exist_ok=True)
+    (tmp_path / "repo" / "service.py").write_text("def value(): return 2")
     provider = Provider()
     host = Harness(tmp_path, skills_root=Path("skills"), requirements_mode="model", runtime=provider)
     state = {
@@ -87,6 +94,8 @@ def test_generated_paths_that_exist_in_the_repository_are_repaired_not_overwritt
         calls = []
 
         async def run_stage(self, **kwargs):
+            if review := review_response(kwargs):
+                return review
             self.calls.append(kwargs["prompt"])
             path = "tests/test_value.py" if len(self.calls) == 1 else "tests/test_value_new.py"
             return {
@@ -111,6 +120,8 @@ def test_generated_paths_that_exist_in_the_repository_are_repaired_not_overwritt
                 },
             }
 
+    (tmp_path / "repo").mkdir(exist_ok=True)
+    (tmp_path / "repo" / "service.py").write_text("def value(): return 2")
     provider = Provider()
     host = Harness(tmp_path, skills_root=Path("skills"), requirements_mode="model", runtime=provider)
     state = {

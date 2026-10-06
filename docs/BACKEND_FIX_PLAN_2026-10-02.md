@@ -1,5 +1,7 @@
 # Backend correction and cleanup plan — approved implementation
 
+> Historical plan/evidence. Counts and earlier UI/setup descriptions are preserved as observations from that date. See [current branch behavior](PETSTORE_STRICT_TEST_GENERATION.md); current UI is Next.js and setup/runtime checks occur at Test execution.
+
 The user approved B01–B15 and the fresh React/FastAPI cycle, then separately approved exactly the three retired GUI files and associated symbols/references below. Those files and symbols are now removed locally; local validation and the fresh live cycle have completed; the fresh QA is FAIL with remaining generated-test defects documented in the cycle audit. Historical HTML and the supplied PDF remain. The original B01–B12 findings remain in [the backend review](BACKEND_REVIEW_2026-10-01.md), with B06 partially implemented under the later reporting request.
 
 ## What actually failed in TokenTelemetry

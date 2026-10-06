@@ -14,7 +14,7 @@ from maf_test_harness.agent.runtime import BudgetGuard
 from maf_test_harness.llm.usage import DailyLimitError, DailyUsageLedger
 from maf_test_harness.settings import DAILY_TOKEN_LIMIT
 from maf_test_harness.ui.runtime_service import RuntimeService
-from maf_test_harness.workflow_steps import generation as generation_steps
+from maf_test_harness.workflow_support import MODEL_REPAIR_ATTEMPTS
 
 
 class Msg:
@@ -199,16 +199,16 @@ def test_every_actor_needs_cases_or_a_stated_reason(drive):
     assert len(prompts) == 2 and "Actor(s) without any test case: Developer" in prompts[1]
 
 
-def test_unresolved_policy_gaps_reach_the_human_instead_of_blocking(drive):
+def test_unresolved_policy_gaps_remain_blocked_after_final_repair(drive):
     runtime, prompts = design_runtime(
         lambda artifact, attempt: artifact["positive_tests"][0].update(level="integration")
     )
     host, answer = drive(runtime)
     for _ in range(4):
         answer(decision="approve")
-    assert len(prompts) == generation_steps.MODEL_REPAIR_ATTEMPTS
-    assert host.view["pending"]["kind"] == "review"
-    assert "no unit-level test case" in host.view["pending"]["details"]["artifact"]["gaps_report"]["notes"]
+    assert len(prompts) == MODEL_REPAIR_ATTEMPTS
+    assert host.view["pending"]["kind"] == "error"
+    assert "no unit-level test case" in host.view["pending"]["error"]
     json.dumps(host.view["pending"]["details"])
 
 

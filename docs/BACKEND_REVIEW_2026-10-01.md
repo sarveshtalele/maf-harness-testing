@@ -1,5 +1,7 @@
 # Session review and backend approval plan — 1 October 2026
 
+> Historical plan/evidence. Counts and earlier UI/setup descriptions are preserved as observations from that date. See [current branch behavior](PETSTORE_STRICT_TEST_GENERATION.md); current UI is Next.js and setup/runtime checks occur at Test execution.
+
 ## Approved scope and session findings
 
 The first version is a local internal-team tool with separate OS-user storage, existing harness features, a Next.js UI and preserved Python workflows. The HTML concept was approved before implementation. The user subsequently requested adjustable windows, audit/observability, Windows/macOS compatibility and live Petstore qualification.

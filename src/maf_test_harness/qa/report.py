@@ -37,8 +37,12 @@ def build_qa_report(
     environment: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     files = generation.get("files", [])
+    reviews = {r["case_id"]: r for r in generation.get("case_reviews", [])}
     file_for_case = {f["case_ids"][0]: f["path"] for f in files}
-    results = map_results_to_cases((execution or {}).get("cases", []), files)
+    execution_cases = (execution or {}).get("cases", [])
+    results = map_results_to_cases(
+        [c for c in execution_cases if c.get("scope", "generated") == "generated"], files
+    )
     result_for_case = {}
     severity = {"passed": 0, "skipped": 1, "not_executed": 2, "failed": 3, "error": 4}
     for result in results:
@@ -66,6 +70,8 @@ def build_qa_report(
                 "level": case.get("level", ""),
                 "actor": case.get("actor", ""),
                 "priority": case.get("priority"),
+                "confidence": reviews.get(case["id"], {}).get("confidence"),
+                "reviewer_reason": reviews.get(case["id"], {}).get("reason"),
                 "file": file_for_case.get(case["id"]),
                 "status": (
                     result["status"]
@@ -82,6 +88,7 @@ def build_qa_report(
                 ],
             }
         )
+    cases.sort(key=lambda c: -(c.get("confidence") or 0))
     by_id = {c["id"]: c for c in cases}
     coverage = []
     for req in requirements.get("requirement_model", {}).get("requirements", []):
@@ -129,6 +136,59 @@ def build_qa_report(
         verdict = "INCONCLUSIVE"
     elif verdict == "PASS" and counts.get("skipped"):
         verdict = "PASS_WITH_SKIPS"
+    generated_verdict = (
+        "FAIL"
+        if counts.get("failed")
+        or counts.get("error")
+        or any(
+            step.get("kind") == "test"
+            and step.get("scope", "generated") == "generated"
+            and step.get("status") not in {"passed", "command_succeeded"}
+            for step in (execution or {}).get("steps", [])
+        )
+        else "INCONCLUSIVE"
+        if not cases or counts.get("not_executed") or counts.get("not_run") or unmapped
+        else "PASS_WITH_SKIPS"
+        if counts.get("skipped")
+        else "PASS"
+    )
+    baseline = []
+    for scope, expected in (execution or {}).get("scope_expectations", {}).items():
+        observed = [c for c in execution_cases if c.get("scope") == scope]
+        steps = [s for s in (execution or {}).get("steps", []) if s.get("scope") == scope]
+        observed_classes = {c.get("classname", "").rsplit(".", 1)[-1].split("$")[0] for c in observed}
+        missing_classes = sorted(set(expected.get("classes", [])) - observed_classes)
+        status = (
+            "FAIL"
+            if any(c.get("status") in {"failed", "error"} for c in observed)
+            or any(s.get("status") in {"failed", "error", "timeout"} for s in steps)
+            else "PASS"
+            if observed and not missing_classes and all(c.get("status") == "passed" for c in observed)
+            else "NOT_APPLICABLE"
+            if expected.get("status") == "not_applicable"
+            else "INCONCLUSIVE"
+        )
+        baseline.append(
+            {
+                "scope": scope,
+                "verdict": status,
+                "tests": len(observed),
+                "classes": expected.get("classes", []),
+                "missing_classes": missing_classes,
+                "reason": expected.get("reason", "")
+                + (f" No fresh test evidence for: {', '.join(missing_classes)}." if missing_classes else ""),
+                "cases": observed,
+            }
+        )
+    if any(row["verdict"] == "FAIL" for row in baseline):
+        verdict = "FAIL"
+    elif verdict.startswith("PASS") and (
+        any(row["verdict"] == "INCONCLUSIVE" for row in baseline)
+        or any(row["state"] == "untested" for row in coverage)
+    ):
+        verdict = "INCONCLUSIVE"
+    source_files = set(repo.get("source_files", []))
+    represented_files = {p for sources in req_sources.values() for p in sources}
     return {
         "generated_at": datetime.now(UTC).isoformat(),
         "repository": {
@@ -137,6 +197,15 @@ def build_qa_report(
             "name": repo.get("repo_name"),
         },
         "verdict": verdict,
+        "generated_verdict": generated_verdict,
+        "baseline_regression": baseline,
+        "source_intake": {
+            **requirements.get("intake", {}),
+            "inventory_source_files": len(source_files),
+            "requirement_source_files": len(represented_files & source_files),
+            "scope": "Discovered static declarations, not complete business requirements or runtime coverage.",
+        },
+        "runtime_coverage": {"line": "not_measured", "branch": "not_measured", "mutation": "not_measured"},
         "execution_status": (execution or {}).get("status", "not_run"),
         "adapter": (execution or {}).get("adapter"),
         "case_status_counts": counts,
@@ -221,6 +290,22 @@ def render_markdown(report: dict[str, Any]) -> str:
         "",
         "| Case | Level | Actor | Pri | Status | File |",
         "|---|---|---|---|---|---|",
+    ]
+    lines[4:4] = [
+        "## Evidence scope",
+        "",
+        f"Generated suite: **{report.get('generated_verdict', report['verdict'])}**. "
+        "A suite verdict does not qualify the complete application.",
+        "",
+        "Line, branch and mutation coverage: **not measured**.",
+        "",
+        "| Existing regression scope | Verdict | Tests | Reason |",
+        "|---|---|---|---|",
+        *[
+            f"| {r['scope']} | {r['verdict']} | {r['tests']} | {r['reason']} |"
+            for r in report.get("baseline_regression", [])
+        ],
+        "",
     ]
     for c in report["cases"]:
         lines.append(

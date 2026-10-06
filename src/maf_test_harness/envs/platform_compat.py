@@ -10,9 +10,11 @@ from __future__ import annotations
 import os
 import shutil
 import sys
+from contextvars import ContextVar
 from pathlib import Path
 
 IS_WINDOWS = sys.platform == "win32"
+RUN_CANCEL = ContextVar("harness_run_cancel", default=None)
 
 
 def venv_python(venv_dir: str | Path) -> str:

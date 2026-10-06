@@ -21,6 +21,7 @@ from ..repo.stack import REQUIRED_TOOLS, StackProfile
 from ..skills.contracts import extra_import_roots
 from . import platform_compat
 from .execution import EXPORT_SKIP_DIRS, read_junit_cases, run_command
+from .regression import maven_regression_steps
 
 REPORT_DIR = ".harness-reports"
 VENV_DIR = ".harness-venv"
@@ -37,6 +38,7 @@ class Step:
     parser: str = ""  # junit | jest | go | trx | ""
     report_glob: str = ""  # relative to workspace, for junit/jest/trx
     continue_on_failure: bool = False
+    scope: str = "generated"
 
 
 @dataclass
@@ -46,6 +48,7 @@ class RunPlan:
     notes: list[str] = field(default_factory=list)
     blocked_reason: str | None = None
     app: dict | None = None  # how to start the application under test (E2E), see app_launcher
+    scope_expectations: dict = field(default_factory=dict)
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -590,6 +593,10 @@ def build_plan(
             )
     if eco == "maven":
         mvn = platform_compat.resolve_wrapper(ws, "mvnw", "mvnw.cmd", "mvn")
+        regression, expectations, notes = maven_regression_steps(
+            ws, files, mvn, platform_compat.cache_path(cache, "m2"), timeout
+        )
+        steps.extend(Step(**item) for item in regression)
         classes = ",".join(_java_class(p) for p in _paths(files, (".java",)))
         steps.append(
             Step(
@@ -601,8 +608,8 @@ def build_plan(
                     f"-Dmaven.repo.local={platform_compat.cache_path(cache, 'm2')}",
                     "test",
                     f"-Dtest={classes}",
-                    "-DfailIfNoTests=false",
-                    "-Dsurefire.failIfNoSpecifiedTests=false",
+                    "-DfailIfNoTests=true",
+                    "-Dsurefire.failIfNoSpecifiedTests=true",
                 ],
                 "test",
                 parser="junit",
@@ -611,7 +618,7 @@ def build_plan(
                 env={"MAVEN_OPTS": "-Xmx1g"},
             )
         )
-        return RunPlan("java-maven", steps)
+        return RunPlan("java-maven", steps, notes=notes, scope_expectations=expectations)
     if eco == "gradle":
         gradle = platform_compat.resolve_wrapper(ws, "gradlew", "gradlew.bat", "gradle")
         filters = [arg for p in _paths(files, (".java", ".kt")) for arg in ("--tests", _java_class(p))]
@@ -1123,12 +1130,14 @@ def _run_test_step(step: Step, workspace: Path, out_dir: Path, label: str) -> tu
         "exit_code": result.get("exit_code"),
         "duration_seconds": result.get("duration_seconds"),
         "stdout": stdout,
+        "scope": step.scope,
     }
     try:
         cases = _step_cases(step, workspace, result, started)
     except (ET.ParseError, OSError, ValueError, json.JSONDecodeError) as exc:
         cases, entry["parse_error"] = [], str(exc)
     entry["summary"] = summarize(cases)
+    cases = [{**case, "scope": step.scope} for case in cases]
     return entry, cases
 
 
@@ -1151,6 +1160,7 @@ def execute_plan(
         "cases": [],
         "status": "no_test_evidence",
         "isolation": "local-process-not-security-sandbox",
+        "scope_expectations": plan.scope_expectations,
     }
     if plan.blocked_reason:
         report.update(status="blocked", error=plan.blocked_reason)

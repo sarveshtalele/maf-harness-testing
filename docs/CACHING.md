@@ -69,3 +69,7 @@ Stage prompts are built stable-first (`llm/prompts.py`): assignment, output sche
 consecutive calls of a stage share the longest possible prefix. Measured on the fixture repository, the repeated share of a
 generation prompt went from 60.7 % to 82.2 %. On a real repository the effect is much smaller (8.3 % repeated prefix in a live run, because per-batch source and evidence dominate the prompt; see [audit/E2E_RESULTS.md](audit/E2E_RESULTS.md) §8). What was deliberately not changed (session reuse, priming, compaction) and why:
 [AUTOMATION.md](AUTOMATION.md#3-prompt-assembly-for-the-providers-prefix-cache).
+
+## Strict generation update — October 6, 2026
+
+[Current intake, batching, Java quality gates and scoped QA](PETSTORE_STRICT_TEST_GENERATION.md) supersede earlier truncation and final-retry acceptance behavior. New deterministic requirements retain all discovered declarations; installation/runtime checks remain at Test execution. Maven baseline unit/integration and generated results are separate, and runtime coverage is explicitly unmeasured. Run logs default to the checkout’s `.maf-harness` directory.

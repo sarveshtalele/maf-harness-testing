@@ -62,7 +62,10 @@ def run_git(argv, run_dir: Path, timeout, env, attempt=1):
                     cancel = read_json(run_dir / "clone_cancel.json")
                 except (OSError, ValueError):
                     cancel = {}
-                if isinstance(cancel, dict) and cancel.get("operation_id") == operation_id:
+                stopped = platform_compat.RUN_CANCEL.get()
+                if (isinstance(cancel, dict) and cancel.get("operation_id") == operation_id) or (
+                    stopped is not None and stopped.is_set()
+                ):
                     operation.update(status="cancelled", message="Repository clone cancelled by user")
                     raise InterruptedError(operation["message"])
                 remaining = deadline - time.monotonic()

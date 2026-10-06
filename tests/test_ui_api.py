@@ -484,3 +484,37 @@ def test_runtime_start_failure_is_persisted_and_visible_in_logs(local_api):
     log = (api.run_path(key) / "workflow.log").read_text(encoding="utf-8")
     assert "starting repository workflow" in log and "Gateway unavailable" in log
     assert any(item["path"] == "workflow.log" for item in api.evidence(key)["files"])
+
+
+def test_stop_active_model_preserves_analysis_and_allows_another_run(local_api):
+    import asyncio
+
+    entered = threading.Event()
+
+    class Slow(ScriptedStageRuntime):
+        async def run_stage(self, **kwargs):
+            entered.set()
+            await asyncio.sleep(30)
+
+    api = local_api
+    api.runtime_factory = Slow
+    key = api.start({"repo_url": "https://github.com/acme/slow"})["id"]
+    wait(api)
+    approve(api, key)
+    gate = api.read(key)["pending"]
+    api.respond(key, {"request_id": gate["id"], "decision": "approve"})
+    assert entered.wait(10)
+    with pytest.raises(RuntimeError, match="No active operation"):
+        other = api.runs / "other"
+        other.mkdir()
+        (other / "run.json").write_text('{"status":"new","state":{}}')
+        api.stop_run("other")
+    api.stop_run(key)
+    wait(api)
+    run = api.read(key)
+    assert run["status"] == "stopped" and run["pending"] is None
+    assert "repo_analysis" in run["state"]["artifacts"]
+    assert "test_generation" not in run["state"]["artifacts"]
+    assert "run_stopped_by_user" in (api.run_path(key) / "audit.jsonl").read_text()
+    api.start({"repo_url": "https://github.com/acme/another"})
+    wait(api)

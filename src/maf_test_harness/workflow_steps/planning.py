@@ -14,8 +14,16 @@ from ..agent.personas import persona_instructions
 from ..envs.environment import build_environment_plan
 from ..envs.setup_guide import setup_guide
 from ..llm.prompts import build_prompt
-from ..models import GeneratedFilesDraft, RequirementsDraft, TestDesignDraft, TestPlan
+from ..models import (
+    GeneratedFilesDraft,
+    RequirementsDraft,
+    RequirementsInventoryDraft,
+    TestDesignDraft,
+    TestPlan,
+)
+from ..qa.quality import existing_test_evidence
 from ..qa.report import design_cases
+from ..repo.analyzer import build_repository_evidence
 from ..repo.stack import detect_stack
 from ..settings import (
     EXECUTION_TIMEOUT_SECONDS,
@@ -34,14 +42,18 @@ from ..workflow_support import (
     _allowed_levels,
     _compact_repo,
     _compact_requirements,
+    _plan_summary,
     atomic_json,
 )
+from .design import design_tests_batched
 
 
 class PlanningSteps:
     async def _call_model(self, *, stage, persona, prompt, state, **kwargs):
         settings = prompt_settings.load(self.run_dir / "prompts.json")
-        persona = settings["personas"].get(stage, persona)
+        role = kwargs.pop("role", None)
+        if not role:
+            persona = settings["personas"].get(stage, persona)
         batch = kwargs.pop("prompt_batch", None)
         key = f"{stage}:{batch}" if batch is not None else stage
         prompt = settings["overrides"].get(key) or prompt
@@ -54,6 +66,7 @@ class PlanningSteps:
             "id": identifier,
             "created_at": datetime.now(UTC).isoformat(),
             "stage": stage,
+            "role": role or "stage_author",
             "batch": batch,
             "override_key": key,
             "persona": persona,
@@ -61,7 +74,7 @@ class PlanningSteps:
             "sha256": hashlib.sha256(prompt.encode()).hexdigest(),
         }
         state.setdefault("prompt_records", []).append(
-            {k: record[k] for k in ("id", "stage", "batch", "override_key", "sha256")}
+            {k: record[k] for k in ("id", "stage", "role", "batch", "override_key", "sha256")}
         )
         atomic_json(folder / f"{identifier}.json", record)
         self.save()
@@ -76,7 +89,8 @@ class PlanningSteps:
                     "name": name,
                     "instructions": (self.skills_root / name / "SKILL.md").read_text(encoding="utf-8"),
                 }
-                for name in skills_for(stage, state).all
+                for name in (kwargs.get("skill_name"), *kwargs.get("companions", ()))
+                if name
             ]
             atomic_json(folder / f"{identifier}.json", record)
 
@@ -111,16 +125,6 @@ class PlanningSteps:
         if stage == "requirements" and state.get("requirements_mode", "model") == "deterministic":
             repo = state["artifacts"]["repo_analysis"]
             analysis = dict(repo.get("reverse_engineering", {}))
-            supplied = set(re.findall(r"--- FILE: (.*?) ---", state.get("evidence", "")))
-            original_count = len(analysis.get("facts", []))
-            analysis["facts"] = [
-                fact for fact in analysis.get("facts", []) if fact["source_file"] in supplied
-            ]
-            if len(analysis["facts"]) < original_count:
-                analysis["gaps"] = [
-                    *analysis.get("gaps", []),
-                    "Requirements include only files retained in the host source-evidence budget; inspect repository analysis for omitted declarations.",
-                ]
             draft = await asyncio.to_thread(
                 execute_host_skill,
                 self.run_dir,
@@ -149,6 +153,19 @@ class PlanningSteps:
             )
             await self.review(stage, artifact, state, ctx)
             return
+        if stage == "test_generation":
+            artifact = await self._generate_tests_batched(state)
+        elif (
+            stage == "test_design"
+            and len(state["artifacts"]["requirements"]["requirement_model"]["requirements"]) > 12
+        ):
+            artifact = await design_tests_batched(self, state)
+        else:
+            artifact = await self._model_artifact(stage, state)
+        await self.review(stage, artifact, state, ctx)
+
+    async def _model_artifact(self, stage, state, requirements_override=None, prompt_batch=None):
+        requirements_source = requirements_override or state["artifacts"].get("requirements", {})
         if self.runtime is None:
             raise ValueError("Configure API key/model before running this stage, then retry.")
 
@@ -165,27 +182,31 @@ class PlanningSteps:
                 "Create the cross-language test implementation plan from the approved inferred requirements and repository facts. "
                 "Select native test frameworks automatically and keep the plan compact."
             )
-            upstream = {"requirements": _compact_requirements(state["artifacts"]["requirements"])}
+            upstream = {"requirements": _compact_requirements(requirements_source)}
+            if requirements_source.get("analysis_mode") == "deterministic":
+                upstream["requirements"]["requirements"] = [
+                    {key: item.get(key) for key in ("id", "source_files", "source_symbol", "source_line")}
+                    for item in upstream["requirements"]["requirements"]
+                ]
         elif stage == "test_design":
             response_format = TestDesignDraft
             assignment = (
                 "Create traceable implementation-ready test cases in the compact draft schema. Cover approved requirements "
-                "with the fewest non-duplicative cases needed; do not manufacture boundaries or contracts."
+                "with distinct source-backed cases; do not manufacture boundaries or contracts. Every supplied requirement "
+                "needs a case or an explicit ID-linked exclusion reason. A method link requires actually invoking that method; "
+                "constructors do not cover setters. Use source-valid positive fixtures and complement existing tests. "
+                "Do not claim full application coverage from a declaration inventory."
             )
             upstream = {
-                "requirements": _compact_requirements(state["artifacts"]["requirements"]),
-                "test_plan": state["artifacts"]["test_planning"],
+                "requirements": _compact_requirements(requirements_source),
+                "test_plan": _plan_summary(state["artifacts"]["test_planning"]),
             }
-        elif stage == "test_generation":
-            artifact = await self._generate_tests_batched(state)
-            await self.review(stage, artifact, state, ctx)
-            return
         else:
             raise ValueError(f"Unsupported model stage: {stage}")
 
         schema = response_format.model_json_schema()
         if stage == "test_design":
-            requirements = _compact_requirements(state["artifacts"]["requirements"])
+            requirements = _compact_requirements(requirements_source)
             ids = sorted(
                 {
                     item["id"]
@@ -210,8 +231,37 @@ class PlanningSteps:
                     },
                     "repository_evidence": state.get("evidence", "")
                     if stage == "requirements"
+                    else build_repository_evidence(
+                        self.run_dir / "repo",
+                        max_files=max(
+                            1,
+                            len(
+                                {
+                                    p
+                                    for r in requirements_source.get("requirement_model", {}).get(
+                                        "requirements", []
+                                    )
+                                    for p in r.get("source_files", [])
+                                }
+                            ),
+                        ),
+                        max_total_chars=40000,
+                        preferred_paths=[
+                            p
+                            for r in requirements_source.get("requirement_model", {}).get("requirements", [])
+                            for p in r.get("source_files", [])
+                        ],
+                    )
+                    if requirements_override
                     else state.get("evidence", "")[:32000],
                     "evidence_file_paths": evidence_paths if stage == "requirements" else None,
+                    "existing_tests": existing_test_evidence(
+                        self.run_dir / "repo",
+                        state["artifacts"]["repo_analysis"].get("test_files", []),
+                        requirements_source.get("requirement_model", {}).get("requirements", []),
+                    )
+                    if stage == "test_design"
+                    else None,
                     "stack_profile": state.get("stack", {}),
                     "selected_application": {
                         "component": state.get("app_component"),
@@ -225,12 +275,7 @@ class PlanningSteps:
                     "revision_feedback": state.get("feedback", {}).get(stage),
                     "repair_feedback": repair or None,
                     "approved_traceability_ids": {
-                        key: [
-                            item["id"]
-                            for item in _compact_requirements(state["artifacts"].get("requirements", {})).get(
-                                key, []
-                            )
-                        ]
+                        key: [item["id"] for item in _compact_requirements(requirements_source).get(key, [])]
                         for key in (
                             "requirements",
                             "acceptance_criteria",
@@ -261,6 +306,7 @@ class PlanningSteps:
                     prompt=prompt,
                     state=state,
                     persist=self.save,
+                    prompt_batch=prompt_batch,
                     response_format=response_format,
                 )
             except ValidationError as exc:
@@ -284,7 +330,7 @@ class PlanningSteps:
             state["draft"] = result["artifact"]
             state["design_attempt"] = attempt
             try:
-                artifact = await self.validate(stage, state)
+                artifact = await self.validate(stage, state, requirements_source=requirements_override)
             except ValueError as exc:  # temperature 0 repeats itself, so the retry must carry the reason
                 self.audit("stage_repair", stage=stage, attempt=attempt, error=str(exc)[:600])
                 if attempt == MODEL_REPAIR_ATTEMPTS:
@@ -295,14 +341,28 @@ class PlanningSteps:
                 )
                 continue
             break
-        await self.review(stage, artifact, state, ctx)
+        return artifact
 
-    async def validate(self, stage, state):
+    async def validate(self, stage, state, requirements_source=None):
 
         draft = state["draft"]
         if stage == "requirements":
-            validated = RequirementsDraft.model_validate(draft).model_dump()
-            evidence_paths = set(re.findall(r"--- FILE: (.*?) ---", state.get("evidence", "")))
+            inventory = state.get("requirements_mode") == "deterministic"
+            validated = (
+                (RequirementsInventoryDraft if inventory else RequirementsDraft)
+                .model_validate(draft)
+                .model_dump()
+            )
+            evidence_paths = (
+                {
+                    f["path"]
+                    for f in state["artifacts"]["repo_analysis"]
+                    .get("reverse_engineering", {})
+                    .get("files", [])
+                }
+                if inventory
+                else set(re.findall(r"--- FILE: (.*?) ---", state.get("evidence", "")))
+            )
             for requirement in validated["requirements"]:
                 unknown = set(requirement["source_files"]) - evidence_paths
                 if unknown:
@@ -350,14 +410,15 @@ class PlanningSteps:
         if stage == "test_design":
             design = finalize_design(
                 draft,
-                state["artifacts"]["requirements"],
+                requirements_source or state["artifacts"]["requirements"],
                 state["repo_url"],
                 self.skills_root,
                 allowed_levels=_allowed_levels(state),
             )
-            self._require_coverage_or_reason(design, state)
+            self._require_coverage_or_reason(design, state, requirements_source=requirements_source)
             if (
-                state.get("app_component")
+                requirements_source is None
+                and state.get("app_component")
                 and any(
                     path.startswith(state["app_component"].rstrip("/") + "/")
                     and path.endswith((".tsx", ".jsx", ".vue", ".svelte", ".html"))

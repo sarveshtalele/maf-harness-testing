@@ -93,6 +93,10 @@ class Recording(ScriptedStageRuntime):
         self.generation_prompts = []
 
     async def run_stage(self, *, stage, state, **kwargs):
+        from fakes import review_response
+
+        if review := review_response(kwargs):
+            return review
         if stage == "test_generation":
             self.generation_prompts.append(kwargs["prompt"])
         return await super().run_stage(stage=stage, state=state, **kwargs)

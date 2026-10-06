@@ -23,7 +23,7 @@ uv run python scripts/start_ui.py
 
 Open http://127.0.0.1:3000. Ctrl+C stops both processes. The launcher uses the current Python environment, finds `npm`/`npm.cmd`, binds both services to loopback and supplies a fresh private API token to the server processes. It does not persist the token or expose it to the browser.
 
-Stop both running services with Ctrl+C before a production build. Replacing `.next` while a production server is running can break JavaScript/CSS bundle loading. The platform startup scripts check for occupied ports before installing or building.
+Stop both running services with Ctrl+C before a production build. Replacing `.next` while a production server is running can break JavaScript/CSS bundle loading. The platform scripts reuse a verified running application before installing/building; default ports recover from unrelated conflicts, while explicit occupied ports report an error.
 
 For a production build:
 
@@ -110,3 +110,9 @@ Run history has a **Delete** action with a confirmation dialog. An active operat
 Skill workflow maps and recorded execution counts appear inside each skill card. **Rerun from step** repeats a selected stage whose upstream approvals are complete, preserving previous evidence under `attempts/<id>` and resetting downstream approvals. Active operations must reach a gate first; tool approvals still apply.
 
 See [Windows setup and debugging](WINDOWS_SETUP_AND_DEBUGGING.md) for Node 24 checks, shim-free Next startup, UTF-8 handling and exact service/run log locations.
+
+## Strict generation update — October 6, 2026
+
+[Current intake, batching, Java quality gates and scoped QA](PETSTORE_STRICT_TEST_GENERATION.md) supersede earlier truncation and final-retry acceptance behavior. New deterministic requirements retain all discovered declarations; installation/runtime checks remain at Test execution. Maven baseline unit/integration and generated results are separate, and runtime coverage is explicitly unmeasured. Run logs default to the checkout’s `.maf-harness` directory.
+
+**Generated tests** displays the independent review, source citations, repair reasons and descending confidence judgments. **QA report** retains the accepted confidence beside each execution result and shows repository evidence scope separately. During active work, use **Stop run**; saved analysis and earlier evidence remain available after reload.

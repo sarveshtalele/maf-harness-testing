@@ -89,5 +89,11 @@ The mode and outcome are stored in `state.telemetry` and shown under *Integrity 
 
 * `tests/test_observability.py` – real MAF harness agent with a scripted transport: the recorder sees the prime run, the structured run, every provider call and both tool calls (one skill, one harness), and the report built from that run passes its checks; redaction; torn-line tolerance; older runs; failing/unexpected tools; traceability (before and after execution); CLI; telemetry.
 * `tests/test_execution_stage.py` – a complete scripted workflow yields the full traceability chain.
-* `tests/targets/test_harness_browser.py` – the tab in a real browser (metrics, tabs, filters, exports).
-* Real data: the tab and CLI were run on the stored `final5-reverse` run (44 provider calls, 1,154,828 tokens, 25 passed / 9 failed, all reproduced).
+* `frontend/tests/workspace.spec.ts` – the Next.js tab in a real browser (metrics, tabs, filters, exports, reviewer confidence and active stopping).
+* Historical data: the tab and CLI were run on the stored `final5-reverse` run (44 provider calls, 1,154,828 tokens, 25 passed / 9 failed, all reproduced). This is not a current release qualification result.
+
+## Strict generation update — October 6, 2026
+
+[Current intake, batching, Java quality gates and scoped QA](PETSTORE_STRICT_TEST_GENERATION.md) supersede earlier truncation and final-retry acceptance behavior. New deterministic requirements retain all discovered declarations; installation/runtime checks remain at Test execution. Maven baseline unit/integration and generated results are separate, and runtime coverage is explicitly unmeasured. Run logs default to the checkout’s `.maf-harness` directory.
+
+Independent reviewer calls occur within `test_generation` and count against the same ledger. Prompt snapshots identify the `test_reviewer` role and record its actual assigned skills. `test_reviewer_result` audit events preserve each judgment, reason and source citation, including rejected cases. The Generated tests view shows the latest rejected review while repair continues; accepted reviews are ranked by confidence. These judgments are not runtime proof. `run_stopped_by_user` records active cancellation; logs and artifacts are retained.

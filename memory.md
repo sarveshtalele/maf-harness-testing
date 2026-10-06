@@ -1,6 +1,8 @@
 # memory.md — working notes for the Agentic QE Harness v2
 
-Living document. Read this first when resuming. Update the *Status* table and *Log* at the end of every phase.
+Current branch is **new-ui**. Product: **Agentic QE Platform**. New runs store evidence inside `<repo-root>/.maf-harness`; setup and all runtime checks follow generation at Test execution. Requirements use deterministic host scripts; full discovered intake, component design batches and strict Java quality gates are documented in [the current guide](docs/PETSTORE_STRICT_TEST_GENERATION.md).
+
+The phase tables and run measurements below are historical implementation notes; they do not override current workflow behavior.
 Full approved plan: `C:\Users\SarveshTalele\.claude\plans\now-analyse-the-exsiting-curried-crescent.md`.
 
 ## 1. What we are building
@@ -10,8 +12,7 @@ modes, todos, the existing **Agent Skills with their reviewed scripts**, isolate
 (Maven + Gradle) and .NET**, bounded automatic recovery from environment and execution errors, and far fewer tokens
 through prefix-cache-friendly prompts. The 7 human-gated stages stay (safe, resumable).
 
-Repo: `https://github.com/sarveshtalele/maf-harness-testing` (private). Working branch: **`windows-compat-docs`**
-(pushed; PR link: `.../pull/new/windows-compat-docs`). Never force-push `main`.
+Repo: `https://github.com/sarveshtalele/maf-harness-testing` (private). Working branch: **`new-ui`**. Never force-push `main`.
 
 ## 2. Decisions taken (do not re-litigate without the user)
 
@@ -50,7 +51,7 @@ name reach the real module. New code imports the subpackage path. `tests/` were 
 
 | Area | Files |
 |---|---|
-| Top level | `workflow.py` (1.5k lines: stages, gates, checkpoints), `cli.py`, `settings.py`, `models.py`, `app.py` (Streamlit, repo root) |
+| Top level | `workflow.py` (gates/checkpoints), `workflow_steps/` (stage operations), `cli.py`, `settings.py`, `models.py`; `frontend/` (Next.js) |
 | `repo/` | `analyzer.py` (clone + static analysis), `stack.py`, `routes.py` |
 | `envs/` | `environment.py` (plan, probes), `runners.py` (`setup_steps`, `execute_setup`, `execute_plan`, pip per-package fallback), `execution.py`, `platform_compat.py`, `env_check.py`, `app_launcher.py`, and Phase 3: `spec.py`, `toolchains.py`, `{python,java,dotnet}_env.py` |
 | `errors/` | `taxonomy.py`, `engine.py`, `playbook.py`, `classifiers/{python,java,dotnet,common}.py`; `docs/ERROR_PLAYBOOK.md` is generated; fixtures in `tests/error_cases.py` |
@@ -59,7 +60,7 @@ name reach the real module. New code imports the subpackage path. `tests/` were 
 | `agent/` | `runtime.py` (`create_harness_agent`, `BudgetGuard`, `ToolTraceMiddleware`, `run_tool_agent`), `personas.py`, `diagnosis.py` |
 | `llm/` | `usage.py` (daily ledger), `prompts.py` (stable-first prompt assembly) |
 | `qa/` | `report.py`, `triage.py`, `packaging.py` |
-| `monitoring/` | `report.py` (incl. *Prompt cache* report), `ui.py`, `trace.py`, `telemetry.py` |
+| `monitoring/` | `report.py` (incl. *Prompt cache* report), `trace.py`, `telemetry.py` |
 | `ui/` | `artifact_presenter.py`, `runtime_service.py` |
 | `hooks/` | Phase 4/6: `events.py`, `engine.py` (fail-closed verdicts), `builtin.py`, `config.py` (`.harness/hooks.json`), `maf_bridge.py` (MAF middleware), `agent_hooks_bridge.py` (optional AGENT-HOOKS-0.1 backend) |
 | Docs | `docs/ARCHITECTURE.md`, `CATALOG.md`, `CACHING.md`, `ERROR_PLAYBOOK.md`, `ENVIRONMENTS.md`, `OBSERVABILITY.md`, `CLAUDE.md` |
@@ -96,7 +97,7 @@ modules used everywhere, and checkpoints reference the model classes by module p
 
 * Run before every commit: `uv run ruff check src tests app.py scripts && uv run ruff format --check src tests app.py scripts && uv run pytest -q --ignore=tests/targets && uv run maf-harness lint-skills`.
 * Commit style: imperative subject, body explains *why*; end with `Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>`.
-* Do not commit `.env`, `.harness_runs/`, `agent-framework.pdf`.
+* Do not commit `.env`, `.maf-harness/`, `.harness_runs/`, `agent-framework.pdf`.
 * The user prefers terse replies (caveman style) in chat; code, commits and docs are written normally.
 * Additive changes; existing behaviour and tests must stay green (currently 690 passed, 1 skipped, with the optional SDK installed).
 * CRLF-safe edit helper used in this session: a throwaway `.scratch_edit.py` (JSON pairs on stdin). It is not committed; recreate it if needed.

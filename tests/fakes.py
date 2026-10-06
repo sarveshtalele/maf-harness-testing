@@ -9,6 +9,29 @@ def clone_fixture(url, destination):
     (destination / "service.py").write_text("def add(a, b):\n    return a + b\n", encoding="utf-8")
 
 
+def review_response(kwargs, source="service.py"):
+    from maf_test_harness.models import TestReviewDraft
+
+    if kwargs.get("response_format") is not TestReviewDraft:
+        return None
+    cases = json.loads(kwargs["prompt"])["approved_inputs"]["approved_cases"]
+    return {
+        "status": "completed",
+        "artifact": {
+            "reviews": [
+                {
+                    "case_id": c["id"],
+                    "confidence": 90,
+                    "verdict": "supported",
+                    "reason": "Scripted reviewer transport: source and assertions match the fixture.",
+                    "source_files": [source],
+                }
+                for c in cases
+            ]
+        },
+    }
+
+
 class ScriptedStageRuntime:
     """Returns schema-valid stage artifacts for the tiny `service.add` repository."""
 
@@ -32,6 +55,8 @@ class ScriptedStageRuntime:
         return self.tool_agent_note
 
     async def run_stage(self, *, stage, state, **kwargs):
+        if review := review_response(kwargs):
+            return review
         self.calls.append(stage)
         if stage == "requirements":
             return {
