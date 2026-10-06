@@ -113,7 +113,11 @@ def test_non_public_targets_cover_unexported_ts_private_python_and_java(tmp_path
 def test_paths_and_globs_are_not_arithmetic_cues():
     from maf_test_harness.repo.testability import _ARITH_CUE
 
-    for text in ("CLI creates skills/foo and prints success", "flattens /api/v1 routes", "matches *.py files"):
+    for text in (
+        "CLI creates skills/foo and prints success",
+        "flattens /api/v1 routes",
+        "matches *.py files",
+    ):
         assert not _ARITH_CUE.search(text), text
     for text in ("amount = 3 * 25.50", "calculates the total", "returns the sum"):
         assert _ARITH_CUE.search(text), text
