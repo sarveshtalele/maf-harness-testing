@@ -1,6 +1,6 @@
 # Agentic QE Platform — contributor guidance
 
-Current branch: `new-ui`. Next.js frontend plus a loopback Python HTTP adapter over the checkpointed Microsoft Agent Framework Harness. The CLI uses the same workflow. Windows, macOS and Linux launchers use Node.js 24 and Python 3.12; Next.js has its own framework version.
+Current branch: `new-ui`. Next.js frontend plus a loopback Python HTTP adapter over the checkpointed Microsoft Agent Framework Harness. The CLI uses the same workflow. Windows, macOS and Linux launchers use Node.js 24 and Python 3.12.
 
 ## Commands
 

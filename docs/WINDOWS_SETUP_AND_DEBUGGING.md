@@ -2,7 +2,7 @@
 
 ## Node.js and the missing Next command
 
-Use **Node.js 24 LTS**. `Next.js 16.3.8` is the framework version, not Node 16. The launcher prints the actual Node version and executable path and rejects other Node majors before installation.
+Use **Node.js 24 LTS**. The launcher prints the actual Node version and executable path and rejects other Node majors before installation.
 
 In a new Command Prompt:
 
@@ -15,7 +15,7 @@ npm config get bin-links
 npm config get omit
 ```
 
-If Node is missing or an older installation appears first on PATH, install/update Node 24 from https://nodejs.org/en/download and reopen the terminal. Check `node --version` again; it must start with `v24.`. Installing Node does not change an already-open terminal's PATH. Do not mistake the framework version for the runtime version. If `node --version` returns `v16.x`, remove that older Node installation from PATH and install Node.js 24 LTS instead.
+If Node is missing or an older installation appears first on PATH, install/update Node 24 from https://nodejs.org/en/download and reopen the terminal. Check `node --version` again; it must start with `v24.`. Installing Node does not change an already-open terminal's PATH. Install Node.js 24 LTS from the official site.
 
 The reported `'next' is not recognized` message means npm could not resolve the Next CLI command after installation. The transcript alone does not prove whether a missing shim, npm configuration, antivirus quarantine or a partial install caused it. The revised scripts avoid depending on `node_modules/.bin/next.cmd`: they invoke the installed Next JavaScript entry point with the verified Node executable. Setup explicitly includes development dependencies and restores npm binary links. The package scripts use direct Node entry points too.
 

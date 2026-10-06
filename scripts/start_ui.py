@@ -100,7 +100,7 @@ def node_runtime():
         raise RuntimeError(
             f"Node.js 24 LTS is required. Found {version or 'unknown'} at {node}. Check where node (Windows) or which node (macOS) and remove older PATH entries."
         )
-    print(f"Node.js {version} · {node} (Next.js is a separate framework version)", flush=True)
+    print(f"Node.js {version} · {node}", flush=True)
     return node
 
 
