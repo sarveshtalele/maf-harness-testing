@@ -27,6 +27,7 @@ from ..settings import API_KEY, BASE_URL, MODEL, validate_gateway_settings
 from ..storage import read_json
 from ..workflow import Harness
 from ..workflow_support import atomic_json
+from .eta import run_eta
 from .evidence_api import EvidenceAPI
 from .presentation import public
 from .progress import progress
@@ -146,6 +147,12 @@ class LocalAPI(EvidenceAPI, SettingsAPI):
         self.harvest()
         return self.job is not None
 
+    def _eta(self, key: str, view: dict) -> dict:
+        try:
+            return run_eta(self.run_path(key), view, bool(self.job and self.job_run == key))
+        except Exception:  # progress hints must never break the run read
+            return {"stages": []}
+
     def read(self, key: str) -> dict:
         with self.lock:
             self.harvest()
@@ -164,7 +171,7 @@ class LocalAPI(EvidenceAPI, SettingsAPI):
             return public(
                 {
                     "id": key,
-                    "progress": progress(view),
+                    "progress": {**progress(view), "eta": self._eta(key, view)},
                     "status": status,
                     "pending": {k: v for k, v in pending.items() if k != "state"} if pending else None,
                     "state": {k: state[k] for k in PUBLIC_STATE if k in state},

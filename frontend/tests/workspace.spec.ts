@@ -27,10 +27,12 @@ test('complete browser workflow, layouts, evidence, downloads and stale gates', 
   await page.route(runRoute, async route => {
     const response = await route.fetch();
     const body = await response.json();
-    await route.fulfill({ response, json: { ...body, busy: true, state: { ...body.state, active_stage: 'test_generation' } } });
+    await route.fulfill({ response, json: { ...body, busy: true, state: { ...body.state, active_stage: 'test_generation' }, progress: { ...body.progress, eta: { stages: [{ stage: 'test_generation', status: 'running', elapsed_s: 365, batch: { done: 13, total: 37 }, eta_s: 960 }, { stage: 'environment_setup', status: 'pending', est_s: 120 }] } } } });
   });
   await page.reload();
   await expect(page.getByRole('status').filter({ hasText: 'Generating tests…' })).toBeVisible();
+  await expect(page.getByRole('status').getByText(/Batch 13 of 37 · ~16 min left/)).toBeVisible();
+  await expect(page.getByText('est. ~2 min').first()).toBeVisible();
   await expect(page.locator('.working .spinner')).toBeVisible();
   expect(await page.locator('.working .spinner').evaluate(el => getComputedStyle(el).animationName)).toBe('spin');
   await page.screenshot({ path: testInfo.outputPath('generation-in-progress.png') });
