@@ -199,6 +199,8 @@ class GenerationSteps:
                         "testability": testability_for_targets(
                             state["artifacts"]["repo_analysis"].get("testability"),
                             [str(case.get("target") or "") for case in work],
+                            self.run_dir / "repo",
+                            source_files,
                         )
                         or None,
                         "failed_generated_source": failed_source or None,
@@ -219,6 +221,7 @@ class GenerationSteps:
                             "Never convert a filesystem path into an import by normalising '-', spaces or leading digits; import only modules proven by source_files.",
                             "Prefer the repository's existing public execution API and existing test patterns/fixtures (for example a registry fixture) over importing internals.",
                             "Never inject or reference fields/members absent from the source. Never use tautological assertions (for example a property map that is always non-null).",
+                            "Never copy or re-implement application code inside a test; import and exercise the real implementation. Targets listed in testability.non_public_targets cannot be imported: test them through the public function, component or class that uses them.",
                             "Respect a supplied `testability` section: low testability targets need an integration/behaviour-level test, not mocks of static acquisition.",
                             "Use source-valid fixture values for positive cases. Invalid values belong only in explicit boundary/negative/validation cases with a real rejection assertion.",
                             "Read existing tests; add complementary behavior instead of repeating an existing assertion. Constant assertions and mock-only assertions do not qualify application behavior.",

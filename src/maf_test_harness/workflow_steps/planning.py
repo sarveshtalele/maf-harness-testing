@@ -288,6 +288,8 @@ class PlanningSteps:
                                 for p in [*r.get("source_files", []), str(r.get("source_symbol") or "")]
                             )
                         ],
+                        self.run_dir / "repo",
+                        state["artifacts"]["repo_analysis"].get("source_files", []),
                     )
                     or None
                     if stage == "test_design"

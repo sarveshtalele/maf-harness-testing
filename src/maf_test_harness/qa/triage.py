@@ -166,6 +166,15 @@ REMEDIES: list[tuple[re.Pattern[str], str]] = [
         "code that does not need it.",
     ),
     (
+        re.compile(
+            r"replicat|re-?implement|copies the (?:source|function|implementation)|is NOT exported|not exported",
+            re.I,
+        ),
+        "Do not copy application code into the test. Import the real symbol; if it is not exported/public, test it "
+        "through the exported function, component or class that uses it (render the component, call the public API), "
+        "or record a testability gap.",
+    ),
+    (
         re.compile(r"does not match any repository path|not a valid Python identifier"),
         "Do not normalise filesystem paths into imports (never translate '-' to '_'): inspect source_files and the "
         "existing tests, and prefer the repository's public API/registry fixture (e.g. "

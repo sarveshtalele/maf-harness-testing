@@ -145,8 +145,16 @@ def analyze_testability(root: Path, source_files: list[str]) -> dict:
     }
 
 
-def testability_for_targets(testability: dict | None, targets: list[str]) -> dict:
-    """Compact entries for the classes named by the targets only (keeps prompts small)."""
+def testability_for_targets(
+    testability: dict | None,
+    targets: list[str],
+    root: Path | None = None,
+    source_files: list[str] | None = None,
+) -> dict:
+    """Compact entries for the classes named by the targets only (keeps prompts small).
+
+    With ``root`` and ``source_files``, also lists targets a test cannot import (``non_public_targets``).
+    """
     text = " ".join(targets)
     picked = {}
     for key, info in ((testability or {}).get("classes") or {}).items():
@@ -157,7 +165,60 @@ def testability_for_targets(testability: dict | None, targets: list[str]) -> dic
                 "reasons": info["reasons"][:4],
                 "allowed_strategies": info["allowed_strategies"],
             }
-    return dict(list(picked.items())[:MAX_CLASSES_PER_PROMPT])
+    picked = dict(list(picked.items())[:MAX_CLASSES_PER_PROMPT])
+    if root is not None and source_files and (hidden := non_public_targets(root, source_files, targets)):
+        picked["non_public_targets"] = hidden
+    return picked
+
+
+_SCRIPT = {".js", ".jsx", ".ts", ".tsx", ".mjs", ".cjs"}
+_JVM = {".java", ".kt", ".cs"}
+
+
+def non_public_targets(root: Path, source_files: list[str], targets: list[str]) -> dict[str, str]:
+    """Targets that a test cannot import: unexported JS/TS module symbols, Python `_private`, Java/C#/Kotlin `private`.
+
+    A name counts only when every definition found for it is non-public. Bounded to MAX_FILES reads.
+    """
+    names = {n for t in targets for n in re.findall(r"[A-Za-z_]\w*", t.split("::")[-1])[-1:]}
+    names = {n for n in names if len(n) > 2}
+    if not names:
+        return {}
+    found: dict[str, list[tuple[str, bool]]] = {}
+    pattern = re.compile(r"\b(" + "|".join(map(re.escape, sorted(names))) + r")\b")
+    for rel in sorted(set(source_files))[:MAX_FILES]:
+        suffix = Path(rel).suffix
+        if suffix not in _SCRIPT | _JVM | {".py"}:
+            continue
+        text = _safe_read(Path(root) / rel)
+        if not text or not pattern.search(text):
+            continue
+        exported = set()
+        if suffix in _SCRIPT:
+            for group in re.findall(r"export\s*\{([^}]*)\}", text):
+                exported |= {part.split(" as ")[0].strip() for part in group.split(",")}
+        for line in text.splitlines():
+            for name in names:
+                if suffix in _SCRIPT and re.match(
+                    rf"\s*(export\s+(?:default\s+)?)?(?:async\s+)?(?:function\*?|const|let|var|class)\s+{name}\b",
+                    line,
+                ):
+                    public = bool(re.match(r"\s*export\b", line)) or name in exported
+                    found.setdefault(name, []).append((rel, public))
+                elif suffix == ".py" and re.match(rf"\s*(?:async\s+)?(?:def|class)\s+{name}\b", line):
+                    found.setdefault(name, []).append(
+                        (rel, not (name.startswith("_") and not name.endswith("__")))
+                    )
+                elif suffix in _JVM and re.search(rf"\b{name}\s*\(", line) and _DEFINITION.match(line):
+                    found.setdefault(name, []).append((rel, not re.match(r"\s*private\b", line)))
+    return {
+        name: (
+            f"{name} in {defs[0][0]} is not public (not exported/private): test it through the public "
+            "function, component or class that uses it, or record a testability gap. Never copy its code into the test."
+        )
+        for name, defs in found.items()
+        if defs and not any(public for _, public in defs)
+    }
 
 
 def retarget_cases(cases: list[dict], root: Path, source_files: list[str]) -> list[str]:

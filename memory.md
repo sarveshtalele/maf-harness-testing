@@ -269,3 +269,17 @@ Final verification on `new-ui`:
 - Not run here:
   - Playwright and the launcher smoke tests, because the sandbox blocks local port binding. CI runs both on all 3 OSes.
   - The live re-runs against the mcp-server-market-v2, mcp-skills-registry and store-pos repos, which need the gateway.
+
+### 2026-10-06 Post-merge run observation (orchestrator)
+- **Live E2E attempt:** the run against mcp-server-market-v2 could not get past the clone. The sandbox blocks writes to any `.git/config`, and running outside the sandbox was denied. The user must run it locally.
+- **Clone fix:** the clone now passes `--template=`, so user or global hook templates are never copied into the target clone. Hooks were already off through `core.hooksPath`. Commit 215107f.
+- **Evidence:** run `registry-strict-20261006` (mcp-skills-registry).
+  - Batch 2 failed 3 times. Design targeted module-level symbols that are not exported (`mcpUrl`, `CLIENTS` in `frontend/app/page.tsx`).
+  - The generator either copied the function into the test (the reviewer said "replicates") or imported a symbol that is not exported.
+  - The run had 433 design cases in 149 batches, which costs a lot of tokens. That is not fixed yet.
+- **Fix:** new `repo/testability.non_public_targets`. It flags unexported JS/TS symbols, Python `_private` names and Java/C#/Kotlin `private` methods.
+  - It is fed through `testability_for_targets(..., root, source_files)` to both the design and generation prompts.
+  - Generation gets a new strict rule: never copy application code into a test, and test non-public targets through their public user.
+  - A triage remedy covers "replicates" and "not exported".
+  - Checked on the real run repo: it flags mcpUrl, CLIENTS, CopyBtn, refresh, ConnectorCards and Dashboard, but not the exported Page and RootLayout.
+- **Verification:** 833 passed, plus the 13 sandbox EPERM baseline failures.

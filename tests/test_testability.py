@@ -83,3 +83,28 @@ def test_prompt_section_only_batch_relevant(tmp_path):
     assert "AddPurchaseController" not in prompt and prompt.index("target_source") < prompt.index(
         "testability"
     )
+
+
+def test_non_public_targets_cover_unexported_ts_private_python_and_java(tmp_path):
+    from maf_test_harness.qa.triage import remedy_for
+    from maf_test_harness.repo.testability import non_public_targets, testability_for_targets
+
+    (tmp_path / "app").mkdir()
+    (tmp_path / "app/page.tsx").write_text(
+        "const mcpUrl = () => '/mcp'\nconst CLIENTS = []\nfunction helper() {}\nexport { helper }\n"
+        "export default function Page() { return null }\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "svc.py").write_text("def _hidden():\n    pass\n\ndef shown():\n    pass\n", encoding="utf-8")
+    (tmp_path / "Calc.java").write_text(
+        "class Calc {\n  private int add(int a, int b) { return a + b; }\n  public int sub(int a, int b) { return a - b; }\n}\n",
+        encoding="utf-8",
+    )
+    files = ["app/page.tsx", "svc.py", "Calc.java"]
+    hidden = non_public_targets(
+        tmp_path, files, ["mcpUrl", "CLIENTS", "helper", "Page", "_hidden", "shown", "Calc.add", "Calc.sub"]
+    )
+    assert set(hidden) == {"mcpUrl", "CLIENTS", "_hidden", "add"}
+    assert "non_public_targets" in testability_for_targets({}, ["mcpUrl"], tmp_path, files)
+    assert testability_for_targets({}, ["Page"], tmp_path, files) == {}
+    assert "Do not copy application code" in remedy_for("The generated test replicates a CLIENTS function")
