@@ -13,6 +13,7 @@ from urllib.parse import urlparse
 from uuid import uuid4
 
 from ..models import RepoAnalysis
+from .git_transport import run_git
 
 IGNORED_DIRS = {
     ".git",
@@ -110,6 +111,12 @@ def validate_github_url(raw_url: str, with_ref: bool = False):
     pages such as /issues or /blob/. Returns (clone_url, owner, repo) or, with ``with_ref``, plus the pinned ref.
     """
     raw_url = raw_url.strip()
+    if raw_url.startswith("git clone "):
+        raw_url = raw_url[len("git clone ") :].strip()
+        if any(c.isspace() for c in raw_url):
+            raise RepoInputError(
+                "Paste a repository URL or git clone followed by one HTTPS URL; extra command arguments are not accepted."
+            )
     parsed = urlparse(raw_url)
     if parsed.scheme != "https" or parsed.hostname not in {"github.com", "www.github.com"}:
         raise RepoInputError("Use a public HTTPS GitHub URL such as https://github.com/owner/repo.")
@@ -167,6 +174,7 @@ def clone_repository(repo_url: str, destination: Path, timeout_seconds: int = 18
         "-c",
         "core.hooksPath=/dev/null",
         "clone",
+        "--progress",
         "--depth",
         "1",
         "--single-branch",
@@ -176,7 +184,14 @@ def clone_repository(repo_url: str, destination: Path, timeout_seconds: int = 18
         str(destination),
     ]
     # Never block on a credential prompt (private/nonexistent repos fail fast instead of hanging).
-    env = {**os.environ, "GIT_TERMINAL_PROMPT": "0", "GIT_ASKPASS": "true"}
+    env = {
+        **os.environ,
+        "GIT_TERMINAL_PROMPT": "0",
+        "GCM_INTERACTIVE": "false",
+        "GCM_GUI_PROMPT": "false",
+        "GIT_ASKPASS": "",
+        "SSH_ASKPASS": "",
+    }
     # Never inherit a certificate-verification bypass. Retry transport failures, not trust failures.
     env.pop("GIT_SSL_NO_VERIFY", None)
     deadline = time.monotonic() + timeout_seconds
@@ -207,20 +222,17 @@ def clone_repository(repo_url: str, destination: Path, timeout_seconds: int = 18
             remaining = deadline - time.monotonic()
             if remaining <= 0:
                 raise subprocess.TimeoutExpired(cmd, timeout_seconds)
-            proc = subprocess.run(
-                [cmd[0], *options, *cmd[1:]],
-                capture_output=True,
-                text=True,
-                encoding="utf-8",
-                errors="replace",
-                timeout=remaining,
-                check=False,
-                env=env,
-            )
+            proc = run_git([cmd[0], *options, *cmd[1:]], destination.parent, remaining, env, attempt + 1)
         except FileNotFoundError as exc:
             raise RepoCloneError("git is not installed or is not on PATH.") from exc
         except subprocess.TimeoutExpired as exc:
-            raise RepoCloneError(f"Repository clone exceeded {timeout_seconds} seconds.") from exc
+            raise RepoCloneError(
+                f"Repository clone exceeded {timeout_seconds} seconds. Inspect live Git logs and network/proxy connectivity, then Retry stage."
+            ) from exc
+        except InterruptedError as exc:
+            raise RepoCloneError(
+                "Repository clone cancelled. Retained output is available; Retry stage or stop the workflow."
+            ) from exc
         if proc.returncode == 0:
             with (destination.parent / "clone.log").open("a", encoding="utf-8") as log:
                 log.write(f"Repository clone succeeded on attempt {attempt + 1}.\n")

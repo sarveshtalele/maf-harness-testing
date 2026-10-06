@@ -6,7 +6,7 @@ The UI includes mouse-resizable panels, light/dark appearance, per-user run hist
 
 Repository analysis and requirements execute the locked reverse-engineering and requirement-analysis scripts without model calls. Planning, design and generation remain model-assisted. Agent skill cards show each workflow map and recorded script executions; Observability filters evidence by step. Run completion measures approved stage milestones, separately from the test verdict. See the [run failure and skill execution review](docs/RUN_FAILURE_AND_SKILL_EXECUTION_REVIEW.md) for verification and limits.
 
-## Quick start: macOS and Windows
+## Quick start: Windows, macOS and Linux
 
 Install [Git](https://git-scm.com/), [Node.js 24 LTS](https://nodejs.org/) and [uv](https://docs.astral.sh/uv/getting-started/installation/). The scripts let uv provision Python 3.12, install the locked Python/frontend dependencies and build the UI.
 
@@ -93,7 +93,7 @@ npm --prefix frontend run typecheck
 npm --prefix frontend run build
 ```
 
-From `frontend`, run `npx playwright install chromium`, then `npm test`. This produces `playwright-report/index.html`, JUnit, failure screenshots and traces. Browser checks exercise the real workflow with deterministic model inputs; they are distinct from live model/GitHub runs. GitHub Actions runs backend checks on Ubuntu/Windows and Next.js browser journeys on macOS/Windows, publishing per-platform browser reports.
+From `frontend`, run `npx playwright install chromium`, then `npm test`. This produces `playwright-report/index.html`, JUnit, failure screenshots and traces. Browser checks exercise the real workflow with deterministic model inputs; they are distinct from live model/GitHub runs. GitHub Actions runs backend checks on Ubuntu/Windows and Next.js browser journeys on Ubuntu/macOS/Windows, publishing per-platform browser reports.
 
 ## Command line
 
@@ -158,3 +158,9 @@ The public `Harness` remains in `src/maf_test_harness/workflow.py`. Its implemen
 ### Deterministic analysis and inspectable runs
 
 New repository analysis and requirements use reviewed host-static skills without model calls. Source paths, lines, hashes and coverage gaps are shown in artifacts. This is a callable surface inventory requiring review, not a guarantee of complete business requirements. Planning, design and generation still use the model. Click any workflow stage to revisit its saved evidence during execution; each run’s Logs also exposes its redacted audit and trace files. See [skill review, findings and limits](docs/DETERMINISTIC_SKILL_REVIEW.md).
+
+### Linux launcher and live clone diagnostics
+
+Use `bash start-linux.sh` (or `bash start-linux.sh --smoke-test`) with Node 24 and uv installed. Windows and macOS keep their existing launchers. All use the same Python API and Next launcher.
+
+The clone view shows the actual run directory, attempt, timeout and live Git output. **Cancel clone** stops only that run's Git process tree and returns a retry/stop gate with logs retained. The default history directory is `~/.maf-harness/runs` (`%USERPROFILE%\.maf-harness\runs` on Windows); it is not a folder inside the downloaded checkout. See [clone diagnostics](docs/CLONE_AND_PLATFORM_DIAGNOSTICS.md).

@@ -275,7 +275,9 @@ class Harness(RerunSteps, ExecutionSteps, GenerationSteps, PlanningSteps):
             raise ValueError("Run already started. Resume its pending request.")
         if not isinstance(repo_knowledge, str) or len(repo_knowledge) > 32000:
             raise ValueError("Repository knowledge must be text of at most 32,000 characters.")
-        _, _, _, ref = validate_github_url(repo_url, with_ref=True)
+        canonical, _, _, ref = validate_github_url(repo_url, with_ref=True)
+        if repo_url.strip().startswith("git clone "):
+            repo_url = canonical
         if app_url is not None and not re.fullmatch(
             r"https?://(?:localhost|127\.0\.0\.1)(?::\d+)?(?:/\S*)?", app_url.strip()
         ):
@@ -331,6 +333,8 @@ class Harness(RerunSteps, ExecutionSteps, GenerationSteps, PlanningSteps):
                 raise PermissionError(f"Blocked by hook ({gate.source}): {gate.reason}")
             self.view = fresh
             self.state = pending["state"]
+            self.state["active_stage"] = pending["stage"]
+            self.view["status"] = "running"
             self.view["consumed"].append(request_id)
             self.save()
             self.audit(
@@ -550,6 +554,9 @@ class Harness(RerunSteps, ExecutionSteps, GenerationSteps, PlanningSteps):
             if request["details"].get("tool") != "clone_repository":
                 raise ValueError("This workflow only permits the repository clone tool.")
             self.audit("tool_started", tool="clone_repository", request_id=request["id"])
+            self.state = state
+            state["active_stage"] = stage
+            self.save()
             _, _, repo_name = validate_github_url(state["repo_url"])
             await asyncio.to_thread(clone_repository, state["repo_url"], self.run_dir / "repo")
             artifact = await asyncio.to_thread(

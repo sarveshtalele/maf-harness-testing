@@ -16,8 +16,8 @@ def test_schannel_retries_use_http1_then_verified_openssl_without_global_changes
     monkeypatch.setattr(analyzer.sys, "platform", "win32")
     monkeypatch.setenv("GIT_SSL_NO_VERIFY", "1")
 
-    def git(command, **kwargs):
-        calls.append((command, kwargs))
+    def git(command, run_dir, timeout, env, attempt=1):
+        calls.append((command, {"env": env, "timeout": timeout}))
         destination.mkdir()
         (destination / "partial.txt").write_text(f"attempt {len(calls)}")
         return subprocess.CompletedProcess(
@@ -27,7 +27,7 @@ def test_schannel_retries_use_http1_then_verified_openssl_without_global_changes
             "fatal: schannel: server closed abruptly (missing close_notify)",
         )
 
-    monkeypatch.setattr(analyzer.subprocess, "run", git)
+    monkeypatch.setattr(analyzer, "run_git", git)
     assert analyzer.clone_repository("https://github.com/acme/demo", destination)[1] == "demo"
     assert len(calls) == 3
     assert "http.version=HTTP/1.1" in calls[1][0]
@@ -36,7 +36,7 @@ def test_schannel_retries_use_http1_then_verified_openssl_without_global_changes
     for command, kwargs in calls:
         assert "http.sslVerify=true" in command and "config" not in command
         assert "GIT_SSL_NO_VERIFY" not in kwargs["env"]
-        assert kwargs["encoding"] == "utf-8"
+        assert kwargs["env"]["GCM_INTERACTIVE"] == "false"
     assert len(list((tmp_path / "clone-attempts").glob("*/repo"))) == 3
     assert list((tmp_path / "clone-attempts").glob("*/repo/retained.txt"))
     assert "succeeded on attempt 3" in (tmp_path / "clone.log").read_text()
@@ -49,11 +49,11 @@ def test_schannel_retries_use_http1_then_verified_openssl_without_global_changes
 def test_clone_does_not_retry_authentication_or_certificate_failures(tmp_path, monkeypatch, error):
     calls = []
 
-    def git(command, **kwargs):
+    def git(command, run_dir, timeout, env, attempt=1):
         calls.append(command)
         return subprocess.CompletedProcess(command, 128, "", error)
 
-    monkeypatch.setattr(analyzer.subprocess, "run", git)
+    monkeypatch.setattr(analyzer, "run_git", git)
     with pytest.raises(analyzer.RepoCloneError, match=error):
         analyzer.clone_repository("https://github.com/acme/demo", tmp_path / "repo")
     assert len(calls) == 1

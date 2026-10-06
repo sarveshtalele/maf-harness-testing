@@ -12,6 +12,7 @@ import zipfile
 from pathlib import Path
 
 ROOTS = (
+    "clone-operations",
     "executions",
     "environment",
     "build_checks",
@@ -51,7 +52,7 @@ def inventory(run_dir: Path) -> dict:
                 and not (Path(current) / d).is_symlink()
             ]
             for name in sorted(names):
-                if folder == "." and name not in {"audit.jsonl", "trace.jsonl", "workflow.log"}:
+                if folder == "." and name not in {"audit.jsonl", "trace.jsonl", "workflow.log", "clone.log"}:
                     continue
                 visited += 1
                 if visited > 20000:

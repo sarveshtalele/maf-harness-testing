@@ -231,7 +231,7 @@ def main():
         raise KeyboardInterrupt
 
     previous_handlers = {}
-    for name in ("SIGTERM", "SIGBREAK"):
+    for name in ("SIGTERM", "SIGBREAK", "SIGHUP"):
         if hasattr(signal, name):
             signum = getattr(signal, name)
             previous_handlers[signum] = signal.signal(signum, interrupt)
@@ -292,16 +292,31 @@ def main():
     except KeyboardInterrupt:
         pass
     finally:
+        # A second Ctrl+C must not interrupt taskkill and leave the application children running.
+        for name in ("SIGINT", "SIGBREAK", "SIGTERM", "SIGHUP"):
+            if hasattr(signal, name):
+                signum = getattr(signal, name)
+                previous_handlers.setdefault(signum, signal.getsignal(signum))
+                signal.signal(signum, signal.SIG_IGN)
         for process in reversed(processes):
             if process.poll() is None:
                 if os.name == "nt":
-                    subprocess.run(
-                        ["taskkill", "/PID", str(process.pid), "/T", "/F"],
-                        check=False,
-                        stdout=subprocess.DEVNULL,
-                    )
+                    try:
+                        subprocess.run(
+                            ["taskkill", "/PID", str(process.pid), "/T", "/F"],
+                            check=False,
+                            stdout=subprocess.DEVNULL,
+                            stderr=subprocess.DEVNULL,
+                            timeout=10,
+                        )
+                    except (OSError, subprocess.TimeoutExpired):
+                        if process.poll() is None:
+                            process.kill()
                 else:
-                    os.killpg(process.pid, signal.SIGTERM)
+                    try:
+                        os.killpg(process.pid, signal.SIGTERM)
+                    except ProcessLookupError:
+                        pass
         for process in processes:
             try:
                 process.wait(timeout=15)
@@ -310,7 +325,7 @@ def main():
                     os.killpg(process.pid, signal.SIGKILL)
                 else:
                     process.kill()
-                process.wait()
+                process.wait(timeout=5)
         for worker in threads:
             worker.join(timeout=5)
         log.close()

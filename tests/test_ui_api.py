@@ -3,7 +3,9 @@
 import base64
 import io
 import json
+import os
 import re
+import sys
 import threading
 import time
 import zipfile
@@ -15,6 +17,7 @@ from fakes import ScriptedStageRuntime, clone_fixture, local_env_plan
 from test_execution_stage import local_pytest_plan
 
 import maf_test_harness.workflow as wf
+from maf_test_harness.repo.git_transport import run_git
 from maf_test_harness.ui.api import LocalAPI, make_server
 from maf_test_harness.workflow_steps import execution as execution_steps
 
@@ -41,6 +44,52 @@ def approve(api, key):
     run = api.read(key)
     api.respond(key, {"request_id": run["pending"]["id"], "decision": "approve"})
     wait(api)
+    assert not api.errors
+
+
+def test_stalled_clone_has_live_operation_directory_and_can_be_cancelled_then_retried(local_api, monkeypatch):
+    api = local_api
+
+    def stalled(url, destination):
+        run_git(
+            [
+                sys.executable,
+                "-c",
+                "import sys,time;print('Connecting to GitHub',file=sys.stderr,flush=True);time.sleep(30)",
+            ],
+            destination.parent,
+            20,
+            os.environ.copy(),
+        )
+
+    monkeypatch.setattr(wf, "clone_repository", stalled)
+    key = api.start({"repo_url": "git clone https://github.com/acme/demo"})["id"]
+    wait(api)
+    assert api.read(key)["state"]["repo_url"] == "https://github.com/acme/demo.git"
+    api.respond(key, {"request_id": api.read(key)["pending"]["id"], "decision": "approve"})
+    deadline = time.monotonic() + 10
+    while time.monotonic() < deadline:
+        run = api.read(key)
+        if run["operation"].get("latest_output") == "Connecting to GitHub":
+            break
+        time.sleep(0.05)
+    else:
+        pytest.fail("Clone operation was not exposed while the workflow was running")
+    assert run["busy"] and run["pending_consumed"]
+    assert run["state"]["active_stage"] == "repo_analysis"
+    assert run["run_directory"] == str(api.run_path(key))
+    assert any("clone-operations" in f["path"] for f in api.evidence(key)["files"])
+    api.cancel_clone(key)
+    wait(api)
+    cancelled = api.read(key)
+    assert cancelled["pending"]["kind"] == "error"
+    assert not cancelled["busy"] and "retry" in cancelled["actions"]
+    monkeypatch.setattr(wf, "clone_repository", clone_fixture)
+    api.respond(key, {"request_id": cancelled["pending"]["id"], "decision": "retry"})
+    wait(api)
+    approve(api, key)
+    wait(api)
+    assert api.read(key)["pending"]["kind"] == "review"
     assert not api.errors
 
 

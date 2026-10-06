@@ -22,6 +22,7 @@ from ..agent import prompt_settings
 from ..agent.runtime import MAFHarnessRuntime
 from ..monitoring.report import build_report
 from ..repo.analyzer import validate_github_url
+from ..repo.git_transport import read_operation
 from ..settings import API_KEY, BASE_URL, MODEL, validate_gateway_settings
 from ..storage import read_json
 from ..workflow import Harness
@@ -158,6 +159,11 @@ class LocalAPI(EvidenceAPI, SettingsAPI):
                     "state": {k: state[k] for k in PUBLIC_STATE if k in state},
                     "actions": [] if self.job else actions,
                     "busy": bool(self.job and self.job_run == key),
+                    "pending_consumed": bool(pending and pending["id"] in view.get("consumed", [])),
+                    "run_directory": str(self.run_path(key)),
+                    "operation": read_operation(self.run_path(key))
+                    if self.job and self.job_run == key
+                    else {},
                     "service_busy": bool(self.job),
                     "operation_error": self.errors.get(key),
                     "error": view.get("error"),
@@ -249,6 +255,8 @@ class LocalAPI(EvidenceAPI, SettingsAPI):
             ):
                 raise ValueError("Repository and application URLs must be text; start_app must be boolean.")
             validate_github_url(url)
+            if url.strip().startswith("git clone "):
+                url = validate_github_url(url)[0]
             if app_url and not re.fullmatch(
                 r"https?://(?:localhost|127\.0\.0\.1)(?::\d+)?(?:/\S*)?", app_url.strip()
             ):
@@ -311,6 +319,17 @@ class LocalAPI(EvidenceAPI, SettingsAPI):
             self.job_run = key
             self.errors.pop(key, None)
             self.job = self.service.submit(self.replace_host(key))
+            return {"id": key}
+
+    def cancel_clone(self, key: str):
+        with self.lock:
+            self.harvest()
+            path = self.run_path(key)
+            operation = read_operation(path)
+            if not self.job or self.job_run != key or operation.get("status") != "running":
+                raise RuntimeError("No active repository clone to cancel.")
+            atomic_json(path / "clone_cancel.json", {"operation_id": operation["id"]})
+            self.operation_log(key, "clone cancellation requested")
             return {"id": key}
 
     def rerun(self, key: str, body: dict):
@@ -494,6 +513,8 @@ def make_server(api: LocalAPI, token: str, port: int = 8765):
                         self.reply(202, api.start(body))
                     elif len(parts) == 3 and parts[0] == "runs" and parts[2] == "delete":
                         self.reply(200, api.delete_run(parts[1], body))
+                    elif len(parts) == 3 and parts[0] == "runs" and parts[2] == "cancel-clone":
+                        self.reply(202, api.cancel_clone(parts[1]))
                     elif (
                         len(parts) == 3
                         and parts[0] == "runs"

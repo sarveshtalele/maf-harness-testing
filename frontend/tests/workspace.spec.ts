@@ -303,3 +303,28 @@ test('aligned editors, configuration separation and confirmed run removal', asyn
   await expect(remove).toHaveCount(0);
   expect((await request.get(`/api/harness/runs/${key}`)).status()).toBe(404);
 });
+
+test('clone progress has a stage, actual directory, live output and cancellation', async ({ page, request }, testInfo) => {
+  const created = await request.post('/api/harness/runs', { data: { repo_url: 'git clone https://github.com/acme/demo' } });
+  const key = (await created.json()).id;
+  await expect.poll(async () => (await (await request.get(`/api/harness/runs/${key}`)).json()).busy).toBe(false);
+  const saved = await (await request.get(`/api/harness/runs/${key}`)).json();
+  let cancelled = false;
+  await page.route(`**/api/harness/runs/${key}`, async route => route.fulfill({ json: { ...saved,
+    busy: !cancelled, service_busy: !cancelled, pending_consumed: !cancelled,
+    state: { ...saved.state, active_stage: undefined }, actions: cancelled ? ['retry', 'stop'] : [],
+    pending: cancelled ? { ...saved.pending, kind: 'error', error: 'Repository clone cancelled. Retry stage or stop.' } : saved.pending,
+    operation: cancelled ? {} : { kind: 'clone', stage: 'repo_analysis', status: 'running', attempt: 1, elapsed_seconds: 12, timeout_seconds: 180, latest_output: 'Receiving objects: 12%' }
+  } }));
+  await page.route(`**/api/harness/runs/${key}/cancel-clone`, async route => { cancelled = true; await route.fulfill({ status: 202, json: { id: key } }); });
+  await page.goto(`/?run=${key}&tab=Review`);
+  await expect(page.getByRole('status').filter({ hasText: 'Cloning repository from GitHub…' })).toBeVisible();
+  await expect(page.getByText('Receiving objects: 12%', { exact: true })).toBeVisible();
+  await expect(page.getByText(saved.run_directory, { exact: true }).first()).toBeVisible();
+  await expect(page.getByText('— is running…', { exact: true })).toHaveCount(0);
+  await expect(page.getByText('Approved Action In Progress', { exact: true })).toBeVisible();
+  await page.screenshot({ path: testInfo.outputPath('live-clone-progress.png') });
+  await page.getByRole('button', { name: 'Cancel clone', exact: true }).click();
+  await expect(page.getByRole('button', { name: 'Retry stage', exact: true })).toBeEnabled();
+  await expect(page.getByRole('button', { name: 'Cancel clone', exact: true })).toHaveCount(0);
+});
