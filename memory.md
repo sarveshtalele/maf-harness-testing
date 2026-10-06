@@ -232,3 +232,30 @@ Wave 1 verification: 815 passed. The 13 failures are the sandbox EPERM baseline.
 - **Decision:** `uncovered_requirements` is unchanged, because existing consumers read it. A witness is a static call match, not measured coverage.
 - **Follow-up:** `skills/reports.py` does not report witness states yet.
 - **Tests:** `tests/test_requirement_witnesses.py` replays the mcp-server-market-v2 case and the REQ-1/REQ-10 regression. 820 passed after the merge.
+
+### 2026-10-06 T5 Testability analysis (Sonnet, merged)
+- **What changed:**
+  - New `repo/testability.py`. It is deterministic, regex-based and makes no model calls. `analyze_testability` grades each class:
+    - **low:** the constructor does static or singleton acquisition or I/O.
+    - **medium:** the class uses a UI toolkit (JavaFX, Swing, WinForms/WPF, React `.tsx`) or creates non-injectable locals.
+    - **high:** neither applies.
+  - `mockStatic` is suggested only when mockito-inline or mockito 5+ is declared.
+  - Results are stored in `repo_analysis["testability"]`, and only entries relevant to the current batch reach the design and generation prompts.
+  - `retarget_cases` moves an arithmetic expectation to the single same-file callee that implements it, for example setPrice → calculatePrice. Each move is audited as `design_case_retargeted` and recorded in `host_notes`.
+- **Merge:** planning.py and prompts.py conflicted with T4's `existing_test_witnesses`. Both sections were kept.
+- **Follow-ups:**
+  - Retargeting does not yet check that field names match.
+  - Nested classes are not analysed.
+  - Runs from before this change get no testability data until repo_analysis is re-run.
+
+### 2026-10-06 T7 Fail-soft batches + per-stage models (orchestrator, on top of the Haiku worktree)
+- **Rejected:** the Haiku branch moved the batch loop into a copied 240-line `_generate_batch`. That copy lost T5's testability section and re-derived the cache, so it was not merged.
+- **What was taken from the branch:** settings, runtime and `.env.example`.
+- **Fail-soft:** implemented as a small edit to the existing loop.
+  - A batch that exhausts its attempts is recorded in `generation_failures` and audited as `test_generation_batch_failed`.
+  - The run continues. It aborts only when more than `HARNESS_MAX_FAILED_BATCH_RATIO` (0.5) of batches fail, or when no files were generated.
+  - Failed batches are not cached, so a rerun or heal retries them. Heal rounds keep the batch's passing files.
+  - Failed cases show as `generation_failed` in the catalog and the QA report, and they block a PASS verdict.
+- **Per-stage models:** `HARNESS_STAGE_MODELS` takes a strict JSON object. The runtime uses `STAGE_MODELS.get(stage) or self.model`, and `state["stage_models"]` records the model used.
+- **Dropped:** the separate reviewer budget, as YAGNI. Once failures are fail-soft, a reviewer rejection no longer aborts the stage.
+- **Tests:** `tests/test_fail_soft_generation.py` covers continue, ratio abort, report verdict, stage-model parsing and the tool budget. `test_attempt_audit` now pins the ratio at 0. 832 passed.
