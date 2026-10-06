@@ -19,6 +19,7 @@ from typing import Any
 
 # Keys, most stable first. A key not listed keeps its insertion order after the listed ones.
 STAGE_ORDER = (
+    # Identical for every batch of a stage (the output schema must stay batch-independent: no per-batch enums).
     "assignment",
     "output_contract",
     "json_rules",
@@ -26,14 +27,15 @@ STAGE_ORDER = (
     "stack_profile",
     "live_app",
     "selected_application",
+    "evidence_file_paths",
+    "traceability_rule",
+    # Per batch from here on: this batch's requirements, evidence, tests and allowed IDs.
     "approved_inputs",
     "repository_evidence",
     "existing_tests",
     "existing_test_witnesses",
     "testability",
-    "evidence_file_paths",
     "approved_traceability_ids",
-    "traceability_rule",
     "revision_feedback",
     "repair_feedback",
 )
@@ -42,8 +44,9 @@ GENERATION_ORDER = (
     "output_contract",
     "json_rules",
     "strict_quality_rules",
-    "approved_inputs",  # its own keys are ordered stable-first too (see GENERATION_INPUT_ORDER)
     "repository",
+    # approved_inputs starts with test_plan and generation_policy (stable), then the batch (see GENERATION_INPUT_ORDER)
+    "approved_inputs",
     "target_source",
     "testability",
     "collaborator_signatures",

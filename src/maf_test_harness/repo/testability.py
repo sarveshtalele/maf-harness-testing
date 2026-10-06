@@ -32,7 +32,9 @@ _UI_TYPES = (
 _LOCAL_UI = re.compile(rf"^\s*(?:final\s+)?(?:{_UI_TYPES})\b(?:<[^>]*>)?\s+\w+\s*=\s*new\s+", re.M)
 _ARITH = re.compile(r"\w\s*[*/]\s*[\w(]")
 # Arithmetic only: "/" in paths/URLs and "*" in globs are not cues (they caused false retargets on CLI/API cases).
-_ARITH_CUE = re.compile(r"\d\s*[*x×/]\s*\d|multipl|calculat|product of|\btimes\b|\btotal\b|\bamount\b|\bsum\b", re.I)
+_ARITH_CUE = re.compile(
+    r"\d\s*[*x×/]\s*\d|multipl|calculat|product of|\btimes\b|\btotal\b|\bamount\b|\bsum\b", re.I
+)
 
 
 def _mockito_static_ok(root: Path) -> bool:

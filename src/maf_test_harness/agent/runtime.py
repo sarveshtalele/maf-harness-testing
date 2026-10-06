@@ -41,6 +41,7 @@ from ..settings import (
 from ..skills.config import COMPANION_PURPOSE
 from ..skills.registry import require_valid
 from ..skills.scripts import HarnessScriptRunner, script_approval_rule
+from ..storage import atomic_json
 from ..tools.agent_tools import CENTRAL_TOOL_NAMES, tool_instructions
 from ..tools.typed import TYPED_TOOL_NAMES
 
@@ -49,6 +50,14 @@ HARNESS_TOOL_NAMES = (*CENTRAL_TOOL_NAMES, *TYPED_TOOL_NAMES)
 
 class AgentOutputError(RuntimeError):
     pass
+
+
+def response_cache_dir() -> Path | None:
+    """Where validated temperature-0 stage answers are kept; None when HARNESS_RESPONSE_CACHE=0 (see docs/CACHING.md)."""
+    if os.getenv("HARNESS_RESPONSE_CACHE", "1").strip().lower() in {"0", "off", "false", "no"}:
+        return None
+    default = Path(__file__).resolve().parents[3] / ".maf-harness" / "cache" / "responses"
+    return Path(os.getenv("HARNESS_RESPONSE_CACHE_DIR") or default).expanduser()
 
 
 DEFAULT_MAX_OUTPUT_TOKENS = MAX_OUTPUT_TOKENS
@@ -307,6 +316,9 @@ class MAFHarnessRuntime:
         self._tracers = {}
         self._primed = {}
         self._run_counts: dict[str, int] = {}
+        self._last_response: dict[
+            str, dict[str, Any]
+        ] = {}  # stage -> {path, result, hit}: awaiting host validation
         self.recorder: TraceRecorder | None = None  # set by the workflow host; None = no trace file
         self._trace_context: dict[str, Any] = {}
         # Reviewed, hash-pinned scripts the agent may call through MAF run_skill_script (model tier only).
@@ -717,6 +729,27 @@ class MAFHarnessRuntime:
         temperature: float = 0.0,
     ) -> dict:
         skills = [skill_name, *companions]
+        cache_path = self._response_cache_path(stage, skills, persona, prompt, response_format, temperature)
+        self._last_response.pop(stage, None)
+        if cache_path is not None and cache_path.is_file():
+            try:
+                cached = json.loads(cache_path.read_text(encoding="utf-8"))
+                if isinstance(cached, dict) and cached.get("status") == "completed":
+                    digest = hashlib.sha256(prompt.encode()).hexdigest()
+                    self._last_response[stage] = {"path": cache_path, "result": cached, "hit": True}
+                    self._trace_context = {"stage": stage, "phase": "structured"}
+                    self._emit(
+                        "cache_hit",
+                        stage=stage,
+                        prompt_sha256=digest,
+                        tokens={"input": 0, "output": 0, "cached": 0},
+                    )
+                    state.setdefault("invocations", []).append(
+                        {"stage": stage, "skill": skill_name, "prompt_sha256": digest, "status": "cache_hit"}
+                    )
+                    return copy.deepcopy(cached)
+            except (OSError, ValueError):
+                pass  # unreadable entry: behave like a miss
         identity = (skills, persona)
         if self._agents.get(stage, (None, None))[0] != identity:  # first call, or the skill set changed
             self._agents[stage] = (identity, self._create_agent(stage, skills, persona, state, persist))
@@ -812,7 +845,54 @@ class MAFHarnessRuntime:
             ):
                 raise AgentOutputError("Agent requested input without concrete questions.")
             return data
-        return {"status": "completed", "artifact": data}
+        outcome = {"status": "completed", "artifact": data}
+        if cache_path is not None:
+            self._last_response[stage] = {"path": cache_path, "result": outcome, "hit": False}
+        return outcome
+
+    def _response_cache_path(
+        self, stage, skills, persona, prompt, response_format, temperature
+    ) -> Path | None:
+        """Content-addressed entry for this exact call, or None (disabled, or temperature > 0: retries must vary)."""
+        root = response_cache_dir()
+        if root is None or temperature != 0:
+            return None
+        schema = (
+            response_format.model_json_schema() if hasattr(response_format, "model_json_schema") else None
+        )
+        material = json.dumps(
+            [
+                STAGE_MODELS.get(stage) or self.model,
+                stage,
+                skills,
+                persona,
+                prompt,
+                schema,
+                temperature,
+                self.skill_mode,
+            ],
+            sort_keys=True,
+            default=str,
+        )
+        return root / f"{hashlib.sha256(material.encode()).hexdigest()}.json"
+
+    def settle_response_cache(self, stage: str, validated: bool) -> None:
+        """Called by the host after its own validation of the stage's last answer.
+
+        Accepted fresh answers are stored; a rejected answer is never stored and a rejected cached one is deleted.
+        Cache failures never fail a run.
+        """
+        entry = self._last_response.pop(stage, None)
+        if entry is None:
+            return
+        try:
+            if validated and not entry["hit"]:
+                entry["path"].parent.mkdir(parents=True, exist_ok=True)
+                atomic_json(entry["path"], entry["result"])
+            elif not validated:
+                entry["path"].unlink(missing_ok=True)
+        except OSError:
+            pass
 
     async def close(self):
         for client in self._clients:
