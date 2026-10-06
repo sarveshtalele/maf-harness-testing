@@ -21,7 +21,7 @@ from ..models import (
     TestDesignDraft,
     TestPlan,
 )
-from ..qa.quality import existing_test_evidence
+from ..qa.quality import existing_requirement_witnesses, existing_test_evidence
 from ..qa.report import design_cases
 from ..repo.analyzer import build_repository_evidence
 from ..repo.stack import detect_stack
@@ -264,6 +264,16 @@ class PlanningSteps:
                         state["artifacts"]["repo_analysis"].get("test_files", []),
                         requirements_source.get("requirement_model", {}).get("requirements", []),
                     )
+                    if stage == "test_design"
+                    else None,
+                    "existing_test_witnesses": {
+                        rid: [f"{w['test_file']}:{w['line']} calls {w['symbol']}" for w in rows[:3]]
+                        for rid, rows in existing_requirement_witnesses(
+                            self.run_dir / "repo",
+                            state["artifacts"]["repo_analysis"].get("test_files", []),
+                            requirements_source.get("requirement_model", {}).get("requirements", []),
+                        ).items()
+                    }
                     if stage == "test_design"
                     else None,
                     "stack_profile": state.get("stack", {}),

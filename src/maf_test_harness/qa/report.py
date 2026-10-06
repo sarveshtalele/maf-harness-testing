@@ -107,8 +107,20 @@ def build_qa_report(
             if statuses == {"passed"}
             else "not_executed"
         )
+        rid = req["id"]
+        gaps = design.get("gaps_report", {})
+        req_state = (
+            "new"
+            if linked
+            else "pre_existing_witness"
+            if rid in gaps.get("pre_existing_test_witnesses", {})
+            else "excluded"
+            if rid in gaps.get("excluded_requirements", [])
+            else "unexplained"
+        )
         coverage.append(
             {
+                "requirement_state": req_state,
                 "id": req["id"],
                 "text": req["text"],
                 "category": req.get("category", ""),
@@ -211,6 +223,10 @@ def build_qa_report(
         "case_status_counts": counts,
         "cases": cases,
         "requirement_coverage": coverage,
+        "requirement_state_counts": {
+            k: sum(c["requirement_state"] == k for c in coverage)
+            for k in ("new", "pre_existing_witness", "excluded", "unexplained")
+        },
         "coverage_scope": "Requirement-to-test traceability; not measured line, branch or behavior coverage.",
         "failures": [
             c
@@ -321,6 +337,11 @@ def render_markdown(report: dict[str, Any]) -> str:
         "|---|---|",
     ]
     lines += [f"| {r['state']} | {r['text'][:110]} |" for r in report["requirement_coverage"]]
+    lines += [
+        "",
+        "Requirement states (static traceability, not measured coverage): "
+        + ", ".join(f"{k}={v}" for k, v in report["requirement_state_counts"].items()),
+    ]
     if report["failures"]:
         lines += ["", "## Failures", ""]
         lines += [

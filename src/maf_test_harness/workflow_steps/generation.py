@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+import re
 from typing import Any
 from uuid import uuid4
 
@@ -10,7 +11,12 @@ from ..envs import Provisioned
 from ..envs.platform_compat import raise_if_cancelled
 from ..llm.prompts import generation_prompt
 from ..models import GeneratedFilesDraft
-from ..qa.quality import existing_test_evidence, require_complete_intake, validate_java_traceability
+from ..qa.quality import (
+    existing_requirement_witnesses,
+    existing_test_evidence,
+    require_complete_intake,
+    validate_java_traceability,
+)
 from ..qa.report import design_cases
 from ..qa.triage import remedy_for
 from ..repo.analyzer import (
@@ -398,12 +404,17 @@ class GenerationSteps:
         are rejected on every attempt, including the last repair attempt.
         """
         arts = state["artifacts"]
-        cited = " ".join(str(g) for g in state.get("draft", {}).get("gaps", [])).lower()
+        gap_entries = [str(g) for g in state.get("draft", {}).get("gaps", [])]
+        cited = " ".join(gap_entries).lower()
+
+        def mentions(word: str) -> bool:
+            return re.search(r"(?<![\w-])" + re.escape(word.lower()) + r"(?![\w-])", cited) is not None
+
         cases = design_cases(design)
         problems: list[str] = []
         if (
             arts["repo_analysis"].get("source_file_count")
-            and "unit" not in cited
+            and not mentions("unit")
             and not any(c.get("level") == "unit" for c in cases)
         ):
             problems.append(
@@ -415,14 +426,44 @@ class GenerationSteps:
             for a in (requirements_source or arts["requirements"]).get("actors", [])
             if a["name"].lower() != "system"
             and not any(c.get("actor") == a["name"] for c in cases)
-            and a["name"].lower() not in cited
+            and not mentions(a["name"])
         ]
         if idle:
             problems.append(
                 f"Actor(s) without any test case: {', '.join(idle)}. Design cases per actor journey, or "
                 "mention the actor in `gaps` with the reason."
             )
-        missing = [rid for rid in design["gaps_report"]["uncovered_requirements"] if rid.lower() not in cited]
+        requirements = (
+            (requirements_source or arts["requirements"]).get("requirement_model", {}).get("requirements", [])
+        )
+        uncovered = design["gaps_report"]["uncovered_requirements"]
+        try:
+            root = self.run_dir / "repo"
+        except Exception:  # bare host without a run dir
+            root = None
+        test_files = arts["repo_analysis"].get("test_files", [])
+        witnesses = (
+            existing_requirement_witnesses(
+                root, test_files, [r for r in requirements if r.get("id") in uncovered]
+            )
+            if root and test_files
+            else {}
+        )
+        id_pattern = re.compile(r"REQ-[A-Z0-9][A-Z0-9-]*[A-Z0-9]", re.I)
+
+        def explained(rid: str) -> bool:
+            token = re.compile(r"(?<![\w-])" + re.escape(rid) + r"(?![\w-])", re.I)
+            for entry in gap_entries:
+                if token.search(entry):
+                    reason = id_pattern.sub("", token.sub("", entry))
+                    if len(re.sub(r"[\W_]+", "", reason)) >= 10:
+                        return True
+            return False
+
+        excluded = [rid for rid in uncovered if rid not in witnesses and explained(rid)]
+        design["gaps_report"]["pre_existing_test_witnesses"] = witnesses
+        design["gaps_report"]["excluded_requirements"] = excluded
+        missing = [rid for rid in uncovered if rid not in witnesses and rid not in excluded]
         if missing:
             listing = "; ".join(missing)
             problems.append(
