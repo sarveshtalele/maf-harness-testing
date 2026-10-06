@@ -31,6 +31,8 @@ STAGE_ORDER = (
     "existing_tests",
     "existing_test_witnesses",
     "testability",
+    "cases_under_review",
+    "target_source",
     "evidence_file_paths",
     "approved_traceability_ids",
     "traceability_rule",

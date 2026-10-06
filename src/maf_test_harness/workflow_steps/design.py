@@ -51,6 +51,7 @@ async def design_tests_batched(host, state):
     cache = state.setdefault("accepted_design_batches", {})
     if cache.get("signature") != signature:
         cache.clear()
+        state["design_reviews"] = {}
         cache.update(signature=signature, batches={})
     batches = list(requirement_batches(requirements))
     merged = {f"{section}_tests": [] for section in SECTIONS}

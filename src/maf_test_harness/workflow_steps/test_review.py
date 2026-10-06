@@ -1,5 +1,6 @@
 """Independent MAF review of generated cases against their actual source evidence."""
 
+from ..agent.personas import chief_architect_persona
 from ..llm.prompts import generation_prompt
 from ..models import TestReviewDraft
 from ..repo.analyzer import build_repository_evidence, extract_target_sources
@@ -55,7 +56,12 @@ async def review_generated_tests(host, state, candidate, cases, batch):
                 role="test_reviewer",
                 skill_name="generic-test-generator",
                 companions=(),
-                persona="You are the independent Repository Test Reviewer. Critique generated tests against source evidence. Never execute code or install packages. Follow the review output contract, not a test-source generation contract. Score the five rubric dimensions conservatively and explain uncertainties.",
+                persona=chief_architect_persona(
+                    state.get("stack"),
+                    state["artifacts"].get("repo_analysis", {}).get("languages"),
+                    state["artifacts"].get("repo_analysis", {}).get("frameworks", ()),
+                )
+                + "\nTASK: review generated tests against source evidence using the review output contract (not a generation contract). Score the five rubric dimensions conservatively and explain uncertainties.",
                 prompt=generation_prompt({**sections, "repair_feedback": repair}),
                 state=state,
                 persist=host.save,

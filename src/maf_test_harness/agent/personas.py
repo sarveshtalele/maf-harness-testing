@@ -137,3 +137,82 @@ def persona_instructions(stage: str) -> str:
         return PERSONAS[stage].instructions()
     except KeyError as exc:
         raise ValueError(f"No persona configured for stage: {stage}") from exc
+
+
+_ARCHITECT_PRINCIPLES = (
+    "Approve only behaviour proven by the supplied source; never by author claims or comments.",
+    "The target must be the method that actually implements the behaviour (a callee's arithmetic is the callee's).",
+    "Fixtures must be valid for the real code; mocks must not replace the behaviour under test.",
+    "Follow the framework's own conventions and flag anything untestable as written (privates, statics, singletons, I/O).",
+    "Reject tautologies, copied implementation logic, and assertions that cannot fail.",
+    "Judge independently: derive expected values yourself. Scores are evidence-based judgments, not pass probabilities.",
+)
+
+# (label, exact lowercased tokens from languages/ecosystems/frameworks/test runner, knowledge)
+_STACK_KNOWLEDGE: tuple[tuple[str, tuple[str, ...], str], ...] = (
+    (
+        "Python",
+        ("python", "pytest", "django", "fastapi", "flask", "streamlit", "typer", "click"),
+        "pytest fixtures/parametrize/tmp_path; patch where a name is looked up, not defined; async needs pytest-asyncio or anyio; no network/clock dependence.",
+    ),
+    (
+        "Java",
+        ("java", "maven", "gradle", "javafx", "spring", "java ee", "jsf", "maven-surefire"),
+        "JUnit4 vs 5 annotations differ; Mockito cannot mock static/final/singletons without inline mocks; Spring slices (@WebMvcTest/@DataJpaTest) over full context; JavaFX needs a toolkit thread.",
+    ),
+    (
+        "TypeScript/JavaScript",
+        (
+            "typescript",
+            "javascript",
+            "node",
+            "react",
+            "next.js",
+            "vue",
+            "angular",
+            "express",
+            "nestjs",
+            "jest",
+            "vitest",
+        ),
+        "jest/vitest mocking and ESM vs CJS imports; unexported symbols are not importable; React Testing Library queries by role/text; Next.js server vs client components and route handlers need different harnesses.",
+    ),
+    (
+        "C#/.NET",
+        ("c#", "csharp", "dotnet", ".net", "asp.net core", "dotnet-test"),
+        "xUnit/NUnit lifecycle; constructor DI and interface seams; EF Core needs in-memory/test providers; async tests return Task.",
+    ),
+    (
+        "Go",
+        ("go", "go-test"),
+        "table-driven tests, testing.T helpers, interfaces as seams, httptest for handlers.",
+    ),
+    ("Rust", ("rust",), "#[cfg(test)] modules; private items are testable only in-module."),
+    ("Ruby", ("ruby", "rails"), "RSpec/Minitest, stub at boundaries, factories over shared fixtures."),
+    ("PHP", ("php",), "PHPUnit data providers, mock collaborators, no global state."),
+)
+_ARCHITECT_FLAGS = (
+    ("web_ui", "UI: assert visible behaviour via stable selectors; no hard-coded host."),
+    ("http_service", "API: assert status, body and error contract of the real route using a test client."),
+)
+
+
+def chief_architect_persona(stack: dict | None, languages: dict | list | None = None, frameworks=()) -> str:
+    """Deterministic reviewer persona whose stack expertise is built only from the detected stack."""
+    stack = stack or {}
+    tokens = {
+        str(t).lower()
+        for t in (*(languages or ()), *stack.get("ecosystems", ()), *frameworks, stack.get("test_runner", ""))
+        if t
+    }
+    blocks = [f"{name}: {text}" for name, keys, text in _STACK_KNOWLEDGE if tokens.intersection(keys)]
+    blocks += [text for flag, text in _ARCHITECT_FLAGS if stack.get(flag)]
+    lines = [
+        "PERSONA: Chief Principal Architect",
+        "ROLE: Independent validator of test cases and generated tests; you never write or run code.",
+        "PRINCIPLES:",
+        *(f"{i}. {p}" for i, p in enumerate(_ARCHITECT_PRINCIPLES, 1)),
+    ]
+    if blocks:
+        lines += ["STACK EXPERTISE (detected):", *(f"- {b}" for b in blocks)]
+    return "\n".join(lines)

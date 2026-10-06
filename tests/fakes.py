@@ -32,6 +32,23 @@ def review_response(kwargs, source="service.py"):
     }
 
 
+def design_review_response(kwargs, confidence=90, verdict="approved", reason="Scripted design reviewer."):
+    from maf_test_harness.models import DesignReviewDraft
+
+    if kwargs.get("response_format") is not DesignReviewDraft:
+        return None
+    cases = json.loads(kwargs["prompt"])["cases_under_review"]
+    return {
+        "status": "completed",
+        "artifact": {
+            "reviews": [
+                {"case_id": c["id"], "verdict": verdict, "confidence": confidence, "reason": reason}
+                for c in cases
+            ]
+        },
+    }
+
+
 class ScriptedStageRuntime:
     """Returns schema-valid stage artifacts for the tiny `service.add` repository."""
 
@@ -56,6 +73,8 @@ class ScriptedStageRuntime:
 
     async def run_stage(self, *, stage, state, **kwargs):
         if review := review_response(kwargs):
+            return review
+        if review := design_review_response(kwargs):
             return review
         self.calls.append(stage)
         if stage == "requirements":
