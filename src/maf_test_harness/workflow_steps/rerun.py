@@ -64,7 +64,7 @@ class RerunSteps:
                 state["app_url"] = f"http://127.0.0.1:{free_port()}"
             self.view = {
                 **view,
-                "status": "new",
+                "status": "running",
                 "pending": None,
                 "checkpoint_id": None,
                 "rerun_attempt": attempt,
