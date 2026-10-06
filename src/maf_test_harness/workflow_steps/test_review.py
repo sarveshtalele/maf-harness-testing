@@ -2,7 +2,7 @@
 
 from ..llm.prompts import generation_prompt
 from ..models import TestReviewDraft
-from ..repo.analyzer import build_repository_evidence
+from ..repo.analyzer import build_repository_evidence, extract_target_sources
 from ..workflow_support import MODEL_REPAIR_ATTEMPTS
 
 
@@ -13,11 +13,19 @@ async def review_generated_tests(host, state, candidate, cases, batch):
         r for r in requirements.get("requirement_model", {}).get("requirements", []) if r["id"] in linked
     ]
     paths = [p for r in selected for p in r.get("source_files", [])]
+    targets = [str(case.get("target") or "") for case in cases]
+    target_source = extract_target_sources(
+        host.run_dir / "repo", targets, state["artifacts"].get("repo_analysis", {}).get("source_files", [])
+    )
     source = build_repository_evidence(
-        host.run_dir / "repo", max_files=max(1, len(set(paths))), max_total_chars=40000, preferred_paths=paths
+        host.run_dir / "repo",
+        max_files=max(1, len(set(paths))),
+        max_total_chars=40000,
+        preferred_paths=paths,
+        target_symbols=targets,
     )
     sections = {
-        "assignment": "Independently review EACH generated test against actual repository source. Do not rewrite tests or trust author claims or explanatory comments. Independently derive every expected literal from the actual fixture and implementation, including string lengths, counts, rounding and arithmetic; author calculations are unverified input. Flag nonexistent imports/APIs, wrong assumptions/assertions, invalid fixtures, ineffective mocks and missing invocation of claimed methods. Return one review per supplied case ID. Missing evidence must be insufficient_evidence, not supported. Scores are evidence-based judgments, not calibrated probabilities or runtime proof.",
+        "assignment": "Independently review EACH generated test against actual repository source. Do not rewrite tests or trust author claims or explanatory comments. Independently derive every expected literal from the actual fixture and implementation, including string lengths, counts, rounding and arithmetic; author calculations are unverified input. Flag nonexistent imports/APIs, wrong assumptions/assertions, invalid fixtures, ineffective mocks and missing invocation of claimed methods. Return one review per supplied case ID. Missing evidence must be insufficient_evidence, not supported. Scores are evidence-based judgments, not calibrated probabilities or runtime proof. Use target_source as the authoritative complete implementation of each targeted method. Do not return insufficient_evidence merely because repository_evidence is a truncated whole-file excerpt when target_source contains the complete method.",
         "strict_quality_rules": {
             "rubric_points": {
                 "source_and_api_match": 25,
@@ -32,6 +40,7 @@ async def review_generated_tests(host, state, candidate, cases, batch):
         },
         "approved_inputs": {"approved_cases": cases, "requirements": selected},
         "generated_source": candidate["files"],
+        "target_source": target_source,
         "repository_evidence": source,
         "citation_rule": "source_files must cite existing repository implementation files supporting your assessment. Do not cite newly generated tests; their code is supplied separately under generated_source.",
         "output_contract": TestReviewDraft.model_json_schema(),

@@ -282,3 +282,33 @@ def test_script_runner_refuses_modified_scripts_unsafe_args_and_unlisted_scripts
     (root / "test-data-generator" / "scripts" / "deterministic_helpers.py").write_text("print('evil')\n")
     with pytest.raises(ScriptRefused, match="changed since it was reviewed"):
         runner.run("test-data-generator", "scripts/deterministic_helpers.py", [])
+
+
+def test_reviewer_persona_gets_fresh_agent_and_session_not_the_generators_primed_snapshot(monkeypatch):
+    client = ScriptedClient(load=SKILL)
+    monkeypatch.setattr(runtime_module, "OpenAIChatCompletionClient", lambda **kwargs: client)
+    runtime = MAFHarnessRuntime(
+        api_key="test", model="test", skills_root=Path("skills"), base_url="http://test"
+    )
+    state, service = fresh_state(), RuntimeService()
+    seen = {}
+
+    async def go():
+        for persona in ("GENERATOR", "REVIEWER"):
+            await runtime.run_stage(
+                stage="test_design",
+                skill_name=SKILL,
+                persona=persona,
+                prompt="Return JSON.",
+                state=state,
+                persist=lambda: None,
+            )
+            seen[persona] = (runtime._agents["test_design"][1], runtime._primed["test_design"])
+
+    try:
+        service.submit(go()).result(20)
+    finally:
+        service.close()
+    assert seen["GENERATOR"][0] is not seen["REVIEWER"][0]
+    assert seen["GENERATOR"][1] is not seen["REVIEWER"][1]
+    assert client.calls == 6  # the reviewer primed its own skill session instead of copying the generator's

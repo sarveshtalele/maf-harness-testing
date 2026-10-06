@@ -533,6 +533,7 @@ def build_repository_evidence(
     max_files: int = 36,
     max_total_chars: int = 70_000,
     preferred_paths: list[str] | None = None,
+    target_symbols: list[str] | None = None,
 ) -> str:
     """Source-first, line-numbered evidence; documents cannot exhaust source budget.
 
@@ -573,17 +574,67 @@ def build_repository_evidence(
             continue
         content = SECRET_ASSIGNMENT.sub(lambda m: f"{m.group(1)}=<redacted>", content)
         numbered = _numbered_source(content, Path(rel).suffix.lower())
-        excerpt = numbered[: allowance - len(header) - 1]
+        room = allowance - len(header) - 1
+        excerpt = numbered[:room]
+        if target_symbols and len(numbered) > room:  # keep the head and splice in the complete target bodies
+            wanted = set(re.findall(r"[A-Za-z_]\w*", " ".join(target_symbols)))
+            bodies = "".join(
+                f"\n[target {name}, lines {first}-{last}]\n{body}"
+                for name, first, last, body in _target_chunks(rel, content, wanted)
+            )
+            if bodies:
+                head = max(room // 4, 200)
+                excerpt = (numbered[:head] + "\n[... omitted ...]" + bodies)[:room]
         chunk = header + excerpt + "\n"
         chunks.append(chunk)
         used += len(chunk)
     return "".join(chunks)
 
 
-_DEFINITION = re.compile(
-    r"^\s*(?:export\s+)?(?:async\s+)?(?:public\s+|private\s+|protected\s+|static\s+|final\s+)*"
-    r"(?:def|function|class|interface|func|fn|void|int|String|boolean|[A-Z][\w<>\[\]]*)\s+(\w+)\s*[(<{:]"
+_KW = r"(?!(?:if|for|while|switch|catch|return|new|else|throw|using|await|do|try|case|elif|with|assert|yield|delete|typeof)\b)"
+_MODIFIERS = (
+    r"(?:(?:export|public|private|protected|internal|static|final|async|override|virtual|abstract|synchronized"
+    r"|default|open|suspend|readonly|extern|sealed|partial)\s+)*"
 )
+# Groups (exactly one captures the symbol name): keyword declarations (python/js/go/rust/kotlin), typed signatures
+# (Java/C#/TS: generics, arrays, primitives), bare `name(args) {` / `name(args): Type {` methods, arrow-function consts.
+_DEFINITION = re.compile(
+    r"^\s*" + _MODIFIERS + r"(?:"
+    r"(?:def|function\*?|class|interface|func|fn|fun)\s+(\w+)"
+    rf"|{_KW}[\w.]+(?:<[^()]*?>)?(?:\[\])*\??\s+(\w+)\s*(?:<[^()]*>)?\("
+    rf"|{_KW}(\w+)\s*\([^;]*\)\s*(?::\s*[^;{{=]+?)?\s*\{{\s*$"
+    r"|(?:const|let|var|val)\s+(\w+)\s*(?::[^=]+)?=\s*(?:async\s*)?(?:\([^)]*\)|\w+)\s*(?::\s*[^=]+)?=>"
+    r")"
+)
+_BLANK = re.compile(
+    r'"""[\s\S]*?"""|//[^\n]*|/\*[\s\S]*?\*/|"(?:\\.|[^"\\\n])*"|\'(?:\\.|[^\'\\\n])*\'|`(?:\\.|[^`\\])*`'
+)
+MAX_BODY_LINES = 400
+
+
+def _brace_body_end(lines: list[str], start: int) -> int:
+    """Index after the line holding the brace that closes the definition at ``lines[start]``.
+
+    Braces inside strings, text blocks, char literals and comments are ignored. Without a ``{`` in the first few
+    lines (abstract/interface methods) it falls back to a 70-line slice; bodies are capped at MAX_BODY_LINES.
+    """
+    window = lines[start : start + MAX_BODY_LINES]
+    # Blank literals/comments but keep newlines so line numbers survive.
+    text = _BLANK.sub(lambda m: "\n" * m.group().count("\n"), "\n".join(window))
+    depth, opened = 0, False
+    for offset, line in enumerate(text.split("\n")):
+        for ch in line:
+            if ch == "{":
+                depth, opened = depth + 1, True
+            elif ch == "}" and opened:
+                depth -= 1
+                if depth == 0:
+                    return start + offset + 1
+            elif ch == ";" and not opened:
+                return min(len(lines), start + 70)
+        if not opened and offset >= 4:
+            return min(len(lines), start + 70)
+    return start + len(window)
 
 
 def _compact_lines(source_lines: list[str], first: int) -> str:
@@ -624,6 +675,20 @@ def _python_target_chunks(src: str, wanted: set[str]) -> list[tuple[str, int, in
     ]
 
 
+def _target_chunks(rel: str, src: str, wanted: set[str]) -> list[tuple[str, int, int, str]]:
+    if rel.endswith(".py"):
+        return _python_target_chunks(src, wanted)
+    all_lines = src.splitlines()
+    found = []
+    for index, line in enumerate(all_lines):
+        match = _DEFINITION.match(line)
+        name = next((g for g in match.groups() if g), None) if match else None
+        if name in wanted:
+            end = _brace_body_end(all_lines, index)
+            found.append((name, index + 1, end, _compact_lines(all_lines[index:end], index + 1)))
+    return found
+
+
 def extract_target_sources(
     root: Path, targets: list[str], source_files: list[str], max_chars: int = 24_000
 ) -> str:
@@ -645,18 +710,7 @@ def extract_target_sources(
             src = _safe_read(root / rel)
             if not src:
                 continue
-            if rel.endswith(".py"):
-                found = _python_target_chunks(src, wanted)
-            else:  # other languages: the definition line and what follows it
-                all_lines = src.splitlines()
-                found = []
-                for index, line in enumerate(all_lines):
-                    match = _DEFINITION.match(line)
-                    if match and match.group(1) in wanted:
-                        end = min(len(all_lines), index + 70)
-                        found.append(
-                            (match.group(1), index + 1, end, _compact_lines(all_lines[index:end], index + 1))
-                        )
+            found = _target_chunks(rel, src, wanted)
             for name, start, end, body in found:
                 if (rel, name) in seen:
                     continue
