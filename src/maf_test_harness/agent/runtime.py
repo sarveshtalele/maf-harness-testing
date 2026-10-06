@@ -52,6 +52,14 @@ class AgentOutputError(RuntimeError):
 DEFAULT_MAX_OUTPUT_TOKENS = MAX_OUTPUT_TOKENS
 
 
+def _structured_value(result: Any) -> Any:
+    """MAF's ``response.value`` raises pydantic ValidationError on schema/JSON failure; surface it as AgentOutputError."""
+    try:
+        return getattr(result, "value", None)
+    except ValueError as exc:  # pydantic.ValidationError subclasses ValueError
+        raise AgentOutputError(f"Structured output failed schema validation: {str(exc)[:400]}") from exc
+
+
 def extract_json_object(text: str) -> dict[str, Any]:
     """Return the complete JSON object from a model response.
 
@@ -494,7 +502,7 @@ class MAFHarnessRuntime:
             raise AgentOutputError(
                 "The helper asked for a tool that needs approval; only read-only tools exist."
             )
-        value = getattr(result, "value", None)
+        value = _structured_value(result)
         data = value.model_dump() if hasattr(value, "model_dump") else value
         return data if isinstance(data, dict) else extract_json_object(result.text or "")
 
@@ -784,7 +792,7 @@ class MAFHarnessRuntime:
         raw_text = result.text or ""
         state.setdefault("raw_model_output", {})[stage] = raw_text
         persist()
-        value = getattr(result, "value", None)
+        value = _structured_value(result)
         data = value.model_dump() if hasattr(value, "model_dump") else value
         if not isinstance(data, dict):
             data = extract_json_object(raw_text)

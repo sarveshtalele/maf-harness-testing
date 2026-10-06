@@ -166,6 +166,50 @@ REMEDIES: list[tuple[re.Pattern[str], str]] = [
         "code that does not need it.",
     ),
     (
+        re.compile(r"does not match any repository path|not a valid Python identifier"),
+        "Do not normalise filesystem paths into imports (never translate '-' to '_'): inspect source_files and the "
+        "existing tests, and prefer the repository's public API/registry fixture (e.g. "
+        '`await registry.execute("skill-name", {...})`) when the target is a script under a non-importable directory.',
+    ),
+    (
+        re.compile(
+            r"Structured output failed schema validation|validation errors? for |did not return a complete "
+            r"JSON object|Agent response must be a JSON object|empty response instead of a JSON",
+            re.I,
+        ),
+        "Return exactly one JSON object matching the schema; no prose or markdown fences; keep each file concise to "
+        "avoid truncation.",
+    ),
+    (
+        re.compile(r"NoSuchFieldException|field .* not found|not @FXML-injected fields|never wired", re.I),
+        "Only inject fields that are declared in the source; locals created inside methods cannot be injected. "
+        "Assert on observable state instead.",
+    ),
+    (
+        re.compile(r"static call|getDatabaseConnection|constructor .{0,40}calls", re.I),
+        "Do not use @InjectMocks expecting injection when the constructor acquires dependencies statically: write an "
+        "integration test, test pure methods, use mockStatic only if mockito-inline is already a declared dependency, "
+        "or record a testability gap.",
+    ),
+    (
+        re.compile(r"insufficient_evidence|truncated", re.I),
+        "Only assert behaviour visible in target_source; drop or retarget assertions about code that is not shown.",
+    ),
+    (
+        re.compile(r"Toolkit not initialized|Not on FX application thread", re.I),
+        "Initialise the JavaFX toolkit once (JavaFX 8: `new JFXPanel()`; 9+: `Platform.startup`) and run UI "
+        "mutations on the FX thread (Platform.runLater + latch).",
+    ),
+    (
+        re.compile(r"Cannot find module|ERR_MODULE_NOT_FOUND"),
+        'Use the repository\'s module system (ESM vs CJS from package.json "type"), relative paths from the test file, '
+        "and existing path aliases from tsconfig.",
+    ),
+    (
+        re.compile(r"\bCS0246\b|\bCS0234\b"),
+        "Add the using/namespace the source declares; reference only projects the test csproj already references.",
+    ),
+    (
         re.compile(r"cannot import name|No module named|ImportError"),
         "Import only names defined at module level in target_source and modules listed in source_files / "
         "python_import_roots: e.g. `from app.rag_pipeline import get_chain`, not a name you expect to exist but "

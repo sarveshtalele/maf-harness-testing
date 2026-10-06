@@ -1082,6 +1082,21 @@ def check_python_imports(
                                 _check_imported_names(node, rel, source, modules_in_repo, path)
                                 break
                     continue
+                norm = re.sub(r"[-\s]", "_", dotted)
+                real = sorted(
+                    f
+                    for f in py_files
+                    if re.sub(r"[-\s]", "_", PurePosixPath(f).with_suffix("").as_posix()).endswith(norm)
+                    and not all(part.isidentifier() for part in PurePosixPath(f).with_suffix("").parts)
+                )[:1]
+                if real:
+                    bad = next(c for c in PurePosixPath(real[0]).with_suffix("").parts if not c.isidentifier())
+                    raise ValueError(
+                        f"import '{name}' in {path or 'generated test'} cannot work: the apparent repository target is "
+                        f"{real[0]}, whose path component '{bad}' is not a valid Python identifier. Do not translate "
+                        "'-' to '_'. Use the repository's public loader/executor API or an existing test fixture; load "
+                        "the file by path only if the application itself does so."
+                    )
                 raise ValueError(
                     f"import '{name}' in {path or 'generated test'} does not match any repository path "
                     f"(top-level '{top}' exists). "

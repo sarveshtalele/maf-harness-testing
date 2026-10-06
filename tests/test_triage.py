@@ -124,3 +124,52 @@ def test_generic_catch_all_remedies_give_a_concrete_worked_example_not_just_a_ca
     assert "{'user': {'id': 1" in triage.remedy_for("KeyError: 'id'")
     assert "trace the actual" in triage.remedy_for("AssertionError: assert 3 == 4")
     assert "from app.rag_pipeline import get_chain" in triage.remedy_for("cannot import name 'x'")
+
+
+def _hyphen_repo(init: bool) -> list[str]:
+    files = ["skills/text-statistics/scripts/main.py", "app/core.py"]
+    return files + (["skills/__init__.py"] if init else [])
+
+
+@pytest.mark.parametrize("init", [False, True])
+def test_hyphenated_skill_import_gets_precise_message_and_remedy(init):
+    from maf_test_harness.skills.contracts import check_python_imports
+
+    code = "from skills.text_statistics.scripts.main import run\n"
+    with pytest.raises(ValueError) as err:
+        check_python_imports(code, _hyphen_repo(init), "", path="tests/test_x.py")
+    msg = str(err.value)
+    assert "skills/text-statistics/scripts/main.py" in msg
+    assert "'text-statistics' is not a valid Python identifier" in msg
+    assert "Do not translate '-' to '_'" in msg
+    assert "'-' to '_'" in triage.remedy_for(msg)
+
+
+@pytest.mark.parametrize(
+    ("message", "needle"),
+    [
+        ("import 'a.b' does not match any repository path", "registry"),
+        ("Structured output failed schema validation: 1 validation error for X", "one JSON object"),
+        ("java.lang.NoSuchFieldException: nameField", "declared in the source"),
+        ("@InjectMocks failed: constructor calls getDatabaseConnection", "mockStatic"),
+        ("reviewer: insufficient_evidence", "target_source"),
+        ("IllegalStateException: Toolkit not initialized", "JFXPanel"),
+        ("Error: Cannot find module './x'", "tsconfig"),
+        ("error CS0246: The type or namespace name 'Foo' could not be found", "using"),
+    ],
+)
+def test_new_remedies(message, needle):
+    assert needle in triage.remedy_for(message)
+
+
+@pytest.mark.parametrize(
+    ("message", "needle"),
+    [
+        ("ImportError: cannot import name 'x'", "module level"),
+        ("ModuleNotFoundError: No module named 'foo'", "module level"),
+        ("cannot find symbol", "public API"),
+        ("AssertionError: assert 3 == 4", "Recompute"),
+    ],
+)
+def test_old_remedies_unchanged(message, needle):
+    assert needle in triage.remedy_for(message)
