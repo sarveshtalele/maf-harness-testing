@@ -255,6 +255,18 @@ def _design(a: dict, ctx: dict) -> tuple[dict, list[Check]]:
         ),
         "adjustments": "**Retargets**\n\n"
         + _bullets(retargets)
+        + "\n\n**Case budget trims**\n\n"
+        + _bullets(
+            [
+                f"{', '.join(map(str, t.get('case_ids') or []))}: {t.get('reason', '')}"
+                for t in (
+                    [gaps["budget_trimmed"]]
+                    if isinstance(gaps.get("budget_trimmed"), dict)
+                    else gaps.get("budget_trimmed") or []
+                )
+                if isinstance(t, dict) and t.get("case_ids")
+            ]
+        )
         + "\n\n**Other host notes**\n\n"
         + _bullets(other)
         + "\n\n**Model budget**\n\n"
