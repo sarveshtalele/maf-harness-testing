@@ -50,6 +50,7 @@ from ..workflow_support import (
 )
 from . import design_review
 from .design import design_tests_batched
+from .planning_batches import plan_tests_batched, planning_is_batched
 
 
 class PlanningSteps:
@@ -170,6 +171,8 @@ class PlanningSteps:
             and len(state["artifacts"]["requirements"]["requirement_model"]["requirements"]) > 12
         ):
             artifact = await design_tests_batched(self, state)
+        elif stage == "test_planning" and planning_is_batched(state["artifacts"]["requirements"]):
+            artifact = await plan_tests_batched(self, state)
         else:
             state["design_reviews"] = {}
             artifact = await self._model_artifact(stage, state)
@@ -196,6 +199,11 @@ class PlanningSteps:
                 "Select native test frameworks automatically and keep the plan compact: group requirements into at "
                 "most 20 areas by component, at most 6 short scenarios per area, one sentence per text field."
             )
+            if requirements_override:
+                assignment += (
+                    " This is one batch of a larger repository: plan ONLY the supplied requirements, "
+                    "at most 6 areas, at most 4 scenarios per area."
+                )
             upstream = {"requirements": _compact_requirements(requirements_source)}
             if requirements_source.get("analysis_mode") == "deterministic":
                 upstream["requirements"]["requirements"] = [

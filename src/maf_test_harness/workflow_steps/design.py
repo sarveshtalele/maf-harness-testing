@@ -10,14 +10,14 @@ SECTIONS = ("positive", "negative", "boundary", "validation", "contract")
 DESIGN_BATCH_SIZE = 12
 
 
-def requirement_batches(requirements):
+def requirement_batches(requirements, size=DESIGN_BATCH_SIZE):
     groups = defaultdict(list)
     for requirement in requirements["requirement_model"]["requirements"]:
         groups[str(PurePosixPath(requirement["source_files"][0]).parent)].append(requirement)
     first = True
     for component, items in sorted(groups.items()):
-        for start in range(0, len(items), DESIGN_BATCH_SIZE):
-            selected = items[start : start + DESIGN_BATCH_SIZE]
+        for start in range(0, len(items), size):
+            selected = items[start : start + size]
             ids = {r["id"] for r in selected}
             model = requirements["requirement_model"]
             yield (
