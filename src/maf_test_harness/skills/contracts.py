@@ -780,12 +780,20 @@ def case_marker_meta(case: dict[str, Any], run_id: str = "", run_name: str = "")
     }
 
 
+# A model that mis-closes the JSON `lines` array leaks schema structure into the source (seen live: a bare
+# trailing `case_ids`, `"],"`, `case_ids]: [`). Only these exact shapes are dropped; real code is never touched.
+_JSON_DEBRIS = re.compile(
+    r'^\s*(?:"?case_ids"?\]?\s*:?\s*\[?\s*(?:"[^"]*"\s*,?\s*)*\]?\s*,?\s*"?|"\s*\]\s*,?\s*"?)\s*$'
+)
+
+
 def expand_generated_lines(payload: dict[str, Any]) -> dict[str, Any]:
     """Join model-supplied ``lines`` into ``content`` (the form validation, export and execution use)."""
     result = deepcopy(payload)
     for item in result.get("files", []) if isinstance(result, dict) else []:
         if isinstance(item, dict) and "lines" in item:
             lines = [str(line).rstrip("\r\n") for line in item.pop("lines")]
+            lines = [line for line in lines if not _JSON_DEBRIS.match(line)]
             item["content"] = "\n".join(lines).strip("\n") + "\n"
     return result
 

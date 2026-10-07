@@ -95,3 +95,18 @@ def test_symbol_targets_resolve_through_requirement_files_without_name_overlap(t
     assert list(recipes) == [files[0]]
     # no app sys.path insert: fallback root is the last non-identifier dir (skills/my-skill)
     assert recipes[files[0]]["import"] == "from scripts.engine.impact_analyzer import ImpactAnalyzer"
+
+
+def test_json_structure_leaked_into_lines_is_dropped_but_code_is_kept():
+    from maf_test_harness.skills.contracts import _JSON_DEBRIS, expand_generated_lines
+
+    lines = ["def test_x():", "    data = [", "        1,", "    ]", "    assert data == [1]", "case_ids"]
+    out = expand_generated_lines({"files": [{"path": "t.py", "lines": lines, "case_ids": ["TC-1"]}]})
+    assert (
+        out["files"][0]["content"]
+        == "def test_x():\n    data = [\n        1,\n    ]\n    assert data == [1]\n"
+    )
+    for debris in ("case_ids", '"case_ids": ["TC-1"]', "case_ids]: [", '"],"', '"case_ids:["'):
+        assert _JSON_DEBRIS.match(debris), debris
+    for code in ("    ]", "],", "case_ids = ['a']", "assert case_ids", "x = [1]"):
+        assert not _JSON_DEBRIS.match(code), code
