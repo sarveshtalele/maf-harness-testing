@@ -50,6 +50,103 @@ def build_id():
     return digest.hexdigest()[:16]
 
 
+STATE_FILE = ROOT / ".maf-harness" / "launcher.json"
+
+
+def _probe(argv):
+    try:
+        done = subprocess.run(argv, capture_output=True, text=True, timeout=10, errors="replace")
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    return done.stdout if done.returncode == 0 else None
+
+
+def pid_alive(pid):
+    if os.name == "nt":
+        out = _probe(["tasklist", "/FI", f"PID eq {pid}", "/FO", "CSV", "/NH"])
+        return bool(out) and f'"{pid}"' in out
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except OSError:  # PermissionError: exists, owned by someone else
+        return True
+    return True
+
+
+def command_line(pid):
+    """Full command line of a pid, or None when it cannot be verified (callers then skip cleanup)."""
+    if os.name == "nt":
+        out = _probe(
+            [
+                "powershell",
+                "-NoProfile",
+                "-Command",
+                f"(Get-CimInstance Win32_Process -Filter 'ProcessId={pid}').CommandLine",
+            ]
+        )
+    else:
+        out = _probe(["ps", "-o", "command=", "-p", str(pid)])
+    return (out.strip() or None) if out is not None else None
+
+
+def terminate_tree(pid):
+    if os.name == "nt":
+        subprocess.run(
+            ["taskkill", "/PID", str(pid), "/T", "/F"], check=False, capture_output=True, timeout=10
+        )
+        return
+    # Children were started with start_new_session, so the pid is also the process-group id.
+    for sig in (signal.SIGTERM, signal.SIGKILL):
+        try:
+            os.killpg(pid, sig)
+        except OSError:
+            return
+        for _ in range(30):
+            if not pid_alive(pid):
+                return
+            time.sleep(0.1)
+
+
+def write_state(children):
+    STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
+    tmp = STATE_FILE.with_suffix(".tmp")
+    payload = {
+        "launcher_pid": os.getpid(),
+        "children": children,
+        "started_at": datetime.now().astimezone().isoformat(timespec="seconds"),
+        "build_id": build_id(),
+    }
+    tmp.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+    os.replace(tmp, STATE_FILE)
+
+
+def clean_orphans():
+    """Stop children a hard-killed launcher left behind. Only a process that is alive, still holds its
+    recorded port and whose command line carries our marker is touched; unverifiable ones are skipped."""
+    try:
+        state = json.loads(STATE_FILE.read_text(encoding="utf-8"))
+        launcher = int(state["launcher_pid"])
+        children = list(state["children"])
+    except (OSError, ValueError, KeyError, TypeError):
+        return
+    if launcher != os.getpid() and pid_alive(launcher) and "start_ui" in (command_line(launcher) or ""):
+        return  # a live launcher owns these
+    for child in children:
+        try:
+            pid, port, marker = int(child["pid"]), int(child["port"]), str(child["marker"])
+        except (KeyError, ValueError, TypeError):
+            continue
+        cmd = command_line(pid) if pid_alive(pid) else None
+        if cmd and marker in cmd and not port_available(port):
+            terminate_tree(pid)
+            print(
+                f"Stopped orphaned {child.get('name', 'service')} (pid {pid}, port {port}) from a previous launch.",
+                flush=True,
+            )
+    STATE_FILE.unlink(missing_ok=True)
+
+
 def running_application(port, expected_build=None):
     """Reuse only a responding platform UI, with a working authenticated API proxy, built from this checkout."""
     if port_available(port):
@@ -162,6 +259,7 @@ def main():
         parser.error(str(exc))
     if args.port == args.api_port or not all(0 < p < 65536 for p in (args.port, args.api_port)):
         parser.error("Choose two different ports between 1 and 65535.")
+    clean_orphans()
     current_build = build_id()
     for candidate in range(args.port, args.port + (1 if explicit_port else 10)):
         if running_application(candidate, current_build):
@@ -230,7 +328,7 @@ def main():
                 secret_values.append(value.strip().strip("\"'"))
     threads = []
 
-    def launch(argv, cwd, name):
+    def launch(argv, cwd, name, port=None, marker=None):
         child = subprocess.Popen(
             argv,
             cwd=cwd,
@@ -243,6 +341,9 @@ def main():
             **kwargs,
         )
         processes.append(child)
+        if port:
+            tracked.append({"name": name, "pid": child.pid, "port": port, "marker": marker})
+            write_state(tracked)
 
         def pump():
             for line in child.stdout:
@@ -259,7 +360,7 @@ def main():
         worker.start()
         return child
 
-    processes = []
+    processes, tracked = [], []
     kwargs = (
         {"creationflags": subprocess.CREATE_NEW_PROCESS_GROUP}
         if os.name == "nt"
@@ -291,6 +392,8 @@ def main():
             [sys.executable, "-m", "maf_test_harness.ui.api", "--port", str(args.api_port)],
             ROOT,
             "backend",
+            args.api_port,
+            "maf_test_harness.ui.api",
         )
         # Cold MAF imports on hosted runners can exceed the old ten-second startup budget.
         deadline = time.monotonic() + 90
@@ -305,7 +408,7 @@ def main():
         else:
             raise RuntimeError("The local API did not become ready.")
         command = frontend_command(node, "start" if args.production else "dev", args.port)
-        launch(command, ROOT / "frontend", "frontend")
+        launch(command, ROOT / "frontend", "frontend", args.port, command[1])
         if args.smoke_test:
             for _ in range(120):
                 if any(process.poll() is not None for process in processes):
@@ -368,6 +471,8 @@ def main():
         for worker in threads:
             worker.join(timeout=5)
         log.close()
+        if tracked:
+            STATE_FILE.unlink(missing_ok=True)
         for signum, handler in previous_handlers.items():
             signal.signal(signum, handler)
 
