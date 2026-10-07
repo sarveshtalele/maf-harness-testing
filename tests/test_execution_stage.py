@@ -556,3 +556,37 @@ def test_a_complete_workflow_run_yields_an_observability_report_with_the_full_tr
     )
     lanes = {row["lane"] for row in report["timeline"]}
     assert {"human", "host"} <= lanes
+
+
+def test_truncated_structured_output_gets_a_compact_retry_not_an_error_gate(tmp_path, monkeypatch):
+    """A cut-off plan (runtime wraps pydantic errors as AgentOutputError) must re-enter the repair loop."""
+    from maf_test_harness.agent.runtime import AgentOutputError
+
+    monkeypatch.setattr(wf, "clone_repository", clone_fixture)
+    runtime = ScriptedStageRuntime()
+    original = runtime.run_stage
+    prompts = []
+
+    async def truncating(**kwargs):
+        if kwargs["stage"] == "test_planning":
+            prompts.append(kwargs["prompt"])
+            if len(prompts) == 1:
+                raise AgentOutputError(
+                    "Structured output failed schema validation: 1 validation error for TestPlan\n"
+                    "  Invalid JSON: EOF while parsing a string at line 456 column 58639 [type=json_invalid]"
+                )
+        return await original(**kwargs)
+
+    runtime.run_stage = truncating
+    service = RuntimeService()
+    host = wf.Harness(
+        tmp_path / "r", skills_root=Path("skills"), requirements_mode="model", runtime=runtime, execute=False
+    )
+    try:
+        service.submit(host.start("https://github.com/acme/demo")).result(15)
+        for _ in range(3):
+            service.submit(host.respond(host.view["pending"]["id"], {"decision": "approve"})).result(30)
+    finally:
+        service.close()
+    assert host.view["pending"]["kind"] == "review" and host.view["pending"]["stage"] == "test_planning"
+    assert len(prompts) == 2 and "cut off at the output limit" in prompts[1]

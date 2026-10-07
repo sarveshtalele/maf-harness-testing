@@ -11,6 +11,7 @@ from pydantic import ValidationError
 
 from ..agent import prompt_settings
 from ..agent.personas import persona_instructions
+from ..agent.runtime import AgentOutputError
 from ..envs.environment import build_environment_plan
 from ..envs.setup_guide import setup_guide
 from ..llm.prompts import build_prompt
@@ -192,7 +193,8 @@ class PlanningSteps:
             response_format = TestPlan
             assignment = (
                 "Create the cross-language test implementation plan from the approved inferred requirements and repository facts. "
-                "Select native test frameworks automatically and keep the plan compact."
+                "Select native test frameworks automatically and keep the plan compact: group requirements into at "
+                "most 20 areas by component, at most 6 short scenarios per area, one sentence per text field."
             )
             upstream = {"requirements": _compact_requirements(requirements_source)}
             if requirements_source.get("analysis_mode") == "deterministic":
@@ -351,17 +353,31 @@ class PlanningSteps:
                     prompt_batch=prompt_batch,
                     response_format=response_format,
                 )
-            except ValidationError as exc:
+            except (
+                ValidationError,
+                AgentOutputError,
+            ) as exc:  # the runtime wraps pydantic errors as AgentOutputError
                 self._settle_response_cache(stage, False)
                 self.audit(
                     "stage_repair", stage=stage, attempt=attempt, error="Invalid model JSON/schema output"
                 )
                 if attempt == MODEL_REPAIR_ATTEMPTS:
                     raise
-                repair = (
-                    "The previous response was invalid JSON/schema output. Return exactly one schema-valid JSON object, escape newlines/control characters within strings, and follow the output_contract. "
-                    + str(exc.errors(include_input=False))[:900]
+                detail = (
+                    str(exc.errors(include_input=False))
+                    if isinstance(exc, ValidationError)
+                    else str(exc).split("[type=")[0]
+                )[:900]
+                truncated = re.search(
+                    r"EOF while parsing|did not return a complete JSON|truncat", str(exc), re.I
                 )
+                repair = (
+                    "The previous response was cut off at the output limit. Return a MUCH more compact JSON object: "
+                    "fewer list items, one short sentence per text field, no repeated wording. "
+                    if truncated
+                    else "The previous response was invalid JSON/schema output. Return exactly one schema-valid JSON "
+                    "object, escape newlines/control characters within strings, and follow the output_contract. "
+                ) + detail
                 continue
             if result["status"] != "completed":
                 self._settle_response_cache(stage, False)

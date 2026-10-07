@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Literal
+from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -168,8 +168,9 @@ class TestArea(BaseModel):
         "mixed",
     ]
     risk: Literal["high", "medium", "low"]
-    evidence_files: list[str] = Field(max_length=12)
-    scenarios: list[str] = Field(min_length=1, max_length=12)
+    evidence_files: list[str] = Field(max_length=8)
+    # Bounded item length too: unbounded scenario strings let a 191-requirement plan exceed the output limit.
+    scenarios: list[Annotated[str, Field(max_length=240)]] = Field(min_length=1, max_length=8)
 
 
 class TestPlan(BaseModel):
@@ -184,7 +185,7 @@ class TestPlan(BaseModel):
     objective: str = Field(min_length=1, max_length=1200)
     recommended_frameworks: list[str] = Field(min_length=1, max_length=8)
     setup_actions: list[str] = Field(max_length=20)
-    areas: list[TestArea] = Field(min_length=1, max_length=40)
+    areas: list[TestArea] = Field(min_length=1, max_length=24)
     execution_order: list[str] = Field(min_length=1, max_length=20)
     assumptions: list[str] = Field(max_length=15)
     gaps: list[str] = Field(max_length=15)
