@@ -28,7 +28,7 @@ from ..settings import API_KEY, BASE_URL, MODEL, validate_gateway_settings
 from ..storage import read_json
 from ..workflow import Harness
 from ..workflow_support import atomic_json
-from .eta import run_eta
+from .eta import case_budget_view, run_eta
 from .evidence_api import EvidenceAPI
 from .presentation import public
 from .progress import progress
@@ -50,6 +50,7 @@ PUBLIC_STATE = (
     "approved",
     "revisions",
     "budget",
+    "case_budget",
     "environment",
     "completed_reason",
     "runtime_provenance",
@@ -79,6 +80,12 @@ def decisions(pending: dict | None, status: str, consumed: list) -> list[str]:
             "stop",
         ]
     return []
+
+
+def _budget_value(value) -> int:
+    if isinstance(value, bool) or not isinstance(value, int) or not 1 <= value <= 10:
+        raise ValueError("Cases per requirement must be an integer from 1 to 10.")
+    return value
 
 
 class LocalAPI(EvidenceAPI, SettingsAPI):
@@ -156,6 +163,38 @@ class LocalAPI(EvidenceAPI, SettingsAPI):
         except Exception:  # progress hints must never break the run read
             return {"stages": []}
 
+    def _case_budget(self, key: str, view: dict) -> dict | None:
+        try:
+            return case_budget_view(self.run_path(key), view)
+        except Exception:
+            return None
+
+    def set_case_budget(self, key: str, body: dict) -> dict:
+        with self.lock:
+            if self.busy():
+                raise RuntimeError("Wait for the active operation before changing the case budget.")
+            value = _budget_value(body.get("per_requirement"))
+            path = self.run_path(key) / "run.json"
+            view = read_json(path)
+            state = view.get("state", {})
+            if "test_design" in state.get("approved", {}):
+                raise RuntimeError("Test design is already approved; the case budget can no longer change.")
+            state["case_budget"] = {"per_requirement": value}
+            view["state"] = state
+            atomic_json(path, view)
+            with (self.run_path(key) / "audit.jsonl").open("a", encoding="utf-8") as stream:
+                stream.write(
+                    json.dumps(
+                        {
+                            "event": "case_budget_changed",
+                            "at": datetime.now(UTC).isoformat(),
+                            "per_requirement": value,
+                        }
+                    )
+                    + "\n"
+                )
+            return {"id": key, "per_requirement": value}
+
     def read(self, key: str) -> dict:
         with self.lock:
             self.harvest()
@@ -177,7 +216,11 @@ class LocalAPI(EvidenceAPI, SettingsAPI):
             return public(
                 {
                     "id": key,
-                    "progress": {**progress(view), "eta": self._eta(key, view)},
+                    "progress": {
+                        **progress(view),
+                        "eta": self._eta(key, view),
+                        "case_budget": self._case_budget(key, view),
+                    },
                     "status": status,
                     "pending": {k: v for k, v in pending.items() if k != "state"} if pending else None,
                     "state": {k: state[k] for k in PUBLIC_STATE if k in state},
@@ -278,6 +321,11 @@ class LocalAPI(EvidenceAPI, SettingsAPI):
                 or not isinstance(launch, bool)
             ):
                 raise ValueError("Repository and application URLs must be text; start_app must be boolean.")
+            budget = body.get("case_budget")
+            if budget is not None:
+                budget = _budget_value(
+                    (budget or {}).get("per_requirement") if isinstance(budget, dict) else None
+                )
             validate_github_url(url)
             if url.strip().startswith("git clone "):
                 url = validate_github_url(url)[0]
@@ -298,7 +346,7 @@ class LocalAPI(EvidenceAPI, SettingsAPI):
 
             async def begin():
                 await self.replace_host(key)
-                await self.host.start(url, app_url, launch, component, knowledge)
+                await self.host.start(url, app_url, launch, component, knowledge, budget)
 
             self.job_run = key
             self.operation_log(key, "starting repository workflow; waiting for clone approval")
@@ -571,6 +619,8 @@ def make_server(api: LocalAPI, token: str, port: int = 8765):
                         self.reply(200, api.delete_run(parts[1], body))
                     elif len(parts) == 3 and parts[0] == "runs" and parts[2] == "cancel-clone":
                         self.reply(202, api.cancel_clone(parts[1]))
+                    elif len(parts) == 3 and parts[0] == "runs" and parts[2] == "case-budget":
+                        self.reply(200, api.set_case_budget(parts[1], body))
                     elif len(parts) == 3 and parts[0] == "runs" and parts[2] == "stop":
                         self.reply(202, api.stop_run(parts[1]))
                     elif (

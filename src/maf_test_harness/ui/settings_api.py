@@ -10,7 +10,7 @@ from pathlib import Path
 from ..agent import prompt_settings
 from ..agent.personas import PERSONAS
 from ..llm.usage import DailyUsageLedger
-from ..settings import API_KEY, BASE_URL, MODEL
+from ..settings import API_KEY, BASE_URL, CASES_PER_REQUIREMENT, MODEL
 from ..workflow import STAGES
 from .presentation import public
 
@@ -77,6 +77,7 @@ class SettingsAPI:
         return public(
             {
                 "model": MODEL,
+                "case_budget_default": CASES_PER_REQUIREMENT,
                 "build_id": os.getenv("HARNESS_BUILD_ID", ""),
                 "base_url": BASE_URL,
                 "key_configured": bool(API_KEY),

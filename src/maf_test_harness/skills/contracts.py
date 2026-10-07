@@ -302,6 +302,43 @@ def _case_id(section: str, case: dict[str, Any], repo_url: str) -> str:
     )
 
 
+_PRIORITY_RANK = {"P0": 0, "P1": 1, "P2": 2}
+
+
+def _trim_to_budget(result: dict[str, Any], tests: list[dict[str, Any]], by_id: dict, budget: int) -> list[str]:
+    """Drop the lowest-ranked cases of over-budget requirements (in place); return the dropped case IDs.
+
+    Cases are ranked priority, then type order, then id. A case counts toward every requirement it links and is
+    dropped only when all of them are already full, so a requirement with cases never ends up with none.
+    """
+
+    def requirements(case: dict[str, Any]) -> set[str]:
+        found = set()
+        for link in case["traceability_links"]:
+            if link["type"] == "requirement":
+                found.add(link["id"])
+            elif link["type"] == "acceptance_criterion":
+                found.add(by_id[link["id"]]["requirement_id"])
+        return found
+
+    ranked = sorted(
+        tests,
+        key=lambda c: (_PRIORITY_RANK.get(c.get("priority"), 3), _SECTIONS.index(c["type"]), c["id"]),
+    )
+    counts: dict[str, int] = {}
+    dropped: set[str] = set()
+    for case in ranked:
+        linked = requirements(case)
+        if linked and all(counts.get(r, 0) >= budget for r in linked):
+            dropped.add(case["id"])
+            continue
+        for r in linked:
+            counts[r] = counts.get(r, 0) + 1
+    for section in _SECTIONS:
+        result[f"{section}_tests"] = [c for c in result[f"{section}_tests"] if c["id"] not in dropped]
+    return sorted(dropped)
+
+
 def _validate_design_schema(result: dict[str, Any], schema: dict[str, Any]) -> None:
     try:
         jsonschema.validate(result, schema, format_checker=_FORMAT_CHECKER)
@@ -316,6 +353,7 @@ def finalize_design(
     repo_url: str,
     skills_root: Path,
     allowed_levels: set[str] | None = None,
+    case_budget: int | None = None,
 ) -> dict[str, Any]:
     """Validate evidence links, assign IDs, and rebuild all derived design sections."""
     if not isinstance(document, dict):
@@ -437,6 +475,9 @@ def finalize_design(
                 raise ValueError("duplicate test content creates duplicate stable ID")
             seen_test_ids.add(case["id"])
             tests.append(case)
+    trimmed = _trim_to_budget(result, tests, by_id, case_budget) if case_budget else []
+    if trimmed:
+        tests = [case for case in tests if case["id"] not in set(trimmed)]
     if not tests:
         raise ValueError("design must contain at least one actionable test case")
 
@@ -493,6 +534,8 @@ def finalize_design(
     gaps = result.get("gaps_report")
     if not isinstance(gaps, dict):
         gaps = {}
+    if trimmed:
+        gaps["budget_trimmed"] = {"case_ids": trimmed, "reason": f"case budget {case_budget} per requirement"}
     gaps.setdefault("missing_validations", [])
     gaps.setdefault("incomplete_requirements", [])
     gaps["uncovered_requirements"] = sorted(key for key, value in requirement_links.items() if not value)

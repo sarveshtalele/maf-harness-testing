@@ -272,6 +272,7 @@ class Harness(RerunSteps, ExecutionSteps, GenerationSteps, PlanningSteps):
         start_app: bool = False,
         app_component: str | None = None,
         repo_knowledge: str = "",
+        case_budget: int | None = None,
     ):
         if self.view["status"] != "new":
             raise ValueError("Run already started. Resume its pending request.")
@@ -297,6 +298,7 @@ class Harness(RerunSteps, ExecutionSteps, GenerationSteps, PlanningSteps):
             "app_url": app_url.strip() if app_url else None,
             "launch_app": bool(start_app and not app_url),
             "app_component": app_component,
+            **({"case_budget": {"per_requirement": case_budget}} if case_budget else {}),
             "stages": self.stages,
             "artifacts": {},
             "revisions": {},

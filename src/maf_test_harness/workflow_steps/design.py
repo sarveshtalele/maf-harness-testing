@@ -4,7 +4,7 @@ from collections import defaultdict
 from pathlib import PurePosixPath
 
 from ..envs.platform_compat import raise_if_cancelled
-from ..workflow_support import digest
+from ..workflow_support import case_budget, digest
 
 SECTIONS = ("positive", "negative", "boundary", "validation", "contract")
 DESIGN_BATCH_SIZE = 12
@@ -46,6 +46,7 @@ async def design_tests_batched(host, state):
             "plan": state["artifacts"]["test_planning"],
             "feedback": state.get("feedback", {}).get("test_design"),
             "policy": "strict-component-design-v1",
+            "case_budget": case_budget(state),
         }
     )
     cache = state.setdefault("accepted_design_batches", {})

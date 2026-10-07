@@ -45,6 +45,7 @@ from ..workflow_support import (
     _compact_requirements,
     _plan_summary,
     atomic_json,
+    case_budget,
 )
 from . import design_review
 from .design import design_tests_batched
@@ -210,7 +211,9 @@ class PlanningSteps:
                 "Every supplied requirement must be accounted for by exactly one of: a new traceable case; an existing "
                 "repository test that directly invokes and asserts it (cite path::test name in gaps with the exact "
                 "requirement ID); or an ID-linked gap with a concrete reason. Target the method that actually implements "
-                "the expected behavior (arithmetic done in a callee belongs to the callee)."
+                "the expected behavior (arithmetic done in a callee belongs to the callee). "
+                f"Case budget: at most {case_budget(state)} case(s) per requirement; prefer one positive case "
+                "plus the most important negative or boundary case. The host drops cases beyond the budget."
             )
             upstream = {
                 "requirements": _compact_requirements(requirements_source),
@@ -468,7 +471,15 @@ class PlanningSteps:
                 state["repo_url"],
                 self.skills_root,
                 allowed_levels=_allowed_levels(state),
+                case_budget=case_budget(state),
             )
+            if requirements_source is None and design["gaps_report"].get("budget_trimmed"):
+                self.audit(
+                    "design_cases_trimmed",
+                    stage=stage,
+                    budget=case_budget(state),
+                    trimmed=design["gaps_report"]["budget_trimmed"]["case_ids"],
+                )
             for note in retarget_cases(
                 design_cases(design),
                 self.run_dir / "repo",

@@ -7,7 +7,7 @@ from pathlib import Path
 from statistics import median
 
 from ..workflow_steps.design import requirement_batches
-from ..workflow_support import TEST_GENERATION_BATCH_SIZE
+from ..workflow_support import TEST_GENERATION_BATCH_SIZE, case_budget
 
 _HISTORY_RUNS = 40
 # seconds per work unit (design/generation: per batch; others: per stage) when nothing was measured
@@ -145,6 +145,63 @@ def _case_count(run_dir: Path, artifacts: dict) -> int:
     if isinstance(cases, list):
         return len(cases)
     return sum(len(v) for k, v in design.items() if k.endswith("_tests") and isinstance(v, list))
+
+
+def _per_unit(stage: str, busy: dict, history: dict, units: dict, active) -> float:
+    done = units.get(stage, 0)
+    if stage == active and done and busy.get(stage):
+        return busy[stage] / done
+    return history.get(stage) or DEFAULTS[stage]
+
+
+def budget_recommendations(
+    requirement_count: int,
+    per_batch_s: float,
+    batch_size: int = TEST_GENERATION_BATCH_SIZE,
+    avg_cases: float = 2.2,
+    design_batches: int = 0,
+    per_design_batch_s: float = DEFAULTS["test_design"],
+    target_min: float = 60,
+) -> dict:
+    """Rows for k=1..4 cases per requirement; recommended = largest k generating within target_min (min 1)."""
+    rows = []
+    for k in range(1, 5):
+        cases = round(min(k, avg_cases) * requirement_count)
+        batches = ceil(cases / batch_size)
+        rows.append(
+            {
+                "per_requirement": k,
+                "cases": cases,
+                "batches": batches,
+                "generation_min": round(batches * per_batch_s / 60),
+                "design_min": round(design_batches * per_design_batch_s / 60),
+            }
+        )
+    fits = [r["per_requirement"] for r in rows if r["generation_min"] <= target_min]
+    return {"recommended": max(fits, default=1), "rows": rows}
+
+
+def case_budget_view(run_dir: Path, view: dict) -> dict:
+    """progress.case_budget: the run's current budget, recommendation and time table."""
+    state = view.get("state") or {}
+    artifacts = state.get("artifacts") or {}
+    audit = _rows(run_dir / "audit.jsonl")
+    units = _units(audit)
+    reqs = len(
+        ((artifacts.get("requirements") or {}).get("requirement_model") or {}).get("requirements") or []
+    )
+    design = artifacts.get("test_design")
+    avg = (_case_count(run_dir, artifacts) / reqs) if design and reqs else 2.2
+    busy, history = _busy(run_dir), _history(run_dir)
+    active = state.get("active_stage")
+    result = budget_recommendations(
+        reqs,
+        _per_unit("test_generation", busy, history, units, active),
+        avg_cases=avg or 2.2,
+        design_batches=_design_total(audit, artifacts) if reqs else 0,
+        per_design_batch_s=_per_unit("test_design", busy, history, units, active),
+    )
+    return {"current": case_budget(state), **result}
 
 
 def run_eta(
