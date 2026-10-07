@@ -24,6 +24,7 @@ from ..repo.analyzer import (
     collaborator_signatures,
     extract_target_sources,
 )
+from ..repo.import_recipes import python_import_recipes
 from ..repo.routes import extract_routes
 from ..repo.stack import detect_stack
 from ..repo.testability import testability_for_targets
@@ -166,7 +167,7 @@ class GenerationSteps:
             rounds = state.setdefault("generation_rounds", {})
             for attempt in range(1, 1 if accepted is not None else TEST_GENERATION_MAX_ATTEMPTS + 1):
                 # A deterministic model repeats a rejected answer verbatim: vary the sampling on every retry.
-                retry_temperature = min(0.8, 0.3 * (attempt - 1) + 0.25 * rounds.get(str(batch_index), 0))
+                retry_temperature = min(0.4, 0.3 * (attempt - 1) + 0.25 * rounds.get(str(batch_index), 0))
                 prompt = generation_prompt(
                     {
                         "assignment": (
@@ -196,6 +197,10 @@ class GenerationSteps:
                             },
                         },
                         "target_source": batch_source,
+                        "import_recipes": python_import_recipes(
+                            self.run_dir / "repo", source_files, [str(c.get("target") or "") for c in work]
+                        )
+                        or None,
                         "testability": testability_for_targets(
                             state["artifacts"]["repo_analysis"].get("testability"),
                             [str(case.get("target") or "") for case in work],

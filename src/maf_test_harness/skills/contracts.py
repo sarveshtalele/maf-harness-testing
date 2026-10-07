@@ -1015,6 +1015,13 @@ def extra_import_roots(py_files: list[str], limit: int = 12) -> list[str]:
     return sorted(roots)[:limit]
 
 
+def _recipe_hint(files: list[str], read: Callable[[str], str | None] | None, targets: list[str]) -> str:
+    from ..repo.import_recipes import recipes_for_files
+
+    found = recipes_for_files(files, read or (lambda _p: None), targets)
+    return "".join(f" import_recipe for {t}: {r['how']} Import line: `{r['import']}`." for t, r in found.items())
+
+
 def check_python_imports(
     content: str,
     repo_files: list[str],
@@ -1095,7 +1102,7 @@ def check_python_imports(
                         f"import '{name}' in {path or 'generated test'} cannot work: the apparent repository target is "
                         f"{real[0]}, whose path component '{bad}' is not a valid Python identifier. Do not translate "
                         "'-' to '_'. Use the repository's public loader/executor API or an existing test fixture; load "
-                        "the file by path only if the application itself does so."
+                        "the file by path only if the application itself does so." + _recipe_hint(py_files, read_source, real)
                     )
                 raise ValueError(
                     f"import '{name}' in {path or 'generated test'} does not match any repository path "
@@ -1117,6 +1124,7 @@ def check_python_imports(
                     "is not an importable package (hyphen or leading digit). The tests run with the repository root as the "
                     "working directory: add that directory to sys.path (e.g. sys.path.insert(0, str(Path.cwd() / "
                     "'<dir>'))) or load the file with importlib.util.spec_from_file_location, then import it."
+                    + _recipe_hint(py_files, read_source, [f"{h}.py" for h in hints])
                 )
             hint = (
                 f" Did you mean the repository module {', '.join(h.replace('/', '.') for h in hints)}?"
