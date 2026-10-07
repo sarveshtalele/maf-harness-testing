@@ -15,6 +15,8 @@ Headline: the Python and TypeScript source is very clean. The scan found **one**
 
 ## A) Safe to remove
 
+Note: `docs/ARCHITECTURE.md:238` already records that the shims were removed, so the `memory.md` claim is the stale one.
+
 | Path:line | Kind | Evidence | Risk | Recommendation |
 |---|---|---|---|---|
 | `src/maf_test_harness/ui/artifact_presenter.py:154` | function `_display_value` | Private; `grep -rn display_value` over the whole repo returns only its own `def` line. 0 references. Not in `__all__`, no getattr/string use. | safe | Delete the function (and `json`/`_scalar` imports only if they become unused, ruff will say). |
@@ -69,6 +71,6 @@ Headline: the Python and TypeScript source is very clean. The scan found **one**
 
 ## Counts
 
-* A) Safe to remove: 7 rows (1 function, 3 doc edits, 3 groups of unreferenced audit evidence = 9 binary/doc files).
-* B) Owner check: 13 rows (4 code symbols/modules, 1 settings doc gap, 8 root/docs artifacts).
+* A) Safe to remove: 7 rows (1 function, 3 stale-doc edits, 3 groups of unreferenced audit evidence = 9 files).
+* B) Owner check: 12 rows (4 code rows, 1 settings doc gap, 6 root/docs artifact rows, 1 informational test note).
 * C) Keep: 15 rows.
