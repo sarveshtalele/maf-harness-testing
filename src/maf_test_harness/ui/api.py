@@ -150,7 +150,9 @@ class LocalAPI(EvidenceAPI, SettingsAPI):
 
     def _eta(self, key: str, view: dict) -> dict:
         try:
-            return run_eta(self.run_path(key), view, bool(self.job and self.job_run == key))
+            live = bool(self.job and self.job_run == key)
+            stale = view.get("status") == "running" and not live  # API restarted mid-run
+            return run_eta(self.run_path(key), view, live, interrupted=stale)
         except Exception:  # progress hints must never break the run read
             return {"stages": []}
 
