@@ -91,6 +91,8 @@ MAX_OUTPUT_TOKENS = int(os.getenv("HARNESS_MAX_OUTPUT_TOKENS", "16384"))
 
 # Approved design cases implemented per provider call during test generation.
 GENERATION_BATCH_SIZE = min(8, max(1, int(os.getenv("HARNESS_GENERATION_BATCH_SIZE", "3"))))
+# Design cases kept per requirement (host-enforced after design); a run may override it ({"case_budget": ...}).
+CASES_PER_REQUIREMENT = min(10, max(1, int(os.getenv("HARNESS_CASES_PER_REQUIREMENT", "2"))))
 GENERATION_MAX_ATTEMPTS = max(1, int(os.getenv("HARNESS_GENERATION_MAX_ATTEMPTS", "3")))
 
 # Test generation: fail-soft batches. If failed_batches / total > this ratio, or zero files generated, raise.

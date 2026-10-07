@@ -6,6 +6,7 @@ import re
 from typing import Any
 
 from .settings import (
+    CASES_PER_REQUIREMENT,
     GENERATION_BATCH_SIZE,
     GENERATION_MAX_ATTEMPTS,
 )
@@ -37,6 +38,12 @@ STAGES = [
 
 
 TEST_GENERATION_BATCH_SIZE = GENERATION_BATCH_SIZE
+
+
+def case_budget(state: dict[str, Any]) -> int:
+    """Design cases kept per requirement: the run's override, else HARNESS_CASES_PER_REQUIREMENT."""
+    value = (state.get("case_budget") or {}).get("per_requirement")
+    return value if isinstance(value, int) and 1 <= value <= 10 else CASES_PER_REQUIREMENT
 
 
 TEST_GENERATION_MAX_ATTEMPTS = GENERATION_MAX_ATTEMPTS

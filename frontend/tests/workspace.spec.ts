@@ -391,3 +391,39 @@ test('repository URL auto-fills optional fields without overwriting edits', asyn
   await expect(page.getByRole('textbox', { name: /Application component/ })).toHaveValue('web');
   await expect(page.getByRole('textbox', { name: /Running application URL/ })).toHaveValue('http://localhost:3000');
 });
+
+test('case budget: new-run field posts case_budget and run view shows the recommendation table', async ({ page }) => {
+  const posts: Record<string, unknown>[] = [];
+  const run = {
+    id: 'abc', status: 'running', busy: false, service_busy: false, actions: [], pending: null,
+    state: { repo_url: 'https://github.com/acme/demo', stages: ['repo_analysis', 'requirements', 'test_planning', 'test_design', 'test_generation'], approved: { repo_analysis: {} }, artifacts: {}, case_budget: { per_requirement: 2 } },
+    progress: { percent: 10, case_budget: { current: 2, recommended: 1, rows: [1, 2, 3, 4].map(k => ({ per_requirement: k, cases: 191 * Math.min(k, 2), batches: 64 * Math.min(k, 2), generation_min: 149 * Math.min(k, 2), design_min: 12 })) } },
+  };
+  await page.route('**/api/harness/**', async route => {
+    const url = new URL(route.request().url());
+    const path = url.pathname.replace('/api/harness/', '');
+    if (route.request().method() === 'POST') {
+      posts.push({ path, ...route.request().postDataJSON() });
+      return route.fulfill({ json: { id: 'abc' } });
+    }
+    if (path === 'config') return route.fulfill({ json: { model: 'm', base_url: 'u', key_configured: true, case_budget_default: 2, daily: { used: 0, remaining: 1, limit: 1 }, stages: run.state.stages, personas: {} } });
+    if (path === 'runs') return route.fulfill({ json: { runs: [], busy: false } });
+    if (path === 'repo-preview') return route.fulfill({ json: {} });
+    if (path === 'runs/abc') return route.fulfill({ json: run });
+    return route.fulfill({ json: {} });
+  });
+  await page.goto('/');
+  await page.getByRole('button', { name: 'New run', exact: true }).click();
+  await expect(page.getByLabel('Test cases per requirement')).toHaveValue('2');
+  await expect(page.getByText('Fewer cases = faster run. You can change this until test design is approved.')).toBeVisible();
+  await page.getByRole('textbox', { name: 'Public GitHub repository URL' }).fill('https://github.com/acme/demo');
+  await page.getByLabel('Test cases per requirement').fill('3');
+  await page.getByRole('button', { name: 'Start repository review →' }).click();
+  await expect.poll(() => posts.find(p => p.path === 'runs')).toMatchObject({ case_budget: { per_requirement: 3 } });
+  await expect(page.getByRole('heading', { name: 'Case budget' })).toBeVisible();
+  await expect(page.getByRole('row', { name: /1 \(recommended\)/ })).toBeVisible();
+  await expect(page.getByRole('row')).toHaveCount(5);
+  await page.getByLabel('Cases per requirement').selectOption('4');
+  await page.getByRole('button', { name: 'Save', exact: true }).click();
+  await expect.poll(() => posts.find(p => p.path === 'runs/abc/case-budget')).toMatchObject({ per_requirement: 4 });
+});
