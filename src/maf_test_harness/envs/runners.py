@@ -446,7 +446,7 @@ def build_plan(
                     *isolate,
                     "--continue-on-collection-errors",
                     "--import-mode=importlib",
-                    f"--junitxml={REPORT_DIR}/junit.xml",
+                    f"--junitxml={REPORT_DIR}/pytest-results.xml",
                     *_paths(files, (".py",)),
                 ],
                 "test",
@@ -457,7 +457,7 @@ def build_plan(
                 },
                 timeout=timeout,
                 parser="junit",
-                report_glob=f"{REPORT_DIR}/junit.xml",
+                report_glob=f"{REPORT_DIR}/pytest-results.xml",
             )
         )
         return RunPlan("python-pytest", steps)

@@ -4,6 +4,7 @@ Layout inside the archive::
 
     <repo-name>/…                 the repository at the analyzed commit + generated tests at their real paths
     harness-report/qa_report.md   verdict, per-case results, files to update (file:line)
+    harness-report/steps/*.md     one validated Markdown report per workflow step (00-summary … 08-qa-verdict)
     harness-report/*.json         requirements, environment, test plan, test design, generation catalog, executions
     harness-report/audit.jsonl    approvals and tool calls
     harness-report/RUN_TESTS.md   the exact commands the harness used, to reproduce the run
@@ -19,6 +20,7 @@ from pathlib import Path, PureWindowsPath
 from ..envs.execution import EXPORT_SKIP_DIRS, FORWARDED_ENV, _exportable
 from ..hooks.builtin import redact
 from ..ui.evidence import MAX_FILE_BYTES, ROOTS, clean_content
+from .step_reports import build_step_reports
 
 REPORT_DIR = "harness-report"
 
@@ -75,7 +77,7 @@ def run_instructions(state: dict) -> str:
         lines += [f"UI/E2E tests read the target from `BASE_URL` (used: `{state['app_url']}`).", ""]
     lines += [
         "Generated files are listed in `harness-report/test_generation.json`; the traceability from requirement to "
-        "test is in `harness-report/qa_report.md`."
+        "test is in `harness-report/qa_report.md`; one report per workflow step is in `harness-report/steps/`."
     ]
     return redact("\n".join(lines) + "\n")[0]
 
@@ -234,6 +236,8 @@ def build_deliverable(run_dir: Path, state: dict, executions_dir: Path | None = 
             archive.write(audit, f"{REPORT_DIR}/audit.jsonl")
         for report in sorted((executions_dir or run_dir / "executions").glob("attempt-*/report.json")):
             archive.write(report, f"{REPORT_DIR}/executions/{report.parent.name}.json")
+        for step_name, markdown in build_step_reports(run_dir, state).items():
+            archive.writestr(f"{REPORT_DIR}/steps/{step_name}.md", redact(markdown)[0])
         archive.writestr(f"{REPORT_DIR}/RUN_TESTS.md", run_instructions(state))
         archive.writestr(f"{REPORT_DIR}/rerun.py", RERUN)
         archive.writestr(f"{REPORT_DIR}/rerun-plan.json", json.dumps(portable_plan(state, run_dir), indent=2))

@@ -68,7 +68,9 @@ def inventory(run_dir: Path) -> dict:
                     if ext in {".png", ".jpg", ".jpeg", ".webp"}
                     else "trace"
                     if name == "trace.zip"
-                    else "junit"
+                    else "test-results"
+                    if ext == ".xml" and name.startswith("TEST-")  # Maven/Gradle result files only
+                    else None
                     if ext == ".xml"
                     else "log"
                     if name.endswith((".log", ".jsonl")) or name == "error-context.md"

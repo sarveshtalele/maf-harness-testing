@@ -19,6 +19,7 @@ from ..hooks import (
     ON_EXEC_ERROR,
 )
 from ..qa.report import build_qa_report, render_markdown
+from ..qa.step_reports import run_completed_at
 from ..qa.triage import remedy_for
 from ..repo.stack import detect_stack
 from ..settings import (
@@ -49,6 +50,7 @@ class ExecutionSteps:
             design=arts["test_design"],
             generation=arts["test_generation"],
             execution=report,
+            generated_at=run_completed_at(self.run_dir),
             stack=state.get("stack"),
             environment={
                 **(state.get("environment", {}).get("plan") or {}),
@@ -63,7 +65,11 @@ class ExecutionSteps:
         )
         execution = dict(report or {"status": "not_run"})
         skill_reports = run_skill_checks(
-            self.skills_root, arts["requirements"], arts["test_design"], arts["test_generation"]
+            self.skills_root,
+            arts["requirements"],
+            arts["test_design"],
+            arts["test_generation"],
+            generated_at=run_completed_at(self.run_dir),
         )
         qa["skill_checks"] = skill_reports["checks"]
         environment = state.get("environment", {})

@@ -10,7 +10,6 @@ Nothing here infers links: it only re-shapes the IDs and links the approved desi
 from __future__ import annotations
 
 import json
-from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -26,12 +25,15 @@ def _requirement_ids(requirements: dict[str, Any]) -> list[str]:
 
 
 def build_traceability(
-    requirements: dict[str, Any], design: dict[str, Any], generation: dict[str, Any]
+    requirements: dict[str, Any],
+    design: dict[str, Any],
+    generation: dict[str, Any],
+    generated_at: str | None = None,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     """(traceability-generator output, its validation source) from the approved design and generated files."""
     model = requirements.get("requirement_model", {})
     criterion_parent = {c["id"]: c["requirement_id"] for c in model.get("acceptance_criteria", [])}
-    file_for_case = {f["case_ids"][0]: f["path"] for f in generation.get("files", [])}
+    file_for_case = {cid: f["path"] for f in generation.get("files", []) for cid in f.get("case_ids", [])}
     matrix, orphan_tests, seen = [], [], set()
     for case in design_cases(design):
         linked = {
@@ -58,7 +60,7 @@ def build_traceability(
     mapped = {row["requirement_id"] for row in matrix}
     report = {
         "metadata": {
-            "generated_at": datetime.now(UTC).isoformat(),
+            "generated_at": generated_at or "1970-01-01T00:00:00+00:00",  # ISO-8601 required; epoch = not recorded
             "generator_version": "1.1",
             "source_skill_names": ["test-design-generator", "generic-test-generator"],
         },
@@ -75,8 +77,9 @@ def build_traceability(
         "requirements": [{"id": r} for r in _requirement_ids(requirements)],
         "test_cases": [{"id": c["id"]} for c in design_cases(design)],
         "generated_artifacts": [
-            {"id": f["path"], "type": "generated_test", "test_case_id": f["case_ids"][0]}
+            {"id": f["path"], "type": "generated_test", "test_case_id": cid}
             for f in generation.get("files", [])
+            for cid in f.get("case_ids", [])
         ],
     }
     return report, source
@@ -153,11 +156,15 @@ def build_coverage(requirements: dict[str, Any], design: dict[str, Any]) -> dict
 
 
 def run_skill_checks(
-    skills_root: Path, requirements: dict[str, Any], design: dict[str, Any], generation: dict[str, Any]
+    skills_root: Path,
+    requirements: dict[str, Any],
+    design: dict[str, Any],
+    generation: dict[str, Any],
+    generated_at: str | None = None,
 ) -> dict[str, Any]:
     """Produce both reports and validate them with the skills' own contract/validator. Never raises."""
     runner = HarnessScriptRunner(skills_root, tiers=("host", "model"))
-    traceability, source = build_traceability(requirements, design, generation)
+    traceability, source = build_traceability(requirements, design, generation, generated_at)
     coverage = build_coverage(requirements, design)
     checks: dict[str, Any] = {}
     try:
