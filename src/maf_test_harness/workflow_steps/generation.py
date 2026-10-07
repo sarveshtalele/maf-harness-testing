@@ -470,8 +470,12 @@ class GenerationSteps:
 
         cases = design_cases(design)
         problems: list[str] = []
+        # A component batch (requirements_source given) may legitimately be UI-only or single-actor; the unit-level
+        # and per-actor policies apply to the merged design only. Per-requirement coverage is checked in both.
+        whole_design = requirements_source is None
         if (
-            arts["repo_analysis"].get("source_file_count")
+            whole_design
+            and arts["repo_analysis"].get("source_file_count")
             and not mentions("unit")
             and not any(c.get("level") == "unit" for c in cases)
         ):
@@ -481,7 +485,7 @@ class GenerationSteps:
             )
         idle = [
             a["name"]
-            for a in (requirements_source or arts["requirements"]).get("actors", [])
+            for a in (arts["requirements"].get("actors", []) if whole_design else [])
             if a["name"].lower() != "system"
             and not any(c.get("actor") == a["name"] for c in cases)
             and not mentions(a["name"])
