@@ -160,7 +160,8 @@ def _python(text: str, directory: str, name: str, tree: set, versions: list) -> 
         "stack": hit[0],
         "port": hit[1],
         "explicit": False,
-        "commands": [install, run.get(hit[0], "uvicorn <module>:app")],
+        # Only known start commands; an unknown module path is never guessed (see README or Dockerfile CMD).
+        "commands": [install, *([run[hit[0]]] if hit[0] in run and "<" not in run[hit[0]] else [])],
     }
 
 

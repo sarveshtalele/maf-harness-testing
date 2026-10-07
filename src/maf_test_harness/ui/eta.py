@@ -228,6 +228,11 @@ def run_eta(
     first = next((t for t in (_ts(r.get("at")) for r in audit) if t), None)
     totals = {"test_design": _design_total(audit, artifacts) if "test_design" in stages else 0}
     cases = _case_count(run_dir, artifacts) if "test_generation" in stages else 0
+    if not cases:  # before design: requirements x case budget is the best available case estimate
+        reqs = len(
+            ((artifacts.get("requirements") or {}).get("requirement_model") or {}).get("requirements") or []
+        )
+        cases = reqs * case_budget(state)
     totals["test_generation"] = (
         ceil(cases / TEST_GENERATION_BATCH_SIZE) if cases else units["test_generation"]
     )
@@ -276,6 +281,10 @@ def run_eta(
                 row["elapsed_s"] = round(max(now - start - gate, 0))
             if measured:
                 row["avg_batch_s"] = round(per, 1)
+            elif row.get("elapsed_s") is not None and stage not in totals:
+                # A single-unit stage that has run longer than predicted: remaining can't be the full prediction.
+                row["remaining_s"] = max(row["predicted_s"] - row["elapsed_s"], 0)
+                row["predicted_s"] = max(row["predicted_s"], row["elapsed_s"])
             if interrupted:
                 row["remaining_s"] = None
                 if busy.get(stage):  # wall time since start includes the downtime after the crash/restart
