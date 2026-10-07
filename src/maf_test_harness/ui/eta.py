@@ -177,8 +177,10 @@ def budget_recommendations(
                 "design_min": round(design_batches * per_design_batch_s / 60),
             }
         )
-    fits = [r["per_requirement"] for r in rows if r["generation_min"] <= target_min]
-    return {"recommended": max(fits, default=1), "rows": rows}
+    fits = [r for r in rows if r["generation_min"] <= target_min]
+    # Largest useful budget within the target; among rows producing the same cases, the smallest k.
+    best = max(fits, key=lambda r: (r["cases"], -r["per_requirement"]), default=None)
+    return {"recommended": best["per_requirement"] if best else 1, "rows": rows}
 
 
 def case_budget_view(run_dir: Path, view: dict) -> dict:

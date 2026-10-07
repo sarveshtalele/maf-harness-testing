@@ -108,7 +108,9 @@ def drive(tmp_path, monkeypatch):
     monkeypatch.setattr(execution_steps, "build_plan", local_pytest_plan)
     monkeypatch.setattr(execution_steps, "build_environment_plan", local_env_plan)
     monkeypatch.setattr(generation_steps, "TEST_GENERATION_BATCH_SIZE", 1)
-    monkeypatch.setattr("maf_test_harness.workflow_support.CASES_PER_REQUIREMENT", 10)  # keep all 3 fixture cases
+    monkeypatch.setattr(
+        "maf_test_harness.workflow_support.CASES_PER_REQUIREMENT", 10
+    )  # keep all 3 fixture cases
     service = RuntimeService()
 
     def make(runtime):

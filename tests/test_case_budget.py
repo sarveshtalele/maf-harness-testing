@@ -140,8 +140,8 @@ def test_recommendations_math():
     assert rows[1]["design_min"] == 12
     assert out["recommended"] == 1  # nothing fits 60 min: minimum 1
     assert (
-        budget_recommendations(20, 140, 3)["recommended"] == 4
-    )  # 2.2*20=44 cases -> 15 batches = 35 min; k=3,4 both cap at 2.2
+        budget_recommendations(20, 140, 3)["recommended"] == 3
+    )  # k=3 and k=4 both give 44 cases: the smaller k wins
 
 
 def test_api_budget_validation_prompt_and_lock_after_design_approval(local_api, monkeypatch):  # noqa: F811
