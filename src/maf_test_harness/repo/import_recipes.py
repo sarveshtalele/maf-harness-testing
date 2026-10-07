@@ -9,6 +9,7 @@ exact ``sys.path`` root and import line, so generation can copy it and the valid
 from __future__ import annotations
 
 import ast
+import re
 from collections.abc import Callable
 from pathlib import Path, PurePosixPath
 
@@ -98,7 +99,7 @@ def _public_name(source: str, hint: str = "") -> str:
         return ""
     kinds = (ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)
     names = [n.name for n in tree.body if isinstance(n, kinds) and not n.name.startswith("_")]
-    if named := next((n for n in names if n in hint), ""):  # the symbol the case targets
+    if named := next((n for n in names if re.search(rf"\b{n}\b", hint)), ""):  # the symbol the case targets
         return named
     for kind in (ast.ClassDef, (ast.FunctionDef, ast.AsyncFunctionDef)):
         for node in tree.body:
