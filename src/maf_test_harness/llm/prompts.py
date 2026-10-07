@@ -50,6 +50,7 @@ GENERATION_ORDER = (
     # approved_inputs starts with test_plan and generation_policy (stable), then the batch (see GENERATION_INPUT_ORDER)
     "approved_inputs",
     "target_source",
+    "import_recipes",
     "testability",
     "collaborator_signatures",
     "state_and_schema_source",

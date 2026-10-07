@@ -177,8 +177,14 @@ REMEDIES: list[tuple[re.Pattern[str], str]] = [
     (
         re.compile(r"does not match any repository path|not a valid Python identifier"),
         "Do not normalise filesystem paths into imports (never translate '-' to '_'): inspect source_files and the "
-        "existing tests, and prefer the repository's public API/registry fixture (e.g. "
-        '`await registry.execute("skill-name", {...})`) when the target is a script under a non-importable directory.',
+        "existing tests, and use the sys.path root and import line from `import_recipes` for a script under a "
+        "non-importable directory (or the repository's public API/registry fixture, e.g. "
+        '`await registry.execute("skill-name", {...})`).',
+    ),
+    (
+        re.compile(r"generated Python source is invalid"),
+        "Keep every source line syntactically complete: each `lines` entry is one real line of Python, never JSON "
+        "punctuation such as `],` or `case_ids:[`; close all brackets before the array ends.",
     ),
     (
         re.compile(
@@ -222,7 +228,8 @@ REMEDIES: list[tuple[re.Pattern[str], str]] = [
         re.compile(r"cannot import name|No module named|ImportError"),
         "Import only names defined at module level in target_source and modules listed in source_files / "
         "python_import_roots: e.g. `from app.rag_pipeline import get_chain`, not a name you expect to exist but "
-        "never saw declared in either list.",
+        "never saw declared in either list. For a hyphenated or numeric-prefixed directory copy the sys.path root "
+        "and import line from `import_recipes`.",
     ),
     (
         re.compile(r"readonly attribute|can't set attribute|cannot set attribute", re.I),
