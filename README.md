@@ -128,6 +128,7 @@ The CLI and UI share `<repo-root>/.maf-harness/runs` by default. `HARNESS_RUNS_D
 | Guide | Contents |
 |---|---|
 | [Architecture](docs/ARCHITECTURE.md) | Workflow, checkpoint format and execution guarantees |
+| [Architecture map](docs/ARCHITECTURE_MAP.md) | Generated diagrams and a per-file table of what imports what |
 | [Agent catalog](docs/CATALOG.md) | Stage personas, central tools and skill assignments |
 | [Environments](docs/ENVIRONMENTS.md) | Isolation, toolchains and dependency checks |
 | [Error playbook](docs/ERROR_PLAYBOOK.md) | Error classification and recovery |
