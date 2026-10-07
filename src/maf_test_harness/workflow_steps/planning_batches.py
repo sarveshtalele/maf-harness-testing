@@ -66,7 +66,7 @@ async def plan_tests_batched(host, state):
     if cache.get("signature") != signature:
         cache.clear()
         cache.update(signature=signature, batches={})
-    batches = list(requirement_batches(requirements, PLANNING_BATCH_SIZE))
+    batches = list(requirement_batches(requirements, PLANNING_BATCH_SIZE, pack=True))
     plans = []
     for index, (component, subset) in enumerate(batches, 1):
         raise_if_cancelled()

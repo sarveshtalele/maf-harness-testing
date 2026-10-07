@@ -1,8 +1,9 @@
 import asyncio
 
-from maf_test_harness.models import TestPlan
+from maf_test_harness.models import TestPlan as PlanModel
 from maf_test_harness.ui.eta import run_eta
 from maf_test_harness.workflow_steps.planning_batches import (
+    PLANNING_BATCH_SIZE,
     PLANNING_THRESHOLD,
     merge_plans,
     plan_tests_batched,
@@ -46,7 +47,7 @@ class Host:
         return _plan(str(prompt_batch))
 
     async def validate(self, stage, state):
-        return TestPlan.model_validate(state["draft"]).model_dump()
+        return PlanModel.model_validate(state["draft"]).model_dump()
 
     def audit(self, event, **kw):
         self.events.append((event, kw))
@@ -56,8 +57,9 @@ class Host:
 
 
 def test_batched_threshold_and_resume_skips_accepted():
-    state = {"artifacts": {"requirements": _reqs(PLANNING_THRESHOLD + 1)}}
-    assert planning_is_batched(state["artifacts"]["requirements"])
+    # Small components are packed up to PLANNING_BATCH_SIZE requirements, so 2 x size + 1 gives 3 batches.
+    state = {"artifacts": {"requirements": _reqs(2 * PLANNING_BATCH_SIZE + 1)}}
+    assert planning_is_batched(_reqs(PLANNING_THRESHOLD + 1))
     assert not planning_is_batched(_reqs(PLANNING_THRESHOLD))
     host = Host()
     plan = asyncio.run(plan_tests_batched(host, state))
@@ -83,7 +85,7 @@ def test_merge_deterministic_caps_and_schema_valid():
     plans[0]["setup_actions"] = [f"a{i}" for i in range(30)]
     merged = merge_plans(plans)
     assert merged == merge_plans(plans)
-    plan = TestPlan.model_validate(merged)
+    plan = PlanModel.model_validate(merged)
     assert len(plan.areas) <= 24 and len(plan.setup_actions) == 20 and len(plan.recommended_frameworks) <= 8
     assert any(a.risk == "high" for a in plan.areas)
     assert all(len(a.scenarios) <= 8 and len(a.evidence_files) <= 8 for a in plan.areas)
@@ -97,7 +99,7 @@ def test_eta_planning_units(tmp_path):
         "artifacts": {"requirements": _reqs(100)},
     }
     out = run_eta(tmp_path, {"state": state}, True, now=1767225600)["stages"][0]
-    assert out["batch"] == {"done": 0, "total": 5} and out["remaining_s"] == 5 * 45
+    assert out["batch"] == {"done": 0, "total": 3} and out["remaining_s"] == 3 * 45  # 100 reqs packed by 40
     (tmp_path / "audit.jsonl").write_text(
         '{"event":"planning_batch_accepted","batch":2,"total_batches":4,"at":"2026-01-01T00:00:10+00:00"}\n'
     )

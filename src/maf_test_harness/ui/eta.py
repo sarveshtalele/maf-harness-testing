@@ -131,7 +131,7 @@ def _design_total(audit: list[dict], artifacts: dict) -> int:
     if any(totals):
         return int(max(t for t in totals if t))
     try:
-        return sum(1 for _ in requirement_batches(artifacts["requirements"]))
+        return sum(1 for _ in requirement_batches(artifacts["requirements"], pack=True))
     except (KeyError, TypeError, IndexError, AttributeError):
         return 1
 
@@ -142,7 +142,9 @@ def _planning_total(audit: list[dict], artifacts: dict) -> int:
         return int(max(t for t in totals if t))
     try:
         if planning_is_batched(artifacts["requirements"]):
-            return sum(1 for _ in requirement_batches(artifacts["requirements"], PLANNING_BATCH_SIZE))
+            return sum(
+                1 for _ in requirement_batches(artifacts["requirements"], PLANNING_BATCH_SIZE, pack=True)
+            )
     except (KeyError, TypeError, IndexError, AttributeError):
         pass
     return 1

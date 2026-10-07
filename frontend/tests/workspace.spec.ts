@@ -248,8 +248,8 @@ test('mouse resizing persists and project skill cards show real package details'
   await page.getByRole('link', { name: 'View skill details →', exact: true }).click();
   await expect(page).toHaveURL(/skill=playwright-test-generator/);
   await expect(page.locator('.markdown-document h2').first()).toContainText('Playwright');
-  await expect(page.locator('.markdown-document pre').first()).not.toBeEmpty();
-  await expect(page.locator('.markdown-document table').first()).toBeVisible();
+  // SKILL.md keeps numbered steps; code samples and tables live in references/ (progressive disclosure).
+  await expect(page.locator('.markdown-document ol li').first()).not.toBeEmpty();
   await expect(page.getByText('Upstream library provenance', { exact: true })).toHaveCount(0);
   await page.reload();
   await expect(page.locator('.skill-document')).toBeVisible();
@@ -420,7 +420,7 @@ test('case budget: new-run field posts case_budget and run view shows the recomm
   await page.getByLabel('Test cases per requirement').fill('3');
   await page.getByRole('button', { name: 'Start repository review →' }).click();
   await expect.poll(() => posts.find(p => p.path === 'runs')).toMatchObject({ case_budget: { per_requirement: 3 } });
-  await expect(page.getByRole('heading', { name: 'Case budget' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Case budget', exact: true })).toBeVisible();
   await expect(page.getByRole('row', { name: /1 \(recommended\)/ })).toBeVisible();
   await expect(page.getByRole('row')).toHaveCount(5);
   await page.getByLabel('Cases per requirement').selectOption('4');
