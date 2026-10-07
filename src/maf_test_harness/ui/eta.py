@@ -7,6 +7,7 @@ from pathlib import Path
 from statistics import median
 
 from ..workflow_steps.design import requirement_batches
+from ..workflow_steps.planning_batches import PLANNING_BATCH_SIZE, planning_is_batched
 from ..workflow_support import TEST_GENERATION_BATCH_SIZE, case_budget
 
 _HISTORY_RUNS = 40
@@ -14,7 +15,7 @@ _HISTORY_RUNS = 40
 DEFAULTS = {
     "repo_analysis": 15,
     "requirements": 10,
-    "test_planning": 60,
+    "test_planning": 45,
     "test_design": 45,
     "test_generation": 45,
     "environment_setup": 180,
@@ -58,11 +59,13 @@ def _busy(run_dir: Path) -> dict[str, float]:
 
 def _units(audit: list[dict]) -> dict[str, int]:
     """Work units completed so far per batched stage, from audit events."""
-    out = {"test_design": 0, "test_generation": 0}
+    out = {"test_planning": 0, "test_design": 0, "test_generation": 0}
     for r in audit:
         if not isinstance(r.get("batch"), int):
             continue
-        if r.get("event") == "design_batch_accepted":
+        if r.get("event") == "planning_batch_accepted":
+            out["test_planning"] = max(out["test_planning"], r["batch"])
+        elif r.get("event") == "design_batch_accepted":
             out["test_design"] = max(out["test_design"], r["batch"])
         elif r.get("event") in _GEN_EVENTS:
             out["test_generation"] = max(out["test_generation"], r["batch"])
@@ -131,6 +134,18 @@ def _design_total(audit: list[dict], artifacts: dict) -> int:
         return sum(1 for _ in requirement_batches(artifacts["requirements"]))
     except (KeyError, TypeError, IndexError, AttributeError):
         return 1
+
+
+def _planning_total(audit: list[dict], artifacts: dict) -> int:
+    totals = [r.get("total_batches") for r in audit if r.get("event") == "planning_batch_accepted"]
+    if any(totals):
+        return int(max(t for t in totals if t))
+    try:
+        if planning_is_batched(artifacts["requirements"]):
+            return sum(1 for _ in requirement_batches(artifacts["requirements"], PLANNING_BATCH_SIZE))
+    except (KeyError, TypeError, IndexError, AttributeError):
+        pass
+    return 1
 
 
 def _case_count(run_dir: Path, artifacts: dict) -> int:
@@ -227,6 +242,10 @@ def run_eta(
     scale = max(1.0, files / 10)
     first = next((t for t in (_ts(r.get("at")) for r in audit) if t), None)
     totals = {"test_design": _design_total(audit, artifacts) if "test_design" in stages else 0}
+    if "test_planning" in stages:
+        planned = _planning_total(audit, artifacts)
+        if planned > 1:  # a single-call plan keeps the single-unit stage behaviour
+            totals["test_planning"] = planned
     cases = _case_count(run_dir, artifacts) if "test_generation" in stages else 0
     if not cases:  # before design: requirements x case budget is the best available case estimate
         reqs = len(
