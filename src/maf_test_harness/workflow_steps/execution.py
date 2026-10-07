@@ -480,8 +480,12 @@ class ExecutionSteps:
             notes=info["plan"].get("notes", []),
             app=info["plan"].get("app"),
         )
-        # Compilation/collection can execute repository code: only after this execution approval.
-        await self._build_gate(state["artifacts"]["test_generation"], batch=0)
+        # Compilation/collection can execute repository code: only after this execution approval. A failing file must
+        # not block the run: the runner quarantines files that fail to compile/collect and reports them as errors.
+        try:
+            await self._build_gate(state["artifacts"]["test_generation"], batch=0)
+        except ValueError as exc:
+            self.audit("build_gate_failed_continuing", stage="test_execution", error=str(exc)[:600])
         out_dir = self.run_dir / "executions" / f"attempt-{info['attempt']}"
         self.audit(
             "execution_started", request_id=request["id"], adapter=plan.adapter, plan_hash=info["hash"]

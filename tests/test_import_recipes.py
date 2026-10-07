@@ -110,3 +110,21 @@ def test_json_structure_leaked_into_lines_is_dropped_but_code_is_kept():
         assert _JSON_DEBRIS.match(debris), debris
     for code in ("    ]", "],", "case_ids = ['a']", "assert case_ids", "x = [1]"):
         assert not _JSON_DEBRIS.match(code), code
+
+
+def test_recipe_purges_cached_package_when_two_dirs_share_a_top_level_name(tmp_path):
+    from maf_test_harness.repo.import_recipes import python_import_recipes
+
+    files = [
+        "skills/a-one/scripts/engine/__init__.py",
+        "skills/a-one/scripts/engine/x.py",
+        "skills/b-two/scripts/engine/__init__.py",
+        "skills/b-two/scripts/engine/y.py",
+    ]
+    for rel in files:
+        (tmp_path / rel).parent.mkdir(parents=True, exist_ok=True)
+        (tmp_path / rel).write_text("def run():\n    return 1\n", encoding="utf-8")
+    how = python_import_recipes(tmp_path, files, [files[1]])[files[1]]["how"]
+    assert "del sys.modules[m]" in how and "'scripts'" in how  # fallback root skills/a-one -> top 'scripts'
+    solo = python_import_recipes(tmp_path, files[:2], [files[1]])[files[1]]["how"]
+    assert "del sys.modules" not in solo

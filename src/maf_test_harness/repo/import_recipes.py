@@ -138,13 +138,27 @@ def recipes_for_files(
         dotted = ".".join(module)
         name = _public_name(read(target) or "", hint)
         line = f"from {dotted} import {name}" if name else f"import {dotted}"
+        top = module[0]
+        # Another directory providing the same top-level package (e.g. two skills/*/scripts/engine) collides inside
+        # one pytest session: whichever was imported first shadows the other ("No module named engine.analyzer").
+        clash = len(module) > 1 and any(
+            f"/{top}/" in f"/{f}" and not PurePosixPath(f).is_relative_to(PurePosixPath(root) / top)
+            for f in py
+        )
+        purge = (
+            f" Because another directory also provides a top-level `{top}` package, first drop cached modules: "
+            f"`for m in [m for m in sys.modules if m == '{top}' or m.startswith('{top}.')]: del sys.modules[m]`, "
+            f"then insert the path and import."
+            if clash
+            else ""
+        )
         out[target] = {
             "sys_path_root": root,
             "import": line,
             "how": (
                 f"In the test, find the repository root with pathlib (walk Path(__file__).resolve().parents until one "
                 f"holds pyproject.toml, setup.cfg or .git), `sys.path.insert(0, str(repo_root / '{root}'))`, then "
-                f"`{line}` ({seen}). Never import via skills.<dir_with_hyphens_renamed>."
+                f"`{line}` ({seen}). Never import via skills.<dir_with_hyphens_renamed>.{purge}"
             ),
         }
     return out
