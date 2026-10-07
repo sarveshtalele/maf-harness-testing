@@ -427,3 +427,32 @@ test('case budget: new-run field posts case_budget and run view shows the recomm
   await page.getByRole('button', { name: 'Save', exact: true }).click();
   await expect.poll(() => posts.find(p => p.path === 'runs/abc/case-budget')).toMatchObject({ per_requirement: 4 });
 });
+
+test('run name: shown in list, header and sidebar; posted from the new-run form', async ({ page }) => {
+  const posts: Record<string, unknown>[] = [];
+  const run = {
+    id: 'abc', status: 'running', busy: false, service_busy: false, actions: [], pending: null,
+    state: { run_name: 'Nightly smoke', repo_url: 'https://github.com/acme/demo', stages: ['repo_analysis'], approved: {}, artifacts: {} },
+    progress: { percent: 10 },
+  };
+  await page.route('**/api/harness/**', async route => {
+    const path = new URL(route.request().url()).pathname.replace('/api/harness/', '');
+    if (route.request().method() === 'POST') { posts.push({ path, ...route.request().postDataJSON() }); return route.fulfill({ json: { id: 'abc' } }); }
+    if (path === 'config') return route.fulfill({ json: { model: 'm', base_url: 'u', key_configured: true, daily: { used: 0, remaining: 1, limit: 1 }, stages: run.state.stages, personas: {} } });
+    if (path === 'runs') return route.fulfill({ json: { runs: [{ id: 'abc', run_name: 'Nightly smoke', repo_url: run.state.repo_url, status: 'running', updated: 1, progress: { percent: 10 } }], busy: false } });
+    if (path === 'runs/abc') return route.fulfill({ json: run });
+    return route.fulfill({ json: {} });
+  });
+  await page.goto('/');
+  await expect(page.locator('.run-row .run-name b')).toHaveText('Nightly smoke');
+  await page.getByRole('searchbox', { name: 'Search runs' }).fill('nightly');
+  await expect(page.locator('.run-row')).toHaveCount(1);
+  await page.getByRole('button', { name: 'Open run →' }).click();
+  await expect(page.getByRole('heading', { level: 1, name: 'Nightly smoke' })).toBeVisible();
+  await expect(page.locator('.sidebar-run b')).toHaveText('Nightly smoke');
+  await page.getByRole('button', { name: 'New run', exact: true }).click();
+  await page.getByRole('textbox', { name: 'Public GitHub repository URL' }).fill('https://github.com/acme/demo');
+  await page.getByRole('textbox', { name: /Run name/ }).fill('My named run');
+  await page.getByRole('button', { name: 'Start repository review →' }).click();
+  await expect.poll(() => posts.find(p => p.path === 'runs')).toMatchObject({ run_name: 'My named run' });
+});

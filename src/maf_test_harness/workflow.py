@@ -273,6 +273,7 @@ class Harness(RerunSteps, ExecutionSteps, GenerationSteps, PlanningSteps):
         app_component: str | None = None,
         repo_knowledge: str = "",
         case_budget: int | None = None,
+        run_name: str | None = None,
     ):
         if self.view["status"] != "new":
             raise ValueError("Run already started. Resume its pending request.")
@@ -291,6 +292,7 @@ class Harness(RerunSteps, ExecutionSteps, GenerationSteps, PlanningSteps):
             prompt_settings.save(self.run_dir / "prompts.json", prompt_settings.defaults())
         self.state = {
             "repo_url": repo_url.strip(),
+            **({"run_name": run_name} if run_name else {}),
             "repo_knowledge": repo_knowledge,
             "workflow_version": 2,
             "requirements_mode": self.requirements_mode,
