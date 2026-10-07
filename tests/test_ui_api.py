@@ -518,3 +518,16 @@ def test_stop_active_model_preserves_analysis_and_allows_another_run(local_api):
     assert "run_stopped_by_user" in (api.run_path(key) / "audit.jsonl").read_text()
     api.start({"repo_url": "https://github.com/acme/another"})
     wait(api)
+
+
+def test_a_running_run_without_a_live_job_reads_as_interrupted(local_api):
+    import json as _json
+
+    run = local_api.run_path("orphan01", create=True)
+    run.mkdir(parents=True, exist_ok=True)
+    (run / "run.json").write_text(
+        _json.dumps({"status": "running", "state": {"stages": ["repo_analysis"]}, "pending": None}),
+        encoding="utf-8",
+    )
+    view = local_api.read("orphan01")
+    assert view["status"] == "interrupted" and view["busy"] is False

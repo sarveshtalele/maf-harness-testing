@@ -164,11 +164,14 @@ class LocalAPI(EvidenceAPI, SettingsAPI):
             pending = view.get("pending")
             actions = decisions(pending, view.get("status", "new"), view.get("consumed", []))
             status = view.get("status", "new")
-            if (
-                pending
-                and status not in {"stopped", "complete"}
-                and pending["id"] in view.get("consumed", [])
-                and not (self.job and self.job_run == key)
+            orphaned = not (self.job and self.job_run == key)
+            if orphaned and (
+                status in {"running", "stopping"}  # the process that ran it ended (API restart or crash)
+                or (
+                    pending
+                    and status not in {"stopped", "complete"}
+                    and pending["id"] in view.get("consumed", [])
+                )
             ):
                 status = "interrupted"
             return public(

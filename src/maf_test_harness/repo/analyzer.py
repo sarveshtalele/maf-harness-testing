@@ -1,3 +1,5 @@
+"""Clone transport, static repository analysis, evidence builders and target-source extraction."""
+
 from __future__ import annotations
 
 import ast

@@ -321,3 +321,29 @@ Final verification on `new-ui`:
   - live runs on all target repos;
   - frontend display of design-case confidence;
   - checking that design case IDs match between the per-batch and final review.
+
+### 2026-10-07 Wave F–H plus the gap review (Sonnet ×3; Opus orchestrated)
+- **Process lesson:** isolated worktrees branch from the shell's cwd repo and from `main`.
+  - The first launch ran inside the evidence clone. The orchestrator cleaned it up.
+  - The second launch was based on `main`, and `git reset --hard` was denied.
+  - Fix: the orchestrator creates worktrees itself with `git worktree add -b task-x .claude/worktrees/task-x new-ui` and dispatches non-isolated agents into them.
+  - Shell writes under `.claude/` in the main checkout are blocked, so H was merged with `git merge-tree` + `commit-tree`, and `docs-maintainer.md` was written with the Write tool.
+- **F, ETA:** `ui/eta.py` now gives a predicted and remaining time for every stage.
+  - Units × seconds per unit, using measured values, then history, then defaults.
+  - Waits at human gates are excluded.
+  - Batch totals: design from `design_batch_accepted`; generation is `ceil(cases/3)`, with progress taken from audit events.
+  - The run gets a finish estimate. An interrupted stage reports busy time instead of downtime.
+  - The UI shows "~N min" or "took N min", "Batch X of Y · ~A min left of ~B min", and an estimated completion time. The design view has a Confidence column.
+- **G, import recipes:** `repo/import_recipes.py` derives a sys.path root and an import line from the app's own `sys.path` inserts or from the repo's tests, and feeds them to generation. Validator messages quote the recipe.
+  - The `unmatched ']'` failures were caused by the model leaking JSON into `lines`. Retry temperature is now capped at 0.4, and a remedy was added.
+- **H, docs:** `scripts/gen_architecture.py` writes `docs/ARCHITECTURE_MAP.md` (133 nodes, 322 edges; how-it-works, package and per-package mermaid diagrams, plus a file table). `--check` is covered by a test. The `.claude/agents/docs-maintainer.md` subagent was added, and ARCHITECTURE and CATALOG were refreshed.
+- **Orchestrator fixes:**
+  - An API read of a run marked `running` that has no live job now reports `interrupted`.
+  - `repo/analyzer.py` now has a module docstring.
+- **Gap review:** `docs/GAP_REVIEW_2026-10-07.md` lists 14 fixes and the open items.
+  - **O1 (high), design volume:** 420 cases make 140 generation batches, about 5.4 h.
+  - **O2:** live end-to-end runs must be done locally.
+  - **O4:** reviewer call cost.
+  - **O5:** review keys are by case ID.
+- **Verification:** 868 passed; the failures are the sandbox socket baseline. tsc, ruff and lint-skills pass, and the map check passes.
+- **Leftover:** the git-ignored directory `.claude/worktrees/task-h` could not be deleted from the sandbox.
