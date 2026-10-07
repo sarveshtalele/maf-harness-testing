@@ -219,6 +219,8 @@ def run_eta(
                 row["avg_batch_s"] = round(per, 1)
             if interrupted:
                 row["remaining_s"] = None
+                if busy.get(stage):  # wall time since start includes the downtime after the crash/restart
+                    row["elapsed_s"] = round(busy[stage])
             elif row["status"] == "waiting" and gate_open:
                 row["remaining_s"] = 0
             if row["remaining_s"] is not None and running:
