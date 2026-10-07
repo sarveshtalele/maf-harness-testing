@@ -1,6 +1,7 @@
 # Architecture
 
 This document explains how the harness is built, what every file does, and where each guarantee is enforced.
+Generated per-file map with Mermaid graphs and an import table: [ARCHITECTURE_MAP](ARCHITECTURE_MAP.md) (regenerate with `python scripts/gen_architecture.py`; the `docs-maintainer` agent does this).
 Companion documents: [README](../README.md) (setup and usage), [CATALOG](CATALOG.md) (every persona, tool and Agent Skill),
 [ENVIRONMENTS](ENVIRONMENTS.md) (Python/Java/.NET isolation and toolchains), [ERROR_PLAYBOOK](ERROR_PLAYBOOK.md) (every known error, whose fault, what to do),
 [AUTOMATION](AUTOMATION.md) (bounded recovery, diagnosis agent, prompt assembly), [HOOKS](HOOKS.md) (hooks and typed tools), [CACHING](CACHING.md) (token/prefix-cache metrics),
@@ -25,7 +26,57 @@ compile) are **not left to the model**: a central set of deterministic tools (`c
 so generation calls are spent on test design, not on guessing. Around every tool call, model call and gate a fail-closed **hook engine** applies secret
 redaction, a write scope and download consent, plus any user hooks ([HOOKS.md](HOOKS.md)). Works on Windows, macOS and Linux (every OS-specific decision lives in `envs/platform_compat.py`).
 
-## 2. System context
+## 2. How the project works (end to end)
+
+Generated file-level detail lives in [ARCHITECTURE_MAP](ARCHITECTURE_MAP.md); this is the same flow in one picture.
+
+```mermaid
+flowchart TD
+  L["launchers: start-windows.cmd / start-macos.command / start-linux.sh"] --> SU["scripts/start_ui.py<br/>checks, build, serve"]
+  SU --> NX["Next.js UI (frontend/app, components)"]
+  SU --> API
+  NX --> PX["API proxy route<br/>frontend/app/api/harness/[...path]/route.ts"]
+  PX -->|HTTP, loopback| API["ui/api.py<br/>+ runtime_service, progress, eta, evidence_api, settings_api"]
+  CLI["cli.py<br/>maf-harness run / trace / verify-run"] --> H
+  API --> H["workflow.Harness<br/>checkpointed MAF workflow"]
+  H --> S1
+  subgraph PIPE["Stages (workflow_steps/*) with human gates"]
+    S1["1 repo_analysis<br/>repo/analyzer, reverse_engineering"] -->|gate: clone + review| S2["2 requirements<br/>repo/requirements, deterministic"]
+    S2 -->|gate| S3["3 test_planning<br/>MAF agent"]
+    S3 -->|gate| S4["4 test_design<br/>batched by component"]
+    S4 --> DR["design review<br/>Chief Principal Architect persona"]
+    DR -->|gate| S5["5 test_generation<br/>batched, fail-soft"]
+    S5 --> TR["independent test review<br/>Repository Test Reviewer"]
+    TR -->|gate: source review| S6["6 environment_setup<br/>install approval"]
+    S6 -->|gate| S7["7 test_execution<br/>run approval"]
+    S7 --> QAR["QA report + deliverable ZIP"]
+  end
+  subgraph RT["Agent runtime"]
+    AR["agent/runtime.py<br/>create_harness_agent + SkillsProvider"]
+    MW["middleware: budget, trace, hooks"]
+    RC["response cache + stage models"]
+    SK[("skills/*/SKILL.md")]
+  end
+  S3 --> AR
+  S4 --> AR
+  S5 --> AR
+  AR --> MW
+  AR --> RC
+  AR -.-> SK
+  AR --> MAF[("Microsoft Agent Framework")]
+  MAF --> GW[("OpenAI-compatible gateway")]
+  HK["hooks/: verdict engine, redaction, write scope"] -.-> MW
+  S1 --> RI["repo intake: testability, witnesses, preview, routes, stack"]
+  RI -->|existing-test witnesses, retargeting| S4
+  S6 --> ENV["envs/: runners, toolchains, platform_compat, recovery"]
+  S7 --> ENV
+  ENV --> ERR["errors/: taxonomy, classifiers, playbook"]
+  S7 --> QAP["qa/: report, triage, quality, packaging"]
+  TOOLS["tools/: code_intel, autofix, build_gate"] -.-> S5
+  MON["monitoring/: trace, report, telemetry"] -.-> H
+```
+
+## 2.1 System context
 
 ```mermaid
 flowchart LR
@@ -68,8 +119,8 @@ Seven stages, each a MAF `Executor`; gates are MAF `request_info` events; state 
 | 1 | `repo_analysis` | host · reverse-engineering | Clone approval, static inventory and source-linked facts, then review | `repo.analyzer`, `skills.host` |
 | 2 | `requirements` | host · requirement-analysis | Complete discovered declaration inventory and preview setup plan, then review | `repo.requirements`, `skills.contracts` |
 | 3 | `test_planning` | MAF agent · test-planning | Source-first strategy, levels and explicit gaps, then review | `workflow_steps.planning` |
-| 4 | `test_design` | MAF agent · test-design-generator + test-data-generator | Component-batched cases, linked requirements or exclusions, then review | `workflow_steps.design`, `skills.contracts` |
-| 5 | `test_generation` | MAF author + independent Repository Test Reviewer | Per-case source, static gates, confidence and repair; then source review | `workflow_steps.generation`, `workflow_steps.test_review`, `qa.quality` |
+| 4 | `test_design` | MAF agent · test-design-generator + test-data-generator; independent Chief Principal Architect design review (advisory, bounded; `HARNESS_DESIGN_REVIEW`, min confidence `HARNESS_DESIGN_REVIEW_MIN_CONFIDENCE`) | Component-batched cases, linked requirements or exclusions, reviewer flags fed back into repair, then review | `workflow_steps.design`, `workflow_steps.design_review`, `skills.contracts` |
+| 5 | `test_generation` | MAF author + independent Repository Test Reviewer | Per-case source, static gates, confidence and repair; failed batches are fail-soft (`generation_failures`, `HARNESS_MAX_FAILED_BATCH_RATIO`, default 0.5; failed cases show as `generation_failed` and block PASS); then source review | `workflow_steps.generation`, `workflow_steps.test_review`, `qa.quality` |
 | 6 | `environment_setup` | host | Test execution · Setup: approve exact installation plan before creating the isolated workspace or installing dependencies; then review | `workflow_steps.execution`, `envs.runners` |
 | 7 | `test_execution` | host | Approve exact runtime/collection/test commands; fresh results, scoped QA, reports and ZIP; bounded healing where applicable | `envs.runners`, `qa.report`, `qa.packaging` |
 
@@ -182,7 +233,7 @@ sequenceDiagram
 
 Modules are grouped in subpackages: `repo/` (intake), `envs/` (environment, execution, toolchains), `skills/` (Agent Skills),
 `tools/` (central tools), `agent/` (MAF runtime, personas), `llm/` (token ledger), `qa/` (report, triage, packaging),
-`monitoring/` (trace, report, telemetry), `ui/` (loopback API and evidence helpers) and `errors/` (taxonomy and playbook). The pre-refactor
+`monitoring/` (trace, report, telemetry), `ui/` (loopback API, progress/ETA and evidence helpers), `workflow_steps/` (stage operations) and `errors/` (taxonomy and playbook). The pre-refactor
 flat module names no longer exist; every import uses its subpackage path. They were bridged by `sys.modules` compatibility
 shims for one phase of the Phase 1 restructure, then removed once every caller (all internal, in `tests/`) was updated —
 this is a private repo with no external consumers of the old paths, so there was nothing left for the shims to protect.
@@ -223,7 +274,12 @@ this is a private repo with no external consumers of the old paths, so there was
 | `skills/reports.py` | Skill-contract QA reports | `build_traceability`, `build_coverage`, `run_skill_checks` | Validated by the upstream `validate_traceability.py` and `coverage_templates.yaml` |
 | `agent/runtime.py` | MAF integration | `MAFHarnessRuntime` (per-stage `create_harness_agent`, `SkillsProvider`, central tools via `tool_provider`, priming, verification, per-call `temperature`), `ToolTraceMiddleware`, `BudgetGuard`, `extract_json_object` | See §7 |
 | `ui/runtime_service.py` | One asyncio loop thread | `RuntimeService.submit/close` | Keeps MAF clients on one loop for the Next.js HTTP adapter |
+| `workflow_steps/*.py`, `workflow_support.py` | Stage operations and shared policy | `planning`, `design`, `design_review` (Chief Principal Architect), `generation`, `test_review`, `execution`, `rerun`; `LANGUAGE_RULES` / `language_rules()` / `retry_reminder()` | Language rules live only there and in `skills/generic-test-generator/references/<lang>.md`; prompts stay language-neutral |
+| `repo/testability.py` | Testability analysis | `analyze_testability`, `non_public_targets`, `retarget_cases` | Regex-based, no model calls; flags constructors that need statics/UI toolkits and retargets cases whose arithmetic lives in a same-class callee |
+| `repo/preview.py` | Repo preview | quick static profile behind `POST /repo-preview` | Autofills the new-run form (language, setup hints) before a run starts |
+| `ui/progress.py`, `ui/eta.py` | Progress and ETA | `progress(view)`, `run_eta` (from recorded stage durations in the run history) | Shown in the UI run header |
 | `workflow.py` | Checkpointed workflow | `Harness` (stages, gates, repair loops, heal loop, environment/execution stages), `StageExecutor`, batched generation with caching and the autofix → gate → build-gate pipeline (`_generate_tests_batched`, `_repo_context`, `_build_gate`), `_generation_policy`, `friendly_error` | Central orchestration |
+| `qa/quality.py` | Source quality and witnesses | `existing_requirement_witnesses` (static match of existing tests to a requirement's `source_symbol`; not measured coverage) | Scoped generated / existing unit / existing integration evidence |
 | `qa/report.py` | QA report | `build_qa_report`, `verdict_for`, `render_markdown` | requirement → case → file → result |
 | `qa/triage.py` | Files/lines to update | `locations`, `classify`, `build_updates`, `REMEDIES` / `remedy_for` (concrete fix per failure pattern) | Test-defect vs application-first classification; remedies feed regeneration and the QA report |
 | `qa/packaging.py` | Deliverable ZIP | `build_deliverable`, `run_instructions` | Repo + generated tests + `harness-report/` |
@@ -265,7 +321,7 @@ Selection is by what the harness requires, from [github.com/shivswami/awesome-ag
 | `traceability-generator` | upstream | QA (host) | requirement → test → artifact matrix contract | `validate_traceability.py` (host tier, run on every QA report) |
 | `coverage-analyzer` | upstream | QA (host) | coverage/gap contract (`assets/coverage_templates.yaml`, validated with jsonschema) | `run-coverage.js` reviewed, **not enabled** (`execSync` of npx) |
 
-Not selected from the upstream repository, with reasons: `requirement-analysis` (plans feature changes, not test requirements),
+The local `reverse-engineering` and `requirement-analysis` skills (run by the host at stages 1-2) and `repository-requirements` are also shipped under `skills/`; the table below lists the rest. Not selected from the upstream repository, with reasons: `requirement-analysis` (plans feature changes, not test requirements),
 `reverse-engineering-skill` (it is one of the qualification targets), `gherkin-generator` (no BDD requirement), `change-impact-analysis`
 (deployment risk), `playwright-test-executor` (needs Playwright traces/MCP), `jira-/confluence-story-converter` (no Jira/Confluence input),
 `vulnerability-checks-bundle` (needs Snyk/SonarQube/Wiz accounts), `skill-creator/-auditor/-gap-analyzer/-evaluator` (meta tools; the
@@ -329,7 +385,7 @@ its own artifacts. Everything else is refused, and every run is recorded in `sta
 * **Priming**: a tool-only turn ("call `load_skill` once for each of …, then reply READY", up to 5 attempts) runs first because some gateways skip tool calls when structured output is requested in the same turn. The primed session snapshot is copied for every later call of that stage.
 * **Verification**: `ToolTraceMiddleware` records each real tool invocation; output is rejected unless `load_skill` succeeded for **every** assigned skill. Provenance (`skill_provenance` with companions, `skill_tool_trace`, `runtime_provenance`, `skill_script_runs`, per-call hashes) is stored in `run.json`; `maf-harness verify-run` re-checks it and the lock.
 * **Budget**: `BudgetGuard` reserves estimate + max output against the daily ledger before each call (raising `DailyLimitError` before any provider call) and settles to the provider-reported usage afterwards; failed calls are refunded. The only refusal is exceeding the daily cap (default 50,000,000 tokens for the local day). The model gateway may enforce its own, separate quota; a provider 429 is reported as such and is never worked around.
-* **Central tools** (`tools/agent_tools.py`, `tools/code_intel.py`): eleven deterministic tools are registered as MAF function tools (`approval_mode="never_require"`, read-only or scratch-only): `resolve_import`, `module_api`, `find_symbol`, `read_source`, `check_test`, `list_routes`, `installed_packages`, `probe_tools`, `try_build`. Each stage gets a small selection (`STAGE_TOOLS`), and the instructions tell the agent to use them sparingly. The host applies the same functions itself on every candidate (autofix → static gates → build gate), so correctness never depends on the agent choosing to call them.
+* **Central tools** (`tools/agent_tools.py`, `tools/code_intel.py`): eleven deterministic tools are registered as MAF function tools (`approval_mode="never_require"`, read-only or scratch-only): `resolve_import`, `module_api`, `find_symbol`, `read_source`, `check_test`, `list_routes`, `installed_packages`, `probe_tools`, `try_build`, `environment_gaps`, `app_launch_plan`. Each stage gets a small selection (`STAGE_TOOLS`), and the instructions tell the agent to use them sparingly. The host applies the same functions itself on every candidate (autofix → static gates → build gate), so correctness never depends on the agent choosing to call them.
 * **Fallback**: `HARNESS_SKILL_MODE=preloaded` injects all assigned skill texts into instructions and is recorded as `uses_maf_skills_provider: false`.
 
 ## 8. Extending
@@ -364,3 +420,13 @@ its own artifacts. Everything else is refused, and every run is recorded in `sta
 | `HARNESS_TOOLCHAIN_DIR` / `HARNESS_TOOLCHAIN_MIRROR` | env | `~/.maf-harness/toolchains` / — | where provisioned JDK/Maven/Gradle/.NET/Python live / a mirror serving the same download paths |
 | `HARNESS_OTEL` | env | `off` | `console` or `otlp` OpenTelemetry export (content never captured) |
 | `.harness/hooks.json`, `~/.maf-harness/hooks.json` | files | none | user hooks and built-in options ([HOOKS.md](HOOKS.md)) |
+
+## 10. Current behaviours worth knowing
+
+* **Per-stage models**: `settings.STAGE_MODELS` is read from `HARNESS_STAGE_MODELS` (JSON `{stage: model}`); `settings` falls back to the default `OPENAI_MODEL`.
+* **Response cache**: validated temperature-0 stage answers are stored under `.maf-harness/cache/responses` (`HARNESS_RESPONSE_CACHE=0` disables, `HARNESS_RESPONSE_CACHE_DIR` relocates; see [CACHING](CACHING.md)).
+* **Testability and retargeting**: `repo/testability.py` marks hard-to-test classes and non-public targets; design cases are retargeted before generation instead of mocking statics.
+* **Existing-test witnesses**: a requirement may be satisfied by a `pre_existing_witness` (an existing repository test directly invokes its source symbol); this is static evidence, never measured coverage.
+* **Fail-soft batches**: a failed generation batch does not abort the run until the failed share exceeds `HARNESS_MAX_FAILED_BATCH_RATIO` (default 0.5); failed cases block PASS.
+* **Progress and ETA**: `ui/progress.py` and `ui/eta.py` derive stage progress and a remaining-time estimate from the run's own audit history.
+* **Stopping**: UI Stop (with confirmation) sets status `stopping`, sets the cancel event, cancels the task and kills the process tree; the run becomes `stopped` once the task ends (cancel points between batches and before model calls). CLI Ctrl-C ends as `stopped` with exit 130. Resuming reruns from the active stage.

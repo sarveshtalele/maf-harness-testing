@@ -40,6 +40,8 @@ them the same way, and they do not reach the model gateway. The one exception is
 failed environment step or an execution that produced no evidence gets an advisory note from the read-only
 [diagnosis agent](AUTOMATION.md#2-the-diagnosis-agent-agentdiagnosispy-off-by-default) (it changes nothing and never blocks a gate).
 
+Test design is followed by an independent Chief Principal Architect review of each recommended case (`workflow_steps/design_review.py`, advisory and bounded; `HARNESS_DESIGN_REVIEW=0` disables it).
+
 Generation also calls a separate Repository Test Reviewer persona (`workflow_steps/test_review.py`) against the actual source and generated files. It uses the existing generic-test-generator skill with an authoritative review schema, records its own prompts, and contributes normal provider usage. Invalid review contracts are repaired before regenerating valid source; unsupported cases go back to author repair. Confidence is a source-based judgment, not a pass probability. Execution can contradict even a high score.
 
 | # | Stage | Persona (`agent/personas.py`) | Model? | Skills loaded | Tools available | Human gate |
@@ -118,10 +120,10 @@ download consent, optional stage budget and audit, plus your own `.harness/hooks
 
 ## 4. Agent Skills
 
-Ten [Agent Skills](https://github.com/shivswami/awesome-agent-skills) power the model stages, loaded through
+Twelve [Agent Skills](https://github.com/shivswami/awesome-agent-skills) power the model stages, loaded through
 MAF's `SkillsProvider` (progressive disclosure) and selected deterministically by `skills.config.skills_for`
-(never a model decision). Six are vendored upstream (pinned commit + per-file SHA-256 in `skills/SKILLS.lock.json`,
-audited offline with their own `evaluator-skill`: 0 security findings); four are local to this project.
+(never a model decision). Seven are vendored upstream (pinned commit + per-file SHA-256 in `skills/SKILLS.lock.json`,
+audited offline with their own `evaluator-skill`: 0 security findings); five are local to this project.
 
 | Skill | Origin | Purpose |
 |---|---|---|
