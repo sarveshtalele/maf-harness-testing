@@ -27,7 +27,7 @@ class SettingsAPI:
                 path = folder / "prompts" / f"{record_id}.json"
                 if not path.is_file():
                     raise FileNotFoundError("Prompt record unavailable")
-                return public(json.loads(path.read_text()))
+                return public(json.loads(path.read_text(encoding="utf-8")))
             settings = prompt_settings.load(folder / "prompts.json")
             records = self.read(key)["state"].get("prompt_records", []) if key else []
             return public(
@@ -69,7 +69,7 @@ class SettingsAPI:
                     .sha256(json.dumps(settings, sort_keys=True).encode())
                     .hexdigest(),
                 }
-                with (folder / "audit.jsonl").open("a") as stream:
+                with (folder / "audit.jsonl").open("a", encoding="utf-8") as stream:
                     stream.write(json.dumps(event) + "\n")
             return public({"settings": settings})
 

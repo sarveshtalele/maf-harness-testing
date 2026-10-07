@@ -129,8 +129,8 @@ def portable_plan(state: dict, run_dir: Path) -> dict:
 RERUN = r'''"""Run from the extracted archive; installs are explicit with --install."""
 import json, os, pathlib, shutil, signal, subprocess, sys, time
 root = pathlib.Path(__file__).resolve().parent.parent
-plan = json.loads(pathlib.Path(__file__).with_name("rerun-plan.json").read_text())
-repo = root / json.loads(pathlib.Path(__file__).with_name("repo_analysis.json").read_text())["repo_name"]
+plan = json.loads(pathlib.Path(__file__).with_name("rerun-plan.json").read_text(encoding="utf-8"))
+repo = root / json.loads(pathlib.Path(__file__).with_name("repo_analysis.json").read_text(encoding="utf-8"))["repo_name"]
 def expand(value):
     value = str(value).replace("{SYSTEM_PYTHON}", sys.executable).replace("{REPO}", str(repo)).replace("{workspace}", str(repo)).replace("{ws}", str(repo))
     for suffix in ("/bin/python", "/Scripts/python.exe"):

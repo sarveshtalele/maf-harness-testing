@@ -173,3 +173,9 @@ def test_new_remedies(message, needle):
 )
 def test_old_remedies_unchanged(message, needle):
     assert needle in triage.remedy_for(message)
+
+
+def test_windows_style_reported_paths_map_to_repo_paths():
+    from maf_test_harness.qa.triage import _match
+
+    assert _match("C:\\ws\\.harness_runs\\r1\\src\\app\\x.py", ["src/app/x.py", "src/y.py"]) == "src/app/x.py"

@@ -81,7 +81,7 @@ class GenerationSteps:
                 "batch_size": TEST_GENERATION_BATCH_SIZE,
                 "quality_policy": "strict-source-invocation-reviewed-v2",
                 "skills": {
-                    name: (self.skills_root / name / "SKILL.md").read_text()
+                    name: (self.skills_root / name / "SKILL.md").read_text(encoding="utf-8")
                     for name in skills_for("test_generation", state).all
                 },
             }
@@ -274,7 +274,7 @@ class GenerationSteps:
                         "generation_attempt_saved",
                         batch=batch_index,
                         attempt=attempt,
-                        artifact=str(attempt_path.relative_to(self.run_dir)),
+                        artifact=attempt_path.relative_to(self.run_dir).as_posix(),
                     )
                     candidate = expand_generated_lines(
                         GeneratedFilesDraft.model_validate(result["artifact"]).model_dump()

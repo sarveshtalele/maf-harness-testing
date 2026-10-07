@@ -241,3 +241,51 @@ def test_a_running_ui_from_other_code_is_not_reused(monkeypatch, capsys):
     assert launcher.running_application(3000, "new") is False
     assert "older Agentic QE Platform build" in capsys.readouterr().out
     assert launcher.build_id() == launcher.build_id()
+
+
+def _launcher():
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location(
+        "start_ui_under_test", Path(__file__).resolve().parents[1] / "scripts" / "start_ui.py"
+    )
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def _state(module, tmp_path, monkeypatch, launcher_pid=111, cmd="node /x/next/dist/bin/next start"):
+    import json
+
+    monkeypatch.setattr(module, "STATE_FILE", tmp_path / "launcher.json")
+    child = {"name": "frontend", "pid": 222, "port": 3000, "marker": "next/dist/bin/next"}
+    module.STATE_FILE.write_text(json.dumps({"launcher_pid": launcher_pid, "children": [child]}))
+    killed = []
+    monkeypatch.setattr(module, "pid_alive", lambda pid: pid == 222)
+    monkeypatch.setattr(module, "command_line", lambda pid: cmd if pid == 222 else None)
+    monkeypatch.setattr(module, "port_available", lambda port: False)
+    monkeypatch.setattr(module, "terminate_tree", killed.append)
+    return killed
+
+
+def test_orphaned_child_of_dead_launcher_is_terminated(tmp_path, monkeypatch, capsys):
+    module = _launcher()
+    killed = _state(module, tmp_path, monkeypatch)
+    module.clean_orphans()
+    assert killed == [222] and not module.STATE_FILE.exists()
+    assert "orphaned frontend" in capsys.readouterr().out
+
+
+@pytest.mark.parametrize("case", ["foreign command", "port free", "unverifiable", "launcher alive"])
+def test_unverified_processes_are_never_killed(tmp_path, monkeypatch, case):
+    module = _launcher()
+    killed = _state(module, tmp_path, monkeypatch, cmd="vim notes.txt" if case == "foreign command" else None)
+    if case == "unverifiable":
+        monkeypatch.setattr(module, "command_line", lambda pid: None)
+    if case == "port free":
+        monkeypatch.setattr(module, "port_available", lambda port: True)
+    if case == "launcher alive":
+        monkeypatch.setattr(module, "pid_alive", lambda pid: True)
+        monkeypatch.setattr(module, "command_line", lambda pid: "python scripts/start_ui.py")
+    module.clean_orphans()
+    assert killed == []

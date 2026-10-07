@@ -11,3 +11,9 @@
 *.gif binary
 *.ico binary
 *.pdf binary
+
+# cmd.exe needs CRLF (labels/goto break on LF); shell launchers need LF.
+*.cmd text eol=crlf
+*.bat text eol=crlf
+*.command text eol=lf
+*.sh text eol=lf
