@@ -35,6 +35,7 @@ from ..settings import (
 )
 from ..skills.config import skills_for
 from ..skills.contracts import (
+    case_marker_meta,
     ensure_generated_case_markers,
     expand_generated_lines,
     flatten_nested_with,
@@ -174,6 +175,9 @@ class GenerationSteps:
                             "Generate executable test source ONLY for this approved batch. Generate exactly one file per "
                             "supplied case ID and exactly one concrete test declaration in that file. Set case_ids to a one-item "
                             "array containing the corresponding supplied ID. The host adds canonical CASE_ID source markers. "
+                            "Name the single test declaration descriptively from the case title in the language convention "
+                            "(test_snake_case in Python, camelCase in Java/JS/TS, PascalCase in C#); where the framework supports "
+                            "display names put '<case_id>: <title>' there (JUnit 5 @DisplayName, pytest docstring, jest test('...') string). "
                             "Use only necessary imports. Never emit placeholders, install dependencies, or execute tests."
                             + (
                                 " Repair the provided failed_generated_source using the recorded execution differences in revision_feedback. Verify the actual implementation before correcting an expectation; preserve meaningful assertions and passing files."
@@ -282,7 +286,13 @@ class GenerationSteps:
                                 flat  # deep `with patch(...)` chains cannot compile; see skill_contracts
                             )
                             self.audit("nested_with_flattened", batch=batch_index, path=item["path"])
-                    candidate = ensure_generated_case_markers(candidate)
+                    candidate = ensure_generated_case_markers(
+                        candidate,
+                        {
+                            str(c["id"]): case_marker_meta(c, self.run_dir.name, state.get("run_name", ""))
+                            for c in work
+                        },
+                    )
                     if AUTOFIX:
                         candidate, fixes = autofix_files(self._repo_context(), candidate)
                         tooling = state.setdefault(
@@ -344,11 +354,20 @@ class GenerationSteps:
                             {
                                 "batch": batch_index,
                                 "case_ids": sorted(work_ids),
+                                "run_id": self.run_dir.name,
+                                "run_name": state.get("run_name", ""),
                                 "attempts": attempt,
                                 "last_error": str(exc)[:1000],
                             }
                         )
-                        self.audit("test_generation_batch_failed", batch=batch_index, error=str(exc)[:300])
+                        self.audit(
+                            "test_generation_batch_failed",
+                            batch=batch_index,
+                            run_id=self.run_dir.name,
+                            run_name=state.get("run_name", ""),
+                            case_ids=sorted(work_ids),
+                            error=str(exc)[:300],
+                        )
                         self.save()
 
             if accepted is None and failures and failures[-1]["batch"] == batch_index:

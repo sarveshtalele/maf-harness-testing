@@ -1,7 +1,7 @@
 export type Row = Record<string, unknown>;
 export type Pending = { id: string; stage: string; kind: string; title: string; details: Row; error?: string };
 export type Run = { id: string; progress?: Row; status: string; state: Row; pending: Pending | null; actions: string[]; busy: boolean; service_busy: boolean; pending_consumed?: boolean; operation?: Row; run_directory?: string; operation_error?: string; error?: string; has_zip: boolean };
-export type RunSummary = { id: string; repo_url?: string; status: string; stage?: string; verdict?: string; busy?: boolean; pending?: boolean; updated: number };
+export type RunSummary = { id: string; run_name?: string; repo_url?: string; status: string; stage?: string; verdict?: string; busy?: boolean; pending?: boolean; updated: number };
 export type Config = { case_budget_default?: number; model: string; base_url: string; key_configured: boolean; daily: { used: number; remaining: number; limit: number }; stages: string[]; personas: Record<string, { name: string; role: string; goal: string }> };
 export const record = (value: unknown): Row => value && typeof value === 'object' && !Array.isArray(value) ? value as Row : {};
 export const rows = (value: unknown): Row[] => Array.isArray(value) ? value.map(record) : [];
@@ -17,3 +17,4 @@ export async function api<T>(path: string, body?: Row, signal?: AbortSignal): Pr
 }
 
 export const minutes = (s: number) => (s < 90 ? `${Math.max(1, Math.round(s))} s` : `${Math.round(s / 60)} min`);
+export const runTitle = (name: unknown, repo: unknown, id: string) => (typeof name === 'string' && name) || (typeof repo === 'string' && repo ? repo.replace(/^https?:\/\/github\.com\//, '').replace(/\.git$/, '') : id);

@@ -750,9 +750,34 @@ def _test_declaration_count(path: str, content: str) -> int:
     return len(re.findall(pattern, content)) if pattern else 0
 
 
-def _case_marker_comment(path: str, case_id: str) -> str:
-    prefix = "#" if PurePosixPath(path).suffix.lower() in {".py", ".rb"} else "//"
-    return f"{prefix} CASE_ID: {case_id}"
+def _one_line(value: Any, limit: int) -> str:
+    return " ".join(str(value or "").split())[:limit]
+
+
+def _case_marker_comment(path: str, case_id: str, meta: dict[str, str] | None = None) -> str:
+    prefix = "#" if PurePosixPath(path).suffix.lower() in {".py", ".rb", ".sh", ".yml", ".yaml"} else "//"
+    line = f"{prefix} CASE_ID: {case_id}"
+    meta = meta or {}
+    if meta.get("run"):
+        line += f" | RUN: {meta['run']}"
+    if meta.get("req"):
+        line += f" | REQ: {meta['req']}"
+    if meta.get("title"):
+        line += f" | TITLE: {meta['title']}"
+    return line
+
+
+def case_marker_meta(case: dict[str, Any], run_id: str = "", run_name: str = "") -> dict[str, str]:
+    """Header fields for one approved case; every value is single-line text."""
+    reqs = [str(link.get("id", "")) for link in case.get("traceability_links") or [] if isinstance(link, dict)]
+    run = _one_line(run_id, 40)
+    if run and run_name:
+        run += f" ({_one_line(run_name, 80)})"
+    return {
+        "run": run,
+        "req": ", ".join(dict.fromkeys(r for r in reqs if r))[:200],
+        "title": _one_line(case.get("title"), 120),
+    }
 
 
 def expand_generated_lines(payload: dict[str, Any]) -> dict[str, Any]:
@@ -765,7 +790,9 @@ def expand_generated_lines(payload: dict[str, Any]) -> dict[str, Any]:
     return result
 
 
-def ensure_generated_case_markers(payload: dict[str, Any]) -> dict[str, Any]:
+def ensure_generated_case_markers(
+    payload: dict[str, Any], meta_by_case: dict[str, dict[str, str]] | None = None
+) -> dict[str, Any]:
     """Inject canonical CASE_ID comments on the host instead of trusting the model.
 
     Generation uses one file per approved design case. This makes the mapping
@@ -793,7 +820,7 @@ def ensure_generated_case_markers(payload: dict[str, Any]) -> dict[str, Any]:
         marker = f"CASE_ID: {case_id}"
         if marker in content:
             continue
-        comment = _case_marker_comment(path, case_id)
+        comment = _case_marker_comment(path, case_id, (meta_by_case or {}).get(case_id))
         if PurePosixPath(path).suffix.lower() == ".php" and content.lstrip().startswith("<?php"):
             start = content.find("<?php") + len("<?php")
             content = content[:start] + "\n" + comment + content[start:]

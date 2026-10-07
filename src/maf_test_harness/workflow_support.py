@@ -192,6 +192,7 @@ LANGUAGE_RULES: dict[str, dict[str, Any]] = {
         "rules": [
             "Inspect collaborator signatures before constructing fixtures, including all required dataclass fields. Follow the actual returned representation: dictionary keys are not object attributes. Never infer return types from an internal helper dataclass if the function serializes it to a dictionary. Expected enum/tag strings must match source constants verbatim, not natural-language synonyms. Normalize filesystem expectations with pathlib rather than hard-coding POSIX strings on Windows. Explicitly import unittest.mock when using it. Read the implementation before writing assertions.",
             "`generation_policy.python_import_roots` lists directories the runner adds to the test import path: a module in one of them is imported by its bare module name (for `skill-packages/03-x/mod.py` write `import mod`; never `sys.path` hacks). Import only names defined at module level in `target_source`; a name that exists only as a local variable or nested function inside another function cannot be imported, so exercise that code by calling the enclosing function with its collaborators patched.",
+            'Name the test descriptively from the case title in snake_case (`test_rejects_empty_email`, never `test_1`) and make the docstring `"<case_id>: <title>"`.',
             "Output must contain a real collectable top-level `def test_name(...)` with assertions against application results. Use the supplied signatures and source bodies; never invent a `main()` or any member absent from the evidence.",
         ],
     },
@@ -201,6 +202,7 @@ LANGUAGE_RULES: dict[str, dict[str, Any]] = {
         "stdlib": "the JDK/standard library",
         "retry": "Java files must declare exactly one @Test method that invokes the class under test and asserts its result.",
         "rules": [
+            'Name the @Test method in descriptive camelCase derived from the case title and, with JUnit 5, add `@DisplayName("<case_id>: <title>")`.',
             "Every claimed Java unit method requirement must be invoked on its actual source type and asserted. Constructor initialization does not cover setters.",
             "Select JUnit 4 or 5 imports/annotations from the build files (pom.xml/build.gradle); never introduce another JUnit generation.",
             "Do not use @InjectMocks when the constructor acquires static or external resources (singletons, JNDI, files); construct the object explicitly or test through the repository's existing public API.",
@@ -213,6 +215,7 @@ LANGUAGE_RULES: dict[str, dict[str, Any]] = {
         "stdlib": "the Node.js standard library",
         "retry": "JavaScript files must contain exactly one test(...)/it(...) call that imports and exercises the real module and asserts its result.",
         "rules": [
+            'Make the test title string `"<case_id>: <title>"` and any helper names descriptive camelCase.',
             "Use the runner declared in package.json (jest, vitest or mocha) and match the module system (ESM `import` vs CommonJS `require`) of the nearest package.json and the source under test.",
         ],
     },
@@ -222,6 +225,7 @@ LANGUAGE_RULES: dict[str, dict[str, Any]] = {
         "stdlib": "the Node.js standard library",
         "retry": "TypeScript files must contain exactly one test(...)/it(...) call that imports and exercises the real module and asserts its result.",
         "rules": [
+            'Make the test title string `"<case_id>: <title>"` and any helper names descriptive camelCase.',
             "Use the runner declared in package.json (jest, vitest or mocha) and the repository tsconfig/ESM settings; import only exports that exist in the source.",
         ],
     },
@@ -231,6 +235,7 @@ LANGUAGE_RULES: dict[str, dict[str, Any]] = {
         "stdlib": "the .NET base class library",
         "retry": "C# files must declare exactly one test method that invokes the class under test and asserts its result.",
         "rules": [
+            'Name the test method in descriptive PascalCase from the case title; use `[Fact(DisplayName = "<case_id>: <title>")]` or `[Description(...)]` where supported.',
             "Use xUnit, NUnit or MSTest according to the PackageReference entries in the test project's csproj; never mix frameworks.",
         ],
     },

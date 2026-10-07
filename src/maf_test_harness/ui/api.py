@@ -37,6 +37,7 @@ from .settings_api import SettingsAPI
 
 ROOT = Path(__file__).resolve().parents[3]
 PUBLIC_STATE = (
+    "run_name",
     "repo_url",
     "repo_ref",
     "repo_knowledge",
@@ -62,6 +63,22 @@ PUBLIC_STATE = (
     "prompt_records",
     "test_reviews",
 )
+
+
+def _run_name(value, url: str) -> str:
+    """Validated user run name; empty means '<owner/repo> · <YYYY-MM-DD HH:MM>' computed here."""
+    if value is not None and not isinstance(value, str):
+        raise ValueError("Run name must be text.")
+    name = (value or "").strip()
+    if len(name) > 80:
+        raise ValueError("Run name must be at most 80 characters.")
+    if not name.isprintable():
+        raise ValueError("Run name must contain printable characters only.")
+    if name:
+        return name
+    match = re.search(r"github\.com[/:]([^/\s]+/[^/\s#?]+?)(?:\.git)?(?:[/#?\s]|$)", url)
+    repo = match.group(1) if match else "run"
+    return f"{repo} · {datetime.now().strftime('%Y-%m-%d %H:%M')}"[:80]
 
 
 def decisions(pending: dict | None, status: str, consumed: list) -> list[str]:
@@ -257,6 +274,7 @@ class LocalAPI(EvidenceAPI, SettingsAPI):
                                 "id": key,
                                 "progress": run["progress"],
                                 "repo_url": run["state"].get("repo_url"),
+                                "run_name": run["state"].get("run_name"),
                                 "status": run["status"],
                                 "stage": (run["pending"] or {}).get("stage")
                                 or run["state"].get("active_stage"),
@@ -327,6 +345,7 @@ class LocalAPI(EvidenceAPI, SettingsAPI):
                     (budget or {}).get("per_requirement") if isinstance(budget, dict) else None
                 )
             validate_github_url(url)
+            run_name = _run_name(body.get("run_name"), url)
             if url.strip().startswith("git clone "):
                 url = validate_github_url(url)[0]
             if app_url and not re.fullmatch(
@@ -342,11 +361,14 @@ class LocalAPI(EvidenceAPI, SettingsAPI):
                 path / "prompts.json", prompt_settings.load(self.runs.parent / "prompts.json")
             )
             # Persist a visible new run before dispatch; Harness.start will populate the real checkpoint.
-            atomic_json(path / "run.json", {"status": "new", "state": {"repo_url": url}, "consumed": []})
+            atomic_json(
+                path / "run.json",
+                {"status": "new", "state": {"repo_url": url, "run_name": run_name}, "consumed": []},
+            )
 
             async def begin():
                 await self.replace_host(key)
-                await self.host.start(url, app_url, launch, component, knowledge, budget)
+                await self.host.start(url, app_url, launch, component, knowledge, budget, run_name)
 
             self.job_run = key
             self.operation_log(key, "starting repository workflow; waiting for clone approval")
@@ -487,6 +509,36 @@ class LocalAPI(EvidenceAPI, SettingsAPI):
             self.errors.pop(key, None)
             return {"id": key, "deleted": True, "recoverable": True}
 
+    def rename_run(self, key: str, body: dict) -> dict:
+        with self.lock:
+            if self.busy():
+                raise RuntimeError("Wait for the active operation before renaming a run.")
+            path = self.run_path(key) / "run.json"
+            view = read_json(path)
+            state = view.setdefault("state", {})
+            old = state.get("run_name")
+            name = _run_name(body.get("run_name"), state.get("repo_url") or "")
+            state["run_name"] = name
+            if self.host and self.host.run_dir == self.run_path(key):
+                self.host.state["run_name"] = name  # the live host rewrites run.json on its next save
+                self.host.save()
+            else:
+                atomic_json(path, view)
+            with (self.run_path(key) / "audit.jsonl").open("a", encoding="utf-8") as stream:
+                stream.write(
+                    json.dumps(
+                        {
+                            "event": "run_renamed",
+                            "at": datetime.now(UTC).isoformat(),
+                            "run_id": key,
+                            "old_name": old,
+                            "run_name": name,
+                        }
+                    )
+                    + "\n"
+                )
+            return {"id": key, "run_name": name}
+
     def audit(self, key):
         path = self.run_path(key) / "audit.jsonl"
         events, malformed = [], 0
@@ -621,6 +673,8 @@ def make_server(api: LocalAPI, token: str, port: int = 8765):
                         self.reply(202, api.cancel_clone(parts[1]))
                     elif len(parts) == 3 and parts[0] == "runs" and parts[2] == "case-budget":
                         self.reply(200, api.set_case_budget(parts[1], body))
+                    elif len(parts) == 3 and parts[0] == "runs" and parts[2] == "rename":
+                        self.reply(200, api.rename_run(parts[1], body))
                     elif len(parts) == 3 and parts[0] == "runs" and parts[2] == "stop":
                         self.reply(202, api.stop_run(parts[1]))
                     elif (
