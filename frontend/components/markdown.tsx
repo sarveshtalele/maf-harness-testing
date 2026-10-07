@@ -25,7 +25,7 @@ export default function Markdown({ text }: { text: string }) {
     const heading = line.match(/^(#{1,6})\s+(.+)$/);
     if (heading) { const Tag = `h${Math.min(heading[1].length + 1, 6)}` as 'h2'; blocks.push(<Tag key={key}>{inline(heading[2])}</Tag>); i++; continue; }
     if (/^\|/.test(line) && /^\|[\s:|-]+\|\s*$/.test(lines[i + 1] || '')) {
-      const cells = (row: string) => row.trim().replace(/^\||\|$/g, '').split('|').map(c => c.trim());
+      const cells = (row: string) => row.trim().replace(/^\||\|$/g, '').split(/(?<!\\)\|/).map(c => c.trim().replace(/\\\|/g, '|'));
       const headers = cells(line); const rows: string[][] = []; i += 2;
       while (i < lines.length && /^\|/.test(lines[i])) rows.push(cells(lines[i++]));
       blocks.push(<div className="markdown-table" key={key}><table><thead><tr>{headers.map((h, j) => <th key={j}>{inline(h)}</th>)}</tr></thead><tbody>{rows.map((r, j) => <tr key={j}>{r.map((c, k) => <td key={k}>{inline(c)}</td>)}</tr>)}</tbody></table></div>); continue;

@@ -146,6 +146,24 @@ class EvidenceAPI:
                 raise FileNotFoundError("Generated file not found.")
             item = files[index]
             return item.get("content", "").encode(), "text/plain", re.split(r"[/\\]", item["path"])[-1]
+        if kind == "step":  # deterministic per-step reports; no name lists them
+            from ..qa.step_reports import build_step_reports
+
+            reports = build_step_reports(self.run_path(key), run["state"])
+            name = query.get("name", [""])[0]
+            if not name:
+                listing = [
+                    {
+                        "name": n,
+                        "title": md.splitlines()[0].lstrip("# "),
+                        "status": "Not run" if "| Step status | Not run |" in md else "Completed",
+                    }
+                    for n, md in reports.items()
+                ]
+                return json.dumps({"steps": listing}).encode(), "application/json", "steps.json"
+            if name not in reports:
+                raise FileNotFoundError("Step report not found.")
+            return public(reports[name]).encode(), "text/markdown", f"{name}.md"
         if kind == "observability":
             data = public(build_report(self.run_path(key), ROOT / "skills"))
             md = render_markdown(data)

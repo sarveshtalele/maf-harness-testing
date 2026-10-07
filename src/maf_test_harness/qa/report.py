@@ -5,13 +5,18 @@ No model is involved. A requirement is only "verified" when every linked case wa
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
 from typing import Any
 
 from ..envs.runners import map_results_to_cases
 from .triage import build_updates
 
 SECTIONS = ("positive", "negative", "boundary", "validation", "contract")
+
+
+def md_cell(value: Any, limit: int = 0) -> str:
+    """Table-safe text: pipes and newlines would split or break a Markdown row; truncation is marked."""
+    text = " ".join(str(value if value is not None else "").split()).replace("|", "\\|")
+    return text[: limit - 1] + "…" if limit and len(text) > limit else text
 
 
 def design_cases(design: dict[str, Any]) -> list[dict[str, Any]]:
@@ -35,11 +40,17 @@ def build_qa_report(
     provenance: dict[str, Any] | None = None,
     stack: dict[str, Any] | None = None,
     environment: dict[str, Any] | None = None,
+    generated_at: str | None = None,
 ) -> dict[str, Any]:
     files = generation.get("files", [])
     reviews = {r["case_id"]: r for r in generation.get("case_reviews", [])}
-    file_for_case = {f["case_ids"][0]: f["path"] for f in files}
-    generation_failed = {cid for f in generation.get("generation_failures", []) for cid in f["case_ids"]}
+    file_for_case = {cid: f["path"] for f in files for cid in f.get("case_ids", [])}
+    failure_for_case = {
+        cid: f.get("last_error", "")
+        for f in generation.get("generation_failures", [])
+        for cid in f["case_ids"]
+    }
+    generation_failed = set(failure_for_case)
     execution_cases = (execution or {}).get("cases", [])
     results = map_results_to_cases(
         [c for c in execution_cases if c.get("scope", "generated") == "generated"], files
@@ -63,6 +74,8 @@ def build_qa_report(
             stem = (file_for_case.get(case["id"]) or "").rsplit("/", 1)[-1]
             own = [ln for ln in diagnostics if stem and stem in ln]
             message = "\n".join((own or diagnostics)[:8])[:900]
+        if not result and case["id"] in generation_failed and not file_for_case.get(case["id"]):
+            message = f"Test generation failed: {failure_for_case[case['id']]}"[:900]
         cases.append(
             {
                 "id": case["id"],
@@ -91,7 +104,7 @@ def build_qa_report(
                 ],
             }
         )
-    cases.sort(key=lambda c: -(c.get("confidence") or 0))
+    cases.sort(key=lambda c: (-(c.get("confidence") or 0), c["id"]))
     by_id = {c["id"]: c for c in cases}
     coverage = []
     for req in requirements.get("requirement_model", {}).get("requirements", []):
@@ -108,6 +121,10 @@ def build_qa_report(
             if statuses & {"failed", "error"}
             else "verified"
             if statuses == {"passed"}
+            else "generation_failed"
+            if statuses == {"generation_failed"}
+            else "skipped"
+            if statuses == {"skipped"}
             else "not_executed"
         )
         rid = req["id"]
@@ -135,6 +152,9 @@ def build_qa_report(
     counts: dict[str, int] = {}
     for c in cases:
         counts[c["status"]] = counts.get(c["status"], 0) + 1
+    status_counts: dict[str, int] = {}
+    for row in coverage:
+        status_counts[row["state"]] = status_counts.get(row["state"], 0) + 1
     unmapped = [r["name"] for r in results if not r.get("case_id")]
     req_sources = {
         r["id"]: r.get("source_files", [])
@@ -207,13 +227,13 @@ def build_qa_report(
         verdict = "FAIL"
     elif verdict.startswith("PASS") and (
         any(row["verdict"] == "INCONCLUSIVE" for row in baseline)
-        or any(row["state"] == "untested" for row in coverage)
+        or any(row["state"] == "untested" and row["requirement_state"] == "unexplained" for row in coverage)
     ):
         verdict = "INCONCLUSIVE"
     source_files = set(repo.get("source_files", []))
     represented_files = {p for sources in req_sources.values() for p in sources}
     return {
-        "generated_at": datetime.now(UTC).isoformat(),
+        "generated_at": generated_at,
         "repository": {
             "url": repo.get("repo_url"),
             "commit": repo.get("commit_sha"),
@@ -239,10 +259,12 @@ def build_qa_report(
             for k in ("new", "pre_existing_witness", "excluded", "unexplained")
         },
         "coverage_scope": "Requirement-to-test traceability; not measured line, branch or behavior coverage.",
+        "requirement_status_counts": dict(sorted(status_counts.items())),
         "failures": [
             c
             for c in cases
-            if c["status"] in {"failed", "error"} or (c["status"] == "not_executed" and c["message"])
+            if c["status"] in {"failed", "error", "generation_failed"}
+            or (c["status"] == "not_executed" and c["message"])
         ],
         "unmapped_results": unmapped,
         "updates": updates,
@@ -315,8 +337,8 @@ def render_markdown(report: dict[str, Any]) -> str:
         "",
         "## Case results",
         "",
-        "| Case | Level | Actor | Pri | Status | File |",
-        "|---|---|---|---|---|---|",
+        "| ID | Case | Level | Actor | Pri | Status | File |",
+        "|---|---|---|---|---|---|---|",
     ]
     lines[4:4] = [
         "## Evidence scope",
@@ -329,14 +351,15 @@ def render_markdown(report: dict[str, Any]) -> str:
         "| Existing regression scope | Verdict | Tests | Reason |",
         "|---|---|---|---|",
         *[
-            f"| {r['scope']} | {r['verdict']} | {r['tests']} | {r['reason']} |"
+            f"| {md_cell(r['scope'])} | {r['verdict']} | {r['tests']} | {md_cell(r['reason'])} |"
             for r in report.get("baseline_regression", [])
         ],
         "",
     ]
     for c in report["cases"]:
         lines.append(
-            f"| {c['title'][:70]} | {c['level']} | {c['actor']} | {c['priority']} | {c['status']} | {c['file'] or ''} |"
+            f"| {md_cell(c['id'])} | {md_cell(c['title'], 70)} | {md_cell(c['level'])} | {md_cell(c['actor'])} "
+            f"| {md_cell(c['priority'])} | {c['status']} | {md_cell(c['file'])} |"
         )
     lines += [
         "",
@@ -344,10 +367,13 @@ def render_markdown(report: dict[str, Any]) -> str:
         "",
         "Linked generated tests are not measured line, branch or complete behavior coverage.",
         "",
-        "| State | Requirement |",
-        "|---|---|",
+        "| ID | State | Basis | Requirement |",
+        "|---|---|---|---|",
     ]
-    lines += [f"| {r['state']} | {r['text'][:110]} |" for r in report["requirement_coverage"]]
+    lines += [
+        f"| {md_cell(r['id'])} | {r['state']} | {r['requirement_state']} | {md_cell(r['text'], 110)} |"
+        for r in report["requirement_coverage"]
+    ]
     lines += [
         "",
         "Requirement states (static traceability, not measured coverage): "
@@ -356,7 +382,7 @@ def render_markdown(report: dict[str, Any]) -> str:
     if report["failures"]:
         lines += ["", "## Failures", ""]
         lines += [
-            f"- **{c['title']}** (`{c['file']}`)\n  ```\n  {c['message'][:600]}\n  ```"
+            f"- **{c['title']}** (`{c['file'] or 'no file'}`, {c['status']})\n  ```\n  {c['message'][:600]}\n  ```"
             for c in report["failures"]
         ]
     checks = report.get("skill_checks", {})
