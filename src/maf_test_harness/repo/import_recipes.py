@@ -163,6 +163,12 @@ def python_import_recipes(
             return None
 
     files = sorted(
-        {f for f in source_files if f.endswith(".py") and any(f in t or Path(f).name in t for t in targets)}
+        {
+            f
+            for f in source_files
+            if f.endswith(".py")
+            # whole path, or the file name not glued to a longer name (analyzer.py must not match impact_analyzer.py)
+            and any(f in t or re.search(r"(?<![\w-])" + re.escape(Path(f).name), t) for t in targets)
+        }
     )
     return recipes_for_files(source_files, read, files, " ".join(targets))

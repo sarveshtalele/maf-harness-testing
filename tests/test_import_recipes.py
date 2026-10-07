@@ -76,3 +76,22 @@ def test_stray_json_punctuation_in_lines_is_a_syntax_error_with_remedy():
     with pytest.raises(ValueError, match="generated Python source is invalid") as err:
         validate_generated_files(expand_generated_lines(payload), {"C"})
     assert "syntactically complete" in triage.remedy_for(str(err.value))
+
+
+def test_symbol_targets_resolve_through_requirement_files_without_name_overlap(tmp_path):
+    from maf_test_harness.repo.import_recipes import python_import_recipes
+
+    for rel, body in {
+        "skills/my-skill/scripts/engine/impact_analyzer.py": "class ImpactAnalyzer:\n    def analyze(self):\n        return 1\n",
+        "skills/other-skill/scripts/engine/analyzer.py": "def generate_report():\n    return 2\n",
+    }.items():
+        (tmp_path / rel).parent.mkdir(parents=True, exist_ok=True)
+        (tmp_path / rel).write_text(body, encoding="utf-8")
+    files = [
+        "skills/my-skill/scripts/engine/impact_analyzer.py",
+        "skills/other-skill/scripts/engine/analyzer.py",
+    ]
+    recipes = python_import_recipes(tmp_path, files, ["ImpactAnalyzer.analyze", files[0]])
+    assert list(recipes) == [files[0]]
+    # no app sys.path insert: fallback root is the last non-identifier dir (skills/my-skill)
+    assert recipes[files[0]]["import"] == "from scripts.engine.impact_analyzer import ImpactAnalyzer"
