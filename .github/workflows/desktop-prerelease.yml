@@ -33,7 +33,7 @@ jobs:
             echo "present=false" >> "$GITHUB_OUTPUT"
             echo "::notice::desktop/ not present yet - skipping"
           fi
-      - uses: actions/setup-node@v5
+      - uses: actions/setup-node@v7
         if: steps.guard.outputs.present == 'true'
         with:
           node-version-file: frontend/.nvmrc
