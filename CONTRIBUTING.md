@@ -2,6 +2,8 @@
 
 Agentic QE Platform: Python harness on Microsoft Agent Framework plus a Next.js UI. Private repository, internal team.
 
+Onboarding and how-to recipes: [docs/DEVELOPER_GUIDE.md](docs/DEVELOPER_GUIDE.md) (docs index: [docs/README.md](docs/README.md)).
+
 Read first: [CLAUDE.md](CLAUDE.md) (project rules), [docs/ARCHITECTURE_MAP.md](docs/ARCHITECTURE_MAP.md) (where code lives), [docs/RELEASING.md](docs/RELEASING.md) (release and tagging).
 
 ## Branch model
