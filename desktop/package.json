@@ -9,7 +9,7 @@
   "scripts": {
     "build": "tsc",
     "start": "npm run build && electron .",
-    "test": "npm run build && node --test dist/",
+    "test": "npm run build && node --test \"dist/**/*.test.js\"",
     "dist": "npm run build && electron-builder",
     "dist:win": "npm run build && electron-builder --win",
     "dist:mac": "npm run build && electron-builder --mac",
