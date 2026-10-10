@@ -43,3 +43,7 @@ desktop/node_modules/
 
 # local generation benchmark evidence
 benchmark-results/
+
+# private reference material, never commit
+agent-framework.pdf
+docs/agent-framework.pdf
