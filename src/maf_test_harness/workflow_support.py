@@ -110,6 +110,10 @@ def _plan_summary(plan: dict[str, Any]) -> dict[str, Any]:
 
 
 def _allowed_levels(state: dict[str, Any]) -> set[str]:
+    if state.get(
+        "test_types"
+    ):  # run options: unit and/or integration only (api maps to integration host-side)
+        return set(state["test_types"]) & {"unit", "integration"}
     base = {"unit", "integration", "api", "cli", "security", "performance"}
     if not state.get("app_url"):
         return base

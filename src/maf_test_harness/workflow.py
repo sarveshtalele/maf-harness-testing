@@ -274,14 +274,29 @@ class Harness(RerunSteps, ExecutionSteps, GenerationSteps, PlanningSteps):
         repo_knowledge: str = "",
         case_budget: int | None = None,
         run_name: str | None = None,
+        run_mode: str = "brownfield",
+        test_types: list[str] | None = None,
+        spec_sources: dict | None = None,
+        documents: list[tuple[str, bytes]] | None = None,
+        jira_token: str | None = None,
     ):
+        """``jira_token`` is held in memory for the spec-intake call only; it is never put in run state or audit."""
         if self.view["status"] != "new":
             raise ValueError("Run already started. Resume its pending request.")
+        greenfield = run_mode == "greenfield"
         if not isinstance(repo_knowledge, str) or len(repo_knowledge) > 32000:
             raise ValueError("Repository knowledge must be text of at most 32,000 characters.")
-        canonical, _, _, ref = validate_github_url(repo_url, with_ref=True)
-        if repo_url.strip().startswith("git clone "):
-            repo_url = canonical
+        ref = None
+        if repo_url.strip() or not greenfield:
+            canonical, _, _, ref = validate_github_url(repo_url, with_ref=True)
+            if repo_url.strip().startswith("git clone "):
+                repo_url = canonical
+        self._jira_token = jira_token
+        if documents:
+            inputs = self.run_dir / "spec_inputs"
+            inputs.mkdir(parents=True, exist_ok=True)
+            for name, data in documents:
+                (inputs / name).write_bytes(data)
         if app_url is not None and not re.fullmatch(
             r"https?://(?:localhost|127\.0\.0\.1)(?::\d+)?(?:/\S*)?", app_url.strip()
         ):
@@ -292,6 +307,9 @@ class Harness(RerunSteps, ExecutionSteps, GenerationSteps, PlanningSteps):
             prompt_settings.save(self.run_dir / "prompts.json", prompt_settings.defaults())
         self.state = {
             "repo_url": repo_url.strip(),
+            "run_mode": run_mode,
+            "test_types": list(test_types or ("unit", "integration")),
+            **({"spec_sources": spec_sources, "spec_intake_pending": True} if greenfield else {}),
             **({"run_name": run_name} if run_name else {}),
             "repo_knowledge": repo_knowledge,
             "workflow_version": 2,
@@ -389,6 +407,19 @@ class Harness(RerunSteps, ExecutionSteps, GenerationSteps, PlanningSteps):
         )
 
     async def enter(self, stage, state, ctx):
+        if stage == "repo_analysis" and not state["repo_url"]:
+            # ponytail: greenfield without a repository stops here until spec intake (W2b) feeds requirements;
+            # generation-only (no execution) for such runs is wired with that intake.
+            await self.ask(
+                stage,
+                "error",
+                state,
+                ctx,
+                title="Greenfield run without a repository",
+                error="No repository is linked. Specs are stored (spec_intake_pending); the spec-to-requirements "
+                "intake is not available in this build, and test execution is skipped for runs without a repository.",
+            )
+            return
         if stage == "repo_analysis":
             await self.ask(
                 stage,

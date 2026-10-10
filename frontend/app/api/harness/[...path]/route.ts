@@ -18,7 +18,7 @@ async function proxy(request: NextRequest, context: { params: Promise<{ path: st
   if (!/^\d{1,5}$/.test(port)) return Response.json({ error: 'Invalid local API port.' }, { status: 503 });
   try {
     const body = request.method === 'POST' ? await request.text() : undefined;
-    if (body && Buffer.byteLength(body) > (path.join('/') === 'skills/import' ? 28000000 : 2097152)) return Response.json({ error: 'Request is too large.' }, { status: 413 });
+    if (body && Buffer.byteLength(body) > (['skills/import', 'runs'].includes(path.join('/')) ? 28000000 : 2097152)) return Response.json({ error: 'Request is too large.' }, { status: 413 });
     const response = await fetch(`http://127.0.0.1:${port}/${path.join('/')}${request.nextUrl.search}`, {
       method: request.method, headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
       body, cache: 'no-store', signal: AbortSignal.timeout(30000),
