@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import base64
 import binascii
+import hashlib
 import io
 import json
 import os
@@ -20,17 +21,20 @@ import re
 import shutil
 import stat
 import tempfile
+import threading
 import zipfile
 from datetime import datetime, timezone
 from pathlib import Path
 
 import yaml
 
-from .registry import NAME_RE, discover_skills, lint_plugins, lint_skill, load_lock, tree_sha256, verify_lock
+from .registry import NAME_RE, discover_skills, lint_plugins, lint_skill, load_lock, load_plugin, verify_lock
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 MAX_IMPORT_BYTES = 20 * 1024 * 1024
 MAX_IMPORT_FILES = 500
+_LOCK = threading.Lock()  # approvals read-modify-write and plugin installs (ThreadingHTTPServer)
+_WIN_RESERVED = re.compile(r"^(con|prn|aux|nul|com[1-9]|lpt[1-9])$", re.I)
 
 
 def plugin_dir() -> Path:
@@ -40,7 +44,8 @@ def plugin_dir() -> Path:
 
 def approvals_path() -> Path:
     env = os.getenv("HARNESS_PLUGIN_APPROVALS", "").strip()
-    return Path(env).expanduser() if env else REPO_ROOT / ".maf-harness" / "plugins.lock.json"
+    # Outside the target workspace on purpose: a repository under test must not be able to pre-approve its own skills.
+    return Path(env).expanduser() if env else Path.home() / ".maf-harness" / "plugins.lock.json"
 
 
 def load_approvals() -> dict[str, dict]:
@@ -49,6 +54,27 @@ def load_approvals() -> dict[str, dict]:
     except (OSError, ValueError):
         return {}
     return data.get("approved", {}) if isinstance(data, dict) and isinstance(data.get("approved"), dict) else {}
+
+
+def full_tree_sha256(directory: Path) -> str:
+    """Hash of every file (path + bytes) with no exclusions, so bytecode or caches cannot hide from an approval."""
+    digest = hashlib.sha256()
+    for path in sorted(p for p in Path(directory).rglob("*") if p.is_file()):
+        digest.update(path.relative_to(directory).as_posix().encode() + b"\0" + path.read_bytes() + b"\0")
+    return digest.hexdigest()
+
+
+def has_bytecode(directory: Path) -> bool:
+    return any(
+        "__pycache__" in p.parts or p.suffix in (".pyc", ".pyo") for p in Path(directory).rglob("*")
+    )
+
+
+def _bad_part(part: str) -> bool:
+    """Windows-hostile path components (also unsafe on other systems when a package is moved around)."""
+    return bool(
+        ":" in part or part != part.rstrip(". ") or _WIN_RESERVED.match(part.split(".")[0]) or "\0" in part
+    )
 
 
 def has_symlink(directory: Path) -> bool:
@@ -74,14 +100,17 @@ def is_approved(directory: Path) -> bool:
     entry = load_approvals().get(directory.name)
     if not entry or not directory.is_dir() or has_symlink(directory):
         return False
-    return entry.get("sha256") == tree_sha256(directory)
+    return not has_bytecode(directory) and entry.get("sha256") == full_tree_sha256(directory)
 
 
 def trust(repo_skills: Path, directory: Path) -> dict:
     verified = is_verified(repo_skills, directory)
+    source = source_of(directory, repo_skills)
     approved = not verified and is_approved(directory)
+    if approved and source == "plugin" and plugin_policy_problems(load_plugin(directory)):
+        approved = False  # a hand-dropped primary/host/entrypoint plugin never becomes trusted
     return {
-        "source": source_of(directory, repo_skills),
+        "source": source,
         "verified": verified,
         "approved": approved,
         "trusted": verified or approved,
@@ -95,6 +124,15 @@ def find_skill(repo_skills: Path, name: str) -> Path:
     raise FileNotFoundError(f"Skill not found: {name}")
 
 
+def plugin_policy_problems(plugin) -> list[str]:
+    """Plugin-sourced skills are instruction packages: companions only, model kind, no entrypoint."""
+    return [
+        *(["plugins may only be companion skills (role: primary is not allowed)"] if plugin.role == "primary" else []),
+        *(["plugins must be kind 'model'"] if plugin.kind != "model" else []),
+        *(["plugins cannot declare an entrypoint"] if plugin.entrypoint else []),
+    ]
+
+
 def approve(repo_skills: Path, name: str) -> dict:
     """User action: record the current hash of an unverified skill. Verified skills need no approval."""
     directory = find_skill(repo_skills, name)
@@ -104,22 +142,32 @@ def approve(repo_skills: Path, name: str) -> dict:
         raise ValueError(f"{name} differs from the repository lock and cannot be approved.")
     if has_symlink(directory):
         raise ValueError(f"{name} contains symbolic links and cannot be approved.")
+    if has_bytecode(directory):
+        raise ValueError(f"{name} contains compiled bytecode (__pycache__/.pyc) and cannot be approved.")
     report = lint_skill(directory)
-    plugin = next(p for p in discover_skills([repo_skills, plugin_dir()]) if p.name == name)
-    problems = [*report.errors, *lint_plugins([plugin]).get(name, [])]
+    everything = discover_skills([repo_skills, plugin_dir()])
+    plugin = next(p for p in everything if p.name == name)
+    if source_of(directory, repo_skills) == "plugin":
+        policy = plugin_policy_problems(plugin)
+        if policy:  # checked before lint_plugins, which would import an entrypoint
+            raise ValueError(f"{name} is not allowed as a plugin: {'; '.join(policy)}")
+    others = [p for p in everything if p.name != name and source_of(p.path, repo_skills) == "repo"]
+    problems = [*report.errors, *lint_plugins([*others, plugin]).get(name, [])]
     if problems:
         raise ValueError(f"{name} is invalid: {'; '.join(problems)}")
-    approvals = load_approvals()
-    approvals[name] = {
-        "name": name,
-        "sha256": tree_sha256(directory),
-        "approved_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
-    }
-    path = approvals_path()
-    path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_suffix(".tmp")
-    tmp.write_text(json.dumps({"approved": approvals}, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-    os.replace(tmp, path)
+    with _LOCK:
+        approvals = load_approvals()
+        approvals[name] = {
+            "name": name,
+            "sha256": full_tree_sha256(directory),
+            "approved_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        }
+        path = approvals_path()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        fd, tmp = tempfile.mkstemp(dir=path.parent, prefix=".plugins-", suffix=".tmp")
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            handle.write(json.dumps({"approved": approvals}, indent=2, sort_keys=True) + "\n")
+        os.replace(tmp, path)
     return trust(repo_skills, directory)
 
 
@@ -134,17 +182,19 @@ def _extract_zip(data: bytes, target: Path) -> None:
     infos = archive.infolist()
     if len(infos) > MAX_IMPORT_FILES or sum(i.file_size for i in infos) > MAX_IMPORT_BYTES:
         raise ValueError("Skill archive is too large (max 20 MB, 500 files).")
+    total = 0
     for info in infos:
         name = info.filename
         parts = name.replace("\\", "/").split("/")
         if (
             name.startswith(("/", "\\"))
             or ".." in parts
-            or re.match(r"^[A-Za-z]:", name)
-            or "\0" in name
+            or any(_bad_part(p) for p in parts if p)
             or info.flag_bits & 0x1
         ):
             raise ValueError(f"Unsafe path in archive: {name!r}")
+        if "__pycache__" in parts or name.endswith((".pyc", ".pyo")):
+            raise ValueError(f"Compiled bytecode is not allowed in a skill archive: {name!r}")
         if stat.S_ISLNK(info.external_attr >> 16):
             raise ValueError(f"Symbolic links are not allowed in a skill archive: {name!r}")
         dest = (target / name).resolve()
@@ -155,9 +205,11 @@ def _extract_zip(data: bytes, target: Path) -> None:
             continue
         dest.parent.mkdir(parents=True, exist_ok=True)
         with archive.open(info) as src, dest.open("wb") as out:
-            if len(chunk := src.read(MAX_IMPORT_BYTES + 1)) > MAX_IMPORT_BYTES:  # header sizes can lie
-                raise ValueError("Skill archive is too large.")
-            out.write(chunk)
+            while chunk := src.read(65536):  # count real bytes: headers can lie
+                total += len(chunk)
+                if total > MAX_IMPORT_BYTES:
+                    raise ValueError("Skill archive is too large (decompressed size over 20 MB).")
+                out.write(chunk)
 
 
 def _copy_folder(source: Path, target: Path) -> None:
@@ -166,7 +218,13 @@ def _copy_folder(source: Path, target: Path) -> None:
     files = [p for p in source.rglob("*") if p.is_file()]
     if len(files) > MAX_IMPORT_FILES or sum(p.stat().st_size for p in files) > MAX_IMPORT_BYTES:
         raise ValueError("Skill folder is too large (max 20 MB, 500 files).")
-    shutil.copytree(source, target, ignore=shutil.ignore_patterns("__pycache__", ".git", ".DS_Store"))
+    shutil.copytree(source, target, symlinks=True, ignore=shutil.ignore_patterns(".git", ".DS_Store"))
+    if has_symlink(target):  # the source changed between the check and the copy
+        raise ValueError("Skill folder must be a real directory without symbolic links.")
+    if has_bytecode(target):
+        raise ValueError("Compiled bytecode (__pycache__/.pyc) is not allowed in a skill.")
+    if any(_bad_part(part) for p in target.rglob("*") for part in p.relative_to(target).parts):
+        raise ValueError("Unsafe file name in skill folder.")
 
 
 def import_skill(repo_skills: Path, *, zip_base64: str | None = None, folder: str | None = None) -> dict:
@@ -195,7 +253,7 @@ def import_skill(repo_skills: Path, *, zip_base64: str | None = None, folder: st
         name = meta.get("name") if isinstance(meta, dict) else None
         if not isinstance(name, str) or len(name) > 64 or not NAME_RE.fullmatch(name):
             raise ValueError("plugin.yaml name must be 1-64 chars of lowercase letters/digits with single hyphens.")
-        named = staging.parent / "named" / name
+        named = Path(tmp).resolve() / "out" / name
         named.parent.mkdir()
         staging.rename(named)
         report = lint_skill(named)
@@ -203,16 +261,24 @@ def import_skill(repo_skills: Path, *, zip_base64: str | None = None, folder: st
         if isinstance(meta, dict) and (meta.get("entrypoint") or meta.get("kind") == "host"):
             raise ValueError("Imported skills must be kind 'model' without an entrypoint.")
         plugin = discover_skills([named.parent])[0]
-        problems = [*report.errors, *lint_plugins([plugin]).get(name, [])]
+        problems = [*report.errors, *plugin.errors, *plugin_policy_problems(plugin)]
         if problems:
             raise ValueError("Invalid skill: " + "; ".join(problems))
         if (repo_skills / name).exists():
             raise ValueError(f"A repository skill named {name} already exists.")
         dest_root = plugin_dir()
         dest_root.mkdir(parents=True, exist_ok=True)
-        dest, partial = dest_root / name, dest_root / f".{name}.importing"
-        shutil.rmtree(partial, ignore_errors=True)
-        shutil.copytree(named, partial)
-        shutil.rmtree(dest, ignore_errors=True)
-        partial.rename(dest)
+        dest = dest_root / name
+        with _LOCK:
+            partial = Path(tempfile.mkdtemp(dir=dest_root, prefix=f".{name}.importing-"))
+            shutil.rmtree(partial)
+            shutil.copytree(named, partial)
+            aside = None
+            if dest.exists():
+                aside = Path(tempfile.mkdtemp(dir=dest_root, prefix=f".{name}.old-"))
+                shutil.rmtree(aside)
+                dest.rename(aside)
+            partial.rename(dest)
+        if aside:
+            shutil.rmtree(aside, ignore_errors=True)
     return {"name": name, **trust(repo_skills, dest)}

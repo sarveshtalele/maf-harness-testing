@@ -383,14 +383,20 @@ class MAFHarnessRuntime:
         hash-checking HarnessScriptRunner; ``run_skill_script`` is approved automatically only for those.
         """
         allowed = set(self.script_runner.allowed)
+        # Exact trusted folders only: a same-named SKILL.md elsewhere under a root must never load as this skill.
+        exact = {n: self._skill_dir(n) for n in skills}
+
+        def is_assigned(skill, _context) -> bool:
+            folder = exact.get(skill.frontmatter.name)
+            where = Path(skill.path).resolve()
+            return folder is not None and where in (folder, folder / "SKILL.md")
+
         source = FileSkillsSource(
             [self.skills_root, *(r for r in self.plugin_roots if r.is_dir())],
             script_runner=self.script_runner,
             script_filter=lambda skill, path: (skill, path) in allowed,
         )
-        only_assigned = FilteringSkillsSource(
-            source, predicate=lambda skill, _context: skill.frontmatter.name in skills
-        )
+        only_assigned = FilteringSkillsSource(source, predicate=is_assigned)
         return SkillsProvider(DeduplicatingSkillsSource(only_assigned))
 
     def _record_provenance(

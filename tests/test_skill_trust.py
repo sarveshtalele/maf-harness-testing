@@ -2,6 +2,7 @@ import base64
 import io
 import stat
 import zipfile
+from pathlib import Path
 
 import pytest
 
@@ -185,3 +186,165 @@ def test_api_lists_flags_and_import_approve_flow(tmp_path):
         api.approve_skill("nope")
     with pytest.raises(ValueError):
         api.import_skill({})
+
+
+# ---- review fixes ------------------------------------------------------------------------------------------------
+
+
+def drop(name="go-helper", manifest=MANIFEST, extra=None):
+    d = trust.plugin_dir() / name
+    d.mkdir(parents=True)
+    (d / "SKILL.md").write_text(FILES["SKILL.md"].replace("go-helper", name))
+    (d / "plugin.yaml").write_text(manifest.replace("go-helper", name))
+    for rel, body in (extra or {}).items():
+        (d / rel).parent.mkdir(parents=True, exist_ok=True)
+        (d / rel).write_bytes(body)
+    return d
+
+
+def test_bytecode_rejected_on_import_blocked_on_approve_and_revokes_approval(tmp_path):
+    with pytest.raises(ValueError, match="bytecode"):
+        trust.import_skill(REPO, zip_base64=make_zip({**FILES, "scripts/__pycache__/x.cpython-312.pyc": "x"}))
+    with pytest.raises(ValueError, match="bytecode"):
+        trust.import_skill(REPO, zip_base64=make_zip({**FILES, "scripts/helper.pyc": "x"}))
+    src = tmp_path / "src"
+    for name, body in {**FILES, "scripts/__pycache__/x.pyc": "x"}.items():
+        (src / name).parent.mkdir(parents=True, exist_ok=True)
+        (src / name).write_text(body)
+    with pytest.raises(ValueError, match="bytecode"):
+        trust.import_skill(REPO, folder=str(src))
+    d = drop(extra={"scripts/__pycache__/x.pyc": b"\0"})
+    with pytest.raises(ValueError, match="bytecode"):
+        trust.approve(REPO, "go-helper")
+    for p in d.rglob("__pycache__"):
+        (p / "x.pyc").unlink()
+        p.rmdir()
+    trust.approve(REPO, "go-helper")
+    assert trust.trust(REPO, d)["approved"]
+    (d / "scripts").mkdir(exist_ok=True)
+    (d / "scripts" / "__pycache__").mkdir()
+    (d / "scripts" / "__pycache__" / "evil.pyc").write_bytes(b"\0")
+    assert not trust.trust(REPO, d)["approved"]  # hash covers every file and bytecode is never approved
+
+
+def test_approved_plugin_script_runs_isolated_without_bytecode_or_sibling_imports():
+    trust.import_skill(
+        REPO,
+        zip_base64=make_zip(
+            {
+                **FILES,
+                "scripts/helper.py": "VALUE = 'sibling'\n",
+                "scripts/hello.py": "import helper\nprint(helper.VALUE)\n",
+            }
+        ),
+    )
+    trust.approve(REPO, "go-helper")
+    out = runner().run("go-helper", "scripts/hello.py")
+    assert out["exit_code"] != 0  # -I keeps the script directory off sys.path
+    assert not list((trust.plugin_dir() / "go-helper").rglob("__pycache__"))
+
+
+def test_zip_total_decompressed_size_is_capped_across_entries(monkeypatch):
+    monkeypatch.setattr(trust, "MAX_IMPORT_BYTES", 1000)
+    many = {f"data/{i}.md": "x" * 600 for i in range(5)}
+    with pytest.raises(ValueError, match="too large"):
+        trust.import_skill(REPO, zip_base64=make_zip({**FILES, **many}))
+
+
+@pytest.mark.parametrize(
+    "manifest",
+    [
+        MANIFEST.replace("role: companion", "role: primary").split("applies_when")[0],
+        MANIFEST + "entrypoint: nonexistent_mod_xyz:run\n",
+        MANIFEST.replace("kind: model", "kind: host"),
+    ],
+)
+def test_hand_dropped_primary_host_or_entrypoint_plugin_cannot_be_approved_or_trusted(manifest):
+    d = drop(manifest=manifest)
+    with pytest.raises(ValueError, match="not allowed as a plugin"):  # and the entrypoint was never imported
+        trust.approve(REPO, "go-helper")
+    # even a forged approval record does not make it trusted or selectable
+    trust.approvals_path().write_text(
+        '{"approved": {"go-helper": {"sha256": "' + trust.full_tree_sha256(d) + '"}}}'
+    )
+    assert not trust.trust(REPO, d)["trusted"]
+    assert "go-helper" not in [
+        p.name for p in __import__("maf_test_harness.skills.config", fromlist=["x"]).plugins()
+    ]
+
+
+def test_import_rejects_primary_plugins():
+    manifest = MANIFEST.replace("role: companion", "role: primary").split("applies_when")[0]
+    with pytest.raises(ValueError, match="companion"):
+        trust.import_skill(REPO, zip_base64=make_zip({**FILES, "plugin.yaml": manifest}))
+
+
+def test_runtime_source_loads_only_the_exact_trusted_folder():
+    import asyncio
+
+    from agent_framework import SkillsSourceContext
+
+    real = drop()
+    trust.approve(REPO, "go-helper")
+    decoy = (
+        trust.plugin_dir() / "aaa" / "go-helper"
+    )  # scanned first, same name one level down, never approved
+    decoy.mkdir(parents=True)
+    (decoy / "SKILL.md").write_text("---\nname: go-helper\ndescription: decoy\n---\n# decoy\n")
+    rt = MAFHarnessRuntime(api_key="k", model="m", skills_root=REPO)
+    provider = rt._skills_provider(["go-helper"])
+    skills = asyncio.run(provider._source.get_skills(SkillsSourceContext(agent=None)))
+    assert [
+        Path(s.path).resolve().parent if s.path.endswith(".md") else Path(s.path).resolve() for s in skills
+    ] == [real.resolve()]
+    assert all(s.frontmatter.description != "decoy" for s in skills)
+
+
+def test_concurrent_approvals_do_not_lose_updates():
+    from concurrent.futures import ThreadPoolExecutor
+
+    names = [f"skill-{i}" for i in range(8)]
+    for n in names:
+        drop(n, manifest=MANIFEST)
+    with ThreadPoolExecutor(8) as pool:
+        list(pool.map(lambda n: trust.approve(REPO, n), names))
+    assert set(trust.load_approvals()) == set(names)
+    assert not list(trust.approvals_path().parent.glob(".plugins-*.tmp"))
+
+
+def test_reimport_replaces_atomically_and_revokes_approval():
+    trust.import_skill(REPO, zip_base64=make_zip())
+    trust.approve(REPO, "go-helper")
+    changed = {**FILES, "SKILL.md": FILES["SKILL.md"] + "more\n"}
+    result = trust.import_skill(REPO, zip_base64=make_zip(changed))
+    assert not result["approved"]
+    assert [p.name for p in trust.plugin_dir().iterdir()] == ["go-helper"]  # no leftovers
+
+
+def test_nested_zip_with_top_folder_named_like_staging_dirs_imports():
+    for top in ("out", "pkg", "named", "go-helper"):
+        assert trust.import_skill(REPO, zip_base64=make_zip(prefix=top + "/"))["name"] == "go-helper"
+
+
+@pytest.mark.parametrize("bad", ["a:b.md", "CON.txt", "nul", "Aux.md", "COM1", "trail.", "space /x.md"])
+def test_windows_hostile_names_rejected(bad):
+    with pytest.raises(ValueError, match="Unsafe path"):
+        trust.import_skill(REPO, zip_base64=make_zip({**FILES, bad: "x"}))
+
+
+def test_runner_sees_approval_made_after_it_was_built():
+    drop(extra={"scripts/hello.py": b"print('hi')\n"})
+    live = runner()
+    with pytest.raises(ScriptRefused):
+        live.check("go-helper", "scripts/hello.py")
+    trust.approve(REPO, "go-helper")
+    assert live.check("go-helper", "scripts/hello.py").is_file()  # no restart needed
+    (trust.plugin_dir() / "go-helper" / "plugin.yaml").write_text(MANIFEST + "# edit\n")
+    with pytest.raises(ScriptRefused):
+        live.check("go-helper", "scripts/hello.py")  # revocation is immediate
+
+
+def test_default_approvals_store_is_outside_the_workspace(monkeypatch):
+    monkeypatch.delenv("HARNESS_PLUGIN_APPROVALS")
+    assert trust.approvals_path() == Path.home() / ".maf-harness" / "plugins.lock.json"
+    assert not trust.approvals_path().is_relative_to(REPO.parent)

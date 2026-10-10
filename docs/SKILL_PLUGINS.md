@@ -34,8 +34,20 @@ Repository skills stay hash-locked in `skills/SKILLS.lock.json` (the lock covers
   `<repo>/.maf-harness/plugins`). It is not selected, not loaded (runtime logs `skill <name> skipped: unverified`) and its
   scripts never run.
 - **Approved**: a user action (UI "Approve", `POST /skills/{name}/approve`) records `{name, sha256 of all files,
-  approved_at}` in `HARNESS_PLUGIN_APPROVALS` (default `<repo>/.maf-harness/plugins.lock.json`). Approval enables
+  approved_at}` in `HARNESS_PLUGIN_APPROVALS` (default `~/.maf-harness/plugins.lock.json`). Approval enables
   selection, loading and `scripts/` (model tier, through the hash-checking script runner). Any file change makes the hash
   differ and the skill is unverified again. Packages with symlinks cannot be approved.
 - **Import**: `POST /skills/import` with `{zip_base64}` or `{path}` validates `plugin.yaml` and `SKILL.md`, rejects path
   traversal, symlinks, host kind/entrypoints and archives over 20 MB or 500 files, then copies into the plugin dir (unverified).
+- **Plugins are companions only**: `role: primary`, `kind: host` and `entrypoint` are rejected for plugin-sourced skills
+  (import, approve, selection). A plugin never overrides a repository primary and its entrypoint is never imported.
+- **Hash and bytecode**: the approval hash covers every file with no exclusions. `__pycache__`, `*.pyc` and `*.pyo` are rejected
+  at import and block approval. Approved plugin `.py` scripts run with `-I -B --check-hash-based-pycs always` and a temp
+  `pycache_prefix`, so sibling modules are not importable and no bytecode is trusted.
+
+### Threat model
+
+The approvals file lives in the user's home, not in the repository under test, so a cloned target repository cannot
+pre-approve its own skills. A process that can already write to your home directory or `HARNESS_PLUGIN_DIR` and
+`HARNESS_PLUGIN_APPROVALS` can approve anything; approval is a user decision made on this machine, not a defence against
+local malware. Approved scripts are not sandboxed beyond the existing argv-only, temp-dir, timeout runner.
