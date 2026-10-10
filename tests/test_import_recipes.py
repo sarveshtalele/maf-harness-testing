@@ -234,3 +234,50 @@ def test_autofix_path_parents_division():
     exec(fixed, ns)
     assert ns["ROOT"].parts[-2:] == ("skills", "x")
     assert fix_path_parents_division("t.py", 'p = Path(__file__).resolve().parents[1] / "x"\n')[1] == []
+
+
+def test_autofix_tie_breaks_look_alike_scripts_by_test_location():
+    # real run 1a9bbae78ff0 batches 26/28: `import scripts.main` under skills/<group>/<skill>/tests/...
+    from maf_test_harness.tools.autofix import fix_import_recipes
+
+    def rec(root):
+        return {
+            "module": "main",
+            "purge": "",
+            "code": f"import sys\n# {root}\nfrom main import run",
+            "import": "from main import run",
+            "sys_path_root": root,
+        }
+
+    recipes = {
+        "skills/integrations/jira-ticket/scripts/main.py": rec("skills/integrations/jira-ticket/scripts"),
+        "skills/integrations/github-pr/scripts/main.py": rec("skills/integrations/github-pr/scripts"),
+        "skills/factory/other/scripts/main.py": rec("skills/factory/other/scripts"),
+    }
+    src = "from scripts.main import run\n"
+    path = "skills/integrations/jira-ticket/tests/batch_26/test_main.py"
+    fixed, fixes = fix_import_recipes(path, src, recipes, [])
+    assert "from main import run" in fixed and fixes
+    assert "# skills/integrations/jira-ticket/scripts" in fixed
+    # no location signal (equal scores) stays ambiguous
+    assert fix_import_recipes("tests/t.py", src, recipes, []) == (src, [])
+
+
+def test_missing_import_is_added_before_code_that_needs_it():
+    # real run: `import sys` was appended after `from change_impact_skill import ...`, below sys.path.insert(...)
+    from maf_test_harness.tools.autofix import _insert_python_imports
+
+    src = (
+        "# CASE_ID: x\nimport subprocess\nfrom pathlib import Path\n\nimport pytest\n\n"
+        'sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "scripts"))\n'
+        "from change_impact_skill import f\n"
+    )
+    out = _insert_python_imports(src, ["import sys"])
+    assert out.index("import sys") < out.index("sys.path.insert")
+    ns: dict = {"__file__": __file__}
+    exec(
+        compile(
+            out.replace("import pytest\n", "").replace("from change_impact_skill import f\n", ""), "t", "exec"
+        ),
+        ns,
+    )

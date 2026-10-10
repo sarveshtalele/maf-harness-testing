@@ -85,7 +85,12 @@ _PYTHON_NAMES: dict[str, str] = {
 def _insert_python_imports(content: str, statements: list[str]) -> str:
     lines = content.splitlines()
     tree = ast.parse(content)
-    imports = [n for n in tree.body if isinstance(n, ast.Import | ast.ImportFrom)]
+    imports = []  # the leading import block only: an import after code (sys.path.insert(...)) is too late
+    for n in tree.body:
+        if isinstance(n, ast.Import | ast.ImportFrom):
+            imports.append(n)
+        elif not (isinstance(n, ast.Expr) and isinstance(n.value, ast.Constant)):
+            break
     if imports:
         at = imports[-1].end_lineno or imports[-1].lineno  # after the last import
     else:
@@ -145,8 +150,17 @@ def fix_python(ctx: RepoContext, path: str, content: str) -> tuple[str, list[Fix
     return content, fixes
 
 
+def _shared_parts(a: str, b: str) -> int:
+    n = 0
+    for x, y in zip(a.split("/"), b.split("/"), strict=False):
+        if x != y:
+            break
+        n += 1
+    return n
+
+
 def _unique_recipe(
-    module: str, recipes: dict[str, dict[str, str]], preferred: list[str]
+    module: str, recipes: dict[str, dict[str, str]], preferred: list[str], test_path: str = ""
 ) -> dict[str, str] | None:
     """The one recipe an import of ``module`` can mean: its own module, or a suffix of the normalized path."""
     hits = {}
@@ -157,7 +171,11 @@ def _unique_recipe(
     if (
         len(hits) > 1
     ):  # the case's own linked source files decide among look-alikes (many skills/*/scripts/main.py)
-        hits = {t: r for t, r in hits.items() if t in preferred}
+        hits = {t: r for t, r in hits.items() if t in preferred} or hits
+    if len(hits) > 1 and test_path:  # then the test's own location: skills/x/y/tests/.. -> skills/x/y/scripts
+        score = {t: _shared_parts(r["sys_path_root"], test_path) for t, r in hits.items()}
+        best = [t for t, v in score.items() if v == max(score.values())]
+        hits = {t: hits[t] for t in best}
     return next(iter(hits.values())) if len(hits) == 1 else None
 
 
@@ -187,9 +205,9 @@ def fix_import_recipes(
     used: list[dict[str, str]] = []
     for node in tree.body:  # module-level imports only
         if isinstance(node, ast.ImportFrom) and node.level == 0 and node.module:
-            recipe = _unique_recipe(node.module, recipes, preferred or [])
+            recipe = _unique_recipe(node.module, recipes, preferred or [], path)
         elif isinstance(node, ast.Import) and len(node.names) == 1 and not node.names[0].asname:
-            recipe = _unique_recipe(node.names[0].name, recipes, preferred or [])
+            recipe = _unique_recipe(node.names[0].name, recipes, preferred or [], path)
         else:
             continue
         if recipe is None:
