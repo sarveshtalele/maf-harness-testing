@@ -1,6 +1,7 @@
-import { app, BrowserWindow, dialog, ipcMain, Menu, session, shell } from 'electron';
+import { app, BrowserWindow, dialog, ipcMain, Menu, safeStorage, session, shell } from 'electron';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
+import { KeyStore, ModelSettingsInput } from './keystore';
 import { ProcessManager, ServiceSpec, waitForHttp } from './process-manager';
 import { canOpenExternally, csp, isAppOrigin, makeToken, pickTwoPorts } from './util';
 
@@ -12,6 +13,8 @@ const RELEASES_URL = `${pkg.homepage.replace(/\/$/, '')}/releases`;
 let pm: ProcessManager;
 let win: BrowserWindow | null = null;
 let quitting = false;
+let store: KeyStore;
+let live: { backend: ServiceSpec; apiPort: number; token: string } | null = null;
 
 function specs(apiPort: number, uiPort: number, token: string): { backend: ServiceSpec; ui: ServiceSpec } {
   const packaged = app.isPackaged;
@@ -38,7 +41,7 @@ function specs(apiPort: number, uiPort: number, token: string): { backend: Servi
     return {
       backend: {
         name: 'backend', command: exe, args: ['--port', String(apiPort)], cwd: path.join(res, 'backend'),
-        env: { ...base, HARNESS_RESOURCE_ROOT: path.join(res, 'backend') },
+        env: { ...base, ...store.env(), HARNESS_RESOURCE_ROOT: path.join(res, 'backend') },
       },
       ui: {
         name: 'frontend', command: process.execPath, args: [path.join(res, 'frontend', 'server.js')],
@@ -62,7 +65,7 @@ function specs(apiPort: number, uiPort: number, token: string): { backend: Servi
   return {
     backend: {
       name: 'backend', command: py, args: ['-m', 'maf_test_harness.ui.api', '--port', String(apiPort)],
-      cwd: repo, env: { ...base, PYTHONPATH: path.join(repo, 'src') },
+      cwd: repo, env: { ...base, ...store.env(), PYTHONPATH: path.join(repo, 'src') },
     },
     ui,
   };
@@ -88,11 +91,13 @@ function buildMenu(dataDir: string) {
 async function boot() {
   const dataDir = app.getPath('userData');
   pm = new ProcessManager(path.join(dataDir, 'logs'));
+  store = new KeyStore(path.join(dataDir, 'secrets.bin'), safeStorage);
   const [apiPort, uiPort] = await pickTwoPorts();
   const token = makeToken();
   const { backend, ui } = specs(apiPort, uiPort, token);
 
-  const be = pm.start(backend, [token]);
+  live = { backend, apiPort, token };
+  const be = pm.start(backend, [token, store.get().api_key]);
   await waitForHttp(`http://127.0.0.1:${apiPort}/`, 200, 90_000, () => be.exitCode === null).catch(async () => {
     // The API may answer non-200 on "/" yet be up; fall back to a TCP-level check via any HTTP response.
     const r = await fetch(`http://127.0.0.1:${apiPort}/`).catch(() => null);
@@ -134,6 +139,20 @@ async function boot() {
 
 ipcMain.handle('desktop:appVersion', () => app.getVersion());
 ipcMain.handle('desktop:openDataFolder', () => shell.openPath(app.getPath('userData')).then(() => undefined));
+ipcMain.handle('desktop:getModelSettings', () => store.view());
+ipcMain.handle('desktop:saveModelSettings', async (_e, input: ModelSettingsInput) => {
+  if (!live) throw new Error('Backend is not running.');
+  const { apiPort, token } = live;
+  const runs = await fetch(`http://127.0.0.1:${apiPort}/runs`, { headers: { Authorization: `Bearer ${token}` } })
+    .then((r) => r.json() as Promise<{ busy?: boolean }>).catch(() => ({ busy: false }));
+  if (runs.busy) throw new Error('Wait for the current operation to finish before changing model settings.');
+  const view = store.save(input); // validates before anything restarts
+  const backend = specs(apiPort, 0, token).backend; // re-reads the new key into the spawn env
+  live.backend = backend;
+  const child = await pm.restart(backend, [token, store.get().api_key]);
+  await waitForHttp(`http://127.0.0.1:${apiPort}/`, 200, 60_000, () => child.exitCode === null).catch(() => undefined);
+  return view;
+});
 ipcMain.handle('desktop:checkForUpdates', () => shell.openExternal(RELEASES_URL));
 
 if (!app.requestSingleInstanceLock()) {

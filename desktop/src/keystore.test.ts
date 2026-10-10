@@ -1,0 +1,59 @@
+import { strict as assert } from 'node:assert';
+import * as fs from 'node:fs';
+import * as os from 'node:os';
+import * as path from 'node:path';
+import { test } from 'node:test';
+import { KeyStore, SafeStorageLike } from './keystore';
+
+const fake = (available = true): SafeStorageLike => ({
+  isEncryptionAvailable: () => available,
+  encryptString: (s) => Buffer.from(Buffer.from(s).toString('base64') + '!enc'),
+  decryptString: (b) => Buffer.from(b.toString().replace(/!enc$/, ''), 'base64').toString(),
+});
+const tmp = () => path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'ks-')), 'secrets.bin');
+const KEY = 'sk-test-0123456789abcdef';
+
+test('saves encrypted, round-trips, view hides the key', () => {
+  const f = tmp();
+  const v = new KeyStore(f, fake()).save({ api_key: KEY, model: 'm', base_url: 'https://gw.example.com/v1', stage_models: { a: 'b' } });
+  assert.equal(v.key_hint, KEY.slice(-4));
+  assert.ok(!JSON.stringify(v).includes(KEY));
+  assert.ok(!fs.readFileSync(f).toString().includes(KEY));
+  if (process.platform !== 'win32') assert.equal(fs.statSync(f).mode & 0o777, 0o600);
+  const again = new KeyStore(f, fake());
+  assert.equal(again.get().api_key, KEY);
+  assert.deepEqual(again.env(), {
+    OPENAI_API_KEY: KEY, OPENAI_BASE_URL: 'https://gw.example.com/v1', OPENAI_MODEL: 'm', HARNESS_STAGE_MODELS: '{"a":"b"}',
+  });
+});
+
+test('empty api_key keeps the stored one; omitted fields are not exported', () => {
+  const ks = new KeyStore(tmp(), fake());
+  ks.save({ api_key: KEY });
+  ks.save({ api_key: '', model: 'next' });
+  assert.equal(ks.get().api_key, KEY);
+  assert.deepEqual(Object.keys(ks.env()).sort(), ['OPENAI_API_KEY', 'OPENAI_MODEL']);
+});
+
+test('without OS encryption the key stays in memory only', () => {
+  const f = tmp();
+  const ks = new KeyStore(f, fake(false));
+  const v = ks.save({ api_key: KEY });
+  assert.equal(v.encrypted, false);
+  assert.equal(v.key_configured, true);
+  assert.ok(!fs.existsSync(f));
+  assert.equal(new KeyStore(f, fake(false)).view().key_configured, false);
+});
+
+test('rejects insecure urls, bad models and keys; corrupt file reads empty', () => {
+  const ks = new KeyStore(tmp(), fake());
+  assert.throws(() => ks.save({ base_url: 'http://example.com' }));
+  assert.throws(() => ks.save({ base_url: 'https://u:p@example.com' }));
+  assert.throws(() => ks.save({ model: '' }));
+  assert.throws(() => ks.save({ model: 'x'.repeat(101) }));
+  assert.throws(() => ks.save({ api_key: 'a b' }));
+  assert.doesNotThrow(() => ks.save({ base_url: 'http://localhost:4000/v1' }));
+  const f = tmp();
+  fs.writeFileSync(f, 'garbage');
+  assert.equal(new KeyStore(f, fake()).view().key_configured, false);
+});
