@@ -3,7 +3,7 @@ from maf_test_harness.workflow import STAGES
 
 
 def test_every_workflow_stage_has_a_persona():
-    assert set(PERSONAS) == set(STAGES)
+    assert set(PERSONAS) == set(STAGES) | {"spec_authoring"}  # greenfield sub-stage of requirements
 
 
 def test_personas_are_cross_language_and_no_manual_input():

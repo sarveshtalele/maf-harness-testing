@@ -24,6 +24,7 @@ from ..monitoring.report import build_report
 from ..repo.analyzer import validate_github_url
 from ..repo.git_transport import read_operation
 from ..repo.preview import preview_repository
+from ..run_options import parse_run_options
 from ..settings import API_KEY, BASE_URL, MODEL, validate_gateway_settings
 from ..storage import read_json
 from ..workflow import Harness
@@ -41,6 +42,10 @@ PUBLIC_STATE = (
     "run_name",
     "repo_url",
     "repo_ref",
+    "run_mode",
+    "test_types",
+    "spec_sources",
+    "spec_intake_pending",
     "repo_knowledge",
     "workflow_version",
     "requirements_mode",
@@ -327,7 +332,10 @@ class LocalAPI(EvidenceAPI, SettingsAPI):
             knowledge = body.get("repo_knowledge") or ""
             if not isinstance(knowledge, str) or len(knowledge) > 32000:
                 raise ValueError("Repository knowledge must be text of at most 32,000 characters.")
+            opts = parse_run_options(body)
             url = body.get("repo_url")
+            if url is None and opts["run_mode"] == "greenfield":
+                url = ""
             app_url = body.get("app_url") or None
             launch = body.get("start_app", False)
             component = body.get("app_component") or None
@@ -350,7 +358,8 @@ class LocalAPI(EvidenceAPI, SettingsAPI):
                 budget = _budget_value(
                     (budget or {}).get("per_requirement") if isinstance(budget, dict) else None
                 )
-            validate_github_url(url)
+            if url.strip() or opts["run_mode"] == "brownfield":
+                validate_github_url(url)
             run_name = _run_name(body.get("run_name"), url)
             if url.strip().startswith("git clone "):
                 url = validate_github_url(url)[0]
@@ -369,12 +378,36 @@ class LocalAPI(EvidenceAPI, SettingsAPI):
             # Persist a visible new run before dispatch; Harness.start will populate the real checkpoint.
             atomic_json(
                 path / "run.json",
-                {"status": "new", "state": {"repo_url": url, "run_name": run_name}, "consumed": []},
+                {
+                    "status": "new",
+                    "state": {
+                        "repo_url": url,
+                        "run_name": run_name,
+                        "run_mode": opts["run_mode"],
+                        "test_types": opts["test_types"],
+                    },
+                    "consumed": [],
+                },
             )
 
             async def begin():
                 await self.replace_host(key)
-                await self.host.start(url, app_url, launch, component, knowledge, budget, run_name)
+                await self.host.start(
+                    url,
+                    app_url,
+                    launch,
+                    component,
+                    knowledge,
+                    budget,
+                    run_name,
+                    run_mode=opts["run_mode"],
+                    test_types=opts["test_types"],
+                    spec_sources=opts["spec_sources"],
+                    documents=opts["documents"],
+                    jira_token=opts[
+                        "jira_token"
+                    ],  # in memory only; the desktop keychain will provide it later
+                )
 
             self.job_run = key
             self.operation_log(key, "starting repository workflow; waiting for clone approval")
@@ -660,7 +693,8 @@ def make_server(api: LocalAPI, token: str, port: int = 8765):
                     if self.headers.get("Content-Type", "").split(";")[0] != "application/json":
                         raise ValueError("JSON body required.")
                     length = int(self.headers.get("Content-Length", "0"))
-                    limit = 28_000_000 if parts == ["skills", "import"] else 2097152  # 20 MB zip as base64
+                    # 20 MB zip as base64; a greenfield run carries up to 10 MB of spec documents as base64
+                    limit = 28_000_000 if parts in (["skills", "import"], ["runs"]) else 2097152
                     if not 0 < length <= limit:
                         raise ValueError(f"Body must be between 1 and {limit:,} bytes.")
                     body = json.loads(self.rfile.read(length))

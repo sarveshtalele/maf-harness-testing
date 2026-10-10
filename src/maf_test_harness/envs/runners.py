@@ -72,13 +72,15 @@ PYTHON_TEST_HELPERS = {
     "hypothesis": (r"^\s*(?:import|from)\s+hypothesis\b",),
     "httpx": (r"(?:starlette|fastapi)\.testclient", r"^\s*(?:import|from)\s+httpx\b"),  # TestClient needs it
     "respx": (r"\brespx\b",),
+    "pytest-django": (r"pytest\.mark\.django_db", r"pytest_django"),
 }
 _DEP_FILES = ("requirements*.txt", "pyproject.toml", "setup.py", "setup.cfg", "Pipfile", "tox.ini")
 
 
 def _declared(ws: Path, pkg: str) -> bool:
     """Whether the repository's own dependency files already name ``pkg`` (its pins are never touched)."""
-    norm = re.compile(rf"(?<![\w-]){re.escape(pkg).replace('-', '[-_.]')}(?![\w-])", re.I)
+    name = re.escape(pkg).replace("\\-", "[-_.]")
+    norm = re.compile(rf"(?<![\w-]){name}(?![\w-])", re.I)
     return any(
         norm.search(f.read_text(encoding="utf-8", errors="replace"))
         for pattern in _DEP_FILES

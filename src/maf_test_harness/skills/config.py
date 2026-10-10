@@ -110,6 +110,7 @@ def _facts(state: dict) -> dict:
         },
         "files": [str(f).replace("\\", "/") for f in [*(repo.get("source_files") or []), *(repo.get("test_files") or [])]],
         "stack": stack,
+        "run_modes": {state.get("run_mode") or "brownfield"},
     }
 
 

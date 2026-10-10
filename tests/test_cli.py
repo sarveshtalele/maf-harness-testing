@@ -94,7 +94,7 @@ def test_lint_skills_command_exit_code(capsys):
     assert (
         "OK   generic-test-generator" in out
         and "OK   SKILLS.lock.json" in out
-        and "12 locked packages" in out
+        and "13 locked packages" in out
     )
 
 

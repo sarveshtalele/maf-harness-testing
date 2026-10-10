@@ -241,7 +241,7 @@ test('mouse resizing persists and project skill cards show real package details'
   await expect.poll(async () => (await panel.boundingBox())!.height).toBeCloseTo(resized.height, 0);
   await page.getByRole('button', { name: 'Agent skills', exact: true }).click();
   await expect(page.getByLabel('requirement-analysis workflow map')).toBeVisible();
-  await expect(page.locator('.skill-card')).toHaveCount(12);
+  await expect(page.locator('.skill-card')).toHaveCount(13); // 12 repo skills + spec-authoring (greenfield)
   await page.getByRole('searchbox', { name: 'Search agent skills' }).fill('playwright');
   await expect(page.locator('.skill-card')).toHaveCount(1);
   await expect(page.getByText('Upstream library provenance', { exact: true })).toHaveCount(0);
@@ -373,7 +373,7 @@ test('stop active model work preserves repository analysis after reload', async 
   await page.screenshot({ path: testInfo.outputPath('stopped-run-analysis.png'), fullPage: true });
 });
 
-test('repository URL auto-fills optional fields without overwriting edits', async ({ page }) => {
+test('repository URL auto-fills repository knowledge without overwriting edits; app fields are hidden', async ({ page }) => {
   const preview = { app_component: 'frontend', app_url: 'http://localhost:3000', start_app_suggested: true, repo_knowledge: 'Auto-detected from GitHub (unverified)\nNext.js', detected: {}, warnings: [] };
   let calls = 0;
   await page.route('**/api/harness/repo-preview', route => { calls++; return route.fulfill({ json: preview }); });
@@ -381,15 +381,64 @@ test('repository URL auto-fills optional fields without overwriting edits', asyn
   const url = page.getByRole('textbox', { name: 'Public GitHub repository URL' });
   await url.fill('https://github.com/acme/demo');
   await expect(page.getByText('Auto-filled from repository — review before starting.')).toBeVisible();
-  await expect(page.getByRole('textbox', { name: /Application component/ })).toHaveValue('frontend');
-  await expect(page.getByRole('textbox', { name: /Running application URL/ })).toHaveValue('http://localhost:3000');
   await expect(page.getByRole('textbox', { name: /Repository knowledge/ })).toHaveValue(/Next\.js/);
-  await expect(page.getByRole('checkbox', { name: 'Start the application for me' })).toBeChecked();
-  await page.getByRole('textbox', { name: /Application component/ }).fill('web');
+  await expect(page.getByText('Running application URL')).toHaveCount(0);
+  await expect(page.getByText('Application component')).toHaveCount(0);
+  await expect(page.getByText('Start the application for me')).toHaveCount(0);
+  await page.getByRole('textbox', { name: /Repository knowledge/ }).fill('mine');
   await url.fill('https://github.com/acme/other');
   await expect.poll(() => calls).toBe(2);
-  await expect(page.getByRole('textbox', { name: /Application component/ })).toHaveValue('web');
-  await expect(page.getByRole('textbox', { name: /Running application URL/ })).toHaveValue('http://localhost:3000');
+  await expect(page.getByRole('textbox', { name: /Repository knowledge/ })).toHaveValue('mine');
+});
+
+test('greenfield form posts mode, test types, documents and Jira without persisting the token', async ({ page }) => {
+  const posts: Record<string, any>[] = [];
+  await page.route('**/api/harness/**', async route => {
+    const path = new URL(route.request().url()).pathname.replace('/api/harness/', '');
+    if (route.request().method() === 'POST') { posts.push({ path, ...route.request().postDataJSON() }); return route.fulfill({ json: { id: 'abc' } }); }
+    if (path === 'config') return route.fulfill({ json: { model: 'm', base_url: 'u', key_configured: true, case_budget_default: 2, daily: { used: 0, remaining: 1, limit: 1 }, stages: ['repo_analysis'], personas: {} } });
+    if (path === 'runs') return route.fulfill({ json: { runs: [], busy: false } });
+    if (path === 'runs/abc') return route.fulfill({ json: { id: 'abc', status: 'running', busy: false, service_busy: false, actions: [], pending: null, state: { run_mode: 'greenfield', test_types: ['unit'], stages: ['repo_analysis'], approved: {}, artifacts: {} }, progress: { percent: 1 } } });
+    return route.fulfill({ json: {} });
+  });
+  await page.goto('/?page=new');
+  await expect(page.getByLabel('API token')).toHaveCount(0);
+  await page.getByRole('radio', { name: 'Greenfield specs' }).check();
+  await page.getByRole('checkbox', { name: 'Integration' }).uncheck();
+  await page.getByLabel('Specification documents').setInputFiles({ name: 'spec.md', mimeType: 'text/markdown', buffer: Buffer.from('# Spec') });
+  await page.getByLabel('Site URL').fill('https://acme.atlassian.net');
+  await page.getByLabel('Issue keys').fill('ACME-1, ACME-2');
+  await page.getByLabel('Email').fill('ba@acme.com');
+  await page.getByLabel('API token').fill('s3cret-token');
+  await page.getByRole('button', { name: 'Start repository review →' }).click();
+  await expect.poll(() => posts.find(p => p.path === 'runs')).toMatchObject({
+    run_mode: 'greenfield', test_types: ['unit'],
+    spec_sources: { documents: [{ name: 'spec.md', content_base64: Buffer.from('# Spec').toString('base64') }], jira: { base_url: 'https://acme.atlassian.net', issue_keys: ['ACME-1', 'ACME-2'], email: 'ba@acme.com', api_token: 's3cret-token' } },
+  });
+  expect(posts.find(p => p.path === 'runs')).not.toHaveProperty('start_app');
+  await expect(page.getByText('greenfield', { exact: true })).toBeVisible();
+  const stored = await page.evaluate(() => JSON.stringify({ ...localStorage }) + JSON.stringify({ ...sessionStorage }));
+  expect(stored).not.toContain('s3cret-token');
+});
+
+test('brownfield form hides application and Jira fields and posts brownfield defaults', async ({ page }) => {
+  const posts: Record<string, any>[] = [];
+  await page.route('**/api/harness/**', async route => {
+    const path = new URL(route.request().url()).pathname.replace('/api/harness/', '');
+    if (route.request().method() === 'POST') { posts.push({ path, ...route.request().postDataJSON() }); return route.fulfill({ json: { id: 'abc' } }); }
+    if (path === 'config') return route.fulfill({ json: { model: 'm', base_url: 'u', key_configured: true, case_budget_default: 2, daily: { used: 0, remaining: 1, limit: 1 }, stages: ['repo_analysis'], personas: {} } });
+    if (path === 'runs') return route.fulfill({ json: { runs: [], busy: false } });
+    return route.fulfill({ json: {} });
+  });
+  await page.goto('/?page=new');
+  await expect(page.getByRole('radio', { name: 'Brownfield repository' })).toBeChecked();
+  await expect(page.getByRole('checkbox', { name: 'Unit' })).toBeChecked();
+  await expect(page.getByRole('checkbox', { name: 'Integration' })).toBeChecked();
+  for (const hidden of ['Running application URL', 'Application component', 'Start the application for me', 'Site URL', 'Specification documents']) await expect(page.getByText(hidden)).toHaveCount(0);
+  await page.getByRole('textbox', { name: 'Public GitHub repository URL' }).fill('https://github.com/acme/demo');
+  await page.getByRole('button', { name: 'Start repository review →' }).click();
+  await expect.poll(() => posts.find(p => p.path === 'runs')).toMatchObject({ run_mode: 'brownfield', test_types: ['unit', 'integration'] });
+  expect(posts.find(p => p.path === 'runs')).not.toHaveProperty('start_app');
 });
 
 test('case budget: new-run field posts case_budget and run view shows the recommendation table', async ({ page }) => {

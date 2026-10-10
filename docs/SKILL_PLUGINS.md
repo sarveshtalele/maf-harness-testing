@@ -16,6 +16,7 @@ applies_when:                    # companions only, all optional; AND across key
   levels: []                     #   design levels, e.g. ui, e2e, accessibility
   files_glob: []                 #   globs over repo source/test files, e.g. "**/openapi*.{yml,yaml,json}"
   stack_flags: []                #   truthy keys of the stack profile, e.g. openapi_files
+  run_modes: []                  #   brownfield | greenfield (the run's mode)
 entrypoint: pkg.module:function  # host kind only; must be importable
 priority: 20                     # int tie-break; higher wins (primaries) / listed first (companions)
 ```

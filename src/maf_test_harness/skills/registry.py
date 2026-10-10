@@ -185,7 +185,7 @@ STAGE_NAMES = (
     "qa",
 )
 PLUGIN_KEYS = {"name", "stages", "role", "kind", "purpose", "applies_when", "entrypoint", "priority"}
-APPLIES_KEYS = {"languages", "frameworks", "levels", "files_glob", "stack_flags"}
+APPLIES_KEYS = {"languages", "frameworks", "levels", "files_glob", "stack_flags", "run_modes"}
 ENTRYPOINT_RE = re.compile(r"^[A-Za-z_][\w.]*:[A-Za-z_]\w*$")
 
 
