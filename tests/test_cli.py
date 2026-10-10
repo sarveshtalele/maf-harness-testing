@@ -15,6 +15,7 @@ SKILLS = Path("skills")
 def test_cli_creates_default_run_in_checkout_or_explicit_storage(tmp_path, monkeypatch, override):
     monkeypatch.setattr(cli, "ROOT", tmp_path)
     monkeypatch.delenv("HARNESS_RUNS_DIR", raising=False)
+    monkeypatch.setenv("HARNESS_DATA_DIR", str(tmp_path / ".maf-harness"))
     if override:
         monkeypatch.setenv("HARNESS_RUNS_DIR", override)
     monkeypatch.setattr(cli, "validate_gateway_settings", lambda: None)
