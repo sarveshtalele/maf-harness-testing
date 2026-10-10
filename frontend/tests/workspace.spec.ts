@@ -456,3 +456,32 @@ test('run name: shown in list, header and sidebar; posted from the new-run form'
   await page.getByRole('button', { name: 'Start repository review →' }).click();
   await expect.poll(() => posts.find(p => p.path === 'runs')).toMatchObject({ run_name: 'My named run' });
 });
+
+test('Errors tab: one run notice, filterable rows, expandable full text', async ({ page }) => {
+  const long = 'Independent test review requires repair: TC-1: ' + 'detail '.repeat(60) + 'END-OF-DETAIL';
+  const item = (n: number, category: string, detail: string) => ({ id: `e${n}`, at: `2026-10-07T01:0${n}:00+00:00`, stage: 'test_generation', batch: n, case_ids: ['TC-A', 'TC-B', 'TC-C'], category, summary: detail.split('. ')[0].slice(0, 160), detail, source: 'generation_failures' });
+  const items = [item(3, 'review_rejected', long), item(2, 'syntax', 'source is invalid. Line 3'), item(1, 'import', 'No module named foo. x')];
+  const run = {
+    id: 'abc', status: 'running', busy: false, service_busy: false, actions: [], pending: null,
+    state: { repo_url: 'https://github.com/acme/demo', stages: ['repo_analysis', 'test_generation'], approved: {}, artifacts: {} },
+    progress: { percent: 10 }, errors: { items, counts: { review_rejected: 1, syntax: 1, import: 1 } },
+  };
+  await page.route('**/api/harness/**', route => {
+    const path = new URL(route.request().url()).pathname.replace('/api/harness/', '');
+    if (path === 'config') return route.fulfill({ json: { model: 'm', base_url: 'u', key_configured: true, daily: { used: 0, remaining: 1, limit: 1 }, stages: run.state.stages, personas: {} } });
+    if (path === 'runs') return route.fulfill({ json: { runs: [], busy: false } });
+    if (path === 'runs/abc') return route.fulfill({ json: run });
+    return route.fulfill({ json: {} });
+  });
+  await page.goto('/?run=abc&tab=Review');
+  await expect(page.locator('.notice.bad')).toHaveCount(1);
+  await expect(page.locator('.notice.bad')).toContainText('3 errors in this run');
+  await expect(page.getByRole('button', { name: 'Errors 3', exact: true })).toBeVisible();
+  await page.getByRole('button', { name: 'Open Errors tab' }).click();
+  await expect(page.locator('tbody tr')).toHaveCount(3);
+  await page.getByRole('button', { name: /^Syntax 1/ }).click();
+  await expect(page.locator('tbody tr')).toHaveCount(1);
+  await page.getByRole('button', { name: /^Syntax 1/ }).click();
+  await page.locator('tbody tr').first().locator('summary').click();
+  await expect(page.locator('tbody pre').first()).toContainText('END-OF-DETAIL');
+});

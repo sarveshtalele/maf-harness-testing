@@ -28,6 +28,7 @@ from ..settings import API_KEY, BASE_URL, MODEL, validate_gateway_settings
 from ..storage import read_json
 from ..workflow import Harness
 from ..workflow_support import atomic_json
+from .errors import run_errors
 from .eta import case_budget_view, run_eta
 from .evidence_api import EvidenceAPI
 from .presentation import public
@@ -230,9 +231,14 @@ class LocalAPI(EvidenceAPI, SettingsAPI):
                 )
             ):
                 status = "interrupted"
+            try:
+                errors = run_errors(self.run_path(key), {**view, "operation_error": self.errors.get(key)})
+            except Exception:
+                errors = {"items": [], "counts": {}}
             return public(
                 {
                     "id": key,
+                    "errors": errors,
                     "progress": {
                         **progress(view),
                         "eta": self._eta(key, view),

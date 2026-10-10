@@ -6,10 +6,11 @@ import Skills from './skills';
 import Reports from './reports';
 import StepReports from './step-reports';
 import Prompts from './prompts';
+import RunErrors from './run-errors';
 import Observability, { Select } from './observability';
 
 const pages: Record<string, string> = { skills: 'Skills', prompts: 'Prompts', configuration: 'Configuration', new: 'New run' };
-const tabs = ['Review', 'Artifacts', 'Generated tests', 'QA report', 'Test reports', 'Logs', 'Observability', 'Audit', 'Prompts'];
+const tabs = ['Review', 'Errors', 'Artifacts', 'Generated tests', 'QA report', 'Test reports', 'Logs', 'Observability', 'Audit', 'Prompts'];
 const stages = ['repo_analysis', 'requirements', 'test_planning', 'test_design', 'test_generation', 'environment_setup', 'test_execution'];
 
 export default function Workspace() {
@@ -114,6 +115,9 @@ export default function Workspace() {
   };
   const response = (decision: string, feedback: string) => run?.pending && act(`runs/${id}/respond`, { request_id: run.pending.id, decision, feedback });
   const active = run?.busy ? String(run.state.active_stage || run.pending?.stage || 'repo_analysis') : run?.pending?.stage || String(run?.state.active_stage || 'repo_analysis');
+  const errorCount = run?.errors?.items.length ?? 0;
+  const genFailed = run?.errors?.items.filter(e => e.source === 'generation_failures' || e.source === 'audit' && e.stage === 'test_generation').length ?? 0;
+  const firstSentence = (v: string) => (v.split(/(?<=[.!?])\s|\n/)[0] || v).slice(0, 200);
   const finish = run?.busy ? record(record(run.progress).eta).finish_estimate : null;
   const etaOf = (stage: string): Row => record(rows(record(run?.progress).eta ? record(record(run?.progress).eta).stages : []).find(r => r.stage === stage));
   const failedStage = run?.pending?.kind === 'error' ? run.pending.stage : (run ? record(record(artifacts(run).test_execution).qa_report).verdict : '') === 'FAIL' ? 'test_execution' : '';
@@ -144,14 +148,16 @@ export default function Workspace() {
           {finish ? <p className="muted">Estimated completion ~{new Date(String(finish)).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })} (≈{minutes(Number(record(record(run.progress).eta).total_remaining_s))} left)</p> : null}
           {(run.busy || sending) && <WorkingStatus key={`${id}:${active}`} stage={active} eta={etaOf(active)} operation={record(run.operation)} directory={run.run_directory} cancel={run.busy && record(run.operation).kind === 'clone' && record(run.operation).status === 'running' ? () => void act(`runs/${id}/cancel-clone`, {}) : undefined} sending={sending} />}
           {run.run_directory && !run.busy && <p className="field-help">Saved run directory: <code>{run.run_directory}</code></p>}
-          {(run.operation_error || run.error || (!run.busy && run.pending?.error)) && <div className="notice bad" role="alert">[{runTitle(run.state.run_name, run.state.repo_url, id)} · {id}] {run.operation_error || run.error || run.pending?.error}</div>}{rows(record(artifacts(run).test_generation).generation_failures).map((f, i) => <div className="notice bad" role="alert" key={i}>[{runTitle(run.state.run_name, run.state.repo_url, id)} · {id}] Test generation failed for batch {text(f.batch)} · cases {Array.isArray(f.case_ids) ? (f.case_ids as string[]).join(', ') : text(f.case_ids)} · {text(f.last_error)}</div>)}
+          {errorCount > 0 && <div className="notice bad" role="alert">{errorCount} errors in this run{genFailed > 0 ? ` (${genFailed} generation batches failed)` : ''} <button onClick={() => changeTab('Errors')}>Open Errors tab</button></div>}
+          {!run.busy && run.pending?.error && <div className="notice bad" role="alert">{firstSentence(run.pending.error)} Details in Errors tab.</div>}
           {run.status === 'interrupted' && <div className="notice bad">An approved operation was interrupted. Automatic replay is blocked. Inspect the audit and retained artifacts; reconnecting does not repeat the action.</div>}
           {run.status === 'stopping' && <div className="notice" role="status">Stopping… waiting for running work to end. Approved evidence is kept.</div>}
           {run.status === 'stopped' && <div className="notice">Workflow stopped. Approved evidence remains available.</div>}
           {run.state.completed_reason ? <div className="notice"><Badge value={record(record(artifacts(run).test_execution).qa_report).verdict} /> {text(run.state.completed_reason)}</div> : null}
           {!record(run.state.approved).test_design && Array.isArray(run.state.stages) && (run.state.stages as string[]).includes('test_design') && record(record(run.progress).case_budget).rows ? <CaseBudget key={`${id}:${text(record(record(run.progress).case_budget).current)}`} budget={record(record(run.progress).case_budget)} id={id} disabled={sending || run.busy || run.service_busy} act={act} /> : null}
-          <div className="tabs" aria-label="Run views">{tabs.map(t => <button className={tab === t ? 'selected' : ''} aria-pressed={tab === t} key={t} onClick={() => changeTab(t)}>{t}{t === 'Review' && run.actions.length > 0 && <span className="tab-dot" />}</button>)}</div>
+          <div className="tabs" aria-label="Run views">{tabs.map(t => <button className={tab === t ? 'selected' : ''} aria-pressed={tab === t} key={t} onClick={() => changeTab(t)}>{t === 'Errors' ? `Errors${errorCount ? ` ${errorCount}` : ''}` : t}{t === 'Review' && run.actions.length > 0 && <span className="tab-dot" />}</button>)}</div>
           {tab === 'Review' && <SplitWorkspace split={split} setSplit={setSplit}><div><Review run={run} /><Panel title="Run context" storageKey={`${id}:context`} defaultOpen={false}><DataView value={{ repository: run.state.repo_url, application_url: run.state.app_url, budget: run.state.budget, repository_knowledge: run.state.repo_knowledge, environment: run.state.environment }} /></Panel></div><Decision key={run.pending?.id || id} run={run} sending={sending} respond={response} /></SplitWorkspace>}
+          {tab === 'Errors' && <RunErrors run={run} id={id} />}
           {tab === 'Prompts' && <Prompts key={`${id}:${run.busy}`} run={run} />}
           {tab === 'Artifacts' && <Artifacts run={run} selectedStage={selectedStage} stageVisit={stageVisit} />}
           {tab === 'Generated tests' && <Generated run={run} />}
