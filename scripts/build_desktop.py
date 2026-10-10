@@ -30,6 +30,9 @@ def plan(arch: str | None = None) -> list[dict]:
                 "--noconfirm",
                 "--distpath",
                 "build",
+                # The default workpath (build/<spec name>) equals the dist folder build/backend: keep them apart.
+                "--workpath",
+                "build/pyinstaller-work",
             ],
             "cwd": ROOT,
             "env": {},
@@ -58,6 +61,25 @@ def copy_static() -> None:
     ):
         if src.is_dir():
             shutil.copytree(src, dst, dirs_exist_ok=True)
+    stage_frontend(standalone)
+
+
+STAGED_FRONTEND = ROOT / "build" / "frontend"
+
+
+def stage_frontend(standalone: Path) -> Path:
+    """Copy the standalone server to build/frontend with node_modules renamed to deps.
+
+    electron-builder always drops `node_modules` from extraResources, so the traced dependencies ship as `deps/` and
+    the desktop shell points NODE_PATH at it (desktop/src/main.ts).
+    """
+    if STAGED_FRONTEND.exists():
+        shutil.rmtree(STAGED_FRONTEND)
+    shutil.copytree(standalone, STAGED_FRONTEND, symlinks=True)
+    modules = STAGED_FRONTEND / "node_modules"
+    if modules.is_dir():
+        modules.rename(STAGED_FRONTEND / "deps")
+    return STAGED_FRONTEND
 
 
 def main(argv: list[str] | None = None) -> int:

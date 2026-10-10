@@ -13,8 +13,14 @@ extraResources:
   # Next standalone (build with DESKTOP_BUILD=1); server.js ends up at resources/frontend/server.js.
   # outputFileTracingRoot=frontend (next.config.ts) keeps server.js at the top; scripts/build_desktop.py copies
   # .next/static and public into the standalone dir first.
-  - from: ../frontend/.next/standalone
+  - from: ../build/frontend
     to: frontend
+    # Staged by scripts/build_desktop.py (stage_frontend): node_modules renamed to deps, because electron-builder
+    # always drops node_modules from extraResources; main.ts sets NODE_PATH to resources/frontend/deps.
+    filter:
+      - "**/*"
+      - ".next/**/*"
+      - "deps/**/*"
 win:
   target:
     - target: nsis

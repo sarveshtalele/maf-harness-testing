@@ -45,7 +45,8 @@ function specs(apiPort: number, uiPort: number, token: string): { backend: Servi
       },
       ui: {
         name: 'frontend', command: process.execPath, args: [path.join(res, 'frontend', 'server.js')],
-        cwd: path.join(res, 'frontend'), env: uiEnv,
+        // build_desktop.py ships the traced dependencies as deps/ (electron-builder drops node_modules).
+        cwd: path.join(res, 'frontend'), env: { ...uiEnv, NODE_PATH: path.join(res, 'frontend', 'deps') },
       },
     };
   }
@@ -98,10 +99,8 @@ async function boot() {
 
   live = { backend, apiPort, token };
   const be = pm.start(backend, [token, store.get().api_key, ...store.mcpValues()]);
-  await waitForHttp(`http://127.0.0.1:${apiPort}/`, 200, 90_000, () => be.exitCode === null).catch(async () => {
-    // The API may answer non-200 on "/" yet be up; fall back to a TCP-level check via any HTTP response.
-    const r = await fetch(`http://127.0.0.1:${apiPort}/`).catch(() => null);
-    if (!r) throw new Error('backend did not start; see logs in ' + path.join(dataDir, 'logs'));
+  await waitForHttp(`http://127.0.0.1:${apiPort}/`, 'any', 90_000, () => be.exitCode === null).catch(() => {
+    throw new Error('backend did not start; see logs in ' + path.join(dataDir, 'logs'));
   });
   const fe = pm.start(ui, [token]);
   await waitForHttp(`http://127.0.0.1:${uiPort}/`, 200, 90_000, () => fe.exitCode === null);
@@ -150,7 +149,7 @@ ipcMain.handle('desktop:saveModelSettings', async (_e, input: ModelSettingsInput
   const backend = specs(apiPort, 0, token).backend; // re-reads the new key into the spawn env
   live.backend = backend;
   const child = await pm.restart(backend, [token, store.get().api_key, ...store.mcpValues()]);
-  await waitForHttp(`http://127.0.0.1:${apiPort}/`, 200, 60_000, () => child.exitCode === null).catch(() => undefined);
+  await waitForHttp(`http://127.0.0.1:${apiPort}/`, 'any', 60_000, () => child.exitCode === null).catch(() => undefined);
   return view;
 });
 ipcMain.handle('desktop:getMcpSecrets', () => store.mcpView());
@@ -197,6 +196,9 @@ if (!app.requestSingleInstanceLock()) {
     }
   });
   app.on('window-all-closed', () => app.quit());
+  // A terminal Ctrl+C, `kill` or OS logout sends a signal that skips Electron's quit path: route it through
+  // before-quit so the backend and UI process trees are stopped instead of orphaned.
+  for (const sig of ['SIGINT', 'SIGTERM', 'SIGHUP'] as const) process.on(sig, () => app.quit());
   app.on('before-quit', (e) => {
     if (quitting || !pm) return;
     e.preventDefault();

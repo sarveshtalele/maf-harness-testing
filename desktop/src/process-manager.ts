@@ -91,13 +91,14 @@ export async function killTree(child: ChildProcess): Promise<void> {
   signal('SIGKILL');
 }
 
-export async function waitForHttp(url: string, okStatus = 200, timeoutMs = 90_000, alive?: () => boolean): Promise<void> {
+/** okStatus "any": ready as soon as the server answers at all (the authenticated API returns 403 without a token). */
+export async function waitForHttp(url: string, okStatus: number | 'any' = 200, timeoutMs = 90_000, alive?: () => boolean): Promise<void> {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
     if (alive && !alive()) throw new Error(`service exited before ${url} became ready`);
     try {
       const r = await fetch(url, { signal: AbortSignal.timeout(2000) });
-      if (r.status === okStatus) return;
+      if (okStatus === 'any' || r.status === okStatus) return;
     } catch { /* not up yet */ }
     await sleep(300);
   }
