@@ -54,6 +54,8 @@ Generation also calls a separate Repository Test Reviewer persona (`workflow_ste
 | 6 | `environment_setup` | Environment Provisioning Engineer | no | host setup/provisioning | approved install commands | Test execution setup approval → review |
 | 7 | `test_execution` | QA Execution Engineer | no | host runners/report checks | approved runtime commands | run approval → scoped QA review |
 
+In greenfield runs (documents or Jira instead of a repository), the requirements stage uses the **Specification Analyst** persona (`spec_authoring`, `workflow_steps/greenfield.py`) with the `spec-authoring` skill, and repository analysis is a scaffold with no execution.
+
 Every model persona shares seven **common rules** (`COMMON_RULES` in `agent/personas.py`) before its stage-specific
 ones: work only from approved upstream artifacts and bounded repository evidence; stay language/framework
 agnostic; never ask the user to fill routine fields; keep output concise and schema-only; treat repository
@@ -88,7 +90,7 @@ offered at `repo_analysis`, `environment_setup`, or `test_execution` (host-only 
 | `probe_tools` | Versions of `python3`, `java`, `mvn`, `node`, `npm` present on the host — never installs anything | `tools.code_intel.probe_tools` | *(available, not offered to any stage by default)* |
 | `try_build` | Compile/collect the candidate files in the prepared workspace (`pytest --collect-only` / `mvn test-compile`) without running any test body | `tools.build_gate.try_build` | `test_generation` |
 | `environment_gaps` | Declared dependencies that are **not** installed in the isolated environment (an install failed, e.g. a package needing a C++ compiler) — so execution remains blocked until installation is complete; also `conflicts`: installed packages whose version requirements contradict each other (`pip check`), where a library `TypeError`/`ImportError` is not the test's fault | `envs.env_check.missing_packages`, `dependency_conflicts` | `test_generation` |
-| `app_launch_plan` | Whether and how the harness can start the application itself for ui/e2e (Playwright) cases — Streamlit, FastAPI, Flask or an npm `start`/`dev` script | `envs.app_launcher.detect_launch` | `test_design` |
+| `app_launch_plan` | Whether and how the harness can start the target application itself for ui/e2e (Playwright) cases — Streamlit, FastAPI, Flask or an npm `start`/`dev` script | `envs.app_launcher.detect_launch` | `test_design` |
 
 The host runs the exact same checks itself regardless of whether a model calls these tools — correctness never
 depends on an agent choosing to call one.
@@ -120,18 +122,19 @@ download consent, optional stage budget and audit, plus your own `.harness/hooks
 
 ## 4. Agent Skills
 
-Twelve [Agent Skills](https://github.com/shivswami/awesome-agent-skills) power the model stages, loaded through
-MAF's `SkillsProvider` (progressive disclosure) and selected deterministically by `skills.config.skills_for`
-(never a model decision). Seven are vendored upstream (pinned commit + per-file SHA-256 in `skills/SKILLS.lock.json`,
-audited offline with their own `evaluator-skill`: 0 security findings); five are local to this project.
+Thirteen [Agent Skills](https://github.com/shivswami/awesome-agent-skills) power the model and host stages. Model stages load them through
+MAF's `SkillsProvider` (progressive disclosure), and `skills.config.skills_for` selects them deterministically
+(never a model decision). `skills/SKILLS.lock.json` classifies six as upstream (pinned commit + per-file SHA-256, audited offline
+with their own `evaluator-skill`: 0 security findings), two as host-adapted (`reverse-engineering`, `requirement-analysis`) and five as local.
 
 | Skill | Origin | Purpose |
 |---|---|---|
-| `reverse-engineering` | local | Execute source-only declaration inventory with original lines and file hashes |
-| `requirement-analysis` | local | Retain the full discovered inventory with stable IDs, counts and explicit gaps |
+| `reverse-engineering` | host-adapted | Execute source-only declaration inventory with original lines and file hashes (host, stage 1) |
+| `requirement-analysis` | host-adapted | Retain the full discovered inventory with stable IDs, counts and explicit gaps (host, stage 2) |
 | `repository-requirements` | local | Infer testable requirements from an existing repository using bounded static evidence; reverse-engineering across languages |
+| `spec-authoring` | local | Greenfield: turn documents or Jira stories into specs with `SPEC-<hash8>-<n>` IDs before requirements |
 | `test-planning` | local | Build an evidence-based test strategy — levels, frameworks, risks, execution order — before design starts |
-| `test-design-generator` | upstream | Generate structured, deterministic, traceable test cases from approved requirements, acceptance criteria and validation rules |
+| `test-design-generator` | local | Generate structured, deterministic, traceable test cases from approved requirements, acceptance criteria and validation rules |
 | `generic-test-generator` | local | Generate executable, traceable tests for polyglot repositories from an approved test design, without running or installing anything |
 | `api-contract-analyzer` | upstream | Extract normalized API contracts (operations, status codes, parameters) from an OpenAPI/Swagger/JSON-Schema file — companion to `requirements` only when such a file exists |
 | `test-data-generator` | upstream | Deterministic test-data fixtures and payloads (seeds, stable IDs, fixture shapes) — companion to `test_design` and `test_generation` |
@@ -159,6 +162,7 @@ table per file.
 |---|---|---|
 | Orchestration | `workflow.py`, `cli.py` | The MAF workflow graph, stage prompts, repair loops (`workflow.py`); the headless CLI driver (`cli.py`) — the Next.js client calls `ui/api.py`; both drive the same `Harness` |
 | Repository intake | `repo/analyzer.py`, `repo/stack.py` | Clone + static analysis; framework/stack/ecosystem detection |
+| Greenfield, MCP, plugins | `repo/specs.py`, `workflow_steps/greenfield.py`, `run_options.py`, `mcp_servers.py`, `skills/trust.py` | Documents and Jira intake; run mode and test types; user MCP servers ([MCP.md](MCP.md)); user skill packages ([SKILL_PLUGINS.md](SKILL_PLUGINS.md)) |
 | Environment | `envs/environment.py`, `envs/runners.py`, `envs/execution.py`, `envs/platform_compat.py`, `envs/env_check.py`, `envs/app_launcher.py`, `envs/` (requirement detection and toolchain provisioning), `errors/` (error taxonomy and playbook) | Environment planning, isolated install, per-ecosystem run adapters, local-process execution, OS-specific decisions (Windows vs POSIX) centralized in one module; declared-vs-installed dependency check (`env_check`); starting the app under test for Playwright E2E (`app_launcher`) |
 | Agent Skills | `skills/config.py`, `skills/registry.py`, `skills/contracts.py`, `skills/scripts.py`, `skills/reports.py` | Which skill a stage loads and why; spec/lock validation; contract enforcement on generated output; sandboxed script execution; host-run QA skill reports |
 | Central tools | `tools/code_intel.py`, `tools/autofix.py`, `tools/build_gate.py`, `tools/agent_tools.py` | The eleven deterministic MAF function tools and the mechanical auto-fixers behind them |

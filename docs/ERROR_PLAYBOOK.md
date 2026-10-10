@@ -2,8 +2,9 @@
 
 Every environment or execution error the harness recognises has a stable **code**, a **category** (whose problem it
 is), an **autonomy** level (how far the harness may go alone) and **recipes** (what to do). The classifier lives in
-`src/maf_test_harness/errors/`; the rows below are generated from it (`errors.playbook.render_markdown()`), so this page
-cannot drift from the code.
+`src/maf_test_harness/errors/`. The code table is generated from `errors/taxonomy.py` (`errors.playbook.render_markdown()`).
+The recipe table is kept in step with `errors.playbook.RECIPES`. Which recipes the harness applies on its own is in
+[AUTOMATION.md](AUTOMATION.md).
 
 ## Categories
 
@@ -32,9 +33,9 @@ downloads software) · `manual` only explain what to do.
 * **Context decides ambiguous errors**: `No module named 'X'` is `EXEC-101` (test defect) unless `X` belongs to a
   declared dependency whose install failed (`ENV-PY-007`, environment).
 
-Recipes named below are data; the ones marked *implemented* run today, the rest are executed by the per-language
-environment adapters (next phase). The classifier is tested against **37 codes** and
-over 55 recorded or representative logs (`tests/error_cases.py`).
+Recipes named below are descriptions. Only the recipes listed in [AUTOMATION.md](AUTOMATION.md) run without a human,
+and only within their limits. The others are reported as guidance or need approval. The classifier is tested against
+**39 codes** and a set of recorded or representative logs (`tests/error_cases.py`).
 
 ## Error codes
 
@@ -87,6 +88,7 @@ over 55 recorded or representative logs (`tests/error_cases.py`).
 | `install-each-package` | Retry a failed bulk install one package at a time (implemented). | no |
 | `prefer-binary` | Retry with --only-binary=:all: so pip never tries to compile. | no |
 | `relax-pin` | Retry one package without its exact version pin. | no |
+| `fix-conflicts` | Reinstall each conflicting dependency at the range `pip check` says its dependent package requires (implemented in `envs.runners.repair_conflicts`). | no |
 | `recreate-venv` | Delete and recreate the isolated venv with an absolute interpreter path. | no |
 | `stub-dependency` | Tell the test to stub the missing package in sys.modules instead of importing it. | no |
 | `fix-import-path` | Rewrite an unambiguous import to the module path the repository really has. | no |

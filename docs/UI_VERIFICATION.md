@@ -1,5 +1,7 @@
 # Next.js migration verification — 1 October 2026
 
+> Dated evidence from 1 to 2 October 2026, kept as a record. Commands, counts and screenshots describe those runs, not the current branch. For current setup see [NEXTJS_UI.md](NEXTJS_UI.md). Run `uv run pytest -q --ignore=tests/targets` for current counts.
+
 ## Implemented
 
 Next.js 16.3.8 / React 19.3.0 frontend, backed by the existing Python Harness through a loopback HTTP adapter. No workflow, checkpoint, runner, hook, environment or model-generation algorithm was changed. The CLI remains available; legacy GUI setup was retired on this branch on 2 October.

@@ -8,6 +8,9 @@ Implemented after approval, October 5, 2026. Deployment remains Next.js plus one
 - `workflow_support.py`: stage constants, prompt policy and pure artifact helpers.
 - `workflow_steps/planning.py`: model dispatch, source context, requirements/planning/design validation and static setup preview.
 - `workflow_steps/generation.py`: batches, repair, traceability, static checks and deferred runtime build gate.
+- `workflow_steps/planning_batches.py`, `workflow_steps/design.py`, `workflow_steps/design_review.py`, `workflow_steps/test_review.py`: component-batched planning and design, the advisory design review and the independent generated-source review.
+- `workflow_steps/greenfield.py`: greenfield runs (documents or Jira specs in place of repository analysis).
+- `workflow_steps/rerun.py`: explicit stage replay with retained evidence.
 - `workflow_steps/execution.py`: setup approval, provisioning, strict environment guard, deferred build/collection, execution and QA.
 - `ui/api.py`: loopback HTTP authentication, origin checks, run lifecycle and approval routing.
 - `ui/settings_api.py`: prompt defaults/history editing and configuration.

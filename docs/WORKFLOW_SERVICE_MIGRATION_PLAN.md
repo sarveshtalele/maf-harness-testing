@@ -2,7 +2,7 @@
 
 > Historical plan/evidence. Counts and earlier UI/setup descriptions are preserved as observations from that date. See [current branch behavior](PETSTORE_STRICT_TEST_GENERATION.md); current UI is Next.js and setup/runtime checks occur at Test execution.
 
-Status: implementation approved; implementation and verification in progress. The proposal below records the approved scope. Existing source files will not be deleted without explicit approval.
+Status (checked against code 2026-10-11): implemented as the modular workflow with deferred Test execution setup. See [MODULAR_WORKFLOW_IMPLEMENTATION.md](MODULAR_WORKFLOW_IMPLEMENTATION.md) for what shipped. The proposal below records the approved scope. Existing source files will not be deleted without explicit approval.
 
 ## Reviewed implementation
 

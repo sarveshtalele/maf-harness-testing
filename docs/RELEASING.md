@@ -9,7 +9,7 @@ How a version moves from `develop` to a desktop installer. Branch rules are in [
 3. QA the release branch: build installers from `release/x.y` and test them on the dev environment (`dev`). Fix blockers with PRs into `release/x.y`, and back-merge fixes to `develop`.
 4. Open a PR from `release/x.y` to `main`. One approving review (CODEOWNERS) and green checks are required.
 5. After merge, tag `main` as `vX.Y.Z`.
-6. Pushing the tag starts the `desktop-release` workflow, which builds the installers and creates a **draft** GitHub Release.
+6. Pushing a tag that matches `v*.*.*` (not `v*-rc*`) starts the `desktop-release` workflow, which builds the installers and creates a **draft** GitHub Release.
 7. Review the draft release notes and assets, then publish it manually.
 
 ## Versioning rule
@@ -20,7 +20,7 @@ These three values must be identical for a release:
 - `frontend/package.json` `version`
 - the git tag `vX.Y.Z` (tag without the `v` must equal both files)
 
-Bump both files in the same commit on the release branch. Do not tag a commit where they differ.
+Bump both files in the same commit on the release branch. Do not tag a commit where they differ. `python scripts/check_version.py` fails when the two files differ. It does not read `desktop/package.json`, so bump that file by hand.
 
 ## macOS unsigned builds
 

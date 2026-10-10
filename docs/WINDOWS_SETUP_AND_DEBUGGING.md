@@ -47,7 +47,7 @@ start-windows.cmd --api-port 8766 --port 3001
 
 Open the URL printed by the launcher. This does not erase any saved runs or stop unrelated processes.
 
-The launcher checks occupied ports before reinstalling or building, pins Python 3.12 with uv, installs locked dependencies and builds Next. Missing prerequisites fail visibly. UTF-8 is enabled for Python services and executed Python scripts, including paths and skill instructions containing non-ASCII text.
+The launcher checks occupied ports before reinstalling or building, runs `uv` with Python 3.12 (`uv sync --python 3.12`), installs locked dependencies and builds Next. Missing prerequisites fail visibly. UTF-8 is enabled for Python services and executed Python scripts, including paths and skill instructions containing non-ASCII text.
 
 ## Where to find every kind of log
 

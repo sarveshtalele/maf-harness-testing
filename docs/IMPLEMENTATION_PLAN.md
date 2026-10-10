@@ -1,5 +1,7 @@
 # Implementation plan — production-grade MAF test-engineering harness
 
+> Status (checked against code 2026-10-11): most milestones below are marked delivered; their partial-verification caveats still apply. The Next.js UI replaced the earlier UI. Open work is the "Next" list in section 5.
+
 > Historical plan/evidence. Counts and earlier UI/setup descriptions are preserved as observations from that date. See [current branch behavior](PETSTORE_STRICT_TEST_GENERATION.md); current UI is Next.js and setup/runtime checks occur at Test execution.
 
 Status legend: ✅ delivered and verified in this repository · 🟡 delivered, partially verified · ⏭ planned.

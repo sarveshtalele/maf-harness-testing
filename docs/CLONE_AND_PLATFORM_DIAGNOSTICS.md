@@ -39,7 +39,7 @@ If Windows cannot find a run directory, compare the UI's actual path with the ch
 | macOS | `./start-macos.command` | `./start-macos.command --smoke-test` |
 | Linux | `bash start-linux.sh` | `bash start-linux.sh --smoke-test` |
 
-All launchers use the same Python/Next launcher, Node 24 and Python 3.12. CI covers real GitHub clones of requirement-analysis-skill and Petstore, descendant-process timeout/cancellation, actual launcher startup/shutdown, backend workflow tests and browser journeys on all three platforms. These checks verify the harness; they do not certify every target application or a particular corporate network.
+All launchers use the same Python/Next launcher, Node 24 and Python 3.12. CI (`.github/workflows/ui.yml`) runs the clone-transport and Git-lifecycle tests, real GitHub clones (Windows Schannel and POSIX default TLS), actual launcher startup and shutdown, and browser journeys on the platform matrix. These checks verify the harness; they do not certify every target application or a particular corporate network.
 
 ## Strict generation update — October 6, 2026
 
