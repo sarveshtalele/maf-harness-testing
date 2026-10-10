@@ -459,14 +459,39 @@ def build_specs(drafts: list[dict], sections: list[dict], start: dict[str, int] 
     return specs
 
 
+_STOP = frozenset(
+    ["a", "an", "the", "is", "are", "be", "been", "of", "to", "for", "on", "in", "at", "by", "with", "and", "or", "any", "each", "it", "its", "this", "that", "than", "then", "get", "gets", "every", "all", "must", "should", "shall", "will", "can"]
+)
+
+
+def _words(text: str) -> set[str]:
+    words = re.findall(r"[a-z0-9][a-z0-9.%]*", text.lower())
+    return {w[:-1] if w.endswith("s") and len(w) > 3 else w for w in words if w not in _STOP}
+
+
+def _restates(text: str, others: list[str], threshold: float = 0.5) -> bool:
+    """True when ``text`` mostly repeats one of ``others`` (Jaccard over content words)."""
+    mine = _words(text)
+    for other in others:
+        theirs = _words(other)
+        if mine and theirs and len(mine & theirs) / len(mine | theirs) >= threshold:
+            return True
+    return False
+
+
 def specs_to_requirements(specs: list[dict], app_name: str, summary: str = "") -> dict:
     """Existing requirement-model artifact: one requirement per acceptance criterion and business rule (or one
     from the narrative when a spec has neither), each carrying ``traceability: {spec_id, source}``."""
     requirements = []
     for spec in specs:
-        items = [(t, "functional") for t in spec["acceptance_criteria"]] + [
-            (t, "validation") for t in spec["business_rules"]
-        ]
+        # Authors often restate an acceptance criterion as a business rule; one requirement per behaviour.
+        kept: list[str] = list(spec["acceptance_criteria"])
+        rules = []
+        for rule in spec["business_rules"]:
+            if not _restates(rule, kept):
+                rules.append(rule)
+                kept.append(rule)
+        items = [(t, "functional") for t in spec["acceptance_criteria"]] + [(t, "validation") for t in rules]
         items = items or [(spec["narrative"] or spec["title"], "functional")]
         for text, category in items:
             requirements.append(

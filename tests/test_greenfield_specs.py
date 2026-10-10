@@ -396,3 +396,30 @@ def test_api_greenfield_end_to_end_without_repo(tmp_path):
         assert qa["execution_note"] == "skipped: no application code"
     finally:
         api.close()
+
+
+def test_business_rules_restating_acceptance_criteria_do_not_duplicate_requirements():
+    from maf_test_harness.repo.specs import specs_to_requirements
+
+    spec = {
+        "id": "SPEC-00000000-1",
+        "title": "Discount",
+        "narrative": "Discounts on orders.",
+        "acceptance_criteria": [
+            "A negative order total is rejected with a ValueError.",
+            "Points are never negative.",
+        ],
+        "business_rules": [
+            "Negative order totals are invalid and raise a ValueError.",
+            "Points are never negative.",
+            "The discount threshold is 100.00.",
+        ],
+        "data_examples": [],
+        "source": {"doc": "d.md", "section_anchor": "discount"},
+    }
+    texts = [r["text"] for r in specs_to_requirements([spec], "x")["requirement_model"]["requirements"]]
+    assert texts == [
+        "A negative order total is rejected with a ValueError.",
+        "Points are never negative.",
+        "The discount threshold is 100.00.",
+    ]
