@@ -435,3 +435,4 @@ Format: `YYYY-MM-DD HH:MM | BEFORE|AFTER | actor | action | scope/risk or result
   - secret scanning not available (needs GHAS).
 - 2026-10-11 | BEFORE | Opus | launch W3.5 MCP servers (Sonnet; Opus security review before merge) and W5 `azure-plan-desktop.md` (Sonnet) in scratchpad worktrees from `develop` 422430d | risk: new dependency `mcp`; secrets handling
 - 2026-10-11 | AFTER | Opus | updated CLAUDE.md: branch model, desktop/greenfield summary, module map, orchestration rules, a permissions section, and the before/after logging rule
+- 2026-10-11 | AFTER | Opus | merged W5 docs/azure-plan-desktop.md (10 sections: architecture mermaid, opt-in sync, remote ephemeral workers, security/RBAC, desktop changes mapped to files, IaC, cost estimates of about 90/190/1260 USD per month marked as estimates, P0-P3 rollout); only the B1 price is sourced from retail-prices.json | doc only
