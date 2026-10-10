@@ -1,0 +1,8 @@
+name: junit-generator
+stages: ["test_generation"]
+role: companion
+kind: model
+purpose: "follow JUnit conventions (naming, assertions, fixtures) for Java/Kotlin tests"
+applies_when:
+  languages: ["Java", "Kotlin"]
+priority: 20

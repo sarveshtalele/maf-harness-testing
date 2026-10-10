@@ -1,0 +1,8 @@
+name: api-contract-analyzer
+stages: ["requirements"]
+role: companion
+kind: model
+purpose: "structure explicit HTTP contracts (operation IDs, status codes, parameters, constraints) from an API specification file"
+applies_when:
+  stack_flags: ["openapi_files"]
+priority: 40

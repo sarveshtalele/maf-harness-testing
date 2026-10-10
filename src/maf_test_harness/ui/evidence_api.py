@@ -10,8 +10,7 @@ from pathlib import Path
 import yaml
 
 from ..monitoring.report import build_report, render_markdown
-from ..skills.config import COMPANION_PURPOSE, HOST_SKILL_NAMES, SKILL_NAMES
-from ..skills.registry import FRONTMATTER_RE, lint_all, load_lock, verify_lock
+from ..skills.registry import FRONTMATTER_RE, discover_skills, lint_all, load_lock, verify_lock
 from ..storage import read_json
 from .artifact_presenter import json_to_markdown
 from .evidence import MIMES, file_path, inventory
@@ -25,6 +24,7 @@ class EvidenceAPI:
         root = ROOT / "skills"
         lock = load_lock(root)
         problems = verify_lock(root)
+        manifests = {p.name: p for p in discover_skills([root])}
         cards = []
         for report in lint_all(root):
             directory = Path(report.path)
@@ -39,25 +39,22 @@ class EvidenceAPI:
             except yaml.YAMLError:
                 meta = {}
             meta = meta if isinstance(meta, dict) else {}
+            plugin = manifests.get(report.name)
             entry = lock.get("skills", {}).get(report.name)
             issues = [p for p in problems if p.startswith(report.name + "/")]
             cards.append(
                 {
                     "name": report.name,
                     "description": meta.get("description", "No description provided."),
-                    "role": "Host-static primary"
-                    if report.name in HOST_SKILL_NAMES.values()
-                    else "Primary"
-                    if report.name in SKILL_NAMES.values()
-                    else "Companion"
-                    if report.name in COMPANION_PURPOSE
-                    else "Host report validator",
-                    "primary_stages": [
-                        stage
-                        for stage, name in [*SKILL_NAMES.items(), *HOST_SKILL_NAMES.items()]
-                        if name == report.name
-                    ],
-                    "purpose": COMPANION_PURPOSE.get(report.name),
+                    "role": "Host report validator"
+                    if not plugin or not plugin.stages
+                    else ("Host-static primary" if plugin.kind == "host" else "Primary")
+                    if plugin.role == "primary"
+                    else "Companion",
+                    "primary_stages": list(plugin.stages) if plugin and plugin.role == "primary" else [],
+                    "purpose": plugin.purpose
+                    if plugin and plugin.role == "companion" and plugin.stages
+                    else None,
                     "metadata": meta,
                     "instructions": source[match.end() :] if match else source,
                     "resources": [

@@ -1,0 +1,8 @@
+name: playwright-test-generator
+stages: ["test_generation"]
+role: companion
+kind: model
+purpose: "write resilient Playwright browser tests (locators, waits, assertions) for ui/e2e cases"
+applies_when:
+  levels: ["ui", "e2e", "accessibility"]
+priority: 10

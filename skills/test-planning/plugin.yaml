@@ -1,0 +1,5 @@
+name: test-planning
+stages: ["test_planning"]
+role: primary
+kind: model
+purpose: "plan the test strategy, frameworks and setup"

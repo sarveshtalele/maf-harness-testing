@@ -26,7 +26,14 @@ from .llm.usage import DailyUsageLedger
 from .monitoring.report import build_report, render_markdown
 from .settings import API_KEY, BASE_URL, MODEL, SKILL_MODE, validate_gateway_settings
 from .skills.config import SKILL_NAMES
-from .skills.registry import lint_all, load_lock, tree_sha256, verify_lock
+from .skills.registry import (
+    discover_skills,
+    lint_all,
+    lint_plugins,
+    load_lock,
+    tree_sha256,
+    verify_lock,
+)
 from .storage import read_json
 from .workflow import ENV_STAGE, EXECUTION_STAGE, Harness
 
@@ -280,8 +287,17 @@ def main(argv: list[str] | None = None) -> int:
         return 0 if all(c["ok"] for c in report["checks"]) else 1
     if args.command == "lint-skills":
         reports = lint_all(args.skills_dir)
+        plugins = {p.name: p for p in discover_skills([args.skills_dir])}
+        plugin_problems = lint_plugins(list(plugins.values()))
         for r in reports:
-            _say(f"{'OK  ' if r.ok else 'FAIL'} {r.name}  {'; '.join(r.errors + r.warnings)}")
+            r.errors += [f"plugin.yaml: {e}" for e in plugin_problems.get(r.name, [])]
+            plugin = plugins.get(r.name)
+            stages = (
+                f"[{plugin.role} {plugin.kind}: {', '.join(plugin.stages) or '-'}]  "
+                if plugin and plugin.ok
+                else ""
+            )
+            _say(f"{'OK  ' if r.ok else 'FAIL'} {r.name}  {stages}{'; '.join(r.errors + r.warnings)}")
         lock = load_lock(args.skills_dir)
         problems = verify_lock(args.skills_dir)
         _say(

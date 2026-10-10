@@ -38,7 +38,7 @@ from ..settings import (
     SKILL_MODE,
     STAGE_MODELS,
 )
-from ..skills.config import COMPANION_PURPOSE
+from ..skills.config import purpose_of
 from ..skills.registry import require_valid
 from ..skills.scripts import HarnessScriptRunner, script_approval_rule
 from ..storage import atomic_json
@@ -564,7 +564,7 @@ class MAFHarnessRuntime:
         roles = (
             f" The PRIMARY skill '{skill_name}' defines your task and the output. "
             + " ".join(
-                f"Companion skill '{name}' applies only to {COMPANION_PURPOSE.get(name, 'its stated purpose')}."
+                f"Companion skill '{name}' applies only to {purpose_of(name) or 'its stated purpose'}."
                 for name in companions
             )
             if companions

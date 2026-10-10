@@ -1,0 +1,5 @@
+name: coverage-analyzer
+stages: []
+role: companion
+kind: host
+purpose: "validate the coverage and gap summary against its JSON Schema"

@@ -1,0 +1,6 @@
+name: requirement-analysis
+stages: ["requirements"]
+role: primary
+kind: host
+purpose: "deterministic requirement extraction from repository facts (no model calls)"
+entrypoint: maf_test_harness.repo.requirements:requirements_from_facts
