@@ -362,3 +362,13 @@ Final verification on `new-ui`:
   - `scripts/check_version.py` makes the tag match the versions in pyproject and package.json.
 - **Lesson:** worktrees live in the session scratchpad. `.claude/` is not writable by the shell inside the repo, so merges into `develop` go through `merge-tree` and `commit-tree`.
 - **Owner actions still pending:** set `develop` as the default branch, add rulesets on main and develop, create the dev/prod environments, and enable Dependabot and secret scanning.
+
+### 2026-10-10 Wave 0 fixes (Sonnet ×2; Opus merged and verified)
+- **W0-Q (generation quality):**
+  - The validator hint prefers the batch's own requirement files. When it is ambiguous it lists up to 3 candidates with a recipe for each (fixes batches 27 and 29).
+  - `resolve_id` remaps a case slug that the model expanded or truncated when the hash suffix matches (fixes batch 33).
+  - The `drop_extra_tests` autofix applies to positive single-case Python files (fixes batches 40 and 48).
+  - `python_constructor_signatures` puts the `__init__` or dataclass fields of each target class into `collaborator_signatures` (fixes batches 54 and 55).
+  - "was never closed" errors now name the truncated file, the line and the last line text (fixes batches 37, 39 and 52).
+- **W0-E (Errors tab):** `ui/errors.py` `run_errors` builds categorized, deduplicated errors, exposed in the run payload. The run view shows one summary notice; the Errors tab has category chips, search and expandable rows. On the real run it produced 22 items in 8 categories.
+- **Verification:** run outside the sandbox. 937 pytest passed and 0 failed; 13 Playwright passed; tsc, build, ruff and the architecture-map check pass.
