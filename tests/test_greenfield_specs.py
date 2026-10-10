@@ -318,3 +318,81 @@ def test_greenfield_javascript_scaffold_and_validation(tmp_path):
             ).result(10)
     finally:
         svc.close()
+
+
+E2E_CASE = {
+    "title": "orders endpoint lists items",
+    "priority": "P1",
+    "level": "e2e",
+    "actor": "User",
+    "target": "GET /orders",
+    "description": "Orders are listed.",
+    "preconditions": [],
+    "data_notes": "",
+    "expected_result": "200 with a list",
+    "steps": ["Call GET /orders"],
+}
+
+
+def test_api_greenfield_end_to_end_without_repo(tmp_path):
+    import base64
+
+    from fakes import local_env_plan  # noqa: F401
+
+    from maf_test_harness.ui.api import LocalAPI
+
+    api = LocalAPI(
+        tmp_path / "runs",
+        requirements_mode="model",
+        runtime_factory=lambda: GreenfieldRuntime(extra_cases=[E2E_CASE]),
+    )
+
+    def wait():
+        import time
+
+        deadline = time.monotonic() + 120
+        while api.busy():
+            assert time.monotonic() < deadline
+            time.sleep(0.01)
+
+    try:
+        doc = b"# Addition\nThe service adds two numbers.\n"
+        key = api.start(
+            {
+                "run_mode": "greenfield",
+                "test_types": ["unit", "integration"],
+                "spec_sources": {
+                    "documents": [{"name": "spec.md", "content_base64": base64.b64encode(doc).decode()}]
+                },
+            }
+        )["id"]
+        wait()
+        run = api.read(key)
+        assert run["pending"]["stage"] == "requirements" and not api.errors
+        artifact = run["pending"]["details"]["artifact"]
+        spec = artifact["specs"][0]
+        assert spec["id"].startswith("SPEC-") and spec["source"] == {
+            "doc": "spec.md",
+            "section_anchor": "addition",
+        }
+        assert artifact["requirement_model"]["requirements"][0]["traceability"]["spec_id"] == spec["id"]
+        for _ in range(10):
+            run = api.read(key)
+            if not run["pending"]:
+                break
+            api.respond(key, {"request_id": run["pending"]["id"], "decision": "approve"})
+            wait()
+            assert not api.errors, api.errors
+        run = api.read(key)
+        assert run["status"] == "complete"
+        state = run["state"]
+        design = state["artifacts"]["test_design"]
+        levels = {c["level"] for k, v in design.items() if k.endswith("_tests") for c in v}
+        assert levels == {"unit", "integration"}
+        assert state["artifacts"]["test_generation"]["files"]
+        run_dir = api.run_path(key)
+        assert (run_dir / "spec_inputs" / "spec.md").exists()
+        qa = json.loads((run_dir / "qa_report.json").read_text())
+        assert qa["execution_note"] == "skipped: no application code"
+    finally:
+        api.close()

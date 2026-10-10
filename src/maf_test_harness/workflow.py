@@ -277,13 +277,18 @@ class Harness(RerunSteps, ExecutionSteps, GenerationSteps, GreenfieldSteps, Plan
         case_budget: int | None = None,
         run_name: str | None = None,
         run_mode: str = "brownfield",
+        test_types: list[str] | None = None,
+        spec_sources: dict | None = None,
         spec_intake: dict | None = None,
-        documents: list[dict] | None = None,
+        documents: list | None = None,
         jira: dict | None = None,
+        jira_token: str | None = None,
         target_language: str = "python",
     ):
-        """``run_mode="greenfield"`` takes specs from ``spec_intake`` (an ``ingest_specs`` result) or ``documents``/``jira``
-        (ingested here; Jira credentials are used once and never stored). The repository URL is then optional."""
+        """``run_mode="greenfield"`` takes specs from ``spec_intake`` (an ``ingest_specs`` result) or from ``documents``
+        (``(name, bytes)`` pairs or ``{name, content}`` dicts) and Jira (``jira`` or ``spec_sources["jira"]`` plus
+        ``jira_token``). They are ingested here; the token is held in memory for that call only and never stored. The
+        repository URL is then optional (no repository: scaffold, no execution)."""
         if self.view["status"] != "new":
             raise ValueError("Run already started. Resume its pending request.")
         if run_mode not in {"brownfield", "greenfield"}:
@@ -293,8 +298,19 @@ class Harness(RerunSteps, ExecutionSteps, GenerationSteps, GreenfieldSteps, Plan
         if greenfield:
             if target_language not in SCAFFOLDS:
                 raise ValueError(f"target_language must be one of {sorted(SCAFFOLDS)}.")
+            docs = [
+                {"name": d[0], "content": d[1]} if isinstance(d, tuple | list) else d for d in documents or []
+            ]
+            if docs:  # keep the originals with the run
+                inputs = self.run_dir / "spec_inputs"
+                inputs.mkdir(parents=True, exist_ok=True)
+                for doc in docs:
+                    (inputs / Path(doc["name"]).name).write_bytes(doc["content"])
+            jira = jira or ((spec_sources or {}).get("jira") or None)
+            if jira and jira_token:
+                jira = {**jira, "api_token": jira_token}
             if spec_intake is None:
-                spec_intake = await asyncio.to_thread(ingest_specs, documents or [], jira)
+                spec_intake = await asyncio.to_thread(ingest_specs, docs, jira)
             if not spec_intake.get("sections"):
                 raise ValueError(
                     "Greenfield mode needs at least one document section or Jira story. "
@@ -317,6 +333,8 @@ class Harness(RerunSteps, ExecutionSteps, GenerationSteps, GreenfieldSteps, Plan
             prompt_settings.save(self.run_dir / "prompts.json", prompt_settings.defaults())
         self.state = {
             "repo_url": repo_url,
+            "test_types": list(test_types or ("unit", "integration")),
+            **({"spec_sources": spec_sources} if greenfield and spec_sources else {}),
             **({"run_name": run_name} if run_name else {}),
             "run_mode": run_mode,
             **(

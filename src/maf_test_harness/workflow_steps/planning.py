@@ -27,6 +27,7 @@ from ..qa.report import design_cases
 from ..repo.analyzer import build_repository_evidence
 from ..repo.stack import detect_stack
 from ..repo.testability import retarget_cases, testability_for_targets
+from ..run_options import restrict_levels
 from ..settings import (
     EXECUTION_TIMEOUT_SECONDS,
 )
@@ -227,6 +228,12 @@ class PlanningSteps:
                 "the expected behavior (arithmetic done in a callee belongs to the callee). "
                 f"Case budget: at most {case_budget(state)} case(s) per requirement; prefer one positive case "
                 "plus the most important negative or boundary case. The host drops cases beyond the budget."
+                + (
+                    f" Design ONLY {' and/or '.join(state['test_types'])} cases (per run test_types); "
+                    "no ui, e2e, accessibility, performance, security or cli levels."
+                    if state.get("test_types")
+                    else ""
+                )
             )
             upstream = {
                 "requirements": _compact_requirements(requirements_source),
@@ -492,6 +499,10 @@ class PlanningSteps:
                 raise ValueError("Test plan must contain at least one area and execution step.")
             return plan.model_dump()
         if stage == "test_design":
+            if state.get("test_types") and isinstance(draft, dict):
+                notes = restrict_levels(draft, state["test_types"])
+                if notes:
+                    draft["gaps"] = [*(draft.get("gaps") or []), *notes]
             design = finalize_design(
                 draft,
                 requirements_source or state["artifacts"]["requirements"],
