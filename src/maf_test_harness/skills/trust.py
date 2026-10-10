@@ -28,9 +28,9 @@ from pathlib import Path
 
 import yaml
 
+from .. import paths
 from .registry import NAME_RE, discover_skills, lint_plugins, lint_skill, load_lock, load_plugin, verify_lock
 
-REPO_ROOT = Path(__file__).resolve().parents[3]
 MAX_IMPORT_BYTES = 20 * 1024 * 1024
 MAX_IMPORT_FILES = 500
 _LOCK = threading.Lock()  # approvals read-modify-write and plugin installs (ThreadingHTTPServer)
@@ -38,8 +38,7 @@ _WIN_RESERVED = re.compile(r"^(con|prn|aux|nul|com[1-9]|lpt[1-9])$", re.I)
 
 
 def plugin_dir() -> Path:
-    env = os.getenv("HARNESS_PLUGIN_DIR", "").strip()
-    return Path(env).expanduser() if env else REPO_ROOT / ".maf-harness" / "plugins"
+    return paths.plugin_dir()
 
 
 def approvals_path() -> Path:

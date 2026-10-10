@@ -12,6 +12,8 @@ import os
 import re
 from pathlib import Path
 
+from . import paths
+
 _DOTENV_KEY = re.compile(r"(?:OPENAI_[A-Z_]+|LLM_MODEL|HARNESS_[A-Z_]+)")
 
 
@@ -43,7 +45,7 @@ def load_dotenv(path: Path) -> None:
             os.environ.setdefault(key, value)
 
 
-for _candidate in (Path.cwd() / ".env", Path(__file__).resolve().parents[2] / ".env"):
+for _candidate in (Path.cwd() / ".env", paths.env_file()):
     load_dotenv(_candidate)
 
 API_KEY = os.getenv("OPENAI_API_KEY", "").strip()
