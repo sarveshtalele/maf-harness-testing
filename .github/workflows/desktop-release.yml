@@ -15,7 +15,11 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [windows-latest, macos-14, macos-13, ubuntu-latest]
+        include:
+          - {os: windows-latest}
+          - {os: macos-14, arch: arm64}
+          - {os: macos-13, arch: x64}
+          - {os: ubuntu-latest}
     defaults:
       run:
         shell: bash
@@ -38,22 +42,21 @@ jobs:
         if: steps.guard.outputs.present == 'true'
       - name: Install Python deps
         if: steps.guard.outputs.present == 'true'
-        run: uv sync --python 3.12 --extra dev
+        run: uv sync --python 3.12 --extra dev --extra desktop
       - name: Check versions
         if: steps.guard.outputs.present == 'true'
         run: uv run python scripts/check_version.py
       - name: Build desktop installers
         if: steps.guard.outputs.present == 'true'
-        working-directory: desktop
-        # `npm run dist` is provided in Wave 3.
-        run: |
-          npm ci
-          npm run dist
+        run: uv run python scripts/build_desktop.py ${{ matrix.arch && format('--arch {0}', matrix.arch) || '' }}
+      - name: Backend self-check
+        if: steps.guard.outputs.present == 'true'
+        run: build/backend/maf-backend --self-check
       - uses: actions/upload-artifact@v5
         if: steps.guard.outputs.present == 'true'
         with:
           name: desktop-${{ matrix.os }}
-          path: desktop/dist/*
+          path: desktop/release/*
 
   release:
     needs: build
