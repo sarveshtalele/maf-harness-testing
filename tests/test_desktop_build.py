@@ -17,7 +17,9 @@ def test_plan_order_and_arch():
 
 
 def test_dry_run_prints_without_executing(capsys, monkeypatch):
-    monkeypatch.setattr(build_desktop.subprocess, "run", lambda *a, **k: (_ for _ in ()).throw(AssertionError))
+    monkeypatch.setattr(
+        build_desktop.subprocess, "run", lambda *a, **k: (_ for _ in ()).throw(AssertionError)
+    )
     assert build_desktop.main(["--dry-run", "--arch", "x64"]) == 0
     out = capsys.readouterr().out
     assert "pyinstaller packaging/backend.spec" in out and "DESKTOP_BUILD=1" in out and "--x64" in out
