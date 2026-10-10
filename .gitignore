@@ -34,3 +34,8 @@ frontend/playwright-report/
 frontend/test-results/
 
 .deleted-runs/
+build/
+dist/
+desktop/dist/
+desktop/release/
+desktop/node_modules/

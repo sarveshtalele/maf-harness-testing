@@ -7,17 +7,14 @@ files:
   - "!dist/**/*.test.js"
   - package.json
 extraResources:
-  # PyInstaller one-folder output (produced by a later task); launched as resources/backend/maf-backend[.exe]
+  # PyInstaller one-folder output (packaging/backend.spec, contents_directory='.'); launched as resources/backend/maf-backend[.exe]
   - from: ../build/backend
     to: backend
   # Next standalone (build with DESKTOP_BUILD=1); server.js ends up at resources/frontend/server.js.
-  # Note: if Next infers a workspace root, standalone nests under the repo path; set outputFileTracingRoot to frontend/ if so.
+  # outputFileTracingRoot=frontend (next.config.ts) keeps server.js at the top; scripts/build_desktop.py copies
+  # .next/static and public into the standalone dir first.
   - from: ../frontend/.next/standalone
     to: frontend
-  - from: ../frontend/.next/static
-    to: frontend/.next/static
-  - from: ../frontend/public
-    to: frontend/public
 win:
   target:
     - target: nsis
