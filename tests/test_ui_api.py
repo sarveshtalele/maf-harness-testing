@@ -263,7 +263,9 @@ def test_http_requires_token_and_rejects_browser_origin(local_api):
         request = Request(
             f"{base}/runs", headers={"Authorization": "Bearer test-authorization-token-32-characters"}
         )
-        assert json.load(urlopen(request)) == {"runs": [], "busy": False}
+        response = urlopen(request)
+        assert json.load(response) == {"runs": [], "busy": False}
+        assert response.headers.get("Access-Control-Allow-Origin") is None  # the UI proxy is same-origin
         request.add_header("Origin", "https://evil.example")
         with pytest.raises(HTTPError) as denied:
             urlopen(request)
@@ -559,3 +561,57 @@ def test_public_redacts_credential_keys_and_basic_auth_but_keeps_counters():
         "input_tokens": 12,
         "secrets": {"api_key": True},
     }
+
+
+def test_run_listing_reads_run_files_without_holding_the_api_lock(local_api):
+    api = local_api
+    api.start({"repo_url": "https://github.com/acme/demo"})
+    wait(api)
+    lock_was_free = []
+
+    def other_thread_can_lock():
+        if api.lock.acquire(timeout=2):
+            api.lock.release()
+            return True
+        return False
+
+    original = api._view
+
+    def view_while_probing(key):
+        probe = threading.Thread(target=lambda: lock_was_free.append(other_thread_can_lock()))
+        probe.start()
+        probe.join()
+        return original(key)
+
+    api._view = view_while_probing
+    try:
+        assert api.list_runs()["runs"] and lock_was_free == [True]
+    finally:
+        del api._view
+
+
+def test_failed_start_removes_the_half_created_run(local_api, monkeypatch):
+    import maf_test_harness.ui.api as api_module
+
+    def fail(*args, **kwargs):
+        raise OSError("disk full")
+
+    monkeypatch.setattr(api_module, "atomic_json", fail)
+    before = set(local_api.runs.iterdir())
+    with pytest.raises(OSError, match="disk full"):
+        local_api.start({"repo_url": "https://github.com/acme/demo"})
+    assert set(local_api.runs.iterdir()) == before and local_api.job is None
+
+
+def test_deleting_a_legacy_run_keeps_its_trash_inside_this_instance(tmp_path):
+    legacy = tmp_path / "other" / "legacy"
+    (legacy / "oldrun").mkdir(parents=True)
+    (legacy / "oldrun" / "run.json").write_text(json.dumps({"status": "complete", "state": {}}))
+    api = LocalAPI(tmp_path / "runs", legacy)
+    try:
+        api.delete_run("oldrun", {"confirm_run_id": "oldrun"})
+        assert not (legacy / "oldrun").exists()
+        assert list((tmp_path / ".deleted-runs").glob("oldrun-*"))
+        assert not (legacy.parent / ".deleted-runs").exists()
+    finally:
+        api.close()
