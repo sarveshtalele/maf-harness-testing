@@ -439,3 +439,4 @@ Format: `YYYY-MM-DD HH:MM | BEFORE|AFTER | actor | action | scope/risk or result
 - 2026-10-11 | AFTER | Opus | merged DEV-ORG (18 per-directory CLAUDE.md files, docs/DEVELOPER_GUIDE.md, docs/README.md index; links checked) and linked them from the root CLAUDE.md | docs only; map check ok
 - 2026-10-11 | BEFORE | Opus | merge W3.5 MCP after Opus review fixes (10 items) | risk: new dependency mcp, secret handling
 - 2026-10-11 | AFTER | Opus | merged W3.5 MCP plus 2 UI fixes found by running its Playwright spec (card key, collapsing Add) | 1112 pytest, 18/18 Playwright, desktop 11/11, ruff/map/lint-strict ok
+- 2026-10-11 | AFTER | Opus | built and launched the packaged macOS app; fixed 4 desktop bugs (PyInstaller workpath, node_modules dropped by electron-builder, 90 s health wait, orphans on SIGTERM); verified UI 200, /config proxy and a clean shutdown | a94d071
