@@ -24,7 +24,8 @@ from .agent.runtime import MAFHarnessRuntime
 from .envs.platform_compat import RUN_CANCEL
 from .llm.usage import DailyUsageLedger
 from .monitoring.report import build_report, render_markdown
-from .settings import API_KEY, BASE_URL, MODEL, SKILL_MODE, validate_gateway_settings
+from .settings import MODEL, SKILL_MODE, validate_gateway_settings
+from .settings import current as current_settings
 from .skills.config import SKILL_NAMES
 from .skills.registry import (
     discover_skills,
@@ -90,15 +91,16 @@ async def run(args) -> int:
     runs = paths.runs_dir()
     runs = (runs if runs.is_absolute() else ROOT / runs).resolve()
     run_dir = Path(args.run_dir).expanduser() if args.run_dir else runs / uuid.uuid4().hex[:12]
+    cur = current_settings()
     runtime = MAFHarnessRuntime(
-        api_key=API_KEY,
-        model=args.model or MODEL,
-        base_url=BASE_URL or None,
+        api_key=cur["api_key"],
+        model=args.model or cur["model"],
+        base_url=cur["base_url"] or None,
         skills_root=paths.skills_dir(),
         skill_mode=args.skill_mode,
     )
     host = Harness(run_dir, skills_root=paths.skills_dir(), runtime=runtime, execute=not args.no_execution)
-    _say(f"run dir: {run_dir}\nmodel: {args.model or MODEL}  skill mode: {args.skill_mode}")
+    _say(f"run dir: {run_dir}\nmodel: {args.model or cur['model']}  skill mode: {args.skill_mode}")
     retries: dict[str, int] = {}
     cancel = (
         threading.Event()

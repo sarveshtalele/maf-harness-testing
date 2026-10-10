@@ -11,6 +11,7 @@ import re
 from pathlib import Path
 from typing import Any
 
+from .. import settings
 from .engine import HookSpec
 from .events import (
     ASK,
@@ -49,6 +50,10 @@ _SECRET_ENV = (
 def redact(text: str, *, keyed: bool = True) -> tuple[str, int]:
     """Replace secret-looking strings (and the values of well-known secret environment variables) in ``text``."""
     count = 0
+    runtime_key = settings.current()["api_key"]  # a key entered in the UI never lives in os.environ
+    if len(runtime_key) >= 8 and runtime_key in text:
+        count += text.count(runtime_key)
+        text = text.replace(runtime_key, REDACTED)
     for name in _SECRET_ENV:
         value = os.environ.get(name, "")
         if len(value) >= 8 and value in text:
