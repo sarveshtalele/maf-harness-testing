@@ -28,7 +28,7 @@ mcp = ["mcp>=1.24,<2"]  # MCP server integration (docs/MCP.md); included by desk
 desktop = ["pyinstaller>=6.10,<7", "mcp>=1.24,<2"]  # builds the bundled desktop backend (packaging/backend.spec)
 dev = [
   "mcp>=1.24,<2",
-  "pytest>=8.3,<9.0",
+  "pytest>=8.3,<10.0",
   "ruff>=0.12,<1.0",
 ]
 
