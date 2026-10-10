@@ -40,3 +40,6 @@ dist/
 desktop/dist/
 desktop/release/
 desktop/node_modules/
+
+# local generation benchmark evidence
+benchmark-results/

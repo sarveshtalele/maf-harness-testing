@@ -9,6 +9,7 @@ Run from the repo root with `uv run python scripts/<name>.py`. Keep them cross-O
 - `build_desktop.py`: `plan()` lists PyInstaller (`packaging/backend.spec`) -> `npm ci` -> `DESKTOP_BUILD=1 npm run build` -> `copy_static` -> electron-builder; `--dry-run` prints it. Build each OS on its own runner.
 - `check_version.py`: `check(root)` fails if `pyproject.toml` and `frontend/package.json` versions differ or a tag mismatches (used by the desktop release workflow).
 - `json_to_markdown.py`: convert a saved harness JSON artifact to Markdown (uses `ui/artifact_presenter.py`).
+- `benchmark_generation.py`: offline scorer for generated pytest suites against `benchmarks/generation/` (baseline validity and seeded-defect kill score); no args runs reference calibration (CI), `--candidate-dir` scores submitted suites. See `docs/GENERATION_BENCHMARK.md`.
 
 ## Invariants
 - `start_ui.py` requires Node 24; it invokes Next directly (no npm shims on Windows). It prints the saved setup/service log path.
