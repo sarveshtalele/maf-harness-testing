@@ -35,6 +35,15 @@ CONFLICT = [
 ]
 
 CASES: list[dict] = [
+    {
+        "name": "starlette.testclient wants httpx2 (static tooling map installed httpx)",
+        "source": "recorded",
+        "ecosystem": "python",
+        "text": "E               RuntimeError: The starlette.testclient module requires the httpx2 package to be installed.\n"
+        "E               You can install this with:\n"
+        "E                   $ pip install httpx2\n",
+        "expect": "ENV-PY-010",
+    },
     # ------------------------------------------------------------------------------------------- python
     {
         "name": "pip dependency conflict (per-package install pulled starlette 1.6 next to fastapi 0.110)",

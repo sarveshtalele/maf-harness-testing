@@ -498,6 +498,7 @@ class ExecutionSteps:
             adapter=plan.adapter,
             status=report["status"],
             summary=report.get("summary"),
+            recoveries=report.get("recoveries"),
         )
         if report["status"] in {"blocked", "no_test_evidence", "setup_failed"}:
             eco = state.get("environment", {}).get("plan", {}).get("ecosystem", "")

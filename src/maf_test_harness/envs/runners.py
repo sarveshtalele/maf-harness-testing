@@ -701,6 +701,18 @@ def build_plan(
 MAX_RECOVERIES = 4  # automatic recovery actions per setup run, across all steps
 
 
+def _tune_test_tooling(step: Step, workspace: Path) -> Step:
+    """The generated-test tooling step installs ``httpx`` for starlette's TestClient; newer starlette wants ``httpx2``."""
+    if step.name != "install-test-tooling" or "httpx" not in step.argv:
+        return step
+    from . import recovery
+
+    wanted = recovery.testclient_http_package(platform_compat.venv_python(workspace / VENV_DIR))
+    if wanted and wanted != "httpx":
+        return replace(step, argv=[wanted if a == "httpx" else a for a in step.argv])
+    return step
+
+
 def execute_setup(
     steps: list[Step],
     workspace: Path,
@@ -731,7 +743,7 @@ def execute_setup(
     runs: dict[str, int] = {}
     index = 0
     while index < len(steps):
-        step = steps[index]
+        step = _tune_test_tooling(steps[index], workspace)
         runs[step.name] = runs.get(step.name, 0) + 1
         label = f"{index + 1:02d}-{step.name}" + (
             f"-retry{runs[step.name] - 1}" if runs[step.name] > 1 else ""
@@ -1159,6 +1171,46 @@ def _run_test_step(step: Step, workspace: Path, out_dir: Path, label: str) -> tu
     return entry, cases
 
 
+def _recover_test_tooling(
+    step: Step, workspace: Path, out_dir: Path, label: str, entry: dict, cases: list[dict], report: dict
+) -> tuple[dict, list[dict]]:
+    """ENV-PY-010: a test client (starlette.testclient) names a package the tooling map missed. Install it into the
+    generated-test tooling (never a repository pin) and run the test step once more."""
+    from . import recovery
+
+    text = "\n".join(c.get("message", "") for c in cases if c["status"] in {"error", "failed"})
+    try:
+        text += "\n" + Path(entry["stdout"]).read_text(encoding="utf-8", errors="replace")[-200_000:]
+    except OSError:
+        pass
+    packages = recovery.test_client_packages(text, workspace)
+    if not packages:
+        return entry, cases
+    install = run_command(
+        [step.argv[0], "-m", "pip", "install", "--disable-pip-version-check", "-q", *packages],
+        workspace,
+        out_dir / f"{label}-install-test-tooling",
+        timeout=step.timeout,
+        env=_expand_env(step.env, workspace),
+        inherit_env=True,
+    )
+    ok = install["status"] in {"command_succeeded", "passed"}
+    report.setdefault("recoveries", []).append(
+        {
+            "step": step.name,
+            "recipe": "add-test-dependency",
+            "code": "ENV-PY-010",
+            "packages": packages,
+            "status": "applied" if ok else f"install_{install['status']}",
+            "note": "test client needs " + ", ".join(packages) + "; installed for the generated tests only",
+        }
+    )
+    if not ok:
+        return entry, cases
+    report["steps"].append(entry)  # keep the first run as evidence
+    return _run_test_step(step, workspace, out_dir, f"{label}-retry-tooling")
+
+
 def execute_plan(
     plan: RunPlan, workspace: Path, out_dir: Path, generated_paths: list[str] | None = None
 ) -> dict:
@@ -1205,9 +1257,12 @@ def execute_plan(
                 report.setdefault("quarantined", []).extend(bad)
                 report["steps"].append(entry)  # keep the failed build as evidence
                 entry, cases = _run_test_step(step, workspace, out_dir, f"{label}-retry{retry}")
+            if "pytest" in step.argv and not report.get("recoveries"):
+                entry, cases = _recover_test_tooling(step, workspace, out_dir, label, entry, cases, report)
             report["steps"].append(entry)
             report["cases"].extend(cases)
             continue
+        step = _tune_test_tooling(step, workspace)
         result = run_command(
             step.argv,
             (workspace / step.cwd).resolve(),

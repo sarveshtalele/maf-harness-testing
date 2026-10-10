@@ -26,6 +26,17 @@ RULES = compile_rules(
             "ENV-PY-006",
             r"SRE module mismatch|Fatal Python error: init_fs_encoding|No module named 'encodings'",
         ),
+        # a test client / helper module (not application code) names the package it cannot import
+        (
+            "ENV-PY-010",
+            r"^[^\n]*test[^\n]*requires the (?P<package>[A-Za-z0-9][\w.-]*) package to be installed",
+        ),
+        (
+            "ENV-PY-010",
+            r"site-packages[^\n]*(?:testclient|test_client)[^\n]*\n(?:[^\n]*\n){0,40}?[^\n]*"
+            r"No module named '(?P<package>[A-Za-z0-9_]+)",
+        ),
+        ("ENV-PY-010", r"test[_.]?client[\s\S]{0,600}?\$ pip install (?P<package>[A-Za-z0-9][\w.-]*)"),
         ("ENV-PY-008", r"\[WinError 2\] The system cannot find the file specified"),
         (
             "ENV-PY-009",
