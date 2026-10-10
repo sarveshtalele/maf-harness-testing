@@ -323,7 +323,7 @@ this is a private repo with no external consumers of the old paths, so there was
 | `scripts/gen_architecture.py`, `scripts/check_version.py`, `scripts/build_desktop.py` | Regenerate and check [ARCHITECTURE_MAP](ARCHITECTURE_MAP.md); pyproject and frontend version check; PyInstaller backend plus desktop build (`--dry-run` prints the plan) |
 | `desktop/`, `packaging/backend.spec` | Electron shell (main, preload, process manager, keystore) and the PyInstaller spec for `maf-backend` |
 | `azure-plan/` | Proposal-only Terraform and price evidence; not applied |
-| `.github/workflows/ci.yml`, `ui.yml`, `desktop-*.yml`, `nightly.yml` | Lint, format, skills lint, tests and secrets scan (`ci.yml`); launcher, browser and platform checks (`ui.yml`); desktop builds on tags and manual runs; nightly runs |
+| `.github/workflows/ci.yml`, `ui.yml`, `desktop-*.yml`, `nightly.yml` | Lint, format, skills lint, tests and secrets scan (`ci.yml`); launcher, browser and platform checks on macOS, Windows and Ubuntu (`ui.yml`); desktop builds on tags and manual runs, one runner per arch (`desktop-*.yml`); nightly runs. Desktop `npm test` is not run by any workflow |
 
 ### 6.3 Agent Skills `skills/`
 

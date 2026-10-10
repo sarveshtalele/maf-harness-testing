@@ -36,7 +36,9 @@ or just use the `next start` fallback by not setting `DESKTOP_BUILD`).
 2. Frontend: `cd frontend && DESKTOP_BUILD=1 npm run build`.
 3. `cd desktop && npm ci && npm run dist` (or `dist:win|mac|linux`; each OS must be built on its own runner). Output in `desktop/release/`.
 
-CI builds installers in `.github/workflows/desktop-prerelease.yml` (manual or on push) and `desktop-release.yml` (on a `v*.*.*` tag, which creates a draft GitHub Release). See [RELEASING.md](RELEASING.md).
+CI builds installers in `.github/workflows/desktop-prerelease.yml` (manual run, or a `v*-rc*` tag) and `desktop-release.yml` (a `v*.*.*` tag, which creates a draft GitHub Release). Both run `scripts/check_version.py`, build the backend for each matrix entry, and run `maf-backend --self-check`. The matrix is Windows, Ubuntu, macOS arm64 on `macos-14`, and macOS x64 on `macos-13`. Each arch is built on its own runner, so the bundled backend matches the runner's architecture. See [RELEASING.md](RELEASING.md).
+
+The desktop unit tests (`npm test` in `desktop/`) are not run by any workflow today. Run them locally.
 
 Targets: Windows NSIS x64, macOS dmg x64+arm64, Linux AppImage x64. No auto-update: Help > "Check for updates" opens the
 GitHub Releases page (`homepage` in `desktop/package.json`).
