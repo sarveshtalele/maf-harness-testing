@@ -46,7 +46,7 @@ stages their tools. Everything is off until you enable it.
 | `atlassian-jira-cloud` | http `https://mcp.atlassian.com/v2/mcp` | `searchJiraIssuesUsingJql`, `getJiraIssue`, `getVisibleJiraProjects` | `createJiraIssue`, `editJiraIssue`, `addCommentToJiraIssue` |
 | `playwright` | stdio `npx @playwright/mcp@latest` | `browser_snapshot`, `browser_console_messages`, `browser_network_requests` | `browser_navigate`, `browser_click`, `browser_type`, `browser_take_screenshot` |
 
-Atlassian: the endpoint is from the Atlassian MCP server README (v2 recommended; `/v1/sse` ends 30 June 2026). OAuth 2.1
+Atlassian: the endpoint is from the Atlassian MCP server README (v2 recommended; the v1 `/v1/sse` endpoint had an end date of 30 June 2026 and is not used). OAuth 2.1
 is interactive and **not supported**; an org admin must enable API-token auth, then paste a service-account API key
 (Bearer) or `Basic <base64(email:token)>` as the token. v2 may expose discovery tools rather than the v1 names above,
 so run **Test** and edit the tool lists (or add `?tools=all` to the URL). Tool names are unverified defaults.

@@ -50,7 +50,8 @@ flowchart LR
 |---|---|---|
 | `model_run` | `run_stage` / `_prime_skill` | `stage`, `phase` (`prime` loads skills, `structured` returns the artifact), `attempt` / `run_index`, `skills`, `temperature`, `status`, `duration_ms`, `tool_calls`, `prompt_sha256`, `response_sha256` |
 | `chat_call` | `BudgetGuard` (every provider request) | `stage`, `phase`, `status` (`ok`/`error`), `duration_ms`, `tokens` (`input`/`output`/`total`), `token_source`, `reserved_tokens`, `error` |
-| `tool_call` | `ToolTraceMiddleware` (every MAF tool invocation) | `stage`, `phase`, `name`, `category` (`skill_load`, `skill_resource`, `skill_script`, `harness`, `unexpected`), `arguments` (summarised, redacted), `ok`, `duration_ms`, `result_chars` |
+| `tool_call` | `ToolTraceMiddleware` (every MAF tool invocation) | `stage`, `phase`, `name`, `category` (`skill_load`, `skill_resource`, `skill_script`, `harness`, `mcp`, `unexpected`), `arguments` (summarised, redacted), `ok`, `duration_ms`, `result_chars` |
+| `cache_hit` | `run_stage` (an accepted response is served from the local cache) | `stage`, `prompt_sha256`, zero tokens; see [CACHING.md](CACHING.md) |
 
 Runs made before this file existed still render: tools come from the recorded model runs (names only) and the tab says so (`trace_level = summary`).
 

@@ -23,6 +23,8 @@ uv run python scripts/start_ui.py
 
 Open http://127.0.0.1:3000. Ctrl+C stops both processes. The launcher uses the current Python environment, finds `npm`/`npm.cmd`, binds both services to loopback and supplies a fresh private API token to the server processes. It does not persist the token or expose it to the browser.
 
+The Electron desktop app in `desktop/` wraps the same UI and backend; see [DESKTOP.md](DESKTOP.md).
+
 Stop both running services with Ctrl+C before a production build. Replacing `.next` while a production server is running can break JavaScript/CSS bundle loading. The platform scripts reuse a verified running application before installing/building; default ports recover from unrelated conflicts, while explicit occupied ports report an error.
 
 For a production build:
@@ -46,9 +48,11 @@ The CLI and UI use the same default run directory. `--run-dir` selects one expli
 
 Drag the sidebar’s right edge or the divider between workspace columns to resize with the mouse. Drag a panel’s visible lower-right handle to adjust both width and height. Handles capture the pointer so dragging continues outside their bounds, and support arrow keys. Layout changes use mouse handles or arrow keys; there is no adjustment form or slider menu. Panel sizing is controlled directly by its drag handle; the former panel adjustment form is removed. Each panel collapses or expands into a dialog. The original neutral light/dark palette from the approved concept is retained. Preferences are saved in this browser, scoped to the run and panel. Small screens stack the panels; Escape closes expanded views.
 
+Other top-level pages are `New run`, `/?page=prompts` (Agent prompts), and `/?page=configuration` (model, usage and MCP servers). **New run** accepts a public GitHub repository (brownfield) or greenfield specifications: up to 10 documents (`.md`, `.txt`, `.docx`, `.pdf`) or Jira Cloud stories. Test types are unit and integration. The run header has a **Cases per requirement** control (1 to 10).
+
 The **Agent skills** page at `/?page=skills` shows all installed project packages as searchable cards, with primary/companion/host roles and descriptions. Each card links to its own reloadable `/?page=skills&skill=<name>` documentation page, rendering SKILL.md headings, lists, tables and code blocks with package resources and reviewed-script checks. The upstream branch/commit/library provenance is omitted from the website. It reads the actual skill registry and does not change packages.
 
-Run views include Review, Artifacts, Generated tests, QA report, Test reports, Logs, Observability and Audit. All nested artifact fields and raw JSON remain available. Audit has expandable events, filters, complete-record search and JSONL export. Observability includes stages/cache/model calls, skills, tool filters, hooks/recovery/diagnosis, timeline/lane filters, traceability/state filters, integrity, telemetry and exports. Complete and passing are distinct; FAIL and INCONCLUSIVE keep their own verdicts.
+Run views include Review, Errors, Artifacts, Generated tests, QA report, Test reports, Logs, Observability, Audit and Prompts. All nested artifact fields and raw JSON remain available. Audit has expandable events, filters, complete-record search and JSONL export. Observability includes stages/cache/model calls, skills, tool filters, hooks/recovery/diagnosis, timeline/lane filters, traceability/state filters, integrity, telemetry and exports. Complete and passing are distinct; FAIL and INCONCLUSIVE keep their own verdicts.
 
 ## Local execution limits
 

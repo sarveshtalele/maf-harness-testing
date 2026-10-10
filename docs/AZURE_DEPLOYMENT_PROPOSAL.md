@@ -1,5 +1,7 @@
 # Azure deployment proposal — Agentic QE Platform
 
+Status (checked against code 2026-10-11): still a proposal. The app runs locally (Next.js UI with the Python API, or the Electron app). The repository has no Dockerfile, hosted-mode switch or per-user isolation, and `azure-plan/` holds Terraform and price evidence that has not been applied.
+
 Status: infrastructure and implementation plan, not a deployment. No Azure resources have been created. The current branch is a local application; the hosted-mode changes below are prerequisites. Terraform does not build an image or make those changes automatically.
 
 ## Cheapest practical App Service option

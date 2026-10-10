@@ -94,6 +94,7 @@ build gate no longer spends generation retries on it. Agents see it through the 
 |---|---|
 | `HARNESS_TOOLCHAIN_DIR` | move the toolchain cache |
 | `HARNESS_TOOLCHAIN_MIRROR` | send every metadata and download request to a mirror that serves the same paths (proxies, offline machines) |
+| `HARNESS_STRICT_ENV` | `on` by default (the guardrail in section 3.0); `off` restores the old warn-and-continue behaviour |
 | `HTTP_PROXY` / `HTTPS_PROXY` | honoured by downloads |
 
 ## 5. When it goes wrong
