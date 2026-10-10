@@ -72,6 +72,8 @@ During active work, **Stop run** cancels model work and signals owned clone/setu
 
 Drag sidebar/column edges and panel corners; use arrow keys for accessible resizing. Double-click a panel corner or press Home on its resize handle to restore its original size. Preferences persist in your browser. New UI and CLI runs default to `<repo-root>/.maf-harness/runs`, inside this checkout. Use separate checkouts for separate users. This is a local app without shared-server login.
 
+**Contributing code?** Start with the [Developer guide](docs/DEVELOPER_GUIDE.md) (setup, layout, how-to recipes, debugging); the docs index is [docs/README.md](docs/README.md).
+
 [Windows troubleshooting and log locations](docs/WINDOWS_SETUP_AND_DEBUGGING.md) · [Detailed setup and UI guide](docs/NEXTJS_UI.md) · [Backend findings and limits](docs/BACKEND_REVIEW_2026-10-01.md) · [Approved cleanup status](docs/DEAD_CODE_REVIEW_2026-10-01.md)
 
 The backend provisions manifest components and groups generated tests by their native ecosystem and working directory. Selected frontend browser cases receive source evidence and component ownership validation; a passing generated suite does not prove that every repository component was exercised. Playwright HTML/screenshots/traces are captured for the Node Playwright adapter; Python and other adapters show the report assets they actually produce.
