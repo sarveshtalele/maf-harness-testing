@@ -33,7 +33,7 @@ def test_recipe_from_app_sys_path_insert(repo):
     r = rec["skills/change-impact-analysis/scripts/engine/graph_builder.py"]
     assert r["sys_path_root"] == "skills/change-impact-analysis/scripts"
     assert r["import"] == "from engine.graph_builder import DependencyGraphBuilder"
-    assert "pyproject.toml" in r["how"]
+    assert "pyproject.toml" in r["code"] and '/ "skills" / "change-impact-analysis" / "scripts"' in r["code"]
 
 
 def test_recipe_derived_without_app_insert(tmp_path):
@@ -124,7 +124,113 @@ def test_recipe_purges_cached_package_when_two_dirs_share_a_top_level_name(tmp_p
     for rel in files:
         (tmp_path / rel).parent.mkdir(parents=True, exist_ok=True)
         (tmp_path / rel).write_text("def run():\n    return 1\n", encoding="utf-8")
-    how = python_import_recipes(tmp_path, files, [files[1]])[files[1]]["how"]
-    assert "del sys.modules[m]" in how and "'scripts'" in how  # fallback root skills/a-one -> top 'scripts'
-    solo = python_import_recipes(tmp_path, files[:2], [files[1]])[files[1]]["how"]
+    how = python_import_recipes(tmp_path, files, [files[1]])[files[1]]["code"]
+    assert "del sys.modules[_m]" in how and '"scripts"' in how  # fallback root skills/a-one -> top 'scripts'
+    solo = python_import_recipes(tmp_path, files[:2], [files[1]])[files[1]]["code"]
     assert "del sys.modules" not in solo
+
+
+def _two_engines(tmp_path):
+    for skill, fn in (("change-impact-analysis", "analyzer"), ("factory/legacy-discovery", "scanner")):
+        d = tmp_path / "skills" / skill / "scripts" / "engine"
+        d.mkdir(parents=True)
+        (d / "__init__.py").write_text("")
+        (d / f"{fn}.py").write_text(f"def {fn}_fn():\n    return '{fn}'\n")
+        (d.parent / "main.py").write_text(  # the application's own launcher shows the working sys.path root
+            "import sys\nfrom pathlib import Path\nsys.path.insert(0, str(Path(__file__).resolve().parent))\n"
+            f"from engine.{fn} import {fn}_fn\n"
+        )
+    (tmp_path / "pyproject.toml").write_text("[project]\nname='x'\n")
+    files = [p.relative_to(tmp_path).as_posix() for p in tmp_path.rglob("*.py")]
+    return files, python_import_recipes(
+        tmp_path, files, [f for f in files if "/engine/" in f and not f.endswith("__init__.py")]
+    )
+
+
+def test_recipe_code_runs_for_two_colliding_engine_packages(tmp_path):
+    import subprocess
+    import sys
+
+    files, recipes = _two_engines(tmp_path)
+    a = recipes["skills/change-impact-analysis/scripts/engine/analyzer.py"]
+    b = recipes["skills/factory/legacy-discovery/scripts/engine/scanner.py"]
+    assert a["purge"] and b["purge"]
+    (tmp_path / "tests").mkdir()
+    t = tmp_path / "tests" / "test_both.py"
+    body = "\n".join(
+        f"{r['code'].replace(chr(10) + r['import'], '')}\n{r['import'].replace(' import ', ' import ')}\nprint({r['import'].split()[-1]}())"
+        for r in (a, b)
+    )
+    t.write_text(body)
+    out = subprocess.run([sys.executable, str(t)], capture_output=True, text=True, cwd=tmp_path)
+    assert out.returncode == 0, out.stderr
+    assert out.stdout.split() == ["analyzer", "scanner"]
+
+
+def test_autofix_rewrites_unique_recipe_and_skips_ambiguous(tmp_path):
+    from maf_test_harness.tools.autofix import fix_import_recipes
+
+    files, recipes = _two_engines(tmp_path)
+    scanner = "skills/factory/legacy-discovery/scripts/engine/scanner.py"
+    src = '"""doc."""\nfrom __future__ import annotations\nimport pytest\nfrom skills.factory.legacy_discovery.scripts.engine.scanner import scanner_fn\n'
+    fixed, fixes = fix_import_recipes("tests/t.py", src, recipes, [scanner])
+    assert fixes[0]["kind"] == "import_recipe_applied"
+    assert "from engine.scanner import scanner_fn" in fixed and "legacy_discovery" not in fixed
+    lines = fixed.splitlines()
+    assert lines[:2] == ['"""doc."""', "from __future__ import annotations"] and "import sys" in lines[2:4]
+    ns: dict = {"__file__": str(tmp_path / "tests" / "t.py")}
+    exec(compile(fixed.replace("import pytest\n", ""), "t", "exec"), ns)
+    assert ns["scanner_fn"]() == "scanner"
+    # `engine.scanner` appears under one skill only, but `engine` modules of both match `from engine import x`
+    amb = "from engine import something\n"
+    assert fix_import_recipes(
+        "t.py", amb, {**recipes, "x/scripts/engine/__init__.py": recipes[scanner]}, []
+    ) == (amb, [])
+
+
+def test_autofix_scripts_main_ambiguous_is_left_alone():
+    from maf_test_harness.tools.autofix import fix_import_recipes
+
+    def rec(root):
+        return {
+            "module": "main",
+            "purge": "",
+            "code": "import sys\nx\nfrom main import run",
+            "import": "from main import run",
+            "sys_path_root": root,
+        }
+
+    recipes = {
+        "skills/a/scripts/main.py": rec("skills/a/scripts"),
+        "skills/b/scripts/main.py": rec("skills/b/scripts"),
+    }
+    src = "from scripts.main import run\n"
+    assert fix_import_recipes("t.py", src, recipes, []) == (src, [])
+    fixed, fixes = fix_import_recipes("t.py", src, recipes, ["skills/b/scripts/main.py"])
+    assert "from main import run" in fixed and fixes
+
+
+def test_autofix_injects_purge_before_sys_path_insert(tmp_path):
+    from maf_test_harness.tools.autofix import fix_missing_purge
+
+    files, recipes = _two_engines(tmp_path)
+    src = (
+        "import sys\nfrom pathlib import Path\n"
+        "sys.path.insert(0, str(Path.cwd() / 'skills' / 'change-impact-analysis' / 'scripts'))\n"
+        "from engine.analyzer import analyzer_fn\n"
+    )
+    fixed, fixes = fix_missing_purge("t.py", src, recipes)
+    assert fixes and fixed.splitlines()[2].startswith("for _m in [m for m in sys.modules")
+    assert fix_missing_purge("t.py", fixed, recipes)[1] == []
+
+
+def test_autofix_path_parents_division():
+    from maf_test_harness.tools.autofix import fix_path_parents_division
+
+    src = 'from pathlib import Path\n\nROOT = Path(__file__).resolve().parents / "skills" / "x"\n'
+    fixed, fixes = fix_path_parents_division("t.py", src)
+    assert fixes and 'ROOT = _ROOT / "skills" / "x"' in fixed
+    ns: dict = {"__file__": __file__}
+    exec(fixed, ns)
+    assert ns["ROOT"].parts[-2:] == ("skills", "x")
+    assert fix_path_parents_division("t.py", 'p = Path(__file__).resolve().parents[1] / "x"\n')[1] == []

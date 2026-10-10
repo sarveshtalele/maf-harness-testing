@@ -14,6 +14,7 @@ import ast
 import re
 from typing import Any
 
+from ..repo.import_recipes import ROOT_LINE
 from .code_intel import RepoContext, java_class_index, resolve_import, undefined_python_names
 
 Fix = dict[str, str]
@@ -142,6 +143,132 @@ def fix_python(ctx: RepoContext, path: str, content: str) -> tuple[str, list[Fix
         content = _insert_python_imports(content, statements)
         fixes += [{"path": path, "kind": "missing_import", "detail": stmt} for stmt in statements]
     return content, fixes
+
+
+def _unique_recipe(
+    module: str, recipes: dict[str, dict[str, str]], preferred: list[str]
+) -> dict[str, str] | None:
+    """The one recipe an import of ``module`` can mean: its own module, or a suffix of the normalized path."""
+    hits = {}
+    for target, r in recipes.items():
+        full = re.sub(r"[-\s]", "_", target.removesuffix(".py").replace("/", "."))
+        if module in (r["module"], full) or full.endswith("." + module) or r["module"].endswith("." + module):
+            hits[target] = r
+    if (
+        len(hits) > 1
+    ):  # the case's own linked source files decide among look-alikes (many skills/*/scripts/main.py)
+        hits = {t: r for t, r in hits.items() if t in preferred}
+    return next(iter(hits.values())) if len(hits) == 1 else None
+
+
+def _bootstrap_line(tree: ast.Module) -> int:
+    """Index (0-based line) after the docstring and ``from __future__`` imports."""
+    at = 0
+    for n in tree.body:
+        doc = isinstance(n, ast.Expr) and isinstance(n.value, ast.Constant) and isinstance(n.value.value, str)
+        if doc or (isinstance(n, ast.ImportFrom) and n.module == "__future__"):
+            at = n.end_lineno or n.lineno
+        else:
+            break
+    return at
+
+
+def fix_import_recipes(
+    path: str, content: str, recipes: dict[str, dict[str, str]], preferred: list[str] | None = None
+) -> tuple[str, list[Fix]]:
+    """Make imports of scripts the repo cannot dotted-import use the recipe's literal bootstrap (see import_recipes)."""
+    fixes: list[Fix] = []
+    try:
+        tree = ast.parse(content)
+    except SyntaxError:
+        return content, fixes
+    lines = content.splitlines()
+    need_bootstrap = False
+    used: list[dict[str, str]] = []
+    for node in tree.body:  # module-level imports only
+        if isinstance(node, ast.ImportFrom) and node.level == 0 and node.module:
+            recipe = _unique_recipe(node.module, recipes, preferred or [])
+        elif isinstance(node, ast.Import) and len(node.names) == 1 and not node.names[0].asname:
+            recipe = _unique_recipe(node.names[0].name, recipes, preferred or [])
+        else:
+            continue
+        if recipe is None:
+            continue
+        used.append(recipe)
+        old = node.module if isinstance(node, ast.ImportFrom) else node.names[0].name
+        if old != recipe["module"]:
+            names = ", ".join(a.name + (f" as {a.asname}" if a.asname else "") for a in node.names)
+            new = f"from {recipe['module']} import {names}" if isinstance(node, ast.ImportFrom) else None
+            if new is None:
+                continue
+            lines[node.lineno - 1 : node.end_lineno] = [new] + [None] * (
+                (node.end_lineno or node.lineno) - node.lineno
+            )  # type: ignore[list-item]
+            fixes.append(
+                {"path": path, "kind": "import_recipe_applied", "detail": f"{old} -> {recipe['module']}"}
+            )
+            need_bootstrap = True
+        elif "sys.path" not in content:
+            fixes.append({"path": path, "kind": "import_recipe_applied", "detail": f"bootstrap for {old}"})
+            need_bootstrap = True
+    lines = [x for x in lines if x is not None]
+    content = "\n".join(lines) + ("\n" if content.endswith("\n") else "")
+    if need_bootstrap and not re.search(r"(?m)^_ROOT\s*=", content):
+        r = used[0]
+        block = r["code"].split("\n")
+        block = block[: block.index(r["import"])]  # everything but the import itself
+        at = _bootstrap_line(ast.parse(content))
+        rows = content.splitlines()
+        content = "\n".join([*rows[:at], *block, *rows[at:]]) + ("\n" if content.endswith("\n") else "")
+    return content, fixes
+
+
+_PARENTS_DIV = re.compile(
+    r"(?:Path\(__file__\)(?:\.resolve\(\))?|Path\(__file__\)\.absolute\(\))\.parents(?=\s*/)"
+)
+
+
+def fix_path_parents_division(path: str, content: str) -> tuple[str, list[Fix]]:
+    """``Path(__file__).resolve().parents / "x"`` raises TypeError; the intent is the repository root."""
+    if not _PARENTS_DIV.search(content):
+        return content, []
+    content = _PARENTS_DIV.sub("_ROOT", content)
+    if not re.search(r"(?m)^_ROOT\s*=", content):
+        try:
+            at = _bootstrap_line(ast.parse(content))
+        except SyntaxError:
+            return content, []
+        rows = content.splitlines()
+        content = "\n".join([*rows[:at], "from pathlib import Path", ROOT_LINE, *rows[at:]]) + "\n"
+    return content, [{"path": path, "kind": "path_parents_division", "detail": "parents / x -> _ROOT / x"}]
+
+
+def fix_missing_purge(path: str, content: str, recipes: dict[str, dict[str, str]]) -> tuple[str, list[Fix]]:
+    """A test that puts a colliding root on sys.path must first drop the other package cached in sys.modules."""
+    if "sys.modules" in content:
+        return content, []
+    try:
+        tree = ast.parse(content)
+    except SyntaxError:
+        return content, []
+    for r in recipes.values():
+        if not r.get("purge"):
+            continue
+        root_parts = r["sys_path_root"].split("/")
+        for node in ast.walk(tree):
+            if (
+                isinstance(node, ast.Expr)
+                and isinstance(node.value, ast.Call)
+                and ast.unparse(node.value.func) == "sys.path.insert"
+                and any(p in ast.unparse(node.value) for p in root_parts[-2:])
+            ):
+                rows = content.splitlines()
+                indent = " " * node.col_offset
+                rows.insert(node.lineno - 1, indent + r["purge"])
+                return "\n".join(rows) + "\n", [
+                    {"path": path, "kind": "sys_modules_purge", "detail": r["purge"]}
+                ]
+    return content, []
 
 
 _JDK: dict[str, str] = {
@@ -341,13 +468,25 @@ def drop_extra_tests(item: dict[str, Any]) -> list[Fix]:
     return fixes
 
 
-def autofix_files(ctx: RepoContext, payload: dict[str, Any]) -> tuple[dict[str, Any], list[Fix]]:
+def autofix_files(
+    ctx: RepoContext,
+    payload: dict[str, Any],
+    recipes: dict[str, dict[str, str]] | None = None,
+    preferred: list[str] | None = None,
+) -> tuple[dict[str, Any], list[Fix]]:
     """Apply the language fixers to every generated file; returns the updated payload and the applied fixes."""
     applied: list[Fix] = []
     for item in payload.get("files", []):
         path, content = item["path"], item["content"]
         if path.endswith(".py"):
-            fixed, fixes = fix_python(ctx, path, content)
+            content, fixes = fix_path_parents_division(path, content)
+            if recipes:
+                content, more = fix_import_recipes(path, content, recipes, preferred)
+                fixes += more
+                content, more = fix_missing_purge(path, content, recipes)
+                fixes += more
+            fixed, more = fix_python(ctx, path, content)
+            fixes += more
             item["content"] = fixed
             fixes += drop_extra_tests(item)
             fixed = item["content"]

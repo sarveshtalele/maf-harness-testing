@@ -152,6 +152,13 @@ class GenerationSteps:
                     accepted = None
             work_ids = {str(case["id"]) for case in work}
             source_files = state["artifacts"]["repo_analysis"].get("source_files", [])
+            # Targets are usually symbols ("Class.method"); the linked requirements' source files name the modules,
+            # so both are passed (files select recipes, symbols pick the import names).
+            recipes = python_import_recipes(
+                self.run_dir / "repo",
+                source_files,
+                [*(str(c.get("target") or "") for c in work), *preferred],
+            )
             batch_source = (
                 extract_target_sources(
                     self.run_dir / "repo", [str(case.get("target") or "") for case in work], source_files
@@ -208,12 +215,7 @@ class GenerationSteps:
                         "target_source": batch_source,
                         # Targets are usually symbols ("Class.method"); the linked requirements' source files name
                         # the modules, so both are passed (files select recipes, symbols pick the import names).
-                        "import_recipes": python_import_recipes(
-                            self.run_dir / "repo",
-                            source_files,
-                            [*(str(c.get("target") or "") for c in work), *preferred],
-                        )
-                        or None,
+                        "import_recipes": recipes or None,
                         "testability": testability_for_targets(
                             state["artifacts"]["repo_analysis"].get("testability"),
                             [str(case.get("target") or "") for case in work],
@@ -303,7 +305,7 @@ class GenerationSteps:
                         },
                     )
                     if AUTOFIX:
-                        candidate, fixes = autofix_files(self._repo_context(), candidate)
+                        candidate, fixes = autofix_files(self._repo_context(), candidate, recipes, preferred)
                         tooling = state.setdefault(
                             "tooling", {"autofix": 0, "build_checks": 0, "build_failures": 0}
                         )

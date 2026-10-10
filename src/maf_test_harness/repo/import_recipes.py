@@ -14,6 +14,11 @@ from collections.abc import Callable
 from pathlib import Path, PurePosixPath
 
 _TEST_NAMES = ("test_", "conftest")
+# Finds the repository root from the test file; falls back to the working directory (tests run from the repo root).
+ROOT_LINE = (
+    '_ROOT = next((p for p in Path(__file__).resolve().parents if (p / "pyproject.toml").exists() '
+    'or (p / ".git").exists() or (p / "setup.cfg").exists()), Path.cwd())'
+)
 
 
 def _is_test(rel: str) -> bool:
@@ -146,20 +151,30 @@ def recipes_for_files(
             for f in py
         )
         purge = (
-            f" Because another directory also provides a top-level `{top}` package, first drop cached modules: "
-            f"`for m in [m for m in sys.modules if m == '{top}' or m.startswith('{top}.')]: del sys.modules[m]`, "
-            f"then insert the path and import."
+            f'for _m in [m for m in sys.modules if m == "{top}" or m.startswith("{top}.")]: del sys.modules[_m]'
             if clash
             else ""
+        )
+        # Literal code, never prose: models mis-transcribe "walk parents until..." (e.g. `parents / "x"`).
+        code = "\n".join(
+            [
+                "import sys",
+                "from pathlib import Path",
+                ROOT_LINE,
+                *([purge] if purge else []),
+                "sys.path.insert(0, str(_ROOT"
+                + "".join(f' / "{seg}"' for seg in PurePosixPath(root).parts)
+                + "))",
+                line,
+            ]
         )
         out[target] = {
             "sys_path_root": root,
             "import": line,
-            "how": (
-                f"In the test, find the repository root with pathlib (walk Path(__file__).resolve().parents until one "
-                f"holds pyproject.toml, setup.cfg or .git), `sys.path.insert(0, str(repo_root / '{root}'))`, then "
-                f"`{line}` ({seen}). Never import via skills.<dir_with_hyphens_renamed>.{purge}"
-            ),
+            "module": dotted,
+            "purge": purge,
+            "code": code,
+            "how": f"Copy `code` verbatim at the top of the test ({seen}); never import via skills.<renamed dir>.",
         }
     return out
 
@@ -167,7 +182,7 @@ def recipes_for_files(
 def python_import_recipes(
     root: Path, source_files: list[str], targets: list[str]
 ) -> dict[str, dict[str, str]]:
-    """``{target_file: {sys_path_root, import, how}}`` for target .py files not reachable by a plain dotted import."""
+    """``{target_file: {sys_path_root, import, module, purge, code, how}}`` for target .py files not reachable by a plain dotted import."""
     root = Path(root)
 
     def read(rel: str) -> str | None:
