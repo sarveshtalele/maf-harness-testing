@@ -1,5 +1,5 @@
 'use client';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { api, label, rows, text, type Row } from '@/lib/harness';
 import { Badge, DataTable, DataView, Metrics } from './data';
 import Markdown from './markdown';
@@ -12,6 +12,9 @@ export default function Skills() {
   const [search, setSearch] = useState('');
   const [selected, setSelected] = useState('');
   const [notice, setNotice] = useState('');
+  const [approving, setApproving] = useState<Skill | null>(null);
+  const approveDialog = useRef<HTMLDialogElement>(null);
+  useEffect(() => { if (approving) approveDialog.current?.showModal(); }, [approving]);
   const reload = (signal?: AbortSignal) => api<{ skills: Skill[]; upstream: Row }>('skills', undefined, signal).then(setCatalog).catch(e => { if (!signal?.aborted) setError(e.message); });
   useEffect(() => {
     setSelected(new URLSearchParams(location.search).get('skill') || '');
@@ -32,8 +35,7 @@ export default function Skills() {
     } catch (e) { setError(e instanceof Error ? e.message : 'Import failed.'); }
   };
   const approveSkill = async (skill: Skill) => {
-    if (!window.confirm(`Approve ${skill.name}? It is not covered by the repository lock. Approving lets agents load its instructions and allows its scripts to run on this machine. Any later file change revokes the approval.`)) return;
-    setError(''); setNotice('');
+    setApproving(null); setError(''); setNotice('');
     try { await api(`skills/${encodeURIComponent(skill.name)}/approve`, {}); setNotice(`${skill.name} approved.`); await reload(); }
     catch (e) { setError(e instanceof Error ? e.message : 'Approval failed.'); }
   };
@@ -64,10 +66,11 @@ export default function Skills() {
         <div className="skill-flow" aria-label={`${skill.name} workflow map`}><span className="eyebrow">Workflow map</span>{[...new Set([...skill.primary_stages, ...rows(skill.executions).map(r => text(r.stage))])].map(stage => <div className="skill-flow-step" key={stage}><span aria-hidden="true">◇</span><strong>{label(stage)}</strong><span aria-hidden="true">→</span><small>{rows(skill.executions).some(r => r.stage === stage) ? 'Recorded' : 'Configured'}</small></div>)}{!skill.primary_stages.length && !rows(skill.executions).length && <small>{skill.role === 'Host report validator' ? 'Reference package; no recorded package execution.' : 'Selected when repository facts match this skill.'}</small>}<div className="skill-flow-counts"><span><strong>{new Set(rows(skill.executions).map(r => text(r.run_id))).size}</strong> recorded runs</span><span><strong>{rows(skill.executions).filter(r => r.status === 'script-executed').length}</strong> script executions</span></div></div>
         {!!skill.stages?.length && <div className="skill-tags" aria-label={`${skill.name} stages`}>{skill.stages.map(stage => <Badge key={stage} value={label(stage)} />)}</div>}
         {skill.purpose && <p className="field-help">{skill.purpose}</p>}
-        {!skill.verified && !skill.approved && <button className="small" onClick={() => void approveSkill(skill)}>Approve {skill.name}</button>}
+        {!skill.verified && !skill.approved && <button className="small" onClick={() => setApproving(skill)}>Approve {skill.name}</button>}
         <a className="button small" href={`/?page=skills&skill=${encodeURIComponent(skill.name)}`}>View skill details →</a>
       </article>)}</div>
       <p className="field-help">Availability does not mean every skill runs on every repository. Companion skills are selected from repository facts and the approved test design.</p>
     </>}
+    {approving && <dialog ref={approveDialog} aria-labelledby="approve-skill-title" className="detail-dialog" onCancel={() => setApproving(null)} onClose={() => setApproving(null)}><header className="panel-heading"><h2 id="approve-skill-title">Approve {approving.name}?</h2></header><div className="panel-body"><p>It is not covered by the repository lock. Approving lets agents load its instructions and allows its scripts to run on this machine. Any later file change revokes the approval.</p><div className="header-actions"><button onClick={() => setApproving(null)}>Cancel</button><button className="primary" onClick={() => void approveSkill(approving)}>Approve</button></div></div></dialog>}
   </>;
 }

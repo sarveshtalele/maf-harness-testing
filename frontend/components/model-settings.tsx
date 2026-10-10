@@ -3,7 +3,7 @@ import { useEffect, useState, type FormEvent } from 'react';
 import { api, label } from '@/lib/harness';
 import { Panel } from './data';
 
-type View = { base_url: string; model: string; stage_models: Record<string, string>; key_configured: boolean; key_hint: string; source?: string; encrypted?: boolean };
+type View = { base_url: string; model: string; stage_models: Record<string, string>; key_configured: boolean; key_hint: string; source?: string; encrypted?: boolean; notice?: string };
 type Desktop = { getModelSettings(): Promise<View>; saveModelSettings(input: Record<string, unknown>): Promise<View> };
 const desktop = (): Desktop | undefined => (typeof window === 'undefined' ? undefined : (window as unknown as { desktop?: Desktop }).desktop);
 
@@ -24,7 +24,7 @@ export default function ModelSettings({ stages, onSaved }: { stages: string[]; o
   const [notice, setNotice] = useState<{ ok: boolean; text: string } | null>(null);
 
   const load = (v: View) => { setView(v); setForm(f => ({ ...f, base_url: v.base_url, model: v.model, api_key: '' })); setPerStage(v.stage_models || {}); };
-  useEffect(() => { (desktop()?.getModelSettings() ?? api<View>('settings/model')).then(load).catch(e => setNotice({ ok: false, text: e.message })); }, []);
+  useEffect(() => { (desktop()?.getModelSettings() ?? api<View>('settings/model')).then(v => { load(v); if (v.notice) setNotice({ ok: false, text: v.notice }); }).catch(e => setNotice({ ok: false, text: e.message })); }, []);
 
   const body = () => ({ base_url: form.base_url.trim(), model: form.model.trim(), stage_models: Object.fromEntries(Object.entries(perStage).filter(([, v]) => v.trim())), ...(form.api_key ? { api_key: form.api_key } : {}) });
   async function save(e: FormEvent) {

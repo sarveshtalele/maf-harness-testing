@@ -6,7 +6,8 @@ const config: NextConfig = {
   devIndicators: false,
   // Only same-origin framing: the evidence report iframe is same-origin; approvals must not be framed elsewhere.
   async headers() {
-    return [{ source: '/:path*', headers: [
+    // Not /api/: the proxy passes the backend's own evidence CSP through and must keep it.
+    return [{ source: '/((?!api/).*)', headers: [
       { key: 'Content-Security-Policy', value: "frame-ancestors 'self'" },
       { key: 'X-Frame-Options', value: 'SAMEORIGIN' },
     ] }];
