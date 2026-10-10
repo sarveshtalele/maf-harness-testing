@@ -1,0 +1,37 @@
+appId: com.internal.agenticqe
+productName: Agentic QE
+directories:
+  output: release
+files:
+  - dist/**
+  - "!dist/**/*.test.js"
+  - package.json
+extraResources:
+  # PyInstaller one-folder output (produced by a later task); launched as resources/backend/maf-backend[.exe]
+  - from: ../build/backend
+    to: backend
+  # Next standalone (build with DESKTOP_BUILD=1); server.js ends up at resources/frontend/server.js.
+  # Note: if Next infers a workspace root, standalone nests under the repo path; set outputFileTracingRoot to frontend/ if so.
+  - from: ../frontend/.next/standalone
+    to: frontend
+  - from: ../frontend/.next/static
+    to: frontend/.next/static
+  - from: ../frontend/public
+    to: frontend/public
+win:
+  target:
+    - target: nsis
+      arch: [x64]
+mac:
+  target:
+    - target: dmg
+      arch: [x64, arm64]
+  identity: null   # unsigned / not notarized (internal distribution); see docs/DESKTOP.md
+  category: public.app-category.developer-tools
+linux:
+  target:
+    - target: AppImage
+      arch: [x64]
+  category: Development
+# No auto-update publisher on purpose: "Check for updates" opens the GitHub Releases page.
+publish: null
