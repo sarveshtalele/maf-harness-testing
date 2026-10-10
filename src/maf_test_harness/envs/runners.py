@@ -70,15 +70,29 @@ PYTHON_TEST_HELPERS = {
     "responses": (r"^\s*(?:import|from)\s+responses\b",),
     "freezegun": (r"freezegun",),
     "hypothesis": (r"^\s*(?:import|from)\s+hypothesis\b",),
+    "httpx": (r"(?:starlette|fastapi)\.testclient", r"^\s*(?:import|from)\s+httpx\b"),  # TestClient needs it
+    "respx": (r"\brespx\b",),
 }
+_DEP_FILES = ("requirements*.txt", "pyproject.toml", "setup.py", "setup.cfg", "Pipfile", "tox.ini")
 
 
-def python_test_helpers(files: list[dict]) -> list[str]:
+def _declared(ws: Path, pkg: str) -> bool:
+    """Whether the repository's own dependency files already name ``pkg`` (its pins are never touched)."""
+    norm = re.compile(rf"(?<![\w-]){re.escape(pkg).replace('-', '[-_.]')}(?![\w-])", re.I)
+    return any(
+        norm.search(f.read_text(encoding="utf-8", errors="replace"))
+        for pattern in _DEP_FILES
+        for f in ws.glob(pattern)
+        if f.is_file()
+    )
+
+
+def python_test_helpers(files: list[dict], ws: Path | None = None) -> list[str]:
     text = "\n".join(f["content"] for f in files)
     return [
         pkg
         for pkg, patterns in PYTHON_TEST_HELPERS.items()
-        if any(re.search(pattern, text, re.M) for pattern in patterns)
+        if any(re.search(pattern, text, re.M) for pattern in patterns) and not (ws and _declared(ws, pkg))
     ]
 
 
@@ -254,7 +268,7 @@ def setup_steps(
                 )
         if helpers:
             steps.append(
-                Step("install-test-helpers", [*pip_cmd, *helpers], "setup", env=pip, timeout=timeout)
+                Step("install-test-tooling", [*pip_cmd, *helpers], "setup", env=pip, timeout=timeout)
             )
     elif eco == "node":
         npm = {"npm_config_cache": platform_compat.cache_path(cache, "npm")}
@@ -432,7 +446,9 @@ def build_plan(
             reports.mkdir(exist_ok=True)
             (reports / "pytest.ini").write_text("[pytest]\n", encoding="utf-8")
             isolate = ["-c", f"{REPORT_DIR}/pytest.ini", "--rootdir", "."]
-        steps = setup_steps(eco, ws, cache, timeout, helpers=python_test_helpers(files), env_ready=env_ready)
+        steps = setup_steps(
+            eco, ws, cache, timeout, helpers=python_test_helpers(files, ws), env_ready=env_ready
+        )
         steps.append(
             Step(
                 "pytest",

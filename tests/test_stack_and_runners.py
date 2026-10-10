@@ -233,7 +233,7 @@ def test_python_adapter_installs_only_allow_listed_helpers_and_pins_rootdir(tmp_
         "tests/test_a.py", content="def test_a(mocker):\n    import evilpkg\n    assert mocker\n"
     )
     plan = runners.build_plan(StackProfile(primary="python"), tmp_path, generated, cache_dir=tmp_path / "c")
-    install = next(s for s in plan.steps if s.name == "install-test-helpers")
+    install = next(s for s in plan.steps if s.name == "install-test-tooling")
     assert (
         install.argv[-1] == "pytest-mock" and "evilpkg" not in install.argv
     )  # never installs model-named packages
@@ -386,3 +386,14 @@ def test_failed_bulk_pip_install_is_retried_per_package(tmp_path, monkeypatch):
     assert [c[-1] for c in calls[1:]] == ["fastapi==1", "chromadb==2"]
     assert report["steps"][0]["fallback"] == {"installed": ["fastapi==1"], "failed": ["chromadb==2"]}
     assert any("1 installed, 1 failed (chromadb==2)" in w for w in report["warnings"])
+
+
+def test_testclient_adds_httpx_unless_repo_declares_it(tmp_path):
+    gen = files(
+        "tests/test_a.py", content="from fastapi.testclient import TestClient\n\ndef test_a():\n    pass\n"
+    )
+    plan = runners.build_plan(StackProfile(primary="python"), tmp_path, gen, cache_dir=tmp_path / "c")
+    assert next(s for s in plan.steps if s.name == "install-test-tooling").argv[-1] == "httpx"
+    (tmp_path / "requirements.txt").write_text("fastapi\nhttpx==0.27.0\n")
+    plan = runners.build_plan(StackProfile(primary="python"), tmp_path, gen, cache_dir=tmp_path / "c")
+    assert all(s.name != "install-test-tooling" for s in plan.steps)

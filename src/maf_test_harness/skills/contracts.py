@@ -1116,7 +1116,7 @@ def _recipe_hint(files: list[str], read: Callable[[str], str | None] | None, tar
     from ..repo.import_recipes import recipes_for_files
 
     found = recipes_for_files(files, read or (lambda _p: None), targets)
-    return "".join(f" import_recipe for {t}: {r['how']} Import line: `{r['import']}`." for t, r in found.items())
+    return "".join(f" import_recipe for {t}: {r['how']} Code:\n{r['code']}\n" for t, r in found.items())
 
 
 def check_python_imports(
