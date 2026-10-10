@@ -10,7 +10,7 @@ readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
   "agent-framework-openai==1.14.3",
-  "agent-framework-core==1.18.0",
+  "agent-framework-core==1.20.0",
   "PyYAML>=6.0,<7",
   "jsonschema>=4.23,<5",
   "pydantic>=2.9,<3.0",
