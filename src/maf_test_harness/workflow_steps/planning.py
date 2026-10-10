@@ -133,6 +133,9 @@ class PlanningSteps:
         return facts
 
     async def model(self, stage, state, ctx):
+        if stage == "requirements" and state.get("run_mode") == "greenfield":
+            await self.author_specs(state, ctx)
+            return
         if stage == "requirements" and state.get("requirements_mode", "model") == "deterministic":
             repo = state["artifacts"]["repo_analysis"]
             analysis = dict(repo.get("reverse_engineering", {}))
@@ -492,7 +495,7 @@ class PlanningSteps:
             design = finalize_design(
                 draft,
                 requirements_source or state["artifacts"]["requirements"],
-                state["repo_url"],
+                state["repo_url"] or "greenfield:specs",  # no repository in greenfield runs
                 self.skills_root,
                 allowed_levels=_allowed_levels(state),
                 case_budget=case_budget(state),

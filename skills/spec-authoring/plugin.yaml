@@ -1,0 +1,7 @@
+name: spec-authoring
+stages: ["requirements"]
+role: companion
+kind: model
+purpose: "turn parsed documents and Jira stories into traceable specs in greenfield runs"
+applies_when:
+  run_modes: [greenfield]

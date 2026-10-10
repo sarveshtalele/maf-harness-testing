@@ -40,6 +40,7 @@ from .repo.analyzer import (
     declared_dependencies,
     validate_github_url,
 )
+from .repo.specs import ingest_specs
 from .repo.stack import detect_stack
 from .repo.testability import analyze_testability
 from .settings import (
@@ -56,6 +57,7 @@ from .tools.registry import ToolContext
 from .tools.typed import default_registry
 from .workflow_steps.execution import ExecutionSteps
 from .workflow_steps.generation import GenerationSteps
+from .workflow_steps.greenfield import SCAFFOLDS, GreenfieldSteps, has_no_code
 from .workflow_steps.planning import PlanningSteps
 from .workflow_steps.rerun import RerunSteps
 
@@ -130,7 +132,7 @@ class StageExecutor(Executor):
         await self.host.answer(original_request.get("stage", self.stage), original_request, response, ctx)
 
 
-class Harness(RerunSteps, ExecutionSteps, GenerationSteps, PlanningSteps):
+class Harness(RerunSteps, ExecutionSteps, GenerationSteps, GreenfieldSteps, PlanningSteps):
     """Checkpointed autonomous MAF workflow with one human review gate per stage."""
 
     def __init__(
@@ -274,14 +276,37 @@ class Harness(RerunSteps, ExecutionSteps, GenerationSteps, PlanningSteps):
         repo_knowledge: str = "",
         case_budget: int | None = None,
         run_name: str | None = None,
+        run_mode: str = "brownfield",
+        spec_intake: dict | None = None,
+        documents: list[dict] | None = None,
+        jira: dict | None = None,
+        target_language: str = "python",
     ):
+        """``run_mode="greenfield"`` takes specs from ``spec_intake`` (an ``ingest_specs`` result) or ``documents``/``jira``
+        (ingested here; Jira credentials are used once and never stored). The repository URL is then optional."""
         if self.view["status"] != "new":
             raise ValueError("Run already started. Resume its pending request.")
+        if run_mode not in {"brownfield", "greenfield"}:
+            raise ValueError("run_mode must be brownfield or greenfield.")
+        greenfield = run_mode == "greenfield"
+        repo_url = (repo_url or "").strip()
+        if greenfield:
+            if target_language not in SCAFFOLDS:
+                raise ValueError(f"target_language must be one of {sorted(SCAFFOLDS)}.")
+            if spec_intake is None:
+                spec_intake = await asyncio.to_thread(ingest_specs, documents or [], jira)
+            if not spec_intake.get("sections"):
+                raise ValueError(
+                    "Greenfield mode needs at least one document section or Jira story. "
+                    + "; ".join(spec_intake.get("warnings") or [])
+                )
         if not isinstance(repo_knowledge, str) or len(repo_knowledge) > 32000:
             raise ValueError("Repository knowledge must be text of at most 32,000 characters.")
-        canonical, _, _, ref = validate_github_url(repo_url, with_ref=True)
-        if repo_url.strip().startswith("git clone "):
-            repo_url = canonical
+        ref = None
+        if repo_url or not greenfield:
+            canonical, _, _, ref = validate_github_url(repo_url, with_ref=True)
+            if repo_url.startswith("git clone "):
+                repo_url = canonical
         if app_url is not None and not re.fullmatch(
             r"https?://(?:localhost|127\.0\.0\.1)(?::\d+)?(?:/\S*)?", app_url.strip()
         ):
@@ -291,8 +316,17 @@ class Harness(RerunSteps, ExecutionSteps, GenerationSteps, PlanningSteps):
         if not (self.run_dir / "prompts.json").exists():
             prompt_settings.save(self.run_dir / "prompts.json", prompt_settings.defaults())
         self.state = {
-            "repo_url": repo_url.strip(),
+            "repo_url": repo_url,
             **({"run_name": run_name} if run_name else {}),
+            "run_mode": run_mode,
+            **(
+                {
+                    "target_language": target_language,
+                    "spec_intake": {k: spec_intake[k] for k in ("sources", "sections", "warnings")},
+                }
+                if greenfield
+                else {}
+            ),
             "repo_knowledge": repo_knowledge,
             "workflow_version": 2,
             "requirements_mode": self.requirements_mode,
@@ -389,6 +423,9 @@ class Harness(RerunSteps, ExecutionSteps, GenerationSteps, PlanningSteps):
         )
 
     async def enter(self, stage, state, ctx):
+        if stage == "repo_analysis" and has_no_code(state):
+            await self.scaffold_repo_analysis(state, ctx)
+            return
         if stage == "repo_analysis":
             await self.ask(
                 stage,
@@ -415,6 +452,9 @@ class Harness(RerunSteps, ExecutionSteps, GenerationSteps, PlanningSteps):
         state["active_stage"] = stage
         self.state = state
         self.save()
+        if stage in (ENV_STAGE, EXECUTION_STAGE) and has_no_code(state):
+            await self.skip_without_code(stage, state, ctx)
+            return
         if stage == ENV_STAGE:
             if (
                 state.get("workflow_version") == 2

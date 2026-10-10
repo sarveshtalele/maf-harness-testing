@@ -183,6 +183,16 @@
       "source_commit": "e6139c314e3c89d2e84efe690a8bdfbce3dc17d2",
       "source_repository": "https://github.com/sarveshtalele/reverse-engineering-skill"
     },
+    "spec-authoring": {
+      "audit": {
+        "status": "repo-reviewed"
+      },
+      "files": {
+        "SKILL.md": "0be8aa9daa764a9adb66700423e5b35122ad1fe0dcebccf00d80f4e048856315",
+        "plugin.yaml": "ab6abc93392f65dfd8b7339c2ae54e980a55b579ddea3387c5decc842fc10188"
+      },
+      "origin": "local"
+    },
     "test-data-generator": {
       "audit": {
         "gate": "PASS",

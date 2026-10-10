@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Annotated, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
 class TestCaseReview(BaseModel):
@@ -258,3 +258,53 @@ class GeneratedFilesDraft(BaseModel):
     selected_framework: str = Field(min_length=1, max_length=120)
     rationale: str = Field(min_length=1, max_length=600)
     files: list[GeneratedTestFileDraft] = Field(min_length=1, max_length=8)
+
+
+class SpecSource(BaseModel):
+    """Where a spec came from: a document section (`doc` + `section_anchor`) or a Jira story (`jira_key`)."""
+
+    model_config = ConfigDict(extra="forbid")
+    doc: str | None = None
+    section_anchor: str | None = None
+    jira_key: str | None = None
+
+    @model_validator(mode="after")
+    def _one_form(self):
+        if bool(self.jira_key) == bool(self.doc and self.section_anchor):
+            raise ValueError("source needs either jira_key or doc + section_anchor")
+        return self
+
+
+class Spec(BaseModel):
+    """Host-assigned, stable specification record (`SPEC-<sha256(source)[:8]>-<n>`)."""
+
+    model_config = ConfigDict(extra="forbid")
+    id: str = Field(pattern=r"^SPEC-[0-9a-f]{8}-\d+$")
+    title: str = Field(min_length=1, max_length=220)
+    narrative: str = Field(max_length=2000)
+    acceptance_criteria: list[str] = Field(default_factory=list)
+    business_rules: list[str] = Field(default_factory=list)
+    data_examples: list[str] = Field(default_factory=list)
+    source: SpecSource
+
+
+_SpecLine = Annotated[str, Field(min_length=1, max_length=500)]
+
+
+class SpecDraft(BaseModel):
+    """Authoring-only spec; `source_ref` must be a `ref` of a supplied section. The host assigns the ID and source."""
+
+    model_config = ConfigDict(extra="forbid")
+    source_ref: str = Field(min_length=1, max_length=300)
+    title: str = Field(min_length=1, max_length=220)
+    narrative: str = Field(max_length=2000)
+    acceptance_criteria: list[_SpecLine] = Field(max_length=12)
+    business_rules: list[_SpecLine] = Field(max_length=12)
+    data_examples: list[_SpecLine] = Field(max_length=8)
+
+
+class SpecsDraft(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    specs: list[SpecDraft] = Field(min_length=1, max_length=40)
+    assumptions: list[_SpecLine] = Field(max_length=12)
+    gaps: list[_SpecLine] = Field(max_length=12)

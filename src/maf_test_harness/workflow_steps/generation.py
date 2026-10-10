@@ -57,6 +57,7 @@ from ..workflow_support import (
     digest,
     retry_reminder,
 )
+from .greenfield import has_no_code
 from .test_review import review_generated_tests
 
 
@@ -332,8 +333,11 @@ class GenerationSteps:
                         )
                     await self._build_gate(candidate, batch_index)
                     self._settle_response_cache("test_generation", True)  # accepted: cache this model answer
-                    candidate["case_reviews"] = await review_generated_tests(
-                        self, state, candidate, work, batch_index
+                    # The source-backed reviewer needs application code; a no-repo greenfield run has none yet.
+                    candidate["case_reviews"] = (
+                        []
+                        if has_no_code(state)
+                        else await review_generated_tests(self, state, candidate, work, batch_index)
                     )
                     accepted = {
                         **candidate,
