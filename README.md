@@ -340,7 +340,7 @@ Skill files (`skills/*/SKILL.md`, `skills/*/references/`) and the document templ
 ## Security
 
 - Settings come from the UI **Configuration** page, the shell, or `.env`. The order is runtime value in the UI, then the environment, then `.env`. [.env.example](.env.example) lists all options.
-- **Never commit** `.env`, run evidence (`.maf-harness/`) or `docs/agent-framework.pdf`. The `.gitignore` covers the first two. The PDF is tracked today, and the owner should decide whether to untrack it.
+- **Never commit** `.env`, run evidence (`.maf-harness/`) or `docs/agent-framework.pdf`. The `.gitignore` covers all three.
 - The UI and the logs show only the last 4 characters of any key.
 - The API listens on loopback only and needs a token generated at launch.
 - **Local execution is not a sandbox.** Generated tests and the commands of the repositories you test run as your user on this machine. Use a disposable machine or account for repositories you do not trust.

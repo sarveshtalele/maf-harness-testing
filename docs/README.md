@@ -60,7 +60,7 @@ Plans give direction. They are not guaranteed to be current.
 - [UI_VERIFICATION.md](UI_VERIFICATION.md): **historical** verification notes for the Next.js migration, 1 October 2026.
 - [RUN_FAILURE_AND_SKILL_EXECUTION_REVIEW.md](RUN_FAILURE_AND_SKILL_EXECUTION_REVIEW.md): **historical** review of one recorded run failure and skill execution.
 - [WINDOWS_RUN_E9681C3_REVIEW.md](WINDOWS_RUN_E9681C3_REVIEW.md): **historical** review of one saved Windows run deliverable.
-- [agent-framework.pdf](agent-framework.pdf): reference copy of the Microsoft Agent Framework documentation. Per the root CLAUDE.md, do not commit or share it. It is currently tracked in git, so the owner should decide whether to untrack it.
+- `agent-framework.pdf` (local only, git-ignored): reference copy of the Microsoft Agent Framework documentation. Do not commit or share it.
 
 ### audit/ (historical evidence)
 
