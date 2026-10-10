@@ -79,7 +79,8 @@ _DEP_FILES = ("requirements*.txt", "pyproject.toml", "setup.py", "setup.cfg", "P
 
 def _declared(ws: Path, pkg: str) -> bool:
     """Whether the repository's own dependency files already name ``pkg`` (its pins are never touched)."""
-    norm = re.compile(rf"(?<![\w-]){re.escape(pkg).replace(r'\-', '[-_.]')}(?![\w-])", re.I)
+    name = re.escape(pkg).replace("\\-", "[-_.]")
+    norm = re.compile(rf"(?<![\w-]){name}(?![\w-])", re.I)
     return any(
         norm.search(f.read_text(encoding="utf-8", errors="replace"))
         for pattern in _DEP_FILES
