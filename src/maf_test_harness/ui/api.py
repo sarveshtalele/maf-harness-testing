@@ -34,10 +34,10 @@ from ..workflow_support import atomic_json
 from .errors import run_errors
 from .eta import case_budget_view, run_eta
 from .evidence_api import EvidenceAPI
+from .mcp_api import McpAPI
 from .presentation import public
 from .progress import progress
 from .runtime_service import RuntimeService
-from .mcp_api import McpAPI
 from .settings_api import SettingsAPI
 
 ROOT = paths.resource_root()

@@ -6,6 +6,7 @@ export interface Secrets {
   base_url: string;
   model: string;
   stage_models: Record<string, string>;
+  mcp: Record<string, Record<string, string>>; // MCP server -> secret name -> value
 }
 export interface ModelSettingsInput extends Partial<Secrets> {}
 /** Renderer-visible view: never contains the key. */
@@ -23,7 +24,7 @@ export interface SafeStorageLike {
   decryptString(b: Buffer): string;
 }
 
-const EMPTY: Secrets = { api_key: '', base_url: '', model: '', stage_models: {} };
+const EMPTY: Secrets = { api_key: '', base_url: '', model: '', stage_models: {}, mcp: {} };
 
 export function validateBaseUrl(url: string): string {
   const v = url.trim();
@@ -35,6 +36,11 @@ export function validateBaseUrl(url: string): string {
   if (u.username || u.password) throw new Error('Base URL must not contain credentials.');
   return v;
 }
+
+const MCP_NAME = /^[a-z][a-z0-9-]{0,31}$/;
+const MCP_KEY = /^[A-Z][A-Z0-9_]{0,63}$/;
+/** Same normalisation as maf_test_harness.mcp_servers.secret_env_name. */
+export const mcpEnvName = (server: string, key: string) => `HARNESS_MCP_SECRET_${server.toUpperCase().replace(/[^A-Z0-9]/g, '_')}_${key}`;
 
 export function validate(input: ModelSettingsInput): ModelSettingsInput {
   const out: ModelSettingsInput = {};
@@ -90,6 +96,48 @@ export class KeyStore {
     return this.view();
   }
 
+  private persist() {
+    if (!this.ss.isEncryptionAvailable()) return;
+    fs.mkdirSync(path.dirname(this.file), { recursive: true, mode: 0o700 });
+    const tmp = `${this.file}.tmp`;
+    fs.writeFileSync(tmp, this.ss.encryptString(JSON.stringify(this.cache)), { mode: 0o600 });
+    fs.renameSync(tmp, this.file);
+    try { fs.chmodSync(this.file, 0o600); } catch { /* Windows */ }
+  }
+
+  /** Merge MCP secrets for one server (empty value clears). Returns that server's names only, never values. */
+  saveMcpSecrets(server: string, values: Record<string, string>): Record<string, boolean> {
+    if (!MCP_NAME.test(server)) throw new Error('Invalid MCP server name.');
+    const next = { ...(this.get().mcp[server] ?? {}) };
+    for (const [k, v] of Object.entries(values ?? {})) {
+      if (!MCP_KEY.test(k) && k !== 'BEARER_TOKEN') throw new Error('Invalid secret name.');
+      if (typeof v !== 'string' || v.length > 4000 || /[\r\n]/.test(v)) throw new Error('A secret must be a single-line string of at most 4000 characters.');
+      if (v.trim()) next[k] = v.trim(); else delete next[k];
+    }
+    const cur = this.get();
+    this.cache = { ...cur, mcp: { ...cur.mcp, [server]: next } };
+    if (!Object.keys(next).length) delete this.cache.mcp[server];
+    this.persist();
+    return this.mcpView()[server] ?? {};
+  }
+
+  removeMcpServer(server: string) {
+    const cur = this.get();
+    const { [server]: _gone, ...rest } = cur.mcp;
+    this.cache = { ...cur, mcp: rest };
+    this.persist();
+  }
+
+  /** Which secrets exist per server (booleans only). */
+  mcpView(): Record<string, Record<string, boolean>> {
+    return Object.fromEntries(Object.entries(this.get().mcp).map(([n, m]) => [n, Object.fromEntries(Object.keys(m).map((k) => [k, true]))]));
+  }
+
+  /** Every MCP secret value, for log redaction. */
+  mcpValues(): string[] {
+    return Object.values(this.get().mcp).flatMap((m) => Object.values(m));
+  }
+
   view(): ModelSettingsView {
     const s = this.get();
     return {
@@ -108,6 +156,7 @@ export class KeyStore {
     if (s.base_url) e.OPENAI_BASE_URL = s.base_url;
     if (s.model) e.OPENAI_MODEL = s.model;
     if (Object.keys(s.stage_models).length) e.HARNESS_STAGE_MODELS = JSON.stringify(s.stage_models);
+    for (const [server, m] of Object.entries(s.mcp)) for (const [k, v] of Object.entries(m)) e[mcpEnvName(server, k)] = v;
     return e;
   }
 }

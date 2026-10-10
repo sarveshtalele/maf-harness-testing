@@ -57,3 +57,23 @@ test('rejects insecure urls, bad models and keys; corrupt file reads empty', () 
   fs.writeFileSync(f, 'garbage');
   assert.equal(new KeyStore(f, fake()).view().key_configured, false);
 });
+
+test('MCP secrets: encrypted at rest, env names match Python, view has booleans only, clears', () => {
+  const f = tmp();
+  const ks = new KeyStore(f, fake());
+  assert.deepEqual(ks.saveMcpSecrets('atlassian-jira', { BEARER_TOKEN: 'tok-0123456789' }), { BEARER_TOKEN: true });
+  ks.saveMcpSecrets('playwright', { API_KEY: 'pw-secret-value' });
+  assert.ok(!fs.readFileSync(f).toString().includes('tok-0123456789'));
+  const again = new KeyStore(f, fake());
+  assert.equal(again.env()['HARNESS_MCP_SECRET_ATLASSIAN_JIRA_BEARER_TOKEN'], 'tok-0123456789');
+  assert.equal(again.env()['HARNESS_MCP_SECRET_PLAYWRIGHT_API_KEY'], 'pw-secret-value');
+  assert.ok(!JSON.stringify(again.mcpView()).includes('tok-'));
+  assert.deepEqual(again.mcpValues().sort(), ['pw-secret-value', 'tok-0123456789']);
+  again.saveMcpSecrets('playwright', { API_KEY: '' });
+  assert.deepEqual(again.mcpView(), { 'atlassian-jira': { BEARER_TOKEN: true } });
+  assert.throws(() => again.saveMcpSecrets('Bad Name', { A: 'x' }));
+  assert.throws(() => again.saveMcpSecrets('ok', { 'bad key': 'x' }));
+  assert.throws(() => again.saveMcpSecrets('ok', { A: 'line\nbreak' }));
+  again.removeMcpServer('atlassian-jira');
+  assert.deepEqual(again.mcpView(), {});
+});

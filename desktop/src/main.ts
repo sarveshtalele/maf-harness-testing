@@ -97,7 +97,7 @@ async function boot() {
   const { backend, ui } = specs(apiPort, uiPort, token);
 
   live = { backend, apiPort, token };
-  const be = pm.start(backend, [token, store.get().api_key]);
+  const be = pm.start(backend, [token, store.get().api_key, ...store.mcpValues()]);
   await waitForHttp(`http://127.0.0.1:${apiPort}/`, 200, 90_000, () => be.exitCode === null).catch(async () => {
     // The API may answer non-200 on "/" yet be up; fall back to a TCP-level check via any HTTP response.
     const r = await fetch(`http://127.0.0.1:${apiPort}/`).catch(() => null);
@@ -149,8 +149,22 @@ ipcMain.handle('desktop:saveModelSettings', async (_e, input: ModelSettingsInput
   const view = store.save(input); // validates before anything restarts
   const backend = specs(apiPort, 0, token).backend; // re-reads the new key into the spawn env
   live.backend = backend;
-  const child = await pm.restart(backend, [token, store.get().api_key]);
+  const child = await pm.restart(backend, [token, store.get().api_key, ...store.mcpValues()]);
   await waitForHttp(`http://127.0.0.1:${apiPort}/`, 200, 60_000, () => child.exitCode === null).catch(() => undefined);
+  return view;
+});
+ipcMain.handle('desktop:getMcpSecrets', () => store.mcpView());
+ipcMain.handle('desktop:saveMcpSecrets', async (_e, server: string, values: Record<string, string>) => {
+  if (!live) throw new Error('Backend is not running.');
+  const { apiPort, token } = live;
+  const auth = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' };
+  const runs = await fetch(`http://127.0.0.1:${apiPort}/runs`, { headers: auth })
+    .then((r) => r.json() as Promise<{ busy?: boolean }>).catch(() => ({ busy: false }));
+  if (runs.busy) throw new Error('Wait for the current operation to finish before changing MCP secrets.');
+  const view = store.saveMcpSecrets(server, values); // validates and stores in the keychain first
+  // Hand the values to the running backend's memory (no restart); a later spawn gets them through env().
+  const r = await fetch(`http://127.0.0.1:${apiPort}/mcp-servers/${encodeURIComponent(server)}/secrets`, { method: 'POST', headers: auth, body: JSON.stringify(values) });
+  if (!r.ok) throw new Error(((await r.json().catch(() => ({}))) as { error?: string }).error || 'Backend rejected the secrets.');
   return view;
 });
 ipcMain.handle('desktop:checkForUpdates', () => shell.openExternal(RELEASES_URL));
