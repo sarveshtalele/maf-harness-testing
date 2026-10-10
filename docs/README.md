@@ -4,7 +4,7 @@ Start with the [Developer guide](DEVELOPER_GUIDE.md) if you will change code. St
 
 Rules for people and agents are in [../CLAUDE.md](../CLAUDE.md). Contribution steps are in [../CONTRIBUTING.md](../CONTRIBUTING.md). Each area of the code also has its own `CLAUDE.md`: `frontend/`, `desktop/`, `scripts/`, `skills/`, `tests/`, and `src/maf_test_harness/` with one per subpackage.
 
-Files marked **historical** are dated reviews, plans or evidence. They record what was true on that date. They are not current claims. Do not edit them.
+Files marked **historical** are dated reviews, plans or evidence. They record what was true on that date. They are not current claims. Do not change their content; a dated status note at the top is allowed.
 
 ## Start here
 
@@ -27,6 +27,7 @@ Files marked **historical** are dated reviews, plans or evidence. They record wh
 ## Operations
 
 - [CACHING.md](CACHING.md): token spend, prompt caching and the response cache.
+- [GENERATION_BENCHMARK.md](GENERATION_BENCHMARK.md): offline scorer for generated pytest suites (`scripts/benchmark_generation.py`, `benchmarks/generation/`).
 - [OBSERVABILITY.md](OBSERVABILITY.md): run tracing, the Observability tab and `maf-harness trace`.
 - [ERROR_PLAYBOOK.md](ERROR_PLAYBOOK.md): every error code, whose fault it is, and the recommended action.
 - [WINDOWS_SETUP_AND_DEBUGGING.md](WINDOWS_SETUP_AND_DEBUGGING.md): Windows setup, Node and `npm` problems, long paths and log locations.

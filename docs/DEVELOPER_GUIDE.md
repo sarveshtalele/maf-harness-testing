@@ -42,7 +42,7 @@ Copy-Item .env.example .env
 
 Notes:
 
-- `--extra e2e` installs Playwright for Python. It is only needed for the browser tests.
+- `--extra e2e` installs Python Playwright used by the e2e tests; `ui.yml` installs it.
 - Edit `.env` to set `OPENAI_API_KEY`, `OPENAI_BASE_URL` and `OPENAI_MODEL`. Never commit it. It is git-ignored.
 - `.env` is read from the current directory and from the repository root. A variable already set in the shell wins over `.env`. The packaged desktop app reads its own copy in the app data folder.
 - Setting the key later in the UI (Configuration page) is also possible. See [DESKTOP.md](DESKTOP.md) for the precedence order.
@@ -101,6 +101,17 @@ npm ci --include=dev
 DESKTOP_BUILD=1 npm run build
 cd ..
 cd desktop
+npm ci
+npm start
+```
+
+PowerShell (Windows):
+
+```powershell
+cd frontend
+npm ci --include=dev
+$env:DESKTOP_BUILD="1"; npm run build; Remove-Item Env:DESKTOP_BUILD
+cd ..\desktop
 npm ci
 npm start
 ```
@@ -177,7 +188,7 @@ Recipes for adding skills are in section 4.
 2. Make one logical change per commit. Use Conventional Commits (section 7).
 3. Run the checks in section 1.6, plus section 1.7 and section 1.8 when relevant.
 4. Push the branch and open a pull request into `develop`.
-5. Wait for green checks: workflow `ci` (jobs `test` and `secrets-scan`) and workflow `Local UI compatibility` (job `local-ui`, from `ui.yml`). No workflow runs the desktop `npm test`, so run it yourself for desktop changes.
+5. Wait for green checks: workflow `ci` (jobs `test` and `secrets-scan`) and workflow `Local UI compatibility` (job `local-ui`, from `ui.yml`). Desktop `npm test` runs in `ui.yml`; run it locally for desktop changes.
 6. Get a review. The repository owner sets up CODEOWNERS review rules; see [RELEASING.md](RELEASING.md). Security-sensitive changes (plugins, MCP, secrets, desktop) need extra care in review.
 7. Merge into `develop`. Releases are cut from `develop` as described in section 4.
 
@@ -384,7 +395,7 @@ Cut `release/x.y` from `develop`, bump `pyproject.toml` and `frontend/package.js
 | Static quality | lint, format, skills, architecture map | section 1.6 and 1.7 |
 | Frontend | types and production build | section 1.6 |
 | Browser (Playwright) | real UI against `tests/ui_fixture_server.py` (real `LocalAPI` and workflow, scripted model, fixture clone, no GitHub). Needs `npm run build` first | section 1.6 |
-| Desktop | `node:test` for port/token/URL guards and keystore (not run by any CI workflow) | section 1.6 |
+| Desktop | `node:test` for port/token/URL guards and keystore (runs in `ui.yml`) | section 1.6 |
 | Live E2E | real gateway and a real repository; costs tokens, needs network | `uv run maf-harness run <url>`; acceptance against deployed apps in `tests/targets/` (skipped unless `PETSTORE_BASE_URL` is set) |
 
 Notes:
@@ -403,7 +414,7 @@ Notes:
 - **Prompts:** language-neutral; language rules only in `LANGUAGE_RULES` and `skills/generic-test-generator/references/<lang>.md`; register section keys in `llm/prompts.py`.
 - **Skills:** hash-locked; after editing a locked file refresh its hash and run `lint-skills --strict`.
 - **Style:** ruff check and format (`pyproject.toml`), type hints on new public functions, small modules with a module docstring (the architecture map reads it), comments explain why.
-- **Git:** Conventional Commits (`feat`, `fix`, `docs`, `chore`, `test`, `refactor`, `ci`), one logical change per commit, PRs into `develop`; never push to `main`/`develop` directly. Agents work in worktrees and never stash or push.
+- **Git:** Conventional Commits (`feat`, `fix`, `docs`, `chore`, `test`, `refactor`, `ci`), one logical change per commit, PRs into `develop`; never push to `main`/`develop` directly (the orchestrator merge described in CLAUDE.md is the only exception). Agents work in worktrees and never stash or push.
 - **Docs travel with code:** update the directory `CLAUDE.md`, this guide or the relevant `docs/*.md`, and regenerate the architecture map in the same commit. Dated reports and `docs/audit/` are historical: do not edit.
 
 ## 8. Glossary

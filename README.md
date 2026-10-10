@@ -35,7 +35,7 @@ uv run python scripts/build_desktop.py --dry-run
 uv run python scripts/build_desktop.py
 ```
 
-The first command prints the steps. The second runs them. Installers are written to `desktop/release/`. You can add `--arch x64` or `--arch arm64` to build one architecture.
+The first command prints the steps. The second runs them. Installers are written to `desktop/release/`. You can add `--arch x64` or `--arch arm64` to build one architecture. The `--arch` value must match this machine's architecture, because the bundled backend is built for the host only.
 
 ### (b) Source checkout with the one-click launchers
 
@@ -219,13 +219,12 @@ Browser tests are in [section 1.6](docs/DEVELOPER_GUIDE.md#16-run-each-test-laye
 
 | Workflow | When it runs | What it checks |
 |---|---|---|
-| `ci.yml` | Pushes to `main`, `develop`, `release/**`, and pull requests | Ruff lint and format, architecture map, skill lock, and the Python tests on Ubuntu (Python 3.11 and 3.12), Windows and macOS. Job `secrets-scan` fails on credential-shaped strings. |
-| `ui.yml` | Same branches, plus manual runs | Python UI tests, real GitHub clones, frontend typecheck and build, launcher smoke checks on all three systems, and the Playwright browser tests. |
+| `ci.yml` | Pushes to `main`, `develop`, `release/**`, and pull requests | Ruff lint and format, architecture map, skill lock, and the Python tests on Ubuntu (Python 3.11 and 3.12), Windows and macOS. Generation benchmark calibration (offline). Job `secrets-scan` fails on credential-shaped strings. |
+| `ui.yml` | Same branches, plus manual runs | Python UI tests, real GitHub clones, frontend typecheck and build, desktop `npm test`, launcher smoke checks on all three systems, and the Playwright browser tests. |
 | `nightly.yml` | Every day at 02:00 UTC, and manual runs | Full Python test suite on Linux. |
 | `desktop-prerelease.yml` | Tags `v*-rc*`, and manual runs | Builds desktop installers as workflow artifacts. |
 | `desktop-release.yml` | Tags `v*.*.*` | Builds desktop installers and creates a draft GitHub Release. |
 
-No workflow runs the desktop `npm test`. Run it yourself when you change `desktop/`.
 
 ## Configuration and security
 

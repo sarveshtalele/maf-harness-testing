@@ -19,7 +19,7 @@ Read first:
 | `main` | Released code only | Tagged `vX.Y.Z` |
 | `new-ui` | Mirrors `develop` during the transition | |
 
-- Do not push directly to `main` or `develop`.
+- Do not push directly to `main` or `develop` (the orchestrator merge described in CLAUDE.md is the only exception).
 - Open pull requests into `develop`. The repository owner sets branch protection (see [RELEASING.md](docs/RELEASING.md)). On the current GitHub plan these rules may not be enforced by GitHub, so follow the rule anyway.
 - After a hotfix reaches `main`, merge `main` back into `develop`.
 
@@ -69,7 +69,7 @@ npm test
 cd ..
 ```
 
-Run the Playwright tests when UI behaviour changes. Desktop `npm test` is not run by CI, so run it when you change `desktop/`.
+Run the Playwright tests when UI behaviour changes. Desktop `npm test` runs in `ui.yml`; run it locally when you change `desktop/`.
 
 If you add, remove or move a `.py` or `.ts` file, regenerate the architecture map with `uv run python scripts/gen_architecture.py`. Never edit `docs/ARCHITECTURE_MAP.md` by hand.
 
