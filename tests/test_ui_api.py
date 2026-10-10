@@ -263,7 +263,9 @@ def test_http_requires_token_and_rejects_browser_origin(local_api):
         request = Request(
             f"{base}/runs", headers={"Authorization": "Bearer test-authorization-token-32-characters"}
         )
-        assert json.load(urlopen(request)) == {"runs": [], "busy": False}
+        response = urlopen(request)
+        assert json.load(response) == {"runs": [], "busy": False}
+        assert response.headers.get("Access-Control-Allow-Origin") is None  # the UI proxy is same-origin
         request.add_header("Origin", "https://evil.example")
         with pytest.raises(HTTPError) as denied:
             urlopen(request)
@@ -531,3 +533,93 @@ def test_a_running_run_without_a_live_job_reads_as_interrupted(local_api):
     )
     view = local_api.read("orphan01")
     assert view["status"] == "interrupted" and view["busy"] is False
+
+
+def test_trace_archive_is_served_only_as_a_download(local_api):
+    api = local_api
+    key = api.start({"repo_url": "https://github.com/acme/demo"})["id"]
+    wait(api)
+    folder = api.run_path(key) / "browser-reports" / "playwright-report"
+    folder.mkdir(parents=True)
+    (folder / "trace.zip").write_bytes(b"PK trace")
+    trace = next(f for f in api.evidence(key)["files"] if f["name"] == "trace.zip")
+    with pytest.raises(ValueError, match="only as downloads"):
+        api.evidence_file(key, trace["id"])
+    assert api.evidence_file(key, trace["id"], download=True)[0] == b"PK trace"
+
+
+def test_public_keeps_empty_and_numeric_values_under_credential_keys():
+    from maf_test_harness.ui.presentation import public
+
+    assert public({"api_key": None}) == {"api_key": None}
+    assert public({"token_limit": "12"}) == {"token_limit": "12"}
+    assert public({"token_limit": "lots"}) == {"token_limit": "[REDACTED]"}
+
+
+def test_public_redacts_credential_keys_and_basic_auth_but_keeps_counters():
+    from maf_test_harness.ui.presentation import public
+
+    basic = "Basic dXNlcjphYmNkZWZnaGlqa2xtbm9w"
+    assert public(f"Authorization: {basic}") == "Authorization: Basic [REDACTED]"
+    assert public(
+        {"jira_token": "abc123xyz", "Authorization": basic, "input_tokens": 12, "secrets": {"api_key": True}}
+    ) == {
+        "jira_token": "[REDACTED]",
+        "Authorization": "[REDACTED]",
+        "input_tokens": 12,
+        "secrets": {"api_key": True},
+    }
+
+
+def test_run_listing_reads_run_files_without_holding_the_api_lock(local_api):
+    api = local_api
+    api.start({"repo_url": "https://github.com/acme/demo"})
+    wait(api)
+    lock_was_free = []
+
+    def other_thread_can_lock():
+        if api.lock.acquire(timeout=2):
+            api.lock.release()
+            return True
+        return False
+
+    original = api._view
+
+    def view_while_probing(key):
+        probe = threading.Thread(target=lambda: lock_was_free.append(other_thread_can_lock()))
+        probe.start()
+        probe.join()
+        return original(key)
+
+    api._view = view_while_probing
+    try:
+        assert api.list_runs()["runs"] and lock_was_free == [True]
+    finally:
+        del api._view
+
+
+def test_failed_start_removes_the_half_created_run(local_api, monkeypatch):
+    import maf_test_harness.ui.api as api_module
+
+    def fail(*args, **kwargs):
+        raise OSError("disk full")
+
+    monkeypatch.setattr(api_module, "atomic_json", fail)
+    before = set(local_api.runs.iterdir())
+    with pytest.raises(OSError, match="disk full"):
+        local_api.start({"repo_url": "https://github.com/acme/demo"})
+    assert set(local_api.runs.iterdir()) == before and local_api.job is None
+
+
+def test_deleting_a_legacy_run_keeps_its_trash_inside_this_instance(tmp_path):
+    legacy = tmp_path / "other" / "legacy"
+    (legacy / "oldrun").mkdir(parents=True)
+    (legacy / "oldrun" / "run.json").write_text(json.dumps({"status": "complete", "state": {}}))
+    api = LocalAPI(tmp_path / "runs", legacy)
+    try:
+        api.delete_run("oldrun", {"confirm_run_id": "oldrun"})
+        assert not (legacy / "oldrun").exists()
+        assert list((tmp_path / ".deleted-runs").glob("oldrun-*"))
+        assert not (legacy.parent / ".deleted-runs").exists()
+    finally:
+        api.close()

@@ -70,7 +70,7 @@ def detect_launch(workspace: Path, port: int, component: str | None = None) -> d
             raise ValueError("Application component must be an existing contained directory")
         package = selected / "package.json"
         if package.is_file():
-            data = json.loads(package.read_text())
+            data = json.loads(package.read_text(encoding="utf-8", errors="replace"))
             scripts = data.get("scripts", {})
             name = next((name for name in ("dev", "start") if name in scripts), None)
             if name:
@@ -87,7 +87,7 @@ def detect_launch(workspace: Path, port: int, component: str | None = None) -> d
                     "env": {"PORT": str(port)},
                 }
                 config = "\n".join(
-                    p.read_text()
+                    p.read_text(encoding="utf-8", errors="replace")
                     for p in selected.glob("vite.config.*")
                     if not p.is_symlink() and p.resolve().is_relative_to(selected)
                 )

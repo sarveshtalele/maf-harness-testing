@@ -304,3 +304,67 @@ def test_windows_export_paths_are_portable_on_a_mac_host():
     step = portable_plan(state, run)["test"][0]
     assert step["argv"] == ["npm.cmd", "{REPO}/frontend/test.js"]
     assert step["env"]["CLAUDE_TELEMETRY_DB"] == "{REPO}/data.db"
+
+
+def test_jsonl_evidence_is_redacted_like_other_text(tmp_path):
+    from maf_test_harness.ui.evidence import clean_content
+
+    path = tmp_path / "trace.jsonl"
+    path.write_text('{"detail": "token=abcdefghijklmnop"}\n', encoding="utf-8")
+    assert b"abcdefghijklmnop" not in clean_content(path)
+
+
+def test_deliverable_audit_and_execution_reports_carry_no_planted_secret(tmp_path):
+    import zipfile
+
+    from maf_test_harness.qa.packaging import build_deliverable
+
+    secret = "abcdefghijklmnop"
+    (tmp_path / "audit.jsonl").write_text(f'{{"detail": "token={secret}"}}\n', encoding="utf-8")
+    attempt = tmp_path / "executions" / "attempt-1"
+    attempt.mkdir(parents=True)
+    (attempt / "report.json").write_text(json.dumps({"detail": f"token={secret}"}), encoding="utf-8")
+    state = {
+        "artifacts": {
+            "repo_analysis": {"repo_name": "demo"},
+            "requirements": {"note": f"token={secret}"},
+            "test_execution": {
+                "qa_report": {"detail": f"token={secret}"},
+                "markdown": f"# QA\n\ntoken={secret}\n",
+                "execution": {},
+            },
+        }
+    }
+    with zipfile.ZipFile(build_deliverable(tmp_path, state)) as archive:
+        for name in ("audit.jsonl", "executions/attempt-1.json", "requirements.json", "qa_report.md"):
+            content = archive.read(f"harness-report/{name}").decode("utf-8")
+            assert secret not in content, name
+
+
+def test_deliverable_excludes_playwright_trace_archives(tmp_path):
+    import zipfile
+
+    from maf_test_harness.qa.packaging import build_deliverable
+
+    folder = tmp_path / "browser-reports" / "playwright-report" / "data"
+    folder.mkdir(parents=True)
+    (folder / "trace.zip").write_bytes(b"raw network and page data")
+    (folder / "screenshot.png").write_bytes(b"png")
+    state = {"artifacts": {"repo_analysis": {"repo_name": "demo"}}}
+    with zipfile.ZipFile(build_deliverable(tmp_path, state)) as archive:
+        names = archive.namelist()
+    assert "harness-report/evidence/browser-reports/playwright-report/data/screenshot.png" in names
+    assert not any(name.endswith("trace.zip") for name in names)
+
+
+def test_run_lock_held_by_another_process_fails_clearly_instead_of_blocking(tmp_path, monkeypatch):
+    import pytest
+    from filelock import FileLock
+
+    import maf_test_harness.workflow as wf
+
+    monkeypatch.setattr(wf, "RUN_LOCK_TIMEOUT", 0.1)
+    with FileLock(str(tmp_path / "run.lock")):
+        with pytest.raises(RuntimeError, match="locked by another process"):
+            with wf._run_lock(tmp_path):
+                pass

@@ -37,6 +37,8 @@ _TOKENS = [
     re.compile(r"AKIA[0-9A-Z]{16}"),
     re.compile(r"(?i)\bBearer\s+[A-Za-z0-9._~+/=-]{20,}"),
 ]
+# Basic credentials only where an authorization header or field names them; prose such as "Basic support" stays.
+_BASIC_AUTH = re.compile(r"""(?i)(authorization["']?\s*[:=]\s*["']?Basic\s+)[A-Za-z0-9+/=]{16,}""")
 _SECRET_ENV = (
     "OPENAI_API_KEY",
     "ANTHROPIC_API_KEY",
@@ -66,6 +68,8 @@ def redact(text: str, *, keyed: bool = True) -> tuple[str, int]:
     for pattern in _TOKENS:
         text, n = pattern.subn(REDACTED, text)
         count += n
+    text, n = _BASIC_AUTH.subn(lambda m: m.group(1) + REDACTED, text)  # keep "Authorization: Basic " visible
+    count += n
     if keyed:
         text, n = _KEYED.subn(
             lambda m: m.group(1) + REDACTED, text

@@ -54,6 +54,16 @@ def test_keyed_secrets_lose_their_value_but_keep_the_key(line):
     }
 
 
+def test_basic_credentials_are_redacted_only_in_an_authorization_context():
+    prose = "Basic internationalization support"
+    assert B.redact(prose) == (prose, 0)
+    text, count = B.redact("Authorization: Basic dXNlcjp0b2tlbjEyMzQ1Ng==")
+    assert text == f"Authorization: Basic {B.REDACTED}" and count == 1
+    payload = json.dumps({"authorization": "Basic dXNlcjp0b2tlbjEyMzQ1Ng=="})
+    text, count = B.redact(payload)
+    assert json.loads(text) == {"authorization": f"Basic {B.REDACTED}"} and count == 1
+
+
 def test_redacted_json_is_still_valid_json():
     payload = json.dumps({"password": "hunter2hunter2", "path": "a.py", "nested": {"token": "abcdefgh1234"}})
     text, count = B.redact(payload)

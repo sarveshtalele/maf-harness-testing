@@ -52,7 +52,9 @@ def load_approvals() -> dict[str, dict]:
         data = json.loads(approvals_path().read_text(encoding="utf-8"))
     except (OSError, ValueError):
         return {}
-    return data.get("approved", {}) if isinstance(data, dict) and isinstance(data.get("approved"), dict) else {}
+    return (
+        data.get("approved", {}) if isinstance(data, dict) and isinstance(data.get("approved"), dict) else {}
+    )
 
 
 def full_tree_sha256(directory: Path) -> str:
@@ -64,9 +66,7 @@ def full_tree_sha256(directory: Path) -> str:
 
 
 def has_bytecode(directory: Path) -> bool:
-    return any(
-        "__pycache__" in p.parts or p.suffix in (".pyc", ".pyo") for p in Path(directory).rglob("*")
-    )
+    return any("__pycache__" in p.parts or p.suffix in (".pyc", ".pyo") for p in Path(directory).rglob("*"))
 
 
 def _bad_part(part: str) -> bool:
@@ -126,7 +126,11 @@ def find_skill(repo_skills: Path, name: str) -> Path:
 def plugin_policy_problems(plugin) -> list[str]:
     """Plugin-sourced skills are instruction packages: companions only, model kind, no entrypoint."""
     return [
-        *(["plugins may only be companion skills (role: primary is not allowed)"] if plugin.role == "primary" else []),
+        *(
+            ["plugins may only be companion skills (role: primary is not allowed)"]
+            if plugin.role == "primary"
+            else []
+        ),
         *(["plugins must be kind 'model'"] if plugin.kind != "model" else []),
         *(["plugins cannot declare an entrypoint"] if plugin.entrypoint else []),
     ]
@@ -179,6 +183,8 @@ def _extract_zip(data: bytes, target: Path) -> None:
     except zipfile.BadZipFile as exc:
         raise ValueError("Not a valid zip file.") from exc
     infos = archive.infolist()
+    if not infos:
+        raise ValueError("Archive is empty")
     if len(infos) > MAX_IMPORT_FILES or sum(i.file_size for i in infos) > MAX_IMPORT_BYTES:
         raise ValueError("Skill archive is too large (max 20 MB, 500 files).")
     total = 0
@@ -251,7 +257,9 @@ def import_skill(repo_skills: Path, *, zip_base64: str | None = None, folder: st
             raise ValueError("plugin.yaml is missing or not valid YAML.") from exc
         name = meta.get("name") if isinstance(meta, dict) else None
         if not isinstance(name, str) or len(name) > 64 or not NAME_RE.fullmatch(name):
-            raise ValueError("plugin.yaml name must be 1-64 chars of lowercase letters/digits with single hyphens.")
+            raise ValueError(
+                "plugin.yaml name must be 1-64 chars of lowercase letters/digits with single hyphens."
+            )
         named = Path(tmp).resolve() / "out" / name
         named.parent.mkdir()
         staging.rename(named)

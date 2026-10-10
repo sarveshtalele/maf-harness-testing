@@ -164,6 +164,6 @@ def clean_content(path: Path) -> bytes:
         ).encode()
     elif path.suffix.lower() == ".js":
         content = redact(content.decode("utf-8", errors="replace"), keyed=False)[0].encode()
-    elif path.suffix.lower() in {".json", ".css", ".xml", ".log", ".md", ".txt"}:
+    elif path.suffix.lower() in {".json", ".jsonl", ".css", ".xml", ".log", ".md", ".txt"}:
         content = redact(content.decode("utf-8", errors="replace"))[0].encode()
     return content

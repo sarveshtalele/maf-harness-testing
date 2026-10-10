@@ -25,6 +25,10 @@ from .step_reports import build_step_reports
 REPORT_DIR = "harness-report"
 
 
+def _json(data) -> str:
+    return redact(json.dumps(data, indent=2, default=str))[0]
+
+
 def _add_tree(archive: zipfile.ZipFile, repo: Path, prefix: str, skip: set[str]) -> None:
     for path in sorted(repo.rglob("*")):
         relative = path.relative_to(repo)
@@ -217,25 +221,21 @@ def build_deliverable(run_dir: Path, state: dict, executions_dir: Path | None = 
         for stage, artifact in arts.items():
             if stage == "test_execution":
                 qa = artifact["qa_report"]
-                archive.writestr(f"{REPORT_DIR}/qa_report.md", artifact["markdown"])
-                archive.writestr(f"{REPORT_DIR}/qa_report.json", json.dumps(qa, indent=2, default=str))
-                archive.writestr(
-                    f"{REPORT_DIR}/execution.json", json.dumps(artifact["execution"], indent=2, default=str)
-                )
+                archive.writestr(f"{REPORT_DIR}/qa_report.md", redact(artifact["markdown"])[0])
+                archive.writestr(f"{REPORT_DIR}/qa_report.json", _json(qa))
+                archive.writestr(f"{REPORT_DIR}/execution.json", _json(artifact["execution"]))
                 for report_name, report in artifact.get("skill_reports", {}).items():
                     file = "coverage-summary" if report_name == "coverage" else "traceability-matrix"
-                    archive.writestr(f"{REPORT_DIR}/{file}.json", json.dumps(report, indent=2, default=str))
+                    archive.writestr(f"{REPORT_DIR}/{file}.json", _json(report))
             else:
-                archive.writestr(f"{REPORT_DIR}/{stage}.json", json.dumps(artifact, indent=2, default=str))
+                archive.writestr(f"{REPORT_DIR}/{stage}.json", _json(artifact))
         if state.get("environment"):
-            archive.writestr(
-                f"{REPORT_DIR}/environment.json", json.dumps(state["environment"], indent=2, default=str)
-            )
+            archive.writestr(f"{REPORT_DIR}/environment.json", _json(state["environment"]))
         audit = run_dir / "audit.jsonl"
         if audit.is_file():
-            archive.write(audit, f"{REPORT_DIR}/audit.jsonl")
+            archive.writestr(f"{REPORT_DIR}/audit.jsonl", clean_content(audit))
         for report in sorted((executions_dir or run_dir / "executions").glob("attempt-*/report.json")):
-            archive.write(report, f"{REPORT_DIR}/executions/{report.parent.name}.json")
+            archive.writestr(f"{REPORT_DIR}/executions/{report.parent.name}.json", clean_content(report))
         for step_name, markdown in build_step_reports(run_dir, state).items():
             archive.writestr(f"{REPORT_DIR}/steps/{step_name}.md", redact(markdown)[0])
         archive.writestr(f"{REPORT_DIR}/RUN_TESTS.md", run_instructions(state))
@@ -256,7 +256,6 @@ def build_deliverable(run_dir: Path, state: dict, executions_dir: Path | None = 
                         ".png",
                         ".jpg",
                         ".webp",
-                        ".zip",
                         ".xml",
                         ".json",
                         ".css",

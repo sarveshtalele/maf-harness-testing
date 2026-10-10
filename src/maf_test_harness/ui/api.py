@@ -8,6 +8,7 @@ import json
 import logging
 import os
 import re
+import shutil
 import traceback
 from datetime import UTC, datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -224,90 +225,92 @@ class LocalAPI(EvidenceAPI, SettingsAPI, McpAPI):
     def read(self, key: str) -> dict:
         with self.lock:
             self.harvest()
-            view = read_json(self.run_path(key) / "run.json")
-            state = view.get("state", {})
-            pending = view.get("pending")
-            actions = decisions(pending, view.get("status", "new"), view.get("consumed", []))
-            status = view.get("status", "new")
-            orphaned = not (self.job and self.job_run == key)
-            if orphaned and (
-                status in {"running", "stopping"}  # the process that ran it ended (API restart or crash)
-                or (
-                    pending
-                    and status not in {"stopped", "complete"}
-                    and pending["id"] in view.get("consumed", [])
-                )
-            ):
-                status = "interrupted"
-            try:
-                errors = run_errors(self.run_path(key), {**view, "operation_error": self.errors.get(key)})
-            except Exception:
-                errors = {"items": [], "counts": {}}
-            return public(
-                {
-                    "id": key,
-                    "errors": errors,
-                    "progress": {
-                        **progress(view),
-                        "eta": self._eta(key, view),
-                        "case_budget": self._case_budget(key, view),
-                    },
-                    "status": status,
-                    "pending": {k: v for k, v in pending.items() if k != "state"} if pending else None,
-                    "state": {k: state[k] for k in PUBLIC_STATE if k in state},
-                    "actions": [] if self.job else actions,
-                    "busy": bool(self.job and self.job_run == key),
-                    "pending_consumed": bool(pending and pending["id"] in view.get("consumed", [])),
-                    "run_directory": str(self.run_path(key)),
-                    "operation": read_operation(self.run_path(key))
-                    if self.job and self.job_run == key
-                    else {},
-                    "service_busy": bool(self.job),
-                    "operation_error": self.errors.get(key),
-                    "error": view.get("error"),
-                    "has_zip": bool(state.get("deliverable_zip")),
-                }
+        return self._view(key)
+
+    def _view(self, key: str) -> dict:  # file reads happen outside the lock (see list_runs)
+        view = read_json(self.run_path(key) / "run.json")
+        state = view.get("state", {})
+        pending = view.get("pending")
+        actions = decisions(pending, view.get("status", "new"), view.get("consumed", []))
+        status = view.get("status", "new")
+        orphaned = not (self.job and self.job_run == key)
+        if orphaned and (
+            status in {"running", "stopping"}  # the process that ran it ended (API restart or crash)
+            or (
+                pending
+                and status not in {"stopped", "complete"}
+                and pending["id"] in view.get("consumed", [])
             )
+        ):
+            status = "interrupted"
+        try:
+            errors = run_errors(self.run_path(key), {**view, "operation_error": self.errors.get(key)})
+        except Exception:
+            errors = {"items": [], "counts": {}}
+        return public(
+            {
+                "id": key,
+                "errors": errors,
+                "progress": {
+                    **progress(view),
+                    "eta": self._eta(key, view),
+                    "case_budget": self._case_budget(key, view),
+                },
+                "status": status,
+                "pending": {k: v for k, v in pending.items() if k != "state"} if pending else None,
+                "state": {k: state[k] for k in PUBLIC_STATE if k in state},
+                "actions": [] if self.job else actions,
+                "busy": bool(self.job and self.job_run == key),
+                "pending_consumed": bool(pending and pending["id"] in view.get("consumed", [])),
+                "run_directory": str(self.run_path(key)),
+                "operation": read_operation(self.run_path(key)) if self.job and self.job_run == key else {},
+                "service_busy": bool(self.job),
+                "operation_error": self.errors.get(key),
+                "error": view.get("error"),
+                "has_zip": bool(state.get("deliverable_zip")),
+            }
+        )
 
     def list_runs(self) -> dict:
         with self.lock:
             self.harvest()
-            rows, seen = [], set()
-            for root in (self.runs, *self.legacy_roots):
-                if not root:
+            files = [file for root in (self.runs, *self.legacy_roots) for file in root.glob("*/run.json")]
+        rows, seen = [], set()
+        for file in files:
+            key = file.parent.name
+            if key in seen:
+                continue
+            seen.add(key)
+            try:
+                run = self._view(key)
+                rows.append(
+                    {
+                        "id": key,
+                        "progress": run["progress"],
+                        "repo_url": run["state"].get("repo_url"),
+                        "run_name": run["state"].get("run_name"),
+                        "status": run["status"],
+                        "stage": (run["pending"] or {}).get("stage") or run["state"].get("active_stage"),
+                        "verdict": run["state"]
+                        .get("artifacts", {})
+                        .get("test_execution", {})
+                        .get("qa_report", {})
+                        .get("verdict"),
+                        "busy": run["busy"],
+                        "pending": bool(run["actions"]),
+                        "updated": file.stat().st_mtime,
+                    }
+                )
+            except (ValueError, OSError):
+                try:
+                    updated = file.stat().st_mtime
+                except OSError:  # deleted while the listing was running
                     continue
-                for file in root.glob("*/run.json"):
-                    key = file.parent.name
-                    if key in seen:
-                        continue
-                    seen.add(key)
-                    try:
-                        run = self.read(key)
-                        rows.append(
-                            {
-                                "id": key,
-                                "progress": run["progress"],
-                                "repo_url": run["state"].get("repo_url"),
-                                "run_name": run["state"].get("run_name"),
-                                "status": run["status"],
-                                "stage": (run["pending"] or {}).get("stage")
-                                or run["state"].get("active_stage"),
-                                "verdict": run["state"]
-                                .get("artifacts", {})
-                                .get("test_execution", {})
-                                .get("qa_report", {})
-                                .get("verdict"),
-                                "busy": run["busy"],
-                                "pending": bool(run["actions"]),
-                                "updated": file.stat().st_mtime,
-                            }
-                        )
-                    except (ValueError, OSError):
-                        rows.append({"id": key, "status": "unreadable", "updated": file.stat().st_mtime})
-            return {
-                "runs": sorted(rows, key=lambda row: row["updated"], reverse=True),
-                "busy": bool(self.job),
-            }
+                rows.append({"id": key, "status": "unreadable", "updated": updated})
+        return {
+            "runs": sorted(rows, key=lambda row: row["updated"], reverse=True),
+            "busy": bool(self.job),
+        }
 
     async def replace_host(self, key: str):
         previous = self.host
@@ -379,46 +382,50 @@ class LocalAPI(EvidenceAPI, SettingsAPI, McpAPI):
             key = uuid4().hex[:12]
             path = self.run_path(key, create=True)
             path.mkdir(mode=0o700)
-            prompt_settings.save(
-                path / "prompts.json", prompt_settings.load(self.runs.parent / "prompts.json")
-            )
-            # Persist a visible new run before dispatch; Harness.start will populate the real checkpoint.
-            atomic_json(
-                path / "run.json",
-                {
-                    "status": "new",
-                    "state": {
-                        "repo_url": url,
-                        "run_name": run_name,
-                        "run_mode": opts["run_mode"],
-                        "test_types": opts["test_types"],
+            try:
+                prompt_settings.save(
+                    path / "prompts.json", prompt_settings.load(self.runs.parent / "prompts.json")
+                )
+                # Persist a visible new run before dispatch; Harness.start will populate the real checkpoint.
+                atomic_json(
+                    path / "run.json",
+                    {
+                        "status": "new",
+                        "state": {
+                            "repo_url": url,
+                            "run_name": run_name,
+                            "run_mode": opts["run_mode"],
+                            "test_types": opts["test_types"],
+                        },
+                        "consumed": [],
                     },
-                    "consumed": [],
-                },
-            )
-
-            async def begin():
-                await self.replace_host(key)
-                await self.host.start(
-                    url,
-                    app_url,
-                    launch,
-                    component,
-                    knowledge,
-                    budget,
-                    run_name,
-                    run_mode=opts["run_mode"],
-                    test_types=opts["test_types"],
-                    spec_sources=opts["spec_sources"],
-                    documents=opts["documents"],
-                    jira_token=opts[
-                        "jira_token"
-                    ],  # in memory only; the desktop keychain will provide it later
                 )
 
-            self.job_run = key
-            self.operation_log(key, "starting repository workflow; waiting for clone approval")
-            self.job = self.service.submit(begin())
+                async def begin():
+                    await self.replace_host(key)
+                    await self.host.start(
+                        url,
+                        app_url,
+                        launch,
+                        component,
+                        knowledge,
+                        budget,
+                        run_name,
+                        run_mode=opts["run_mode"],
+                        test_types=opts["test_types"],
+                        spec_sources=opts["spec_sources"],
+                        documents=opts["documents"],
+                        jira_token=opts[
+                            "jira_token"
+                        ],  # in memory only; the desktop keychain will provide it later
+                    )
+
+                self.job_run = key
+                self.operation_log(key, "starting repository workflow; waiting for clone approval")
+                self.job = self.service.submit(begin())
+            except BaseException:  # nothing was dispatched: do not leave a half-created run behind
+                shutil.rmtree(path, ignore_errors=True)
+                raise
             return {"id": key}
 
     def respond(self, key: str, body: dict) -> dict:
@@ -548,10 +555,10 @@ class LocalAPI(EvidenceAPI, SettingsAPI, McpAPI):
 
                 self.service.submit(release()).result(15)
                 self.host = None
-            trash = path.parent.parent / ".deleted-runs"
+            trash = self.runs.parent / ".deleted-runs"  # inside this instance's root, also for legacy runs
             trash.mkdir(exist_ok=True, mode=0o700)
             destination = trash / f"{key}-{uuid4().hex}"
-            path.rename(destination)
+            shutil.move(path, destination)  # Path.rename fails when a legacy run lives on another volume
             self.errors.pop(key, None)
             return {"id": key, "deleted": True, "recoverable": True}
 
@@ -631,7 +638,6 @@ def make_server(api: LocalAPI, token: str, port: int = 8765):
                     "Content-Security-Policy",
                     "default-src 'none'; script-src 'unsafe-inline' blob:; style-src 'unsafe-inline'; img-src 'self' data: blob:; connect-src 'self' data: blob:; font-src data:; worker-src blob:; sandbox allow-scripts",
                 )
-            self.send_header("Access-Control-Allow-Origin", "*")
             if filename:
                 safe = re.sub(r"[^A-Za-z0-9._-]", "_", filename)
                 self.send_header("Content-Disposition", f'attachment; filename="{safe}"')
