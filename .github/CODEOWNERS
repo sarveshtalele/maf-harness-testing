@@ -1,0 +1,9 @@
+# Default owner for everything
+*                   @sarveshtalele
+
+# Skill packs and their lock file (supply-chain sensitive)
+/skills/            @sarveshtalele
+/skills/SKILLS.lock.json @sarveshtalele
+
+# CI and automation
+/.github/           @sarveshtalele

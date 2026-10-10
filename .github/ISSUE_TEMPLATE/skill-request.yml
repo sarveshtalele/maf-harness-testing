@@ -1,0 +1,46 @@
+name: Skill request
+description: Request a new skill or a change to an existing one
+labels: ["skill"]
+body:
+  - type: input
+    id: skill-name
+    attributes:
+      label: Skill name
+      description: Use the kebab-case directory name, e.g. `api-contract-analyzer`.
+    validations:
+      required: true
+  - type: checkboxes
+    id: stages
+    attributes:
+      label: Stage(s)
+      description: Which workflow stage(s) the skill serves.
+      options:
+        - label: Requirements
+        - label: Test design
+        - label: Test planning
+        - label: Test generation
+        - label: Coverage and QA
+        - label: Traceability and reporting
+        - label: Reverse engineering
+  - type: input
+    id: languages
+    attributes:
+      label: Languages and frameworks it applies to
+      placeholder: "e.g. Java/Spring, TypeScript/Playwright, Python/pytest"
+    validations:
+      required: true
+  - type: textarea
+    id: scripts
+    attributes:
+      label: Scripts and assets needed
+      description: Helper scripts, templates, fixtures or reference files the skill needs. Note any that must be committed.
+      placeholder: |
+        - scripts/parse_openapi.py: ...
+        - assets/report-template.md: ...
+  - type: textarea
+    id: behaviour
+    attributes:
+      label: Expected behaviour
+      description: Inputs the skill receives and outputs it should produce.
+    validations:
+      required: true

@@ -1,0 +1,41 @@
+name: Feature request
+description: Propose a new capability or an improvement
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What is hard or impossible today, and who is affected.
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed change
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options:
+        - Harness and workflow
+        - Skills
+        - UI
+        - CLI and launchers
+        - CI and release
+        - Docs
+    validations:
+      required: true
+  - type: checkboxes
+    id: cross-os
+    attributes:
+      label: Cross-OS
+      options:
+        - label: I have considered Windows, macOS and Linux behaviour
+          required: true
