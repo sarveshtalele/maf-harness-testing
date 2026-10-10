@@ -57,6 +57,9 @@ jobs:
         working-directory: frontend
       - run: npm test
         working-directory: frontend
+      - name: Desktop shell tests (tsc + node:test)
+        run: npm ci && npm test
+        working-directory: desktop
       - uses: actions/upload-artifact@v5
         if: always()
         with:

@@ -1,8 +1,7 @@
-"""Artifact presentation helpers shared by Streamlit UI and export scripts.
+"""Artifact presentation helpers shared by the loopback API and export scripts.
 
 The workflow stores structured JSON artifacts. This module converts them into
-human-readable Markdown and can render the same structure in Streamlit without
-losing access to the raw JSON.
+human-readable Markdown without losing access to the raw JSON.
 """
 
 from __future__ import annotations
