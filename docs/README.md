@@ -8,6 +8,7 @@ Files marked **historical** are dated reviews, plans or evidence. They record wh
 
 ## Start here
 
+- [USER_GUIDE.md](USER_GUIDE.md): install the desktop app from GitHub Releases and use it (this is the README of `main`).
 - [DEVELOPER_GUIDE.md](DEVELOPER_GUIDE.md): dev environment, layout, the run lifecycle, how-to recipes, debugging, testing and conventions.
 - [README.md](README.md): this index.
 

@@ -22,14 +22,14 @@ Repositories you test may need their own tools, such as a JDK with Maven or Grad
 
 ## Install the desktop app
 
-Download the installer for your system from the [latest release](https://github.com/sarveshtalele/maf-harness-testing/releases/latest). Each version has its own page under [Releases](https://github.com/sarveshtalele/maf-harness-testing/releases). Installers appear there once the maintainer publishes a release. If a release has no installer for your system, ask the maintainer.
+Download the installer for your system from the [latest release](https://github.com/sarveshtalele/maf-harness-testing/releases/latest). Each version has its own page under [Releases](https://github.com/sarveshtalele/maf-harness-testing/releases).
 
 | Your system | File to download |
 |---|---|
-| Windows | The `.exe` installer (NSIS). |
-| macOS, Apple silicon | The `.dmg` file for arm64. |
-| macOS, Intel | The `.dmg` file for x64. |
-| Linux | The `.AppImage` file. |
+| Windows | `Agentic-QE-<version>-win-x64.exe` |
+| macOS, Apple silicon (M1 or later) | `Agentic-QE-<version>-mac-arm64.dmg` |
+| macOS, Intel | `Agentic-QE-<version>-mac-x64.dmg` |
+| Linux | `Agentic-QE-<version>-linux-x86_64.AppImage` |
 
 The installers are **unsigned**. Your operating system will warn you the first time you open the app. This is expected. Use the steps for your system below.
 
@@ -70,13 +70,13 @@ Only do this for installers you downloaded from the team's GitHub Releases page.
 1. Make the file executable:
 
    ```bash
-   chmod +x ./Agentic*QE*.AppImage
+   chmod +x ./Agentic-QE-*-linux-x86_64.AppImage
    ```
 
 2. Run it. If it fails because FUSE 2 is missing, run it with:
 
    ```bash
-   ./Agentic*QE*.AppImage --appimage-extract-and-run
+   ./Agentic-QE-*-linux-x86_64.AppImage --appimage-extract-and-run
    ```
 
 ## Set your model API key
