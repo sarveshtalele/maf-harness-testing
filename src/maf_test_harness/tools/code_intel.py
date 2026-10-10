@@ -395,13 +395,20 @@ def check_stateful_fixtures(ctx: RepoContext, path: str, content: str) -> None:
                     )
 
 
-def static_gate(ctx: RepoContext, path: str, content: str) -> None:
+def static_gate(ctx: RepoContext, path: str, content: str, preferred: list[str] | None = None) -> None:
     """Every static defect the host can find in one generated file; raises ``ValueError`` describing the first."""
     if path.endswith(".py"):
         try:
             compile(content, path, "exec")
         except SyntaxError as exc:
-            raise ValueError(f"{path} line {exc.lineno}: SyntaxError: {exc.msg}") from exc
+            note = ""
+            if "was never closed" in exc.msg:
+                last = content.rstrip().splitlines()[-1:] or [""]
+                note = (
+                    f" - the file was truncated at line {len(content.splitlines())} (last line: {last[0].strip()[:80]!r}); "
+                    "regenerate this file completely and keep it short"
+                )
+            raise ValueError(f"{path} line {exc.lineno}: SyntaxError: {exc.msg}{note}") from exc
         if ctx.source_files:
             installed = frozenset(_installed_python_modules(ctx)) if ctx.workspace else None
             check_python_imports(
@@ -411,6 +418,7 @@ def static_gate(ctx: RepoContext, path: str, content: str) -> None:
                 path,
                 read_source=ctx.read,
                 installed=installed,
+                preferred=preferred,
             )
         check_python_test_hygiene(content, path, ctx.source_files, read_source=ctx.read)
         check_fixture_contracts(content, path, ctx)

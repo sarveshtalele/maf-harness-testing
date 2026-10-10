@@ -164,7 +164,12 @@ class GenerationSteps:
                     f"--- SELECTED APPLICATION SOURCE: {path} ---\n{source}"
                     for path, source in app_sources.items()
                 )
-            collaborators = collaborator_signatures(self.run_dir / "repo", batch_source, source_files)
+            collaborators = collaborator_signatures(
+                self.run_dir / "repo",
+                batch_source,
+                source_files,
+                targets=[str(c.get("target") or "") for c in work],
+            )
             rounds = state.setdefault("generation_rounds", {})
             for attempt in range(1, 1 if accepted is not None else TEST_GENERATION_MAX_ATTEMPTS + 1):
                 # A deterministic model repeats a rejected answer verbatim: vary the sampling on every retry.
@@ -308,7 +313,7 @@ class GenerationSteps:
                     raw_batches.append(json.dumps(candidate, separators=(",", ":"), default=str))
                     validation = validate_generated_files(candidate, work_ids)
                     validate_java_traceability(candidate, work, requirements, self.run_dir / "repo")
-                    self._check_imports(candidate, state)
+                    self._check_imports(candidate, state, preferred)
                     self._check_paths_are_new(candidate)
                     if validation["uncovered_case_ids"]:
                         raise ValueError(
@@ -616,7 +621,7 @@ class GenerationSteps:
                 "choose a NEW file name (for example add the case topic or batch number) in a new path."
             )
 
-    def _check_imports(self, candidate: dict, state: dict) -> None:
+    def _check_imports(self, candidate: dict, state: dict, preferred: list[str] | None = None) -> None:
         """Static gates (syntax, imports, undefined names, mocks, patch targets, URLs) on every generated file."""
         from ..envs.runners import repository_components, resolve_ecosystem
 
@@ -635,4 +640,4 @@ class GenerationSteps:
                     f"Place this spec under a NEW tests/ path inside one of {node_roots}; "
                     "the runner resolves dependencies from that component."
                 )
-            static_gate(ctx, item["path"], item["content"])
+            static_gate(ctx, item["path"], item["content"], preferred)

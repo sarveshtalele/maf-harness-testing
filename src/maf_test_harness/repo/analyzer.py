@@ -789,8 +789,31 @@ def java_signatures(text: str, limit: int = 30) -> list[str]:
     return signatures[:limit]
 
 
+def python_constructor_signatures(src: str, names: set[str]) -> list[str]:
+    """`class X` plus its `__init__` signature (or dataclass/annotated fields) for each wanted top-level class."""
+    try:
+        tree = ast.parse(src)
+    except SyntaxError:
+        return []
+    out: list[str] = []
+    for node in tree.body:
+        if not (isinstance(node, ast.ClassDef) and node.name in names):
+            continue
+        init = next((n for n in node.body if isinstance(n, ast.FunctionDef) and n.name == "__init__"), None)
+        if init is not None:
+            out.append(f"class {node.name}: def __init__({ast.unparse(init.args)})")
+        else:
+            fields = [ast.unparse(n) for n in node.body if isinstance(n, ast.AnnAssign)]
+            out.append(f"class {node.name}: fields (constructor args): " + "; ".join(fields[:30]))
+    return out
+
+
 def collaborator_signatures(
-    root: Path, target_source: str, source_files: list[str], max_chars: int = 7_000
+    root: Path,
+    target_source: str,
+    source_files: list[str],
+    max_chars: int = 7_000,
+    targets: list[str] | None = None,
 ) -> str:
     """Public constructors/method signatures of the Java classes the targeted code mentions.
 
@@ -821,6 +844,23 @@ def collaborator_signatures(
             break
         chunks.append(block)
         used += len(block)
+    # Python: the constructor of every class named in the targets or the target source, even when the class itself is
+    # the target (a large class body may not fit the target_source budget, and a guessed constructor fails the test).
+    wanted = {
+        m for t in targets or [] for m in re.findall(r"[A-Z][A-Za-z0-9_]+", t.split("::")[-1].split(".")[0])
+    }
+    wanted |= set(re.findall(r"--- SOURCE: \S+ :: ([A-Z]\w*)", target_source))
+    wanted |= set(re.findall(r"\bclass ([A-Z]\w*)", target_source))
+    if wanted:
+        for rel in [f for f in source_files if f.endswith(".py")][:_SCAN_LIMIT]:
+            text = _safe_read(root / rel)
+            if not text or not any(f"class {n}" in text for n in wanted):
+                continue
+            lines = python_constructor_signatures(text, wanted)
+            block = f"\n--- SIGNATURES: {rel} ---\n" + "\n".join(lines) + "\n" if lines else ""
+            if block and used + len(block) <= max_chars:
+                chunks.append(block)
+                used += len(block)
     return "".join(chunks)
 
 
