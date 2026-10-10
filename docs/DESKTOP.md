@@ -44,3 +44,11 @@ GitHub Releases page (`homepage` in `desktop/package.json`; replace the placehol
 - **macOS**: unsigned/not notarized. After download run `xattr -dr com.apple.quarantine "/Applications/Agentic QE.app"`, or right-click > Open once.
 - **Windows**: SmartScreen shows "Windows protected your PC"; choose More info > Run anyway.
 - **Linux**: `chmod +x Agentic-QE-*.AppImage` then run it (needs FUSE 2, or `--appimage-extract-and-run`).
+
+## Model and API key
+
+Set in the app under Configuration, Model & API key. Resolution order per field (`settings.current()`): runtime override
+(entered in the UI) > environment > `.env`. In the desktop app the key, base URL, model and per-stage models are encrypted
+with Electron `safeStorage` into `<userData>/secrets.bin` (0600), passed to the backend as `OPENAI_*` / `HARNESS_STAGE_MODELS`
+at spawn, and the backend restarts when they change. Without OS encryption they stay in memory for the session. In a browser
+the key lives in the running local server only; "Save to .env" (developer) writes it to the `.env` file (0600).
