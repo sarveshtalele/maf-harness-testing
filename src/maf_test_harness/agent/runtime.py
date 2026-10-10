@@ -26,6 +26,7 @@ from agent_framework import (
 )
 from agent_framework.openai import OpenAIChatClient, OpenAIChatCompletionClient
 
+from .. import paths
 from ..envs.platform_compat import raise_if_cancelled
 from ..hooks.agent_hooks_bridge import BACKENDS, hook_bundle, sdk_available
 from ..hooks.maf_bridge import hook_middleware
@@ -57,7 +58,7 @@ def response_cache_dir() -> Path | None:
     """Where validated temperature-0 stage answers are kept; None when HARNESS_RESPONSE_CACHE=0 (see docs/CACHING.md)."""
     if os.getenv("HARNESS_RESPONSE_CACHE", "1").strip().lower() in {"0", "off", "false", "no"}:
         return None
-    default = Path(__file__).resolve().parents[3] / ".maf-harness" / "cache" / "responses"
+    default = paths.cache_dir() / "responses"
     return Path(os.getenv("HARNESS_RESPONSE_CACHE_DIR") or default).expanduser()
 
 

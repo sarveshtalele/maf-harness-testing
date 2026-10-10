@@ -13,13 +13,13 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
-import os
 import signal
 import sys
 import threading
 import uuid
 from pathlib import Path
 
+from . import paths
 from .agent.runtime import MAFHarnessRuntime
 from .envs.platform_compat import RUN_CANCEL
 from .llm.usage import DailyUsageLedger
@@ -37,7 +37,7 @@ from .skills.registry import (
 from .storage import read_json
 from .workflow import ENV_STAGE, EXECUTION_STAGE, Harness
 
-ROOT = Path(__file__).resolve().parents[2]
+ROOT = paths.resource_root()
 
 
 def _say(message: str) -> None:
@@ -87,17 +87,17 @@ def _auto(pending: dict, state: dict, args, retries: dict) -> dict:
 
 async def run(args) -> int:
     validate_gateway_settings()
-    runs = Path(os.getenv("HARNESS_RUNS_DIR") or ROOT / ".maf-harness" / "runs").expanduser()
+    runs = paths.runs_dir()
     runs = (runs if runs.is_absolute() else ROOT / runs).resolve()
     run_dir = Path(args.run_dir).expanduser() if args.run_dir else runs / uuid.uuid4().hex[:12]
     runtime = MAFHarnessRuntime(
         api_key=API_KEY,
         model=args.model or MODEL,
         base_url=BASE_URL or None,
-        skills_root=ROOT / "skills",
+        skills_root=paths.skills_dir(),
         skill_mode=args.skill_mode,
     )
-    host = Harness(run_dir, skills_root=ROOT / "skills", runtime=runtime, execute=not args.no_execution)
+    host = Harness(run_dir, skills_root=paths.skills_dir(), runtime=runtime, execute=not args.no_execution)
     _say(f"run dir: {run_dir}\nmodel: {args.model or MODEL}  skill mode: {args.skill_mode}")
     retries: dict[str, int] = {}
     cancel = (
@@ -256,7 +256,7 @@ def main(argv: list[str] | None = None) -> int:
     runp.add_argument("--no-execution", action="store_true", help="Workflow without the execution stage")
     verify = sub.add_parser("verify-run", help="Check a saved run's MAF harness and Agent Skills evidence")
     verify.add_argument("run_dir", type=Path)
-    verify.add_argument("--skills-dir", type=Path, default=ROOT / "skills")
+    verify.add_argument("--skills-dir", type=Path, default=paths.skills_dir())
     trace = sub.add_parser(
         "trace",
         help="Observability and traceability report for a saved run (skills, tools, cost, requirement chain)",
@@ -264,11 +264,11 @@ def main(argv: list[str] | None = None) -> int:
     trace.add_argument("run_dir", type=Path)
     trace.add_argument("--format", choices=["md", "json"], default="md")
     trace.add_argument("--out", type=Path, help="Write the report to this file instead of stdout")
-    trace.add_argument("--skills-dir", type=Path, default=ROOT / "skills")
+    trace.add_argument("--skills-dir", type=Path, default=paths.skills_dir())
     lint = sub.add_parser(
         "lint-skills", help="Validate bundled skills against the Agent Skills specification"
     )
-    lint.add_argument("skills_dir", nargs="?", type=Path, default=ROOT / "skills")
+    lint.add_argument("skills_dir", nargs="?", type=Path, default=paths.skills_dir())
     lint.add_argument(
         "--strict", action="store_true", help="Also fail when a skill folder has no lock entry (CI)"
     )

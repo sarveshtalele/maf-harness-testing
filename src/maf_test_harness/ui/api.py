@@ -18,6 +18,7 @@ from uuid import uuid4
 
 from filelock import FileLock, Timeout
 
+from .. import paths
 from ..agent import prompt_settings
 from ..agent.runtime import MAFHarnessRuntime
 from ..monitoring.report import build_report
@@ -37,7 +38,7 @@ from .progress import progress
 from .runtime_service import RuntimeService
 from .settings_api import SettingsAPI
 
-ROOT = Path(__file__).resolve().parents[3]
+ROOT = paths.resource_root()
 PUBLIC_STATE = (
     "run_name",
     "repo_url",
@@ -316,11 +317,11 @@ class LocalAPI(EvidenceAPI, SettingsAPI):
         else:
             validate_gateway_settings()
             runtime = MAFHarnessRuntime(
-                api_key=API_KEY, model=MODEL, base_url=BASE_URL, skills_root=ROOT / "skills"
+                api_key=API_KEY, model=MODEL, base_url=BASE_URL, skills_root=paths.skills_dir()
             )
         self.host = Harness(
             self.run_path(key),
-            skills_root=ROOT / "skills",
+            skills_root=paths.skills_dir(),
             runtime=runtime,
             requirements_mode=self.requirements_mode,
         )
@@ -670,7 +671,7 @@ def make_server(api: LocalAPI, token: str, port: int = 8765):
                         elif parts[2:] == ["audit"]:
                             self.reply(200, api.audit(key))
                         elif parts[2:] == ["observability"]:
-                            self.reply(200, public(build_report(api.run_path(key), ROOT / "skills")))
+                            self.reply(200, public(build_report(api.run_path(key), paths.skills_dir())))
                         elif parts[2:] == ["evidence"]:
                             self.reply(200, api.evidence(key))
                         elif len(parts) >= 4 and parts[2] == "evidence":
@@ -767,7 +768,7 @@ def main():
         parser.error(
             "Set HARNESS_API_TOKEN to a random value of at least 32 characters (the launcher does this)."
         )
-    runs = Path(os.getenv("HARNESS_RUNS_DIR") or ROOT / ".maf-harness" / "runs").expanduser()
+    runs = paths.runs_dir()
     runs = (runs if runs.is_absolute() else ROOT / runs).resolve()
     runs.mkdir(parents=True, exist_ok=True, mode=0o700)
     # ponytail: one local API owns this user's run store; a shared service needs explicit job ownership.

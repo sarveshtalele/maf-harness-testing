@@ -6,14 +6,13 @@ import json
 import os
 from pathlib import Path
 
+from .. import paths
 from .personas import PERSONAS
-
-ROOT = Path(__file__).resolve().parents[3]
 
 
 def defaults() -> dict:
-    example = ROOT / "prompts/repository-review.md"
-    persona_file = ROOT / "prompts/personas.json"
+    example = paths.prompts_dir() / "repository-review.md"
+    persona_file = paths.prompts_dir() / "personas.json"
     personas = (
         json.loads(persona_file.read_text())
         if persona_file.is_file()

@@ -5,7 +5,6 @@ from __future__ import annotations
 import json
 import os
 import re
-from pathlib import Path
 
 from ..agent import prompt_settings
 from ..agent.personas import PERSONAS
@@ -13,8 +12,6 @@ from ..llm.usage import DailyUsageLedger
 from ..settings import API_KEY, BASE_URL, CASES_PER_REQUIREMENT, MODEL
 from ..workflow import STAGES
 from .presentation import public
-
-ROOT = Path(__file__).resolve().parents[3]
 
 
 class SettingsAPI:

@@ -9,6 +9,7 @@ from pathlib import Path
 
 import yaml
 
+from .. import paths
 from ..monitoring.report import build_report, render_markdown
 from ..skills import trust as skill_trust
 from ..skills.registry import FRONTMATTER_RE, discover_skills, lint_skill, load_lock, verify_lock
@@ -17,20 +18,18 @@ from .artifact_presenter import json_to_markdown
 from .evidence import MIMES, file_path, inventory
 from .presentation import public
 
-ROOT = Path(__file__).resolve().parents[3]
-
 
 class EvidenceAPI:
     def import_skill(self, body: dict) -> dict:
         return skill_trust.import_skill(
-            ROOT / "skills", zip_base64=body.get("zip_base64"), folder=body.get("path")
+            paths.skills_dir(), zip_base64=body.get("zip_base64"), folder=body.get("path")
         )
 
     def approve_skill(self, name: str) -> dict:
-        return {"name": name, **skill_trust.approve(ROOT / "skills", name)}
+        return {"name": name, **skill_trust.approve(paths.skills_dir(), name)}
 
     def skills(self) -> dict:
-        root = ROOT / "skills"
+        root = paths.skills_dir()
         lock = load_lock(root)
         problems = verify_lock(root)
         plugins = discover_skills(
@@ -180,7 +179,7 @@ class EvidenceAPI:
                 raise FileNotFoundError("Step report not found.")
             return public(reports[name]).encode(), "text/markdown", f"{name}.md"
         if kind == "observability":
-            data = public(build_report(self.run_path(key), ROOT / "skills"))
+            data = public(build_report(self.run_path(key), paths.skills_dir()))
             md = render_markdown(data)
         else:
             artifacts = run["state"].get("artifacts", {})

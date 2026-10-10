@@ -22,12 +22,13 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+from .. import paths
 from ..skills.config import SKILL_NAMES
 from ..tools.agent_tools import CENTRAL_TOOL_NAMES, STAGE_TOOLS
 from ..tools.typed import TYPED_TOOL_NAMES
 from .trace import read_trace, tool_category
 
-DEFAULT_SKILLS_ROOT = Path(__file__).resolve().parents[3] / "skills"
+DEFAULT_SKILLS_ROOT = paths.skills_dir()
 _HOST_LANES = {
     "requested": ("human", "Approval requested"),
     "human_response": ("human", "Human response"),
