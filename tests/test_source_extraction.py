@@ -32,9 +32,19 @@ def test_brace_body_end_ignores_braces_in_literals_and_stops_at_method_end():
     assert end > 150
 
 
-def test_abstract_method_falls_back():
+def test_bodiless_declarations_end_on_their_line_and_unknown_shapes_fall_back():
     lines = ["    abstract void run();", *[f"x{i}" for i in range(100)]]
-    assert _brace_body_end(lines, 0) == 70
+    assert _brace_body_end(lines, 0) == 1  # abstract method: the declaration is the whole body
+    arrow = [
+        "const mcpUrl = () => (typeof window !== 'undefined' ? `${o}/mcp` : '/mcp');",
+        "type Stats = {",
+        "};",
+    ]
+    assert _brace_body_end(arrow, 0) == 1
+    assert (
+        _brace_body_end(["function f({ a, b }: P) {", "  return a;", "}", "x"], 0) == 3
+    )  # destructured params
+    assert _brace_body_end([f"x{i}" for i in range(100)], 0) == 70  # no brace or ';' in the first lines
 
 
 def test_definition_regex_variants():
@@ -98,3 +108,21 @@ def test_reviewer_prompt_has_full_target_method_for_large_file(tmp_path):
     asyncio.run(review_generated_tests(Host(), state, {"files": []}, cases, 1))
     assert "MARK_END" in prompts[0]["target_source"]
     assert "authoritative complete implementation" in prompts[0]["assignment"]
+
+
+def test_bare_symbol_targets_resolve_to_their_defining_file(tmp_path):
+    from maf_test_harness.repo.analyzer import extract_target_sources
+
+    (tmp_path / "app").mkdir()
+    (tmp_path / "app/page.tsx").write_text(
+        "export default function Page() { return null }\n\nfunction ConnectorCards({ a }: P) {\n  return a;\n}\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "graph.py").write_text(
+        "class DependencyGraph:\n    def get_reverse_deps(self):\n        return []\n", encoding="utf-8"
+    )
+    files = ["app/page.tsx", "graph.py"]
+    tsx = extract_target_sources(tmp_path, ["ConnectorCards"], files)
+    py = extract_target_sources(tmp_path, ["DependencyGraph.get_reverse_deps"], files)
+    assert "app/page.tsx :: ConnectorCards" in tsx and "return a;" in tsx
+    assert "graph.py :: DependencyGraph" in py and "get_reverse_deps" in py

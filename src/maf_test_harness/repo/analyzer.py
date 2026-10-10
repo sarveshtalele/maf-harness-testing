@@ -618,23 +618,32 @@ MAX_BODY_LINES = 400
 def _brace_body_end(lines: list[str], start: int) -> int:
     """Index after the line holding the brace that closes the definition at ``lines[start]``.
 
-    Braces inside strings, text blocks, char literals and comments are ignored. Without a ``{`` in the first few
-    lines (abstract/interface methods) it falls back to a 70-line slice; bodies are capped at MAX_BODY_LINES.
+    Braces inside strings, text blocks, char literals, comments and parameter lists are ignored. A declaration that ends
+    with ``;`` before any body ends on that line; without a ``{`` or ``;`` in the first few lines it falls back to a
+    70-line slice. Bodies are capped at MAX_BODY_LINES.
     """
     window = lines[start : start + MAX_BODY_LINES]
     # Blank literals/comments but keep newlines so line numbers survive.
     text = _BLANK.sub(lambda m: "\n" * m.group().count("\n"), "\n".join(window))
-    depth, opened = 0, False
+    depth, opened, parens = 0, False, 0
     for offset, line in enumerate(text.split("\n")):
         for ch in line:
-            if ch == "{":
+            if ch in "([":
+                parens += 1
+            elif ch in ")]":
+                parens = max(parens - 1, 0)
+            elif parens and not opened:
+                continue  # braces in a parameter list (destructuring, defaults) are not the body
+            elif ch == "{":
                 depth, opened = depth + 1, True
             elif ch == "}" and opened:
                 depth -= 1
                 if depth == 0:
                     return start + offset + 1
             elif ch == ";" and not opened:
-                return min(len(lines), start + 70)
+                return (
+                    start + offset + 1
+                )  # a declaration without a body (`const f = () => x;`, abstract method)
         if not opened and offset >= 4:
             return min(len(lines), start + 70)
     return start + len(window)
@@ -692,6 +701,33 @@ def _target_chunks(rel: str, src: str, wanted: set[str]) -> list[tuple[str, int,
     return found
 
 
+_SCAN_SUFFIXES = {".py", ".ts", ".tsx", ".js", ".jsx", ".mjs", ".java", ".kt", ".cs", ".go", ".rb", ".php"}
+_SCAN_LIMIT = 800  # files read per call at most (bounded for large repositories)
+
+
+def _defining_files(root: Path, source_files: list[str], target: str, cache: dict[str, str]) -> list[str]:
+    """Files that declare the target's leading symbol (class/function/component), at most 2."""
+    names = re.findall(r"[A-Za-z_]\w*", target.split("::")[-1])
+    if not names:
+        return []
+    name = names[0]  # "Class.method" -> the class holds the method; "Component" -> itself
+    declaration = re.compile(
+        rf"^\s*(?:export\s+(?:default\s+)?)?(?:(?:public|private|protected|internal|static|final|abstract|sealed|"
+        rf"async|override|data|open)\s+)*(?:class|interface|struct|record|enum|object|def|function\*?|fun|func|"
+        rf"type)\s+{re.escape(name)}\b|^\s*(?:export\s+)?(?:const|let|var)\s+{re.escape(name)}\s*[:=]",
+        re.M,
+    )
+    hits = []
+    for rel in [f for f in source_files if Path(f).suffix in _SCAN_SUFFIXES][:_SCAN_LIMIT]:
+        if rel not in cache:
+            cache[rel] = _safe_read(root / rel) or ""
+        if declaration.search(cache[rel]):
+            hits.append(rel)
+            if len(hits) == 2:
+                break
+    return hits
+
+
 def extract_target_sources(
     root: Path, targets: list[str], source_files: list[str], max_chars: int = 24_000
 ) -> str:
@@ -704,11 +740,16 @@ def extract_target_sources(
     chunks: list[str] = []
     used = 0
     seen: set[tuple[str, str]] = set()
+    cache: dict[str, str] = {}
     for text in targets:
         rels = sorted((f for f in source_files if f in text or Path(f).name in text), key=len, reverse=True)[
             :2
         ]
         wanted = set(re.findall(r"[A-Za-z_]\w*", text))
+        if (
+            not rels
+        ):  # targets are usually bare symbols ("Class.method", "Component"): find where they are defined
+            rels = _defining_files(root, source_files, text, cache)
         for rel in rels:
             src = _safe_read(root / rel)
             if not src:
