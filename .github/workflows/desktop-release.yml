@@ -75,7 +75,7 @@ jobs:
             echo "present=false" >> "$GITHUB_OUTPUT"
             echo "::notice::desktop/ not present yet - skipping"
           fi
-      - uses: actions/download-artifact@v5
+      - uses: actions/download-artifact@v8
         if: steps.guard.outputs.present == 'true'
         with:
           pattern: desktop-*
