@@ -26,7 +26,8 @@ from ..repo.analyzer import validate_github_url
 from ..repo.git_transport import read_operation
 from ..repo.preview import preview_repository
 from ..run_options import parse_run_options
-from ..settings import API_KEY, BASE_URL, MODEL, validate_gateway_settings
+from ..settings import current as current_settings
+from ..settings import validate_gateway_settings
 from ..storage import read_json
 from ..workflow import Harness
 from ..workflow_support import atomic_json
@@ -316,8 +317,12 @@ class LocalAPI(EvidenceAPI, SettingsAPI):
             runtime = self.runtime_factory()
         else:
             validate_gateway_settings()
+            cur = current_settings()
             runtime = MAFHarnessRuntime(
-                api_key=API_KEY, model=MODEL, base_url=BASE_URL, skills_root=paths.skills_dir()
+                api_key=cur["api_key"],
+                model=cur["model"],
+                base_url=cur["base_url"] or None,
+                skills_root=paths.skills_dir(),
             )
         self.host = Harness(
             self.run_path(key),
@@ -654,6 +659,8 @@ def make_server(api: LocalAPI, token: str, port: int = 8765):
                 if self.command == "GET":
                     if parts == ["config"]:
                         self.reply(200, api.config())
+                    elif parts == ["settings", "model"]:
+                        self.reply(200, api.model_settings())
                     elif parts == ["prompts"]:
                         self.reply(200, api.prompts())
                     elif parts == ["skills"]:
@@ -703,6 +710,10 @@ def make_server(api: LocalAPI, token: str, port: int = 8765):
                         raise ValueError("JSON object required.")
                     if parts == ["repo-preview"]:
                         self.reply(200, public(preview_repository(str(body.get("repo_url", "")))))
+                    elif parts == ["settings", "model"]:
+                        self.reply(200, api.save_model_settings(body))
+                    elif parts == ["settings", "model", "test"]:
+                        self.reply(200, api.test_model_settings())
                     elif parts == ["prompts"]:
                         self.reply(200, api.save_prompts(body))
                     elif parts == ["skills", "import"]:

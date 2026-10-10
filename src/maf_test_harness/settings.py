@@ -10,11 +10,14 @@ from __future__ import annotations
 import json
 import os
 import re
+import threading
 from pathlib import Path
+from urllib.parse import urlsplit
 
 from . import paths
 
 _DOTENV_KEY = re.compile(r"(?:OPENAI_[A-Z_]+|LLM_MODEL|HARNESS_[A-Z_]+)")
+_from_dotenv: dict[str, str] = {}  # variables load_dotenv put into the environment (to report their source)
 
 
 def load_dotenv(path: Path) -> None:
@@ -41,8 +44,8 @@ def load_dotenv(path: Path) -> None:
             value = value[1:end] if end > 0 else value[1:]
         else:
             value = re.split(r"\s+#", value, maxsplit=1)[0].strip()
-        if value:
-            os.environ.setdefault(key, value)
+        if value and key not in os.environ:
+            os.environ[key] = _from_dotenv[key] = value
 
 
 for _candidate in (Path.cwd() / ".env", paths.env_file()):
@@ -101,22 +104,166 @@ GENERATION_MAX_ATTEMPTS = max(1, int(os.getenv("HARNESS_GENERATION_MAX_ATTEMPTS"
 # Default 0.5 allows up to half the batches to fail; clamp to [0, 1].
 MAX_FAILED_BATCH_RATIO = max(0.0, min(1.0, float(os.getenv("HARNESS_MAX_FAILED_BATCH_RATIO", "0.5"))))
 
+
 # Per-stage model overrides: JSON object {stage_name: model_id}. Unset or invalid JSON defaults to MODEL.
 # Example: {"test_generation": "claude-opus-4", "test_design": "claude-sonnet-4"}
-STAGE_MODELS: dict[str, str] = {}
-if _stage_models_env := os.getenv("HARNESS_STAGE_MODELS", "").strip():
+def parse_stage_models(text: str) -> dict[str, str]:
+    """Parse a HARNESS_STAGE_MODELS JSON object into {stage: model}; raises ValueError when malformed."""
     try:
-        _parsed = json.loads(_stage_models_env)
+        parsed = json.loads(text)
     except ValueError as exc:
         raise ValueError(f"HARNESS_STAGE_MODELS must be a JSON object: {exc}") from exc
-    if not isinstance(_parsed, dict):
+    if not isinstance(parsed, dict):
         raise ValueError("HARNESS_STAGE_MODELS must be a JSON object {stage: model}.")
-    STAGE_MODELS = {str(k): str(v).strip() for k, v in _parsed.items() if str(v).strip()}
+    return {str(k): str(v).strip() for k, v in parsed.items() if str(v).strip()}
+
+
+STAGE_MODELS: dict[str, str] = parse_stage_models(os.getenv("HARNESS_STAGE_MODELS", "").strip() or "{}")
+
+
+# ---- runtime resolver ---------------------------------------------------------------------------------------------
+# Precedence per field: in-process runtime override (set via the API/desktop) > environment > .env file > default.
+# The module constants above (API_KEY, BASE_URL, MODEL, STAGE_MODELS) are import-time snapshots kept only for
+# backward-compatible reads; build clients and hosts from current().
+_runtime: dict = {}
+_runtime_lock = threading.Lock()
+_ENV_NAMES = {
+    "api_key": ("OPENAI_API_KEY",),
+    "base_url": ("OPENAI_BASE_URL",),
+    "model": ("OPENAI_MODEL", "LLM_MODEL"),
+    "stage_models": ("HARNESS_STAGE_MODELS",),
+}
+
+
+def _env_source(field: str) -> tuple[str, str]:
+    for name in _ENV_NAMES[field]:
+        value = os.environ.get(name, "").strip()
+        if value:
+            return value, (".env" if _from_dotenv.get(name) == os.environ.get(name) else "environment")
+    return "", "default"
+
+
+def current() -> dict:
+    """Resolve {api_key, base_url, model, stage_models, source} now. ``source`` is where the API key comes from."""
+    with _runtime_lock:
+        rt = dict(_runtime)
+    out: dict = {}
+    sources: dict[str, str] = {}
+    for field in ("api_key", "base_url", "model", "stage_models"):
+        if field in rt:
+            out[field], sources[field] = rt[field], "runtime"
+        else:
+            out[field], sources[field] = _env_source(field)
+    out["stage_models"] = (
+        parse_stage_models(out["stage_models"])
+        if isinstance(out["stage_models"], str) and out["stage_models"]
+        else (out["stage_models"] or {})
+    )
+    out["model"] = out["model"] or "deepseek-v4-flash-global"
+    out["source"] = sources["api_key"] if out["api_key"] else "none"
+    out["sources"] = sources
+    return out
+
+
+def validate_base_url(url: str) -> str:
+    """https only; plain http solely for localhost / 127.0.0.1. Empty means the provider default."""
+    url = url.strip()
+    if not url:
+        return ""
+    parts = urlsplit(url)
+    local = parts.hostname in {"localhost", "127.0.0.1"}
+    if parts.scheme not in {"https", "http"} or not parts.hostname or (parts.scheme == "http" and not local):
+        raise ValueError("Base URL must use https (http is allowed only for localhost).")
+    if parts.username or parts.password:
+        raise ValueError("Base URL must not contain credentials.")
+    return url
+
+
+def set_runtime(
+    *, api_key=None, base_url=None, model=None, stage_models=None, save_to_env: bool = False
+) -> None:
+    """Validate and apply in-process overrides (None leaves a field alone). ``save_to_env`` also writes the .env file."""
+    update: dict = {}
+    if api_key is not None:
+        if (
+            not isinstance(api_key, str)
+            or not api_key.strip()
+            or len(api_key) > 500
+            or re.search(r"\s", api_key.strip())
+        ):
+            raise ValueError("API key must be a single non-empty string.")
+        update["api_key"] = api_key.strip()
+    if base_url is not None:
+        if not isinstance(base_url, str):
+            raise ValueError("Base URL must be a string.")
+        update["base_url"] = validate_base_url(base_url)
+    if model is not None:
+        if not isinstance(model, str) or not model.strip() or len(model.strip()) > 100:
+            raise ValueError("Model must be 1-100 characters.")
+        update["model"] = model.strip()
+    if stage_models is not None:
+        if isinstance(stage_models, str):
+            stage_models = parse_stage_models(stage_models.strip() or "{}")
+        if not isinstance(stage_models, dict) or len(stage_models) > 20:
+            raise ValueError("stage_models must be an object {stage: model}.")
+        clean = {str(k): str(v).strip() for k, v in stage_models.items() if str(v).strip()}
+        if any(len(v) > 100 for v in clean.values()):
+            raise ValueError("Stage model names are limited to 100 characters.")
+        update["stage_models"] = clean
+    with _runtime_lock:
+        _runtime.update(update)
+    if save_to_env:
+        _write_env(update)
+
+
+def clear_runtime() -> None:
+    with _runtime_lock:
+        _runtime.clear()
+
+
+def _write_env(update: dict) -> None:
+    names = {"api_key": "OPENAI_API_KEY", "base_url": "OPENAI_BASE_URL", "model": "OPENAI_MODEL"}
+    values = {names[k]: v for k, v in update.items() if k in names}
+    if "stage_models" in update:
+        values["HARNESS_STAGE_MODELS"] = json.dumps(update["stage_models"]) if update["stage_models"] else ""
+    path = paths.env_file()
+    try:
+        lines = path.read_text(encoding="utf-8").splitlines()
+    except OSError:
+        lines = []
+    seen: set[str] = set()
+    out = []
+    for line in lines:
+        key = line.partition("=")[0].strip().removeprefix("export ").strip()
+        if key in values:
+            if key not in seen and values[key]:
+                out.append(f"{key}={_quote(values[key])}")
+            seen.add(key)
+        else:
+            out.append(line)
+    out += [f"{k}={_quote(v)}" for k, v in values.items() if k not in seen and v]
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(path.name + ".tmp")
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w", encoding="utf-8") as stream:
+        stream.write("\n".join(out) + "\n")
+    os.replace(tmp, path)
+    try:
+        path.chmod(0o600)
+    except OSError:  # Windows: ACLs, not modes
+        pass
+
+
+def _quote(value: str) -> str:
+    if "'" in value or "\n" in value or "\r" in value:
+        raise ValueError("Values saved to .env cannot contain quotes or newlines.")
+    return f"'{value}'" if re.search(r"""[\s#"]""", value) else value
 
 
 def model_for(stage: str) -> str:
     """The model for a stage: its HARNESS_STAGE_MODELS entry, else the default MODEL."""
-    return STAGE_MODELS.get(stage, MODEL)
+    cur = current()
+    return cur["stage_models"].get(stage) or cur["model"]
 
 
 # Wall-clock limit for each host-run setup/test command.
@@ -125,9 +272,12 @@ MODEL_TIMEOUT_SECONDS = max(1, float(os.getenv("HARNESS_MODEL_TIMEOUT_SECONDS", 
 
 
 def validate_gateway_settings() -> None:
-    if not API_KEY:
-        raise ValueError("Set OPENAI_API_KEY before starting the workflow.")
-    if not MODEL:
+    cur = current()
+    if not cur["api_key"]:
+        raise ValueError(
+            "Set an API key (Configuration > Model & API key, or OPENAI_API_KEY) before starting the workflow."
+        )
+    if not cur["model"]:
         raise ValueError("Set OPENAI_MODEL before starting the workflow.")
     if SKILL_MODE not in {"progressive", "preloaded"}:
         raise ValueError("HARNESS_SKILL_MODE must be 'progressive' or 'preloaded'.")

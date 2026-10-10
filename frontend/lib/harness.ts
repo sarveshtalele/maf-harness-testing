@@ -2,7 +2,7 @@ export type Row = Record<string, unknown>;
 export type Pending = { id: string; stage: string; kind: string; title: string; details: Row; error?: string };
 export type Run = { id: string; progress?: Row; status: string; state: Row; pending: Pending | null; actions: string[]; busy: boolean; service_busy: boolean; pending_consumed?: boolean; operation?: Row; run_directory?: string; operation_error?: string; error?: string; has_zip: boolean; errors?: { items: Row[]; counts: Record<string, number> } };
 export type RunSummary = { id: string; run_name?: string; repo_url?: string; status: string; stage?: string; verdict?: string; busy?: boolean; pending?: boolean; updated: number };
-export type Config = { case_budget_default?: number; model: string; base_url: string; key_configured: boolean; daily: { used: number; remaining: number; limit: number }; stages: string[]; personas: Record<string, { name: string; role: string; goal: string }> };
+export type Config = { case_budget_default?: number; model: string; base_url: string; key_configured: boolean; key_source?: string; daily: { used: number; remaining: number; limit: number }; stages: string[]; personas: Record<string, { name: string; role: string; goal: string }> };
 export const record = (value: unknown): Row => value && typeof value === 'object' && !Array.isArray(value) ? value as Row : {};
 export const rows = (value: unknown): Row[] => Array.isArray(value) ? value.map(record) : [];
 export const label = (value: unknown) => (value === 'environment_setup' ? 'Test execution · Setup' : String(value ?? '—')).replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());

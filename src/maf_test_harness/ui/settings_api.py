@@ -6,15 +6,31 @@ import json
 import os
 import re
 
+from .. import settings
 from ..agent import prompt_settings
 from ..agent.personas import PERSONAS
 from ..llm.usage import DailyUsageLedger
-from ..settings import API_KEY, BASE_URL, CASES_PER_REQUIREMENT, MODEL
+from ..settings import CASES_PER_REQUIREMENT
 from ..workflow import STAGES
 from .presentation import public
 
 
+def _probe(cur: dict) -> None:
+    """Tiny connectivity check: list models, else a 1-token completion (20 s cap, no retries)."""
+    from openai import OpenAI
+
+    client = OpenAI(api_key=cur["api_key"], base_url=cur["base_url"] or None, timeout=20, max_retries=0)
+    try:
+        next(iter(client.models.list()), None)
+    except Exception:  # some gateways do not expose /models
+        client.chat.completions.create(
+            model=cur["model"], messages=[{"role": "user", "content": "ping"}], max_tokens=1
+        )
+
+
 class SettingsAPI:
+    model_probe = None  # tests inject a fake
+
     def prompts(self, key: str | None = None, record_id: str | None = None) -> dict:
         with self.lock:
             folder = self.run_path(key) if key else self.runs.parent
@@ -70,14 +86,58 @@ class SettingsAPI:
                     stream.write(json.dumps(event) + "\n")
             return public({"settings": settings})
 
+    @staticmethod
+    def _model_view() -> dict:
+        cur = settings.current()
+        key = cur["api_key"]
+        return {
+            "base_url": cur["base_url"],
+            "model": cur["model"],
+            "stage_models": cur["stage_models"],
+            "key_configured": bool(key),
+            "key_hint": key[-4:] if len(key) >= 8 else ("" if not key else "****"),
+            "source": cur["source"],
+        }
+
+    def model_settings(self) -> dict:
+        return self._model_view()
+
+    def save_model_settings(self, body: dict) -> dict:
+        with self.lock:
+            if self.busy():
+                raise RuntimeError("Wait for the current operation to finish before changing model settings.")
+            unknown = set(body) - {"base_url", "model", "stage_models", "api_key", "save_to_env"}
+            if unknown:
+                raise ValueError(f"Unknown settings: {', '.join(sorted(unknown))}")
+            settings.set_runtime(
+                api_key=body.get("api_key") or None,  # empty string keeps the current key
+                base_url=body.get("base_url"),
+                model=body.get("model"),
+                stage_models=body.get("stage_models"),
+                save_to_env=body.get("save_to_env") is True,
+            )
+            return self._model_view()
+
+    def test_model_settings(self) -> dict:
+        cur = settings.current()
+        if not cur["api_key"]:
+            return {"ok": False, "message": "No API key is configured."}
+        try:
+            (self.model_probe or _probe)(cur)
+        except Exception as exc:  # message is redacted: never echo the key
+            return {"ok": False, "message": public(f"{type(exc).__name__}: {str(exc)[:300]}")}
+        return {"ok": True, "message": "Connection works."}
+
     def config(self):
+        cur = settings.current()
         return public(
             {
-                "model": MODEL,
+                "model": cur["model"],
                 "case_budget_default": CASES_PER_REQUIREMENT,
                 "build_id": os.getenv("HARNESS_BUILD_ID", ""),
-                "base_url": BASE_URL,
-                "key_configured": bool(API_KEY),
+                "base_url": cur["base_url"],
+                "key_configured": bool(cur["api_key"]),
+                "key_source": cur["source"],
                 "run_directory": str(self.runs),
                 "service_log_directory": os.getenv("HARNESS_LOG_DIR") or str(self.runs.parent / "logs"),
                 "daily": DailyUsageLedger().snapshot(),

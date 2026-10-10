@@ -99,3 +99,4 @@ dialog::backdrop { background: #00000066; backdrop-filter: blur(3px); }
 
 .radio-group{border:0;padding:0;margin:0 0 12px;display:flex;flex-direction:column;gap:8px}
 .radio-group legend{font-weight:600;padding:0 0 4px}
+.link{border:0;background:transparent;padding:0;color:var(--primary);text-decoration:underline;display:inline}

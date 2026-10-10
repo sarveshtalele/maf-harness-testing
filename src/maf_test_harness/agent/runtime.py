@@ -37,8 +37,8 @@ from ..settings import (
     MAX_OUTPUT_TOKENS,
     MODEL_TIMEOUT_SECONDS,
     SKILL_MODE,
-    STAGE_MODELS,
 )
+from ..settings import current as current_settings
 from ..skills.config import purpose_of
 from ..skills.registry import discover_skills, require_valid
 from ..skills.scripts import HarnessScriptRunner, script_approval_rule
@@ -496,7 +496,9 @@ class MAFHarnessRuntime:
         self._guards[stage] = BudgetGuard(state["budget"], persist, self.ledger, emit=self._emit)
         self._tracers[stage] = ToolTraceMiddleware(emit=self._emit, harness_tools=HARNESS_TOOL_NAMES)
         agent = create_harness_agent(
-            client=self._new_client(max_function_calls, model=STAGE_MODELS.get(stage) or self.model),
+            client=self._new_client(
+                max_function_calls, model=current_settings()["stage_models"].get(stage) or self.model
+            ),
             name=stage,
             disable_web_search=True,
             disable_file_memory=True,
@@ -557,7 +559,7 @@ class MAFHarnessRuntime:
 
     def _create_agent(self, stage: str, skills: list[str], persona: str, state: dict, persist):
         skill_name = skills[0]
-        stage_model = STAGE_MODELS.get(stage) or self.model
+        stage_model = current_settings()["stage_models"].get(stage) or self.model
         client = self._new_client(max_function_calls=14, model=stage_model)
         self._record_provenance(stage, skills, state, persist, model=stage_model)
         self._guards[stage] = BudgetGuard(state["budget"], persist, self.ledger, emit=self._emit)
@@ -894,7 +896,7 @@ class MAFHarnessRuntime:
         )
         material = json.dumps(
             [
-                STAGE_MODELS.get(stage) or self.model,
+                current_settings()["stage_models"].get(stage) or self.model,
                 stage,
                 skills,
                 persona,
