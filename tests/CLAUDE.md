@@ -11,6 +11,7 @@ Layers: unit, component (real MAF with a scripted transport) and workflow end-to
 - Name by area: `test_<module>.py`; one behaviour per test; prefer `tmp_path`; no network, no real model, no sleeping on real time.
 - Monkeypatch at the module that uses the name (e.g. `wf.clone_repository = clone_fixture`).
 - Cross-OS: build paths with `pathlib`, no POSIX-only assumptions, skip with a reason when an OS tool is absent.
+- `test_generation_benchmark.py` covers the offline generation scorer; its corpus lives in `benchmarks/generation/` (not here), so do not add reference suites under `tests/`.
 - `test_architecture_map.py` fails when `docs/ARCHITECTURE_MAP.md` is stale; `test_module_layout.py` imports every module.
 
 ## Commands

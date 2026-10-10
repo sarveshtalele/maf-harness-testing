@@ -1,0 +1,32 @@
+{
+  "schema_version": 1,
+  "scope": "offline Python source-backed generation evaluation",
+  "tasks": [
+    {
+      "id": "transcript",
+      "source": "transcript/target.py",
+      "prompt": "transcript/PROMPT.md",
+      "mutations": [
+        "root_usage",
+        "invented_total"
+      ]
+    },
+    {
+      "id": "sqlite",
+      "source": "sqlite/target.py",
+      "prompt": "sqlite/PROMPT.md",
+      "mutations": [
+        "duplicate_ignored",
+        "wrong_summary"
+      ]
+    },
+    {
+      "id": "csv",
+      "source": "csv/target.py",
+      "prompt": "csv/PROMPT.md",
+      "mutations": [
+        "missing_rows"
+      ]
+    }
+  ]
+}
