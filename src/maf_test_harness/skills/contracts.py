@@ -99,6 +99,18 @@ def resolve_id(candidate: Any, known: Any) -> str | None:
     same_label = [k for k in ids if _HEX_SUFFIX.sub("", k.upper()) == label]
     if len(same_label) == 1:
         return same_label[0]
+    # A model that expands (or shortens) the truncated descriptive slug keeps the 8-hex suffix intact.
+    tail = _HEX_SUFFIX.search(text.upper())
+    if tail:
+        head = label.rstrip("-")
+        same_tail = [
+            k
+            for k in ids
+            if k.upper().endswith(tail.group())
+            and (lambda kl: kl.startswith(head) or head.startswith(kl))(_HEX_SUFFIX.sub("", k.upper()))
+        ]
+        if len(same_tail) == 1:
+            return same_tail[0]
     close = difflib.get_close_matches(text, ids, n=2, cutoff=0.92)
     return close[0] if len(close) == 1 else None
 
@@ -870,7 +882,14 @@ def validate_generated_files(payload: dict[str, Any], case_ids: set[str]) -> dic
                 # `with`/`for`) only fail in compile(), i.e. at test collection time. Catch them now.
                 compile(content, path, "exec", dont_inherit=True)
             except (SyntaxError, ValueError, RecursionError) as exc:
-                raise ValueError(f"generated Python source is invalid in {path}: {exc}") from exc
+                note = ""
+                if "was never closed" in str(exc):
+                    lines = content.rstrip().splitlines()
+                    note = (
+                        f" - {path} was truncated at line {len(lines)} (last line: {lines[-1].strip()[:80]!r}); "
+                        "regenerate this file completely and keep it short"
+                    )
+                raise ValueError(f"generated Python source is invalid in {path}: {exc}{note}") from exc
             imports = [node for node in ast.walk(tree) if isinstance(node, (ast.Import, ast.ImportFrom))]
             if sum(len(node.names) for node in imports) > 20:
                 raise ValueError(f"generated file contains excessive imports: {path}")
@@ -1107,6 +1126,7 @@ def check_python_imports(
     path: str = "",
     read_source: Callable[[str], str | None] | None = None,
     installed: frozenset[str] | None = None,
+    preferred: list[str] | None = None,
 ) -> None:
     """Reject imports that cannot resolve: not stdlib, not a repository module, not declared or installed.
 
@@ -1168,17 +1188,25 @@ def check_python_imports(
                                 break
                     continue
                 norm = re.sub(r"[-\s]", "_", dotted)
-                real = sorted(
+                matches = sorted(
                     f
                     for f in py_files
                     if re.sub(r"[-\s]", "_", PurePosixPath(f).with_suffix("").as_posix()).endswith(norm)
                     and not all(part.isidentifier() for part in PurePosixPath(f).with_suffix("").parts)
-                )[:1]
+                )
+                # The case's own linked source files decide among several look-alikes (many skills/*/scripts/main.py).
+                real = [f for f in matches if f in (preferred or ())] or matches
                 if real:
                     bad = next(c for c in PurePosixPath(real[0]).with_suffix("").parts if not c.isidentifier())
+                    real = real[:3]
+                    target = (
+                        real[0]
+                        if len(real) == 1
+                        else "one of: " + ", ".join(real) + " (use the one for this case's target)"
+                    )
                     raise ValueError(
                         f"import '{name}' in {path or 'generated test'} cannot work: the apparent repository target is "
-                        f"{real[0]}, whose path component '{bad}' is not a valid Python identifier. Do not translate "
+                        f"{target}, whose path component '{bad}' is not a valid Python identifier. Do not translate "
                         "'-' to '_'. Use the repository's public loader/executor API or an existing test fixture; load "
                         "the file by path only if the application itself does so." + _recipe_hint(py_files, read_source, real)
                     )
@@ -1194,7 +1222,10 @@ def check_python_imports(
             leaf = name.split(".")[-1]
             if path_aware and leaf in stems:
                 continue
-            hints = sorted(m for m in modules_in_repo if m.endswith("/" + leaf) or m == leaf)[:3]
+            hints = sorted(
+                (m for m in modules_in_repo if m.endswith("/" + leaf) or m == leaf),
+                key=lambda m: (f"{m}.py" not in (preferred or ()), m),
+            )[:3]
             if hints and any(not all(part.isidentifier() for part in h.split("/")) for h in hints):
                 shown = ", ".join(f"{h}.py" for h in hints)
                 raise ValueError(

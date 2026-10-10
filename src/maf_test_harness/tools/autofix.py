@@ -313,6 +313,34 @@ def fix_java(ctx: RepoContext, path: str, content: str) -> tuple[str, list[Fix]]
     return content, fixes
 
 
+def drop_extra_tests(item: dict[str, Any]) -> list[Fix]:
+    """One positive case -> one test: drop top-level `test_*` functions after the first when nothing else uses them."""
+    ids = item.get("case_ids") or []
+    if len(ids) != 1 or not str(ids[0]).startswith("TC-POS"):
+        return []
+    try:
+        tree = ast.parse(item["content"])
+    except SyntaxError:
+        return []
+    tests = [
+        n
+        for n in tree.body
+        if isinstance(n, ast.FunctionDef | ast.AsyncFunctionDef) and n.name.startswith("test_")
+    ]
+    lines = item["content"].splitlines()
+    fixes: list[Fix] = []
+    for node in tests[1:][::-1]:
+        start = min([node.lineno, *(d.lineno for d in node.decorator_list)]) - 1
+        rest = "\n".join(lines[:start] + lines[node.end_lineno :])
+        if re.search(rf"\b{re.escape(node.name)}\b", rest):
+            continue
+        lines[start : node.end_lineno] = []
+        fixes.append({"path": item["path"], "kind": "extra_test_dropped", "detail": node.name})
+    if fixes:
+        item["content"] = "\n".join(lines).rstrip() + "\n"
+    return fixes
+
+
 def autofix_files(ctx: RepoContext, payload: dict[str, Any]) -> tuple[dict[str, Any], list[Fix]]:
     """Apply the language fixers to every generated file; returns the updated payload and the applied fixes."""
     applied: list[Fix] = []
@@ -320,6 +348,9 @@ def autofix_files(ctx: RepoContext, payload: dict[str, Any]) -> tuple[dict[str, 
         path, content = item["path"], item["content"]
         if path.endswith(".py"):
             fixed, fixes = fix_python(ctx, path, content)
+            item["content"] = fixed
+            fixes += drop_extra_tests(item)
+            fixed = item["content"]
         elif path.endswith(".java"):
             fixed, fixes = fix_java(ctx, path, content)
         else:
