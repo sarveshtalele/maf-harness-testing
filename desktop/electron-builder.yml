@@ -27,8 +27,7 @@ win:
       arch: [x64]
 mac:
   target:
-    - target: dmg
-      arch: [x64, arm64]
+    - target: dmg   # arch comes from the CLI (--x64/--arm64): the bundled backend is built for the runner's arch only
   identity: null   # unsigned / not notarized (internal distribution); see docs/DESKTOP.md
   category: public.app-category.developer-tools
 linux:

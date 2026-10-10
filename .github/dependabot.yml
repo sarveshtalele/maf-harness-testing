@@ -14,6 +14,10 @@ updates:
     target-branch: "develop"
     schedule:
       interval: "weekly"
+    ignore:
+      # Node.js 24 is the supported runtime (engines, .nvmrc): keep its type definitions on 24.x.
+      - dependency-name: "@types/node"
+        update-types: ["version-update:semver-major"]
     groups:
       npm-minor-patch:
         update-types: ["minor", "patch"]
@@ -25,4 +29,16 @@ updates:
       interval: "weekly"
     groups:
       actions-minor-patch:
+        update-types: ["minor", "patch"]
+
+  - package-ecosystem: "npm"
+    directory: "/desktop"
+    target-branch: "develop"
+    schedule:
+      interval: "weekly"
+    ignore:
+      - dependency-name: "@types/node"
+        update-types: ["version-update:semver-major"]
+    groups:
+      desktop-minor-patch:
         update-types: ["minor", "patch"]
