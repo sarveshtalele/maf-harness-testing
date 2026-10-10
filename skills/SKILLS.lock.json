@@ -88,11 +88,11 @@
       "files": {
         "SKILL.md": "0301341df63295bc9130251e5a0e18dc6c3bb24743c9879ff801b56f062cb6cc",
         "plugin.yaml": "ca233658173a663911d00623107618ab84d7b6da4e96b8ac8fbfc42de5ce89d4",
-        "references/csharp.md": "6f6a2b182f07d55d55bb35ae8da7abf0bb6f372d53b73ffbca1007b9c10d6293",
-        "references/java.md": "2173b0447c5cde6fa0a79abe9d2f618977a89462c9de070ce0bc0467fa138fd8",
-        "references/javascript.md": "76ba60940e934da0e4dbaa1803146efe2f3c0ccf1a5ca2f623228705587ba6fb",
-        "references/python.md": "a36b285f8afa8025a66686f2d0cf3b96dfb6ea92c7c1be63b058497eb7e8e6b0",
-        "references/typescript.md": "052345a01a48d59c9e8c77cca79e9d624113db53520418163f36e40b1430adad"
+        "references/csharp.md": "27d65b01408c8e9ed63df573c172be66fa54e6327786b83647fff8567cd32b7f",
+        "references/java.md": "b823eb7e041201c30902283e1b333ded2e15fca129923afc7b04daad88d492c1",
+        "references/javascript.md": "e2fa0559266f62ce833c9c0257695998eef22a193b74618a1b552c89a4da65f8",
+        "references/python.md": "192f3ef8a63eaf5f09340027aba994371ab7c2075de1712ef47b0edece576d5f",
+        "references/typescript.md": "d761b07e7ff1c1528a496038a63ba0e4b60c71c32facabbf32286090f328b6fe"
       },
       "origin": "local"
     },

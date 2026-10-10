@@ -7,3 +7,17 @@
 - Positive fixtures must satisfy source constraints (for example `@Size`); do not assume annotations reject setter input at runtime.
 - Parametrize with the declared framework's mechanism only (`@ParameterizedTest` needs JUnit 5 params).
 - Place tests in the package of the class under test, under the Maven/Gradle test source root.
+
+## Integration tests
+
+- Controllers: `@WebMvcTest` + `MockMvc` + `@MockBean` services. `@SpringBootTest` only if existing tests use it; Testcontainers only if declared.
+- Request only paths/verbs declared by the controller mappings shown; mock only external services.
+
+```java
+@WebMvcTest(ItemController.class)
+class ItemControllerTest {
+    @Autowired MockMvc mvc;
+    @MockBean ItemService service;
+    @Test void listsItems() throws Exception { mvc.perform(get("/items")).andExpect(status().isOk()); }
+}
+```

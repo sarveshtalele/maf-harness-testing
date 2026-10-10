@@ -189,6 +189,13 @@ LANGUAGE_RULES: dict[str, dict[str, Any]] = {
         "parametrize": "`@pytest.mark.parametrize(('value', 'expected'), [(...), (...)])`",
         "stdlib": "the standard library",
         "retry": "Python files must define a top-level def test_name(...): with a meaningful assertion against the actual application. Imports alone are not a test.",
+        "integration": [
+            "Build the app through the repository's own factory (for example `create_app(settings)`) with settings pointing data/db dirs at `tmp_path`; do not import a module-level app that reads real config.",
+            "FastAPI/Starlette: use `with fastapi.testclient.TestClient(app) as client:` so lifespan startup/shutdown runs. Override dependencies with `app.dependency_overrides[<the exact callable passed to Depends(...)>]` (for `Depends(get_registry)` key on `get_registry`, never on the class it returns), and clear the overrides afterwards.",
+            "Flask: `app.test_client()` (use `with app.app_context()` when needed). Django: `django.test.TestCase`/`Client` (pytest-django `@pytest.mark.django_db` when the repo uses it). Neither needs extra packages.",
+            "Call only routes present in the route source; seed state through the app's own public API or the fixtures already used in existing tests/conftest, not through endpoints you assume exist.",
+            "Integration means real collaborators inside the process boundary; mock only external network/cloud services. Prefer fixtures/helpers from existing tests and conftest, and never call routes, endpoints or methods absent from the source shown.",
+        ],
         "rules": [
             "Inspect collaborator signatures before constructing fixtures, including all required dataclass fields. Follow the actual returned representation: dictionary keys are not object attributes. Never infer return types from an internal helper dataclass if the function serializes it to a dictionary. Expected enum/tag strings must match source constants verbatim, not natural-language synonyms. Normalize filesystem expectations with pathlib rather than hard-coding POSIX strings on Windows. Explicitly import unittest.mock when using it. Read the implementation before writing assertions.",
             "`generation_policy.python_import_roots` lists directories the runner adds to the test import path: a module in one of them is imported by its bare module name (for `skill-packages/03-x/mod.py` write `import mod`; never `sys.path` hacks). Import only names defined at module level in `target_source`; a name that exists only as a local variable or nested function inside another function cannot be imported, so exercise that code by calling the enclosing function with its collaborators patched.",
@@ -201,6 +208,10 @@ LANGUAGE_RULES: dict[str, dict[str, Any]] = {
         "parametrize": "JUnit `@ParameterizedTest` with `@ValueSource`/`@MethodSource`",
         "stdlib": "the JDK/standard library",
         "retry": "Java files must declare exactly one @Test method that invokes the class under test and asserts its result.",
+        "integration": [
+            "Spring: `@WebMvcTest` with `MockMvc` (and `@MockBean` for services) for controllers; `@SpringBootTest` only if the repository's tests already use it; Testcontainers only if declared in the build file.",
+            "Request only paths and verbs declared by the controller mappings shown. Integration means real collaborators inside the process boundary; mock only external network/cloud services. Prefer fixtures/helpers from existing tests and conftest, and never call routes, endpoints or methods absent from the source shown.",
+        ],
         "rules": [
             'Name the @Test method in descriptive camelCase derived from the case title and, with JUnit 5, add `@DisplayName("<case_id>: <title>")`.',
             "Every claimed Java unit method requirement must be invoked on its actual source type and asserted. Constructor initialization does not cover setters.",
@@ -214,6 +225,9 @@ LANGUAGE_RULES: dict[str, dict[str, Any]] = {
         "parametrize": "`test.each` / `it.each`",
         "stdlib": "the Node.js standard library",
         "retry": "JavaScript files must contain exactly one test(...)/it(...) call that imports and exercises the real module and asserts its result.",
+        "integration": [
+            "HTTP apps: use `supertest` against the exported app/`createApp()` without calling `listen`; use `msw`/`nock` only if declared in package.json. Integration means real collaborators inside the process boundary; mock only external network/cloud services. Prefer fixtures/helpers from existing tests and conftest, and never call routes, endpoints or methods absent from the source shown.",
+        ],
         "rules": [
             'Make the test title string `"<case_id>: <title>"` and any helper names descriptive camelCase.',
             "Use the runner declared in package.json (jest, vitest or mocha) and match the module system (ESM `import` vs CommonJS `require`) of the nearest package.json and the source under test.",
@@ -224,6 +238,9 @@ LANGUAGE_RULES: dict[str, dict[str, Any]] = {
         "parametrize": "`test.each` / `it.each`",
         "stdlib": "the Node.js standard library",
         "retry": "TypeScript files must contain exactly one test(...)/it(...) call that imports and exercises the real module and asserts its result.",
+        "integration": [
+            "HTTP apps: use `supertest` against the exported app/`createApp()` without calling `listen`; use `msw`/`nock` only if declared in package.json. Integration means real collaborators inside the process boundary; mock only external network/cloud services. Prefer fixtures/helpers from existing tests and conftest, and never call routes, endpoints or methods absent from the source shown.",
+        ],
         "rules": [
             'Make the test title string `"<case_id>: <title>"` and any helper names descriptive camelCase.',
             "Use the runner declared in package.json (jest, vitest or mocha) and the repository tsconfig/ESM settings; import only exports that exist in the source.",
@@ -234,6 +251,9 @@ LANGUAGE_RULES: dict[str, dict[str, Any]] = {
         "parametrize": "`[Theory]`/`[TestCase]`/`[DataRow]`",
         "stdlib": "the .NET base class library",
         "retry": "C# files must declare exactly one test method that invokes the class under test and asserts its result.",
+        "integration": [
+            "ASP.NET Core: `WebApplicationFactory<Program>` with `CreateClient()`; replace services via `WithWebHostBuilder(b => b.ConfigureTestServices(...))` keyed on the exact registered service type. Integration means real collaborators inside the process boundary; mock only external network/cloud services. Prefer fixtures/helpers from existing tests and conftest, and never call routes, endpoints or methods absent from the source shown.",
+        ],
         "rules": [
             'Name the test method in descriptive PascalCase from the case title; use `[Fact(DisplayName = "<case_id>: <title>")]` or `[Description(...)]` where supported.',
             "Use xUnit, NUnit or MSTest according to the PackageReference entries in the test project's csproj; never mix frameworks.",
@@ -262,6 +282,10 @@ def language_rules(repo: dict[str, Any], state: dict[str, Any] | None = None) ->
     return {f: LANGUAGE_RULES[f]["rules"] for f in language_families(repo, state)}
 
 
+def integration_rules(repo: dict[str, Any], state: dict[str, Any] | None = None) -> dict[str, list[str]]:
+    return {f: LANGUAGE_RULES[f]["integration"] for f in language_families(repo, state)}
+
+
 def retry_reminder(policy: dict[str, Any]) -> str:
     return " ".join(LANGUAGE_RULES[f]["retry"] for f in policy.get("language_rules") or {})
 
@@ -285,6 +309,7 @@ def _generation_policy(repo: dict[str, Any], state: dict[str, Any] | None = None
         "selected_application_component": state.get("app_component"),
         "component_path_rule": "Place Node tests inside the component containing its package.json. For the selected frontend, write new specs under <selected_application_component>/tests/. Root tests/ cannot resolve nested frontend dependencies. Other ecosystems belong to their own manifest component.",
         "language_rules": language_rules(repo, state),
+        "integration_rules": integration_rules(repo, state),
         **(
             {"python_import_roots": extra_import_roots(repo.get("source_files") or [])}
             if "python" in families

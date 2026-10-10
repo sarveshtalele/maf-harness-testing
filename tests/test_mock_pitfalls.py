@@ -538,3 +538,21 @@ def test_language_rules_reach_only_the_detected_stack():
     assert list(ts["language_rules"]) == ["typescript"]
     assert "pytest" not in ts["structure_rule"] and "JDK" not in ts["dependency_rule"]
     assert retry_reminder(java).startswith("Java files") and "Python" not in retry_reminder(java)
+
+
+def test_integration_rules_only_for_detected_stack_and_tooling(tmp_path):
+    from maf_test_harness.envs.runners import python_test_helpers
+
+    py = wf._generation_policy({"languages": {"Python": 10}}, {"stack": {"primary": "python"}})
+    assert list(py["integration_rules"]) == ["python"]
+    joined = " ".join(py["integration_rules"]["python"])
+    assert "dependency_overrides" in joined and "Depends" in joined and "TestClient" in joined
+    cs = wf._generation_policy({"languages": {"C#": 1}}, {"stack": {"primary": "csharp"}})
+    assert list(cs["integration_rules"]) == ["csharp"] and "WebApplicationFactory" in " ".join(
+        cs["integration_rules"]["csharp"]
+    )
+    assert python_test_helpers([{"content": "@pytest.mark.django_db\ndef test_x(): ..."}]) == [
+        "pytest-django"
+    ]
+    (tmp_path / "requirements.txt").write_text("pytest-django==4.8\n")
+    assert python_test_helpers([{"content": "@pytest.mark.django_db"}], tmp_path) == []
