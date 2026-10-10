@@ -148,7 +148,7 @@ def resolve_import(ctx: RepoContext, module: str, language: str = "python") -> d
     stdlib = getattr(sys, "stdlib_module_names", frozenset())
     if top in stdlib:
         return {"module": module, "status": "stdlib"}
-    modules = _repo_module_files(ctx.source_files)
+    modules = _repo_module_files([*ctx.source_files, *ctx.package_files])
     if module in modules:
         return {"module": module, "status": "repo", "file": modules[module]}
     if any(m.startswith(module + ".") for m in modules):
@@ -413,7 +413,7 @@ def static_gate(ctx: RepoContext, path: str, content: str, preferred: list[str] 
             installed = frozenset(_installed_python_modules(ctx)) if ctx.workspace else None
             check_python_imports(
                 content,
-                ctx.source_files,
+                [*ctx.source_files, *ctx.package_files],
                 ctx.dependency_text,
                 path,
                 read_source=ctx.read,

@@ -14,11 +14,12 @@ import sys
 import time
 import xml.etree.ElementTree as ET
 from dataclasses import asdict, dataclass, field, replace
+from itertools import takewhile
 from pathlib import Path, PurePosixPath
 
 from .. import errors
 from ..repo.stack import REQUIRED_TOOLS, StackProfile
-from ..skills.contracts import extra_import_roots
+from ..skills.contracts import PYTHON_PROJECT_FILES, python_import_roots
 from . import platform_compat
 from .execution import EXPORT_SKIP_DIRS, read_junit_cases, run_command
 from .regression import maven_regression_steps
@@ -108,21 +109,67 @@ def _python_import_roots(ws: Path) -> list[str]:
     found = []
     for folder, dirs, names in os.walk(ws):
         dirs[:] = [d for d in dirs if d not in EXPORT_SKIP_DIRS and not d.startswith("%")]
-        found += [(Path(folder) / n).relative_to(ws).as_posix() for n in names if n.endswith(".py")]
-    return extra_import_roots(found)
+        found += [
+            (Path(folder) / n).relative_to(ws).as_posix()
+            for n in names
+            if n.endswith(".py") or n in PYTHON_PROJECT_FILES
+        ]
+    return python_import_roots(found)
 
 
-def _repo_has_pytest_config(ws: Path) -> bool:
+def _pytest_config(ws: Path) -> str | None:
+    """The pytest config file in ``ws`` (pytest's own precedence), or None."""
+
     def contains(name: str, needle: str) -> bool:
         path = ws / name
         return path.is_file() and needle in path.read_text(encoding="utf-8", errors="replace")
 
-    return (
-        (ws / "pytest.ini").is_file()
-        or contains("pyproject.toml", "[tool.pytest")
-        or contains("tox.ini", "[pytest]")
-        or contains("setup.cfg", "[tool:pytest]")
+    for name, needle in (
+        ("pytest.ini", ""),
+        ("pyproject.toml", "[tool.pytest"),
+        ("tox.ini", "[pytest]"),
+        ("setup.cfg", "[tool:pytest]"),
+    ):
+        if contains(name, needle):
+            return name
+    return None
+
+
+def _node_declares(ws: Path, package: str) -> bool:
+    try:
+        data = json.loads((ws / "package.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return False
+    return isinstance(data, dict) and any(
+        isinstance(data.get(key), dict) and package in data[key]
+        for key in ("dependencies", "devDependencies")
     )
+
+
+def _repo_has_pytest_config(ws: Path) -> bool:
+    return _pytest_config(ws) is not None
+
+
+def _nested_pytest_project(ws: Path, files: list[dict]) -> tuple[str, str] | None:
+    """(directory, config file) of the nested Python project holding every generated test, when it has a pytest config.
+
+    ``backend/pyproject.toml`` with ``[tool.pytest.ini_options]`` means the repository runs that suite from
+    ``backend/``: its conftest imports ``core`` (not ``backend.core``) and its markers/asyncio mode live there.
+    """
+    paths = [PurePosixPath(f["path"]) for f in files if f["path"].endswith(".py")]
+    if not paths:
+        return None
+    shared = takewhile(
+        lambda parts: len(set(parts)) == 1, zip(*(p.parent.parts for p in paths), strict=False)
+    )
+    common = PurePosixPath(*(parts[0] for parts in shared))
+    for root in [common, *common.parents]:
+        if root.as_posix() in {"", "."}:
+            break
+        config = _pytest_config(ws / root)
+        if config:
+            return root.as_posix(), f"{root.as_posix()}/{config}"
+    return None
 
 
 def _paths(files: list[dict], suffixes: tuple[str, ...] | None = None) -> list[str]:
@@ -424,6 +471,7 @@ def build_plan(
                     step.report_glob = (PurePosixPath(cwd) / step.report_glob).as_posix()
                 steps.append(step)
             notes.append(f"{kind} component: {cwd} ({len(members)} generated files)")
+            notes.extend(child.notes)
         return RunPlan("multi-component", steps, notes=notes, blocked_reason="; ".join(blocked) or None)
     eco = resolve_ecosystem(stack, files)
     if ready_components is not None:
@@ -444,7 +492,10 @@ def build_plan(
         # The workspace may live under the harness; without its own pytest config, pytest would walk up and pick the
         # harness's config. Pin the rootdir with an empty config unless the repository ships its own.
         isolate: list[str] = []
-        if not _repo_has_pytest_config(ws):
+        nested = None if _repo_has_pytest_config(ws) else _nested_pytest_project(ws, files)
+        if nested:
+            isolate = ["-c", nested[1], "--rootdir", nested[0]]
+        elif not _repo_has_pytest_config(ws):
             reports.mkdir(exist_ok=True)
             (reports / "pytest.ini").write_text("[pytest]\n", encoding="utf-8")
             isolate = ["-c", f"{REPORT_DIR}/pytest.ini", "--rootdir", "."]
@@ -493,6 +544,14 @@ def build_plan(
         if runner == "playwright" and stack.test_runner == "playwright":
             steps = [st for st in steps if st.name != "install-playwright"]  # repo already depends on it
         paths = _paths(files)
+        if runner in {"jest", "vitest"} and not _node_declares(ws, runner):
+            # npx --no-install would abort ("npx canceled due to missing packages"); say why instead.
+            note = (
+                f"No JavaScript test runner is declared in {ws.name}/package.json (jest or vitest), so the "
+                f"{len(paths)} generated test file(s) there were not executed. Add the runner as a devDependency "
+                "to run them."
+            )
+            return RunPlan(f"node-{runner}", [], notes=[note])
         if runner == "playwright":
             config_name = ".harness-playwright-report.config.ts"
             original = next(

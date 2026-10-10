@@ -1139,6 +1139,25 @@ def extra_import_roots(py_files: list[str], limit: int = 12) -> list[str]:
     return sorted(roots)[:limit]
 
 
+PYTHON_PROJECT_FILES = frozenset({"pyproject.toml", "setup.py", "setup.cfg"})
+
+
+def python_import_roots(files: list[str], limit: int = 12) -> list[str]:
+    """``extra_import_roots`` plus nested Python projects (``backend/pyproject.toml``).
+
+    A sub-project's own suite imports its modules from its own directory (``from core.seed import seed`` in
+    ``backend/tests/conftest.py``), so the runner puts that directory on PYTHONPATH and the validator accepts it.
+    """
+    py_files = [f for f in files if f.endswith(".py")]
+    nested = {
+        PurePosixPath(f).parent.as_posix()
+        for f in files
+        if PurePosixPath(f).name in PYTHON_PROJECT_FILES and PurePosixPath(f).parent.as_posix() != "."
+    }
+    nested = {d for d in nested if any(f.startswith(d + "/") for f in py_files)}
+    return [*extra_import_roots(py_files, limit), *sorted(nested)[:limit]]
+
+
 def _recipe_hint(files: list[str], read: Callable[[str], str | None] | None, targets: list[str]) -> str:
     from ..repo.import_recipes import recipes_for_files
 
@@ -1171,7 +1190,7 @@ def check_python_imports(
     stdlib = getattr(__import__("sys"), "stdlib_module_names", frozenset())
     # The runner puts the workspace root and src/ (and lib/) on PYTHONPATH, so all three layouts resolve.
     py_files = [f for f in repo_files if f.endswith(".py")]
-    import_roots = ("", "src/", "lib/", *(f"{r}/" for r in extra_import_roots(py_files)))
+    import_roots = ("", "src/", "lib/", *(f"{r}/" for r in python_import_roots(repo_files)))
     rooted = {f[len(root) :] for f in py_files for root in import_roots if f.startswith(root)}
     modules_in_repo = {PurePosixPath(f).with_suffix("").as_posix() for f in rooted}
     packages = {PurePosixPath(f).parent.as_posix() for f in rooted}
@@ -1377,7 +1396,7 @@ def _bound_names(tree: ast.AST) -> set[str] | None:
 def _repo_module_files(repo_files: list[str]) -> dict[str, str]:
     """Dotted module name -> repository file, for every layout the runner puts on PYTHONPATH."""
     py_files = [f for f in repo_files if f.endswith(".py")]
-    roots = ("", "src/", "lib/", *(f"{r}/" for r in extra_import_roots(py_files)))
+    roots = ("", "src/", "lib/", *(f"{r}/" for r in python_import_roots(repo_files)))
     modules: dict[str, str] = {}
     for f in py_files:
         for root in roots:

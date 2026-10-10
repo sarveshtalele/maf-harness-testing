@@ -460,7 +460,42 @@ def build_specs(drafts: list[dict], sections: list[dict], start: dict[str, int] 
 
 
 _STOP = frozenset(
-    ["a", "an", "the", "is", "are", "be", "been", "of", "to", "for", "on", "in", "at", "by", "with", "and", "or", "any", "each", "it", "its", "this", "that", "than", "then", "get", "gets", "every", "all", "must", "should", "shall", "will", "can"]
+    [
+        "a",
+        "an",
+        "the",
+        "is",
+        "are",
+        "be",
+        "been",
+        "of",
+        "to",
+        "for",
+        "on",
+        "in",
+        "at",
+        "by",
+        "with",
+        "and",
+        "or",
+        "any",
+        "each",
+        "it",
+        "its",
+        "this",
+        "that",
+        "than",
+        "then",
+        "get",
+        "gets",
+        "every",
+        "all",
+        "must",
+        "should",
+        "shall",
+        "will",
+        "can",
+    ]
 )
 
 

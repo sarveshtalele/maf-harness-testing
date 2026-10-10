@@ -11,7 +11,7 @@ from .settings import (
     GENERATION_MAX_ATTEMPTS,
 )
 from .skills.contracts import (
-    extra_import_roots,
+    python_import_roots,
     resolve_id,
 )
 from .storage import atomic_json as atomic_json
@@ -315,7 +315,11 @@ def _generation_policy(repo: dict[str, Any], state: dict[str, Any] | None = None
         "language_rules": language_rules(repo, state),
         "integration_rules": integration_rules(repo, state),
         **(
-            {"python_import_roots": extra_import_roots(repo.get("source_files") or [])}
+            {
+                "python_import_roots": python_import_roots(
+                    [*(repo.get("source_files") or []), *(repo.get("package_files") or [])]
+                )
+            }
             if "python" in families
             else {}
         ),
