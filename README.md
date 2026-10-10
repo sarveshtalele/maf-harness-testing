@@ -1,175 +1,252 @@
 # Agentic QE Platform
 
-A local repository-testing workspace with a **Next.js frontend** and the existing **Python / Microsoft Agent Framework backend**. `new-ui` is the primary UI branch. Give the harness a public GitHub repository, review each stage, approve installation and test execution, then inspect QA results, failure recommendations, logs and browser evidence.
+Agentic QE Platform is an internal test-engineering tool for the team. Give it a GitHub repository (brownfield) or specs from documents or Jira Cloud (greenfield). It analyzes the code, plans and designs tests, generates unit and integration tests, and runs them after your approval. It ends with a QA report and a ZIP of the deliverables. It runs as a local web UI, as a command-line tool, or as an unsigned desktop app.
 
-The UI includes mouse-resizable panels, light/dark appearance, per-user run history, agent skill cards, audit and observability. The CLI uses the same backend. Execution runs as your OS user with isolated dependencies; use a disposable machine for repositories you do not trust.
+The repository is private and for the internal team only.
 
-Repository analysis and requirements execute the locked reverse-engineering and requirement-analysis scripts without model calls. Planning, design and generation remain model-assisted. Agent skill cards show each workflow map and recorded script executions; Observability filters evidence by step. Run completion measures approved stage milestones, separately from the test verdict. See the [run failure and skill execution review](docs/RUN_FAILURE_AND_SKILL_EXECUTION_REVIEW.md) for verification and limits.
+## Download and try it
 
-## Quick start: Windows, macOS and Linux
+There are three ways to run the platform. Pick one.
 
-Install [Git](https://git-scm.com/), [Node.js 24 LTS](https://nodejs.org/) and [uv](https://docs.astral.sh/uv/getting-started/installation/). The scripts let uv provision Python 3.12, install the locked Python/frontend dependencies and build the UI.
+### (a) Desktop app
 
-```text
-git clone --branch new-ui https://github.com/sarveshtalele/maf-harness-testing.git
-cd maf-harness-testing
-```
+The desktop app is an Electron shell around the same backend and UI.
 
-Copy `.env.example` to `.env`, then edit it with your gateway values:
+**Status:** no release has been published yet. Installers are built by GitHub Actions and appear under GitHub Releases once a release is cut:
 
-```dotenv
-OPENAI_API_KEY=your-key-here
-OPENAI_BASE_URL=https://your-openai-compatible-gateway
-OPENAI_MODEL=your-tool-capable-model
-```
+- A tag `vX.Y.Z` runs `.github/workflows/desktop-release.yml`. It builds installers for Windows, macOS (arm64 and x64) and Linux, then creates a **draft** GitHub Release. The owner reviews and publishes it.
+- A tag `vX.Y.Z-rcN` runs `.github/workflows/desktop-prerelease.yml`. It builds the installers and uploads them as workflow artifacts. It does not create a release.
 
-macOS Terminal:
+Builds are **unsigned**, so the operating system warns on first launch.
+
+- **macOS:** after copying the app to Applications, run `xattr -dr com.apple.quarantine "/Applications/Agentic QE.app"`. Or right-click the app and choose Open, once.
+- **Windows:** SmartScreen shows "Windows protected your PC". Choose More info, then Run anyway.
+- **Linux:** make the AppImage executable with `chmod +x Agentic-QE-*.AppImage`, then run it. It needs FUSE 2, or run it with `--appimage-extract-and-run`.
+
+Set your model key in the app under **Configuration**, Model & API key. Where the operating system can encrypt it, the key is stored encrypted. Otherwise it is kept in memory for the session. The app shows only its last 4 characters.
+
+More detail: [docs/DESKTOP.md](docs/DESKTOP.md) and [docs/RELEASING.md](docs/RELEASING.md).
+
+**Build an installer yourself.** Build each OS on its own machine. You need Node.js 24 and uv.
 
 ```bash
-cp .env.example .env   # first setup only; do not overwrite an existing .env
+uv sync --python 3.12 --extra dev --extra desktop
+uv run python scripts/build_desktop.py --dry-run
+uv run python scripts/build_desktop.py
+```
+
+The first command prints the steps. The second runs them. Installers are written to `desktop/release/`. You can add `--arch x64` or `--arch arm64` to build one architecture.
+
+### (b) Source checkout with the one-click launchers
+
+**Prerequisites**
+
+- [Git](https://git-scm.com/).
+- Python 3.12. uv can install it for you.
+- [uv](https://docs.astral.sh/uv/getting-started/installation/).
+- [Node.js 24](https://nodejs.org/). Exactly version 24 is required. The launchers and npm refuse other versions. With nvm: `nvm install 24` and `nvm use 24`.
+- For the repositories you test: their toolchains, such as a JDK with Maven or Gradle for Java, or the .NET SDK. See [docs/ENVIRONMENTS.md](docs/ENVIRONMENTS.md).
+
+**Steps**
+
+1. Clone the repository and switch to the default integration branch:
+
+```bash
+git clone https://github.com/sarveshtalele/maf-harness-testing.git
+cd maf-harness-testing
+git checkout develop
+```
+
+2. Create your settings file. The launchers also create it if it is missing.
+
+```bash
+cp .env.example .env
 chmod 600 .env
-# Edit .env, then:
+```
+
+On Windows PowerShell, use `Copy-Item .env.example .env`.
+
+3. Open `.env` and set your gateway values:
+
+```dotenv
+OPENAI_API_KEY=<your-key>
+OPENAI_BASE_URL=<your-openai-compatible-gateway-url>
+OPENAI_MODEL=<a-model-that-supports-tool-calling>
+```
+
+You can skip this step and set the key later in the UI under **Configuration**. Never commit `.env`.
+
+4. Start the platform with the launcher for your system:
+
+```bash
 ./start-macos.command
 ```
 
-Windows PowerShell:
+```bash
+bash start-linux.sh
+```
 
 ```powershell
-Copy-Item .env.example .env   # first setup only
-notepad .env
 .\start-windows.cmd
 ```
 
-Open **http://127.0.0.1:3000**. One launcher starts both **Next.js on 3000** and the **Python API on 8765**, with matching private server credentials. Keep the terminal open; Ctrl+C stops both servers. A missing `.env` is created from the example without overwriting existing configuration. Restart after changing gateway settings. Never commit credentials.
+The first start installs the Python and frontend dependencies and builds the UI. This takes a few minutes. The launcher then starts two local services:
 
-To use different ports:
+- The web UI at **http://127.0.0.1:3000**. Open it in your browser.
+- The Python API at **127.0.0.1:8765**. It accepts only local connections and requires a private token that the launcher generates.
 
-```text
-./start-macos.command --port 3001 --api-port 8766
-.\start-windows.cmd --port 3001 --api-port 8766
+If port 3000 or 8765 is busy, the launcher picks the next free port and prints it. Keep the terminal open. Press Ctrl+C to stop both services. The launcher checks Node 24 before it installs anything.
+
+### (c) Headless command line
+
+The CLI runs the same workflow without a browser. Run it from the repository root after step 1 and step 3 above.
+
+```bash
+uv sync --extra dev
+uv run maf-harness run https://github.com/owner/repo
+uv run maf-harness run https://github.com/owner/repo --no-execution
+uv run maf-harness run https://github.com/owner/repo --auto-approve
+uv run maf-harness trace .maf-harness/runs/<run-id>
+uv run maf-harness verify-run .maf-harness/runs/<run-id>
 ```
 
-Stop the current launcher with Ctrl+C before updating or rebuilding. A second launch reuses a verified running application without rebuilding its assets. Default ports can recover from unrelated conflicts; explicitly selected occupied ports report an error. If a browser was open during an older rebuild, reload it after restarting.
+- Without `--auto-approve`, each gate asks you in the terminal.
+- `--auto-approve` is your explicit consent to clone the repository, install its dependencies and run the generated tests on this machine.
+- `--no-execution` stops after test generation. Nothing is installed and no test runs.
+- Ctrl+C stops the run.
 
-The launcher requires Node.js 24 LTS. It invokes Next directly without relying on Windows npm shims, and prints a saved setup/service log path. Configuration → Debugging logs shows the actual log directories. Install Node.js 24 LTS from https://nodejs.org/ if needed.
+Run folders are written to `.maf-harness/runs/<run-id>`.
 
-The scripts install/build on each launch to keep the checkout and dependencies consistent. For faster development after initial setup: `uv run python scripts/start_ui.py`.
+## First run walkthrough
 
-### Using the workspace
+These steps use the UI. The CLI asks the same questions in the terminal.
 
-1. **Configuration:** check the gateway model and whether a key is configured; the key itself is hidden.
-2. **New run:** enter a public GitHub URL and optionally a running local application URL. Approve the clone action.
-3. **Review:** inspect requirements, the environment plan, test plan/design and generated source. Approve, request changes or stop at each gate.
-4. **Run tests:** review exact commands before approving execution. Missing prerequisites and errors remain visible.
-5. **QA report:** inspect per-case results, requirement coverage, recorded failure output and recommendations with affected files. Recommendations require review; an assertion failure alone does not establish an application defect.
-6. **Test reports:** view saved Playwright HTML inside the UI, screenshots and JUnit, or download a trace for `npx playwright show-trace trace.zip`. Browser evidence appears only when a browser suite produced it.
-7. **Logs:** choose an installation/build/execution log, search its line-numbered output or download the full file. **Audit** and **Observability** show approvals, agents, tools and usage.
-8. Use **Rerun from step** on a run to repeat any step whose preceding approvals are complete. Previous evidence and environments are retained under `attempts/<id>`; downstream approvals reset and normal tool review gates apply. Active operations must reach a gate first.
-9. Use **Delete** in run history to remove an idle run after confirmation. Files move to the local `.deleted-runs` folder for recovery; active operations cannot be removed.
-10. Download the deliverable ZIP when available. Browse **Agent skills** to open each package’s readable instruction page, resources and integrity checks.
+1. Open **Configuration**. Check that a key is configured. Only its last 4 characters are shown.
+2. Open **New run**.
+3. Choose a mode:
+   - **Brownfield** for an existing repository. Enter its public GitHub URL.
+   - **Greenfield** for new work. Give it documents (`.md`, `.txt` or `.docx`; PDF needs the `pypdf` package) or a Jira Cloud project. A specs skill turns them into requirements. The Jira token stays in memory only.
+4. Choose the test types: **Unit**, **Integration**, or both.
+5. Start the run. The run page opens on the **Review** tab. The workflow pauses at each gate and waits for you. For each review gate you can approve, revise, skip or stop. Tool gates let you approve or deny an action.
 
-During active work, **Stop run** cancels model work and signals owned clone/setup/test processes to stop while retaining saved evidence. Each generated case receives an independent source-based review, a confidence judgment and a reason; accepted cases appear in descending confidence order. Scores do not replace execution results. Unsupported imports receive repository-path repair guidance, and rejected batches retain earlier accepted work. See [strict generation and evidence scope](docs/PETSTORE_STRICT_TEST_GENERATION.md).
+The gates, in order:
 
-Drag sidebar/column edges and panel corners; use arrow keys for accessible resizing. Double-click a panel corner or press Home on its resize handle to restore its original size. Preferences persist in your browser. New UI and CLI runs default to `<repo-root>/.maf-harness/runs`, inside this checkout. Use separate checkouts for separate users. This is a local app without shared-server login.
+1. Approve the repository clone (a machine action).
+2. Review the repository analysis.
+3. Review the deterministic requirements.
+4. Review the test plan.
+5. Review the test design, in batches by component.
+6. Review the generated test source.
+7. Approve installing the test environment (a machine action).
+8. Approve running the tests (a machine action).
+9. Review the scoped QA report. The deliverable ZIP is built after this.
 
-**Contributing code?** Start with the [Developer guide](docs/DEVELOPER_GUIDE.md) (setup, layout, how-to recipes, debugging); the docs index is [docs/README.md](docs/README.md).
+Nothing is installed and no test runs before gates 7 and 8. Static source checks run during generation. Build and collection checks run only after the environment is installed.
 
-[Windows troubleshooting and log locations](docs/WINDOWS_SETUP_AND_DEBUGGING.md) · [Detailed setup and UI guide](docs/NEXTJS_UI.md) · [Backend findings and limits](docs/BACKEND_REVIEW_2026-10-01.md) · [Approved cleanup status](docs/DEAD_CODE_REVIEW_2026-10-01.md)
+After the run:
 
-The backend provisions manifest components and groups generated tests by their native ecosystem and working directory. Selected frontend browser cases receive source evidence and component ownership validation; a passing generated suite does not prove that every repository component was exercised. Playwright HTML/screenshots/traces are captured for the Node Playwright adapter; Python and other adapters show the report assets they actually produce.
+- **QA report** tab: results per case, and the status of each requirement: new case, pre-existing witness, excluded, or unexplained gap.
+- **Generated tests** tab: the test files that were produced.
+- **Deliverables** folder in the run folder (`.maf-harness/runs/<run-id>/deliverables/`): the ZIP.
+- **Errors** tab: every error in the run, grouped. Each error has a code and a suggested fix. The meanings are in [docs/ERROR_PLAYBOOK.md](docs/ERROR_PLAYBOOK.md).
+- **Logs**, **Audit**, **Observability** and **Test reports** tabs: the evidence trail.
 
-## Development and verification
+To stop a run early, use **Stop** in the UI and confirm. The run stops after the current step ends (within about 30 seconds). Rerunning a stopped run starts again from the active stage. Earlier evidence is kept under `attempts/`.
 
-```text
+## Verify your install
+
+Run these from the repository root.
+
+Check the prerequisites and the ports without starting anything:
+
+```bash
+uv run python scripts/start_ui.py --check-only
+```
+
+Start both services, check that the home page and the authenticated backend connection work, then stop. This does not need a model key:
+
+```bash
+./start-macos.command --smoke-test
+```
+
+On Linux use `bash start-linux.sh --smoke-test`. On Windows use `.\start-windows.cmd --smoke-test`.
+
+Check the bundled skills against their lock file:
+
+```bash
+uv run maf-harness lint-skills --strict
+```
+
+## Developer environment
+
+Full details are in [docs/DEVELOPER_GUIDE.md](docs/DEVELOPER_GUIDE.md), section 1.
+
+```bash
 uv sync --python 3.12 --extra dev --extra e2e
-npm --prefix frontend ci
+cd frontend
+npm ci --include=dev
+cd ..
+cd desktop
+npm ci
+cd ..
 uv run python scripts/start_ui.py
 ```
 
-The development launcher starts both services. To verify a production build:
+The last command runs the API and the UI in dev mode with hot reload.
 
-```text
+Common checks:
+
+```bash
+uv run pytest -q --ignore=tests/targets
 uv run ruff check src tests scripts
 uv run ruff format --check src tests scripts
-uv run pytest -q --ignore=tests/targets
-uv run maf-harness lint-skills
-npm --prefix frontend run typecheck
-npm --prefix frontend run build
+uv run maf-harness lint-skills --strict
+uv run python scripts/gen_architecture.py --check
+cd frontend
+npm run typecheck
+npm run build
+cd ..
+cd desktop
+npm test
+cd ..
 ```
 
-From `frontend`, run `npx playwright install chromium`, then `npm test`. This produces `playwright-report/index.html`, JUnit, failure screenshots and traces. Browser checks exercise the real workflow with deterministic model inputs; they are distinct from live model/GitHub runs. GitHub Actions runs backend checks on Ubuntu/Windows and Next.js browser journeys on Ubuntu/macOS/Windows, publishing per-platform browser reports.
+Browser tests are in [section 1.6](docs/DEVELOPER_GUIDE.md#16-run-each-test-layer).
 
-## Command line
+**Branches.** `develop` is the default branch and the integration branch. Work on `feature/*` branches and open pull requests into `develop`. `main` holds released code. `release/x.y` is cut from `develop` for QA. `new-ui` mirrors `develop`. See [CONTRIBUTING.md](CONTRIBUTING.md).
 
-```text
-uv run maf-harness run https://github.com/owner/repo
-uv run maf-harness run https://github.com/owner/repo --app-url http://127.0.0.1:8080
-uv run maf-harness verify-run /path/to/run
-uv run maf-harness trace /path/to/run
-uv run maf-harness lint-skills
-```
+**CI workflows** (in `.github/workflows/`):
 
-The CLI and UI share `<repo-root>/.maf-harness/runs` by default. `HARNESS_RUNS_DIR` overrides this path; stop an active UI operation before another process changes that run. `--auto-approve` explicitly authorizes clone/install/test commands as your OS user.
+| Workflow | When it runs | What it checks |
+|---|---|---|
+| `ci.yml` | Pushes to `main`, `develop`, `release/**`, and pull requests | Ruff lint and format, architecture map, skill lock, and the Python tests on Ubuntu (Python 3.11 and 3.12), Windows and macOS. Job `secrets-scan` fails on credential-shaped strings. |
+| `ui.yml` | Same branches, plus manual runs | Python UI tests, real GitHub clones, frontend typecheck and build, launcher smoke checks on all three systems, and the Playwright browser tests. |
+| `nightly.yml` | Every day at 02:00 UTC, and manual runs | Full Python test suite on Linux. |
+| `desktop-prerelease.yml` | Tags `v*-rc*`, and manual runs | Builds desktop installers as workflow artifacts. |
+| `desktop-release.yml` | Tags `v*.*.*` | Builds desktop installers and creates a draft GitHub Release. |
 
-## Configuration and troubleshooting
+No workflow runs the desktop `npm test`. Run it yourself when you change `desktop/`.
 
-`LLM_MODEL` is accepted as an alias for `OPENAI_MODEL`. Use the base URL exactly as your gateway documents it, including `/v1` when required. Shell variables override `.env`; restart both servers after changing settings. See `.env.example` for token limits, toolchains, hooks and tracing options.
+## Configuration and security
 
-| Symptom | Action |
-|---|---|
-| Old UI still visible | Stop the launcher with Ctrl+C, rerun the platform script to rebuild, then reload port 3000. Close previews on other ports. |
-| Port already in use | Stop the previous launcher, or pass different `--port` and `--api-port` values. |
-| Gateway key missing, HTTP 401/404 | Check `.env`, gateway URL/model and key; restart. Never put credentials in a repository or target test environment. |
-| Environment incomplete | Read the failed command and missing-prerequisite details, install the indicated tool or approve the revised environment plan, then retry. |
-| Tests fail or cannot collect | Inspect QA case output and Logs. Check the application, test expectations and environment before treating a failure as an application defect. |
-| No Playwright report | The selected attempt must actually run a browser suite. Unit-only runs do not produce browser screenshots. |
-| No runs for another teammate | History is separated by OS account. This version has no shared-server authentication. |
+- Settings come from `.env`, the UI **Configuration** page, or the shell. The order is: runtime value in the UI, then the environment, then `.env`. See [.env.example](.env.example) for all options.
+- Never commit `.env`, run evidence (`.maf-harness/`), or `docs/agent-framework.pdf`. The `.gitignore` covers the first two.
+- The UI shows only the last 4 characters of any key.
+- The API listens on loopback only and needs a token.
+- **Local execution is not a sandbox.** Generated tests and the commands of the repositories you test run as your user on this machine. Use a disposable machine or account for repositories you do not trust.
 
-## Backend documentation
+## Troubleshooting
 
-| Guide | Contents |
-|---|---|
-| [Architecture](docs/ARCHITECTURE.md) | Workflow, checkpoint format and execution guarantees |
-| [Architecture map](docs/ARCHITECTURE_MAP.md) | Generated diagrams and a per-file table of what imports what |
-| [Agent catalog](docs/CATALOG.md) | Stage personas, central tools and skill assignments |
-| [Environments](docs/ENVIRONMENTS.md) | Isolation, toolchains and dependency checks |
-| [Error playbook](docs/ERROR_PLAYBOOK.md) | Error classification and recovery |
-| [Automation](docs/AUTOMATION.md) | Generation validation and bounded repair |
-| [Hooks](docs/HOOKS.md) | Approval, redaction and write-scope controls |
-| [Observability](docs/OBSERVABILITY.md) | Traces, tools, usage and requirement coverage |
+- [docs/WINDOWS_SETUP_AND_DEBUGGING.md](docs/WINDOWS_SETUP_AND_DEBUGGING.md): Windows setup, long paths, antivirus locks and log locations.
+- [docs/ERROR_PLAYBOOK.md](docs/ERROR_PLAYBOOK.md): every error code, whose fault it is, and what to do.
+- [docs/CLONE_AND_PLATFORM_DIAGNOSTICS.md](docs/CLONE_AND_PLATFORM_DIAGNOSTICS.md): clone failures and platform checks.
+- [docs/DEVELOPER_GUIDE.md](docs/DEVELOPER_GUIDE.md), section 5: where evidence lives and how to debug a run.
 
-This README documents the `new-ui` branch's Next.js application. Historical source files are retained pending explicit deletion approval; they are not installed or launched as this branch's UI.
+Launcher logs are in `.maf-harness/logs/launch-*.log`. Run evidence is in `.maf-harness/runs/<run-id>/`.
 
-### Customize agent prompts
+## More documentation
 
-Open **Agent prompts** to edit/save default persona instructions and the end-to-end repository review guide. Each run keeps a separate snapshot. Its **Prompts** tab displays full recorded model requests and lets you save changes for the next attempt. Examples are in [prompts/repository-review.md](prompts/repository-review.md) and [prompts/personas.json](prompts/personas.json). Prompt edits do not bypass approvals or change historical requests.
-
-### Azure hosting plan
-
-Read the documentation-only [Azure deployment proposal](docs/AZURE_DEPLOYMENT_PROPOSAL.md) and supporting [Terraform](azure-plan/README.md) for the East US 2 B1 cost estimate, Mermaid architecture, Terraform and phased hosted implementation. The current branch remains local; hosted identity, per-user isolation and isolated execution are required before deploying a shared web harness. No Azure resources were deployed.
-
-To verify installation without leaving servers running, use `./start-macos.command --smoke-test` on macOS or `.\start-windows.cmd --smoke-test` on Windows. This installs/builds the application, checks the actual homepage and authenticated backend connection, then stops both services. Stop any existing launcher for this checkout first: its build output is shared even when ports differ. A model key is required for repository runs, but not this startup check.
-
-### Repository knowledge and execution setup
-
-In **New run**, paste repository-specific README/setup notes, supported tool versions, component directories, and install/start instructions in **Repository knowledge**. This is unverified planning context; pasted commands never execute automatically.
-
-New runs follow repository analysis → requirements → planning → design → generation → **Test execution · Setup** → Test execution. Early phases inspect source and validate artifacts statically. The requirements artifact previews the setup plan; the isolated workspace and target dependency installation are deferred until the execution setup gate. Compilation and collection run only after execution command approval. Missing prerequisites or unsupported setup show a step-by-step guide with host-specific command quoting, working directories, environment requirements, and your pasted notes. Install missing tools outside the harness, then retry to regenerate and approve the plan; an unknown adapter stays blocked/unverified.
-
-Existing runs retain their saved stage order so their checkpoints and approvals keep their original meaning.
-
-The public `Harness` remains in `src/maf_test_harness/workflow.py`. Its implementation is separated into `workflow_steps/planning.py`, `generation.py`, and `execution.py`, with pure helpers in `workflow_support.py`. UI settings and evidence operations live in `ui/settings_api.py` and `ui/evidence_api.py`; shared redaction stays in `ui/presentation.py`. These are modules in one backend, with the same two-server local deployment.
-
-### Deterministic analysis and inspectable runs
-
-New repository analysis and requirements use reviewed host-static skills without model calls. Source paths, lines, hashes and coverage gaps are shown in artifacts. This is a callable surface inventory requiring review, not a guarantee of complete business requirements. Planning, design and generation still use the model. Click any workflow stage to revisit its saved evidence during execution; each run’s Logs also exposes its redacted audit and trace files. See [skill review, findings and limits](docs/DETERMINISTIC_SKILL_REVIEW.md).
-
-### Linux launcher and live clone diagnostics
-
-Use `bash start-linux.sh` (or `bash start-linux.sh --smoke-test`) with Node 24 and uv installed. Windows and macOS keep their existing launchers. All use the same Python API and Next launcher.
-
-The clone view shows the actual run directory, attempt, timeout and live Git output. **Cancel clone** stops only that run's Git process tree and returns a retry/stop gate with logs retained. The default history directory is `<repo-root>/.maf-harness/runs`, inside the downloaded checkout. Service logs use `<repo-root>/.maf-harness/logs`. Older profile-based and `.harness_runs` history remains available in place; no files are moved or deleted. See [clone diagnostics](docs/CLONE_AND_PLATFORM_DIAGNOSTICS.md).
-
-## Strict generation update — October 6, 2026
-
-[Current intake, batching, Java quality gates and scoped QA](docs/PETSTORE_STRICT_TEST_GENERATION.md) supersede earlier truncation and final-retry acceptance behavior. New deterministic requirements retain all discovered declarations; installation/runtime checks remain at Test execution. Maven baseline unit/integration and generated results are separate, and runtime coverage is explicitly unmeasured. Run logs default to the checkout’s `.maf-harness` directory.
+- [docs/README.md](docs/README.md): index of all documentation.
+- [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md): design and guarantees.
+- [CLAUDE.md](CLAUDE.md): project rules for contributors and coding agents.
+- [CONTRIBUTING.md](CONTRIBUTING.md): branches, commits and pull requests.
