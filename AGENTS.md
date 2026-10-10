@@ -12,7 +12,7 @@ Agentic QE Platform: a Next.js UI and a loopback Python API over a checkpointed 
 - Never commit secrets, `.env`, run evidence or `agent-framework.pdf`, and never print API keys.
 - Never relax repository dependency pins or replace missing application dependencies with fake tests.
 - Never bypass the skill lock (`skills/SKILLS.lock.json`), plugin approval, or the clone, install and run approval gates.
-- Ask before deleting files or rewriting user evidence. Never force-push or push to `main`.
+- Ask before deleting files, rewriting user evidence, force-pushing or pushing to `main`.
 - After editing a locked skill file, refresh only its hash in `skills/SKILLS.lock.json`.
 - After adding, moving or removing a `.py` or `.ts` file, run `python scripts/gen_architecture.py`.
 

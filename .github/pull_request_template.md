@@ -18,7 +18,7 @@
 
 ## Merge gate
 
-Mirrors the merge gate in the root `CLAUDE.md`. Tick each item that ran, or that does not apply, and say which in the description.
+Contributors tick the items relevant to the change; the orchestrator runs the full merge gate before merge.
 
 - [ ] `uv run pytest -q --ignore=tests/targets` passes with 0 failures
 - [ ] `uv run ruff check src tests scripts` passes
@@ -32,4 +32,4 @@ Mirrors the merge gate in the root `CLAUDE.md`. Tick each item that ran, or that
 - [ ] Docs updated: the `CLAUDE.md` of each changed directory, plus `docs/` where behaviour changed
 - [ ] No secrets, `.env`, run evidence or `agent-framework.pdf` committed
 - [ ] Security-sensitive change (plugins, MCP, secrets, desktop) reviewed by Opus before merge
-- [ ] `memory.md` BEFORE/AFTER entries added (significant changes)
+- [ ] Significant change: say so in the description so the orchestrator logs BEFORE/AFTER in `memory.md` (do not edit it)

@@ -1,6 +1,6 @@
 # ui/ (loopback API and its services)
 
-The Next.js app and desktop shell talk to this package over HTTP on 127.0.0.1 with a bearer token (`HARNESS_API_TOKEN`). Despite `__init__.py`'s old Streamlit wording, there is no Streamlit UI.
+The Next.js app and desktop shell talk to this package over HTTP on 127.0.0.1 with a bearer token (`HARNESS_API_TOKEN`).
 
 ## Key files
 - `api.py`: `LocalAPI` (`start`, `respond`, `rerun`, `stop_run`, `read`, `list_runs`, `delete_run`, `rename_run`, `set_case_budget`, `audit`), `make_server` (the `Handler.handle_request` route table), `main`.

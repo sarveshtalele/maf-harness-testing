@@ -87,11 +87,10 @@ Every change must work on Windows, macOS and Linux; pathlib; explicit encoding="
 
 ## Orchestration and memory (rules)
 
-- **Agent model.** Four roles, each with a fixed model:
-  - Opus 5.5 (`claude-opus-5-5`): plans every task; the user approves the plan before execution. Opus also orchestrates, runs the final review and merges.
+- **Agent model.** Three models, each with a fixed role:
+  - Opus 5.5 (`claude-opus-5-5`): plans every task; the user approves the plan before execution. Opus also orchestrates and does the final review: it runs the merge gate, reviews security-sensitive changes (plugins, MCP, secrets, desktop), merges to `develop`, keeps `new-ui` equal and logs BEFORE/AFTER in `memory.md`.
   - Haiku 5.5 (`claude-haiku-5-5`): implements each task in its own worktree (code, docs, tests, mechanical edits).
   - Sonnet 5.5 (`claude-sonnet-5-5`): reviews each Haiku worktree diff against the brief (correctness, cross-OS, security, tests, docs accuracy) and returns findings; Haiku fixes them.
-  - Opus final review: runs the merge gate, reviews security-sensitive changes (plugins, MCP, secrets, desktop), merges to `develop`, keeps `new-ui` equal and logs BEFORE/AFTER in `memory.md`.
 - **Worktrees.**
   - The orchestrator creates them under the session scratchpad: `git worktree add -b task-<id> <scratchpad>/wt/task-<id> develop`. Never put them inside the repo `.claude/`, which the shell sandbox can't write.
   - Agents work only in their worktree, commit early and often, and never stash or push.
