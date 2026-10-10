@@ -50,6 +50,7 @@ class McpAPI:
             return _view(mcp_servers.get(name))
 
     def mcp_test(self, name: str) -> dict:
+        self._mcp_guard()
         server = mcp_servers.get(name)
         try:
             result = asyncio.run((self.mcp_probe or mcp_servers.probe)(server))

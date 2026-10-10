@@ -31,6 +31,7 @@ MAX_SECTION_CHARS = 20_000
 MAX_SECTIONS = 500
 MAX_DOC_BYTES = 10_000_000
 JIRA_PAGE = 100
+CLOUD_ID_RE = re.compile(r"[A-Za-z0-9-]{1,64}")
 KEY_RE = re.compile(r"^[A-Z][A-Z0-9_]*-\d+$")
 HEADING_RE = re.compile(r"^(#{1,6})\s+(.+?)\s*#*\s*$")
 W = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
@@ -317,7 +318,7 @@ def _mcp_call(server: dict, tool_name: str, arguments: dict) -> str:
 
 
 def fetch_jira_via_mcp(spec: dict, call: Callable[[dict, str, dict], str] | None = None):
-    """Jira stories through a configured MCP server: ``{server, jql | issue_keys, tool?, arguments?}``.
+    """Jira stories through a configured MCP server: ``{server, jql | issue_keys, tool?, cloud_id?}``.
 
     Only a tool on the server's auto-approved (read-only) list may be used here, because this call does not go through
     the model's approval gate. The result must be Jira search JSON (``{"issues": [...]}``) or a list of issues."""
@@ -335,7 +336,12 @@ def fetch_jira_via_mcp(spec: dict, call: Callable[[dict, str, dict], str] | None
     jql = str(spec.get("jql") or "").strip() or (f"key in ({','.join(keys)}) ORDER BY key" if keys else "")
     if not jql:
         raise ValueError("Provide jql or issue_keys")
-    arguments = {**(spec.get("arguments") or {}), "jql": jql}
+    arguments: dict = {"jql": jql}  # free-form arguments are not accepted
+    cloud_id = spec.get("cloud_id")
+    if cloud_id:
+        if not isinstance(cloud_id, str) or not CLOUD_ID_RE.fullmatch(cloud_id):
+            raise ValueError("cloud_id must be 1-64 letters, digits or '-'.")
+        arguments["cloudId"] = cloud_id
     text = (call or _mcp_call)(server, tool_name, arguments)
     try:
         body = json.loads(text)

@@ -40,7 +40,7 @@ export function validateBaseUrl(url: string): string {
 const MCP_NAME = /^[a-z][a-z0-9-]{0,31}$/;
 const MCP_KEY = /^[A-Z][A-Z0-9_]{0,63}$/;
 /** Same normalisation as maf_test_harness.mcp_servers.secret_env_name. */
-export const mcpEnvName = (server: string, key: string) => `HARNESS_MCP_SECRET_${server.toUpperCase().replace(/[^A-Z0-9]/g, '_')}_${key}`;
+export const mcpEnvName = (server: string, key: string) => `HARNESS_MCP_SECRET_${server.toUpperCase().replace(/-/g, '__')}_${key}`;
 
 export function validate(input: ModelSettingsInput): ModelSettingsInput {
   const out: ModelSettingsInput = {};

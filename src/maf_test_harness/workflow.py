@@ -558,6 +558,8 @@ class Harness(RerunSteps, ExecutionSteps, GenerationSteps, GreenfieldSteps, Plan
                 if digest(state["artifacts"][stage]) != request["details"]["artifact_hash"]:
                     raise ValueError("Artifact changed since review.")
                 state.setdefault("approved", {})[stage] = request["details"]["artifact_hash"]
+                if hasattr(self.runtime, "close_stage"):
+                    await self.runtime.close_stage(stage)  # disconnect that stage's MCP servers
                 self.audit(
                     "artifact_approved",
                     stage=stage,

@@ -572,8 +572,21 @@ class MAFHarnessRuntime:
         used = 0
         for server in mcp_servers.for_stage(stage):
             tool = None
+            kept = False
             try:
-                tool = mcp_servers.build_tool(server)
+                if server["approval_required_tools"] and self.mcp_approver is None:
+                    note = {
+                        "stage": stage,
+                        "server": server["name"],
+                        "tools": server["approval_required_tools"],
+                    }
+                    state.setdefault("mcp_approval_hidden", []).append(note)
+                    self._emit(
+                        "mcp_approval_hidden",
+                        reason="approval-required MCP tools hidden: no approver",
+                        **note,
+                    )
+                tool = mcp_servers.build_tool(server, with_approval=self.mcp_approver is not None)
                 await mcp_servers.connect(tool)
                 names = mcp_servers.enforce_approvals(tool, server)
                 if used + len(names) > mcp_servers.MAX_MCP_TOOLS_PER_STAGE:
@@ -583,6 +596,7 @@ class MAFHarnessRuntime:
                 used += len(names)
                 self._mcp_names.update(names)
                 tools.append(tool)
+                kept = True
             except BaseException as exc:
                 if isinstance(exc, KeyboardInterrupt | SystemExit | asyncio.CancelledError):
                     raise
@@ -590,13 +604,24 @@ class MAFHarnessRuntime:
                 note = {"stage": stage, "server": server["name"], "error": hook_redact(reason)[0]}
                 state.setdefault("mcp_unavailable", []).append(note)
                 self._emit("mcp_unavailable", **note)
-                if tool is not None:
+            finally:  # also on cancellation during connect(): never leave a spawned server behind
+                if tool is not None and not kept:
                     try:
-                        await tool.close()
-                    except Exception:
+                        await asyncio.shield(tool.close())
+                    except BaseException:
                         pass
         self._mcp[stage] = tools
         return tools
+
+    async def close_stage(self, stage: str) -> None:
+        """Disconnect a finished stage's MCP servers (called when its artifact is approved)."""
+        for tool in self._mcp.pop(stage, []):
+            try:
+                await tool.close()
+            except Exception:
+                pass
+        self._agents.pop(stage, None)  # its tools are gone; a rerun rebuilds the agent
+        self._primed.pop(stage, None)
 
     def _create_agent(
         self, stage: str, skills: list[str], persona: str, state: dict, persist, mcp_tools: list | None = None
@@ -716,30 +741,32 @@ class MAFHarnessRuntime:
         return create_harness_agent(**options)
 
     async def _resolve_mcp_approvals(self, stage, agent, session, result, run_options, invocation):
-        """Ask ``mcp_approver`` about approval-required MCP calls and continue the run with its answers.
+        """Answer approval requests: ``mcp_approver`` decides for MCP calls; without one, or for anything else, refuse.
 
         With no approver, or any request that is not an MCP tool, nothing is answered (the caller then rejects the
         run): refusing is the safe default. Arguments are passed redacted."""
         requests = result.user_input_requests
         calls = [r for r in requests if getattr(r, "function_call", None) is not None]
-        if self.mcp_approver is None or len(calls) != len(requests):
-            return result
-        if any(r.function_call.name not in self._mcp_names for r in calls):
-            return result
-        summary = [
-            {
-                "tool": r.function_call.name,
-                "arguments": summarize_arguments(
-                    json.loads(r.function_call.arguments)
-                    if isinstance(r.function_call.arguments, str)
-                    else r.function_call.arguments
-                ),
-            }
-            for r in calls
-        ]
-        verdicts = self.mcp_approver(stage, summary)
-        if asyncio.iscoroutine(verdicts):
-            verdicts = await verdicts
+        if len(calls) != len(requests):
+            return result  # not a function approval: cannot be answered
+        summary: list[dict] = []
+        refuse = self.mcp_approver is None or any(r.function_call.name not in self._mcp_names for r in calls)
+        for r in calls:
+            try:
+                raw = r.function_call.arguments
+                args = json.loads(raw) if isinstance(raw, str) else raw
+                if not isinstance(args, dict):
+                    raise ValueError("arguments are not an object")
+                summary.append({"tool": r.function_call.name, "arguments": summarize_arguments(args)})
+            except ValueError:  # malformed arguments are never approved
+                refuse = True
+                summary.append({"tool": r.function_call.name, "arguments": {}})
+        if refuse:
+            verdicts: Any = [False] * len(calls)
+        else:
+            verdicts = self.mcp_approver(stage, summary)
+            if asyncio.iscoroutine(verdicts):
+                verdicts = await verdicts
         verdicts = list(verdicts)
         if len(verdicts) != len(calls):
             verdicts = [False] * len(calls)
@@ -924,6 +951,12 @@ class MAFHarnessRuntime:
         persist()
         try:
             result = await self._run_agent(agent, prompt, session=session, options=run_options)
+            for _ in range(3):  # approval rounds for MCP calls
+                if not result.user_input_requests:
+                    break
+                result = await self._resolve_mcp_approvals(
+                    stage, agent, session, result, run_options, invocation
+                )
             invocation["status"] = "returned"
             invocation["response_sha256"] = hashlib.sha256((result.text or "").encode()).hexdigest()
         except Exception as exc:
@@ -943,10 +976,6 @@ class MAFHarnessRuntime:
             raise
         finally:
             persist()
-        for _ in range(3):  # approval rounds for MCP calls
-            if not result.user_input_requests:
-                break
-            result = await self._resolve_mcp_approvals(stage, agent, session, result, run_options, invocation)
         if result.user_input_requests:
             invocation["status"] = "rejected_approval_request"
             raise AgentOutputError(

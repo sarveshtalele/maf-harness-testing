@@ -18,7 +18,8 @@ stages their tools. Everything is off until you enable it.
 - `allowed_tools` run without asking; `approval_required_tools` use MAF `always_require` approval. After connecting, the
   runtime forces `always_require` on any exposed tool that is not auto-approved.
 - Approval requests are answered by `MAFHarnessRuntime.mcp_approver(stage, [{tool, arguments}]) -> [bool]`. **With no
-  approver (the default) every approval-required call is refused and the stage fails with a clear error.** The
+  approver (the default) approval-required tools are not shown to the model at all** (trace note `mcp_approval_hidden`),
+  so only `allowed_tools` are usable; a stray approval request is answered with a refusal and the model carries on. The
   workflow's existing human "tool" gate is for host commands between stages, not for mid-turn model tool calls, so wiring
   an interactive approval UI is a follow-up.
 - Existing hooks apply to MCP calls (function middleware: pre/post-tool hooks, secret redaction), and each call is
@@ -31,7 +32,11 @@ stages their tools. Everything is off until you enable it.
   backend. They are added to the redaction hook and never logged. stdio env values go only to the spawned process; an
   http token is sent as `Authorization` (`Bearer <token>`, or verbatim when it already contains a space, such as
   `Basic ...`) and only to the server's own origin.
-- Env names that change code loading (`PATH`, `NODE_OPTIONS`, `LD_PRELOAD`, ...) cannot be configured.
+- Env names that change code loading or networking cannot be configured: prefixes `DYLD_`, `LD_`, `NODE_`, `PYTHON`,
+  `NPM_CONFIG_`, anything ending in `_PROXY`, and `PATH`, `BASH_ENV`, `ENV`, `PERL5LIB`, `RUBYOPT`, `JAVA_TOOL_OPTIONS`,
+  `SSL_CERT_FILE`, `HOME`, `COMSPEC`.
+- Deleting a server, or changing its url/transport/command, discards its secrets (env-supplied values are ignored until
+  new ones are set). Env names encode `-` in the server name as `__` (`HARNESS_MCP_SECRET_ATLASSIAN__JIRA_BEARER_TOKEN`).
 - Mutating API calls return 409 while a run operation is active.
 
 ## Presets
@@ -51,9 +56,10 @@ resolved to `npx.cmd` with `shutil.which`.
 
 ## Greenfield intake
 
-`spec_sources.jira_mcp = {server, jql | issue_keys, tool?}` fetches stories through a configured server instead of
+`spec_sources.jira_mcp = {server, jql | issue_keys, tool?, cloud_id?}` fetches stories through a configured server instead of
 REST. The tool must be on the server's auto-approved list (this call bypasses the model approval gate) and must return
-Jira search JSON (`{"issues": [...]}`); sections map exactly as in the REST path. Not yet exposed in the UI form.
+Jira search JSON (`{"issues": [...]}`); sections map exactly as in the REST path. `cloud_id` (`[A-Za-z0-9-]{1,64}`) is passed as the tool's `cloudId` argument, which Atlassian tools require; no other
+arguments can be supplied. Not yet exposed in the UI form.
 
 ## API
 

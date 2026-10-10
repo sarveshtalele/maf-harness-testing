@@ -47,6 +47,15 @@ def test_stages_match_workflow():
         srv(token=SECRET),  # a pasted secret is rejected, not stored
         srv(env_keys=["lower"]),
         srv(env_keys=["PATH"]),
+        srv(env_keys=["NODE_OPTIONS"]),
+        srv(env_keys=["LD_PRELOAD"]),
+        srv(env_keys=["DYLD_INSERT_LIBRARIES"]),
+        srv(env_keys=["PYTHONPATH"]),
+        srv(env_keys=["NPM_CONFIG_REGISTRY"]),
+        srv(env_keys=["HTTPS_PROXY"]),
+        srv(env_keys=["BASH_ENV"]),
+        srv(env_keys=["SSL_CERT_FILE"]),
+        srv(env_keys=["JAVA_TOOL_OPTIONS"]),
         srv(allowed_tools=["a"], approval_required_tools=["a"]),
         srv(allowed_tools=[f"t{i}" for i in range(9)]),
         {"name": "h", "transport": "http", "url": "http://example.com/mcp"},
@@ -79,7 +88,7 @@ def test_secret_from_env_matches_desktop_naming(monkeypatch):
     mcp_servers.upsert(
         {"name": "atlassian-jira", "transport": "http", "url": "https://mcp.atlassian.com/v2/mcp"}
     )
-    monkeypatch.setenv("HARNESS_MCP_SECRET_ATLASSIAN_JIRA_BEARER_TOKEN", SECRET)
+    monkeypatch.setenv("HARNESS_MCP_SECRET_ATLASSIAN__JIRA_BEARER_TOKEN", SECRET)
     assert mcp_servers.get_secret("atlassian-jira", "BEARER_TOKEN") == SECRET
 
 
@@ -206,6 +215,7 @@ def test_runtime_only_enabled_servers_for_matching_stage(runtime, monkeypatch):
 
 def test_unlisted_exposed_tool_is_forced_to_require_approval(runtime, monkeypatch):
     mcp_servers.upsert(srv(stages=["requirements"], allowed_tools=["a"], approval_required_tools=["b"]))
+    runtime.mcp_approver = lambda stage, calls: [False] * len(calls)
     fake_builder(monkeypatch)
     (tool,) = asyncio.run(runtime._mcp_tools("requirements", {}))
     modes = {f.additional_properties["_mcp_remote_name"]: f.approval_mode for f in tool.functions}
@@ -247,39 +257,125 @@ def test_stage_tool_budget_caps_mcp_tools(runtime, monkeypatch):
     )  # + load_skill/read_skill_resource/run_skill_script
 
 
-def test_approvals_refused_without_approver_and_asked_with_one(runtime):
-    class Req:
-        def __init__(self, name):
-            self.function_call = type("C", (), {"name": name, "arguments": '{"url": "https://x"}'})()
-            self.answers = []
+class _Req:
+    def __init__(self, name, arguments='{"url": "https://x"}'):
+        self.function_call = type("C", (), {"name": name, "arguments": arguments})()
+        self.answers = []
 
-        def to_function_approval_response(self, ok):
-            self.answers.append(ok)
-            return f"resp:{ok}"
+    def to_function_approval_response(self, ok):
+        self.answers.append(ok)
+        return f"resp:{ok}"
 
-    class Result:
-        def __init__(self, reqs):
-            self.user_input_requests = reqs
 
-    runtime._mcp_names = {"mcp_pw_browser_navigate"}
-    req = Req("mcp_pw_browser_navigate")
-    res = Result([req])
-    assert asyncio.run(runtime._resolve_mcp_approvals("requirements", None, None, res, {}, {})) is res
-    seen = []
-    runtime.mcp_approver = lambda stage, calls: seen.append(calls) or [False]
+class _Result:
+    def __init__(self, reqs):
+        self.user_input_requests = reqs
+
+
+def _rt_with_replies(runtime):
     sent = []
 
     async def fake_run(agent, prompt, **kw):
         sent.append(prompt)
-        return Result([])
+        return _Result([])
 
     runtime._run_agent = fake_run
-    out = asyncio.run(runtime._resolve_mcp_approvals("requirements", None, None, res, {}, {}))
-    assert out.user_input_requests == [] and req.answers == [False]
-    assert seen[0][0]["tool"] == "mcp_pw_browser_navigate"
-    # a non-MCP approval request is never auto-answered
-    foreign = Result([Req("run_skill_script")])
-    assert asyncio.run(runtime._resolve_mcp_approvals("requirements", None, None, foreign, {}, {})) is foreign
+    runtime._mcp_names = {"mcp_pw_browser_navigate"}
+    return sent
+
+
+def test_no_approver_answers_refusal_so_the_model_continues(runtime):
+    sent = _rt_with_replies(runtime)
+    req = _Req("mcp_pw_browser_navigate")
+    out = asyncio.run(runtime._resolve_mcp_approvals("requirements", None, None, _Result([req]), {}, {}))
+    assert out.user_input_requests == [] and req.answers == [False] and len(sent) == 1
+    foreign = _Req("run_skill_script")  # never auto-approved, but also answered with a refusal
+    asyncio.run(runtime._resolve_mcp_approvals("requirements", None, None, _Result([foreign]), {}, {}))
+    assert foreign.answers == [False]
+
+
+def test_approver_decides_and_malformed_arguments_are_refused(runtime):
+    _rt_with_replies(runtime)
+    seen = []
+    runtime.mcp_approver = lambda stage, calls: seen.append(calls) or [True]
+    ok = _Req("mcp_pw_browser_navigate")
+    asyncio.run(runtime._resolve_mcp_approvals("requirements", None, None, _Result([ok]), {}, {}))
+    assert ok.answers == [True] and seen[0][0]["tool"] == "mcp_pw_browser_navigate"
+    for bad in ("{not json", "[1, 2]"):
+        req = _Req("mcp_pw_browser_navigate", bad)
+        asyncio.run(runtime._resolve_mcp_approvals("requirements", None, None, _Result([req]), {}, {}))
+        assert req.answers == [False]
+    assert len(seen) == 1  # the approver was never asked about the malformed ones
+
+
+def test_approval_required_tools_hidden_without_approver(runtime, monkeypatch):
+    mcp_servers.upsert(srv(stages=["requirements"], allowed_tools=["a"], approval_required_tools=["b"]))
+    seen = []
+    real_build = mcp_servers.build_tool
+    monkeypatch.setattr(
+        mcp_servers, "build_tool", lambda server, **kw: seen.append(kw) or FakeTool(server, ["a"])
+    )
+    state: dict = {}
+    asyncio.run(runtime._mcp_tools("requirements", state))
+    assert seen == [{"with_approval": False}] and state["mcp_approval_hidden"][0]["tools"] == ["b"]
+    monkeypatch.setattr(mcp_servers, "build_tool", real_build)
+    tool = mcp_servers.build_tool(mcp_servers.get("pw"), with_approval=False)
+    assert tool.allowed_tools == ["a"] and tool.approval_mode["always_require_approval"] == []
+    tool = mcp_servers.build_tool(mcp_servers.get("pw"), with_approval=True)
+    assert set(tool.allowed_tools) == {"a", "b"}
+
+
+def test_cancel_during_connect_closes_tool_and_close_stage_disconnects(runtime, monkeypatch):
+    mcp_servers.upsert(srv(stages=["requirements"], allowed_tools=["a"]))
+    built = []
+
+    class Hang(FakeTool):
+        async def connect(self):
+            await asyncio.sleep(60)
+
+    monkeypatch.setattr(
+        mcp_servers, "build_tool", lambda server, **kw: built.append(Hang(server, ["a"])) or built[-1]
+    )
+
+    async def go():
+        task = asyncio.create_task(runtime._mcp_tools("requirements", {}))
+        await asyncio.sleep(0.05)
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+
+    asyncio.run(go())
+    assert built[0].closed
+    fake_builder(monkeypatch)
+    asyncio.run(runtime._mcp_tools("requirements", {}))
+    assert runtime._mcp["requirements"]
+    asyncio.run(runtime.close_stage("requirements"))
+    assert "requirements" not in runtime._mcp
+
+
+def test_secrets_revoked_on_delete_and_target_change(monkeypatch):
+    mcp_servers.upsert({"name": "j", "transport": "http", "url": "https://a.example.com/mcp"})
+    monkeypatch.setenv("HARNESS_MCP_SECRET_J_BEARER_TOKEN", SECRET)
+    assert mcp_servers.get_secret("j", "BEARER_TOKEN") == SECRET
+    mcp_servers.set_secrets("j", {"BEARER_TOKEN": "memory-secret-1234"})
+    mcp_servers.upsert(
+        {"name": "j", "transport": "http", "url": "https://a.example.com/mcp", "enabled": True}
+    )
+    assert mcp_servers.get_secret("j", "BEARER_TOKEN") == "memory-secret-1234"  # same target: kept
+    mcp_servers.upsert({"name": "j", "transport": "http", "url": "https://evil.example.com/mcp"})
+    assert mcp_servers.get_secret("j", "BEARER_TOKEN") == ""  # new target: memory dropped, env ignored
+    mcp_servers.set_secrets("j", {"BEARER_TOKEN": "fresh-secret-12345"})
+    assert mcp_servers.get_secret("j", "BEARER_TOKEN") == "fresh-secret-12345"
+    mcp_servers.remove("j")
+    mcp_servers.upsert({"name": "j", "transport": "http", "url": "https://evil.example.com/mcp"})
+    assert mcp_servers.get_secret("j", "BEARER_TOKEN") == ""  # a deleted server's env value stays ignored
+
+
+def test_secret_env_names_cannot_collide_and_match_desktop():
+    assert mcp_servers.secret_env_name("a-b", "C") == "HARNESS_MCP_SECRET_A__B_C"
+    assert mcp_servers.secret_env_name("a", "B_C") == "HARNESS_MCP_SECRET_A_B_C"
+    ts = (Path(__file__).parents[1] / "desktop" / "src" / "keystore.ts").read_text()
+    assert ".toUpperCase().replace(/-/g, '__')" in ts  # keep the TypeScript encoding identical
 
 
 # ---- API --------------------------------------------------------------------------------------------------------
@@ -307,6 +403,7 @@ def test_api_mutations_conflict_while_busy(api, monkeypatch):
     api.mcp_save(srv(env_keys=["API_TOKEN"]))
     monkeypatch.setattr(api, "busy", lambda: True)
     for call in (
+        lambda: api.mcp_test("pw"),
         lambda: api.mcp_save(srv(name="other")),
         lambda: api.mcp_delete("pw"),
         lambda: api.mcp_set_secrets("pw", {"API_TOKEN": SECRET}),
@@ -393,6 +490,7 @@ def test_real_stdio_probe_and_stage_tools(tmp_path):
         "secret_extra",
     ]
     rt = MAFHarnessRuntime(api_key="k", model="m", skills_root=Path("skills"))
+    rt.mcp_approver = lambda stage, calls: [False] * len(calls)
 
     async def go():
         (tool,) = await rt._mcp_tools("requirements", {})
@@ -403,4 +501,42 @@ def test_real_stdio_probe_and_stage_tools(tmp_path):
 
     modes, out = asyncio.run(go())
     assert modes == {"mcp_fx_read_thing": "never_require", "mcp_fx_change_thing": "always_require"}
+    rt2 = MAFHarnessRuntime(
+        api_key="k", model="m", skills_root=Path("skills")
+    )  # no approver: gated tool hidden
+    (only,) = asyncio.run(_stage_tools(rt2))
+    assert [f.name for f in only.functions] == ["mcp_fx_read_thing"]
     assert "read 1" in "".join(getattr(c, "text", "") or "" for c in out)
+
+
+async def _stage_tools(rt):
+    tools = await rt._mcp_tools("requirements", {})
+    await rt.close()
+    return tools
+
+
+def test_jira_cloud_id_is_validated_and_free_arguments_ignored():
+    from maf_test_harness.repo.specs import ingest_specs
+    from maf_test_harness.run_options import parse_run_options
+
+    mcp_servers.upsert({**mcp_servers.preset_server("atlassian-jira-cloud", "jira"), "enabled": True})
+    calls = []
+
+    def call(server, tool, args):
+        calls.append(args)
+        return json.dumps({"issues": []})
+
+    spec = {"server": "jira", "jql": "project = P", "cloud_id": "abc-123", "arguments": {"evil": 1}}
+    ingest_specs(None, None, None, spec, call)
+    assert calls == [{"jql": "project = P", "cloudId": "abc-123"}]
+    with pytest.raises(ValueError, match="cloud_id"):
+        ingest_specs(None, None, None, {**spec, "cloud_id": "x y;"}, call)
+    out = parse_run_options(
+        {"run_mode": "greenfield", "test_types": ["unit"], "spec_sources": {"jira_mcp": spec}}
+    )
+    assert out["spec_sources"]["jira_mcp"] == {
+        "server": "jira",
+        "jql": "project = P",
+        "issue_keys": [],
+        "cloud_id": "abc-123",
+    }

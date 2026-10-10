@@ -117,6 +117,12 @@ def parse_run_options(body: dict) -> dict[str, Any]:
         ):
             raise ValueError("jira_mcp needs a server name and a JQL query or issue keys.")
         clean_mcp = {"server": mcp["server"], "jql": jql.strip(), "issue_keys": keys}
+        if mcp.get("cloud_id"):
+            if not isinstance(mcp["cloud_id"], str) or not re.fullmatch(
+                r"[A-Za-z0-9-]{1,64}", mcp["cloud_id"]
+            ):
+                raise ValueError("cloud_id must be 1-64 letters, digits or '-'.")
+            clean_mcp["cloud_id"] = mcp["cloud_id"]
         if mcp.get("tool"):
             clean_mcp["tool"] = str(mcp["tool"])
     if not parsed and not clean_jira and not clean_mcp:

@@ -38,21 +38,26 @@ CONNECT_TIMEOUT_SECONDS = 25  # below the UI proxy's 30 s limit
 _SLUG = re.compile(r"[a-z][a-z0-9-]{0,31}")
 _ENV_KEY = re.compile(r"[A-Z][A-Z0-9_]{0,63}")
 _TOOL_NAME = re.compile(r"[A-Za-z0-9_.:-]{1,100}")
-# Variables that change how a process loads code; a secret field must never be able to set them.
+# Variables that change how a process loads code, resolves hosts or trusts certificates; a secret field must never set them.
+_FORBIDDEN_PREFIXES = ("DYLD_", "LD_", "NODE_", "PYTHON", "NPM_CONFIG_")
 _FORBIDDEN_ENV = {
     "PATH",
     "PATHEXT",
-    "LD_PRELOAD",
-    "LD_LIBRARY_PATH",
-    "DYLD_INSERT_LIBRARIES",
-    "DYLD_LIBRARY_PATH",
-    "NODE_OPTIONS",
-    "PYTHONPATH",
-    "PYTHONSTARTUP",
-    "PYTHONHOME",
     "HOME",
     "COMSPEC",
+    "BASH_ENV",
+    "ENV",
+    "PERL5LIB",
+    "RUBYOPT",
+    "JAVA_TOOL_OPTIONS",
+    "SSL_CERT_FILE",
 }
+
+
+def forbidden_env(key: str) -> bool:
+    k = key.upper()
+    return k in _FORBIDDEN_ENV or k.startswith(_FORBIDDEN_PREFIXES) or k.endswith("_PROXY")
+
 
 PRESETS: dict[str, dict[str, Any]] = {
     "atlassian-jira-cloud": {
@@ -164,7 +169,7 @@ def validate(data: dict) -> dict:
         )
     if set(out["allowed_tools"]) & set(out["approval_required_tools"]):
         raise ValueError("A tool cannot be both auto-approved and approval-required.")
-    if set(out["env_keys"]) & _FORBIDDEN_ENV:
+    if any(forbidden_env(k) for k in out["env_keys"]):
         raise ValueError("That environment variable cannot be set for an MCP server.")
     if transport == "stdio":
         command = str(data.get("command", "")).strip()
@@ -220,6 +225,9 @@ def get(name: str) -> dict:
 def upsert(data: dict) -> dict:
     server = validate(data)
     with _file_lock:
+        old = next((s for s in load() if s["name"] == server["name"]), None)
+        if old and any(old[k] != server[k] for k in ("url", "transport", "command")):
+            clear_secrets(server["name"])  # a secret never follows a server to a different target
         servers = [s for s in load() if s["name"] != server["name"]]
         if len(servers) >= MAX_SERVERS:
             raise ValueError(f"At most {MAX_SERVERS} MCP servers.")
@@ -251,11 +259,15 @@ def for_stage(stage: str) -> list[dict]:
 
 # ---- secrets ----------------------------------------------------------------------------------------------------
 _secrets: dict[str, dict[str, str]] = {}
+_revoked: set[str] = (
+    set()
+)  # servers whose HARNESS_MCP_SECRET_* env values are ignored until new secrets are set
 _secret_lock = threading.Lock()
 
 
 def secret_env_name(server: str, key: str) -> str:
-    return f"{SECRET_ENV_PREFIX}{re.sub(r'[^A-Z0-9]', '_', server.upper())}_{key}"
+    # '-' becomes '__' so "a-b"+"C" and "a"+"B_C" cannot collide; same encoding in desktop/src/keystore.ts
+    return f"{SECRET_ENV_PREFIX}{server.upper().replace('-', '__')}_{key}"
 
 
 def secret_keys(server: dict) -> list[str]:
@@ -273,6 +285,7 @@ def set_secrets(name: str, values: dict) -> None:
             raise ValueError("A secret must be a single-line string of at most 4000 characters.")
         clean[key] = value.strip()
     with _secret_lock:
+        _revoked.discard(name)
         store = _secrets.setdefault(name, {})
         for key, value in clean.items():  # empty string clears
             if value:
@@ -284,12 +297,14 @@ def set_secrets(name: str, values: dict) -> None:
 def clear_secrets(name: str) -> None:
     with _secret_lock:
         _secrets.pop(name, None)
+        _revoked.add(name)
 
 
 def get_secret(name: str, key: str) -> str:
     with _secret_lock:
         value = _secrets.get(name, {}).get(key, "")
-    return value or os.environ.get(secret_env_name(name, key), "").strip()
+        revoked = name in _revoked
+    return value or ("" if revoked else os.environ.get(secret_env_name(name, key), "").strip())
 
 
 def secret_status(server: dict) -> dict[str, bool]:
@@ -322,7 +337,7 @@ def approval_mode(server: dict) -> dict[str, list[str]]:
     }
 
 
-def build_tool(server: dict, *, expose_all: bool = False):
+def build_tool(server: dict, *, expose_all: bool = False, with_approval: bool = True):
     """An unconnected MAF ``MCPStdioTool`` / ``MCPStreamableHTTPTool``.
 
     Only listed tools are exposed (``allowed_tools``): a tool the server adds later, or one in neither list, is
@@ -330,13 +345,17 @@ def build_tool(server: dict, *, expose_all: bool = False):
     """
     from agent_framework import MCPStdioTool, MCPStreamableHTTPTool
 
-    listed = None if expose_all else [*server["allowed_tools"], *server["approval_required_tools"]]
+    # Without an approver an approval-required tool could only be refused: do not show it to the model at all.
+    gated = server["approval_required_tools"] if with_approval else []
+    listed = None if expose_all else [*server["allowed_tools"], *gated]
     common: dict[str, Any] = {
         "tool_name_prefix": function_prefix(server["name"]),
         "load_prompts": False,
         "request_timeout": 60,
         "allowed_tools": listed,
-        "approval_mode": "always_require" if expose_all else approval_mode(server),
+        "approval_mode": "always_require"
+        if expose_all
+        else {**approval_mode(server), "always_require_approval": list(gated)},
     }
     if server["transport"] == "stdio":
         missing = [k for k in server["env_keys"] if not get_secret(server["name"], k)]

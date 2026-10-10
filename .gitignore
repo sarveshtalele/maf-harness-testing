@@ -28,6 +28,7 @@ docs/audit/execution-targets/
 # Next.js UI and local tooling
 .tools/
 frontend/node_modules/
+frontend/node_modules
 frontend/.next/
 frontend/*.tsbuildinfo
 frontend/playwright-report/
