@@ -30,7 +30,9 @@ STAGES = (
 SECRET_ENV_PREFIX = "HARNESS_MCP_SECRET_"
 BEARER_KEY = "BEARER_TOKEN"  # reserved secret name of an http server's Authorization value
 MAX_SERVERS = 20
-MAX_LISTED_TOOLS = 8  # per server: every tool description is resent with every model call (stage budget is 20)
+MAX_LISTED_TOOLS = (
+    8  # per server: every tool description is resent with every model call (stage budget is 20)
+)
 MAX_MCP_TOOLS_PER_STAGE = 8
 CONNECT_TIMEOUT_SECONDS = 30
 _SLUG = re.compile(r"[a-z][a-z0-9-]{0,31}")
@@ -79,7 +81,12 @@ PRESETS: dict[str, dict[str, Any]] = {
         "args": ["@playwright/mcp@latest"],
         "stages": [],
         "allowed_tools": ["browser_snapshot", "browser_console_messages", "browser_network_requests"],
-        "approval_required_tools": ["browser_navigate", "browser_click", "browser_type", "browser_take_screenshot"],
+        "approval_required_tools": [
+            "browser_navigate",
+            "browser_click",
+            "browser_type",
+            "browser_take_screenshot",
+        ],
     },
 }
 
@@ -152,7 +159,9 @@ def validate(data: dict) -> dict:
     if set(out["stages"]) - set(STAGES):
         raise ValueError("Unknown stage in stages.")
     if len(set(out["allowed_tools"]) | set(out["approval_required_tools"])) > MAX_LISTED_TOOLS:
-        raise ValueError(f"At most {MAX_LISTED_TOOLS} tools per server (each tool is resent with every model call).")
+        raise ValueError(
+            f"At most {MAX_LISTED_TOOLS} tools per server (each tool is resent with every model call)."
+        )
     if set(out["allowed_tools"]) & set(out["approval_required_tools"]):
         raise ValueError("A tool cannot be both auto-approved and approval-required.")
     if set(out["env_keys"]) & _FORBIDDEN_ENV:
