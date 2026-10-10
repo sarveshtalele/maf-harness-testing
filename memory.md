@@ -372,3 +372,18 @@ Final verification on `new-ui`:
   - "was never closed" errors now name the truncated file, the line and the last line text (fixes batches 37, 39 and 52).
 - **W0-E (Errors tab):** `ui/errors.py` `run_errors` builds categorized, deduplicated errors, exposed in the run payload. The run view shows one summary notice; the Errors tab has category chips, search and expandable rows. On the real run it produced 22 items in 8 categories.
 - **Verification:** run outside the sandbox. 937 pytest passed and 0 failed; 13 Playwright passed; tsc, build, ruff and the architecture-map check pass.
+
+### 2026-10-10 Live E2E result + W0b (Sonnet; Opus merged)
+- **First complete end-to-end run** of mcp-skills-registry (`098c9fba4a53`, budget 1):
+  - 173 cases: 78 passed, 21 failed, 44 error, 27 generation_failed, 3 not run.
+  - All 191 requirements are accounted for (0 unexplained); 9 generation batches failed.
+- **Error root causes:**
+  - 24 colliding top-level `engine` packages;
+  - 13 missing `httpx` for the TestClient;
+  - 6 cases where the model wrote `parents / "x"`.
+- **W0b fixes:**
+  - Recipes carry literal `code`: a `_ROOT` marker search, a purge on collision, a per-segment `sys.path.insert`, then the import.
+  - New autofixes: `fix_import_recipes`, which rewrites bad imports to the unique recipe and does nothing when ambiguous; `fix_missing_purge`; `fix_path_parents_division`.
+  - A test-tooling map for the `install-test-tooling` step: `httpx` for starlette/fastapi testclient, plus `respx`, `pytest-mock`, `pytest-asyncio` and `freezegun`. It is skipped when the repo already declares the package, and repo pins are never changed.
+  - Verification: 943 passed outside the sandbox.
+- **Gap:** a server stopped from outside leaves the run `interrupted`; Rerun from the active stage reuses the accepted batches. The desktop app should offer to resume on start.
