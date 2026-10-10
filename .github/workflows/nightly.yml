@@ -1,0 +1,20 @@
+name: nightly
+on:
+  schedule:
+    - cron: "0 2 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  nightly:
+    runs-on: ubuntu-latest
+    environment: dev
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v7
+      - run: uv sync --extra dev --python 3.12
+      - name: Full test suite
+        run: uv run pytest -q --ignore=tests/targets
+      # Benchmark step: added later.

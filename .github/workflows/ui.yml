@@ -1,8 +1,16 @@
 name: Local UI compatibility
 on:
   push:
+    branches: [main, develop, 'release/**']
   pull_request:
   workflow_dispatch:
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
 jobs:
   local-ui:
     strategy:

@@ -1,0 +1,55 @@
+name: desktop-prerelease
+on:
+  workflow_dispatch:
+  push:
+    tags: ["v*-rc*"]
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    environment: dev
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, macos-14, macos-13, ubuntu-latest]
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v7
+      - name: Guard (desktop/ present?)
+        id: guard
+        run: |
+          if [ -f desktop/package.json ]; then
+            echo "present=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "present=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::desktop/ not present yet - skipping"
+          fi
+      - uses: actions/setup-node@v5
+        if: steps.guard.outputs.present == 'true'
+        with:
+          node-version-file: frontend/.nvmrc
+      - uses: astral-sh/setup-uv@v7
+        if: steps.guard.outputs.present == 'true'
+      - name: Install Python deps
+        if: steps.guard.outputs.present == 'true'
+        run: uv sync --python 3.12 --extra dev
+      - name: Check versions
+        if: steps.guard.outputs.present == 'true'
+        run: uv run python scripts/check_version.py
+      - name: Build desktop installers
+        if: steps.guard.outputs.present == 'true'
+        working-directory: desktop
+        # `npm run dist` is provided in Wave 3.
+        run: |
+          npm ci
+          npm run dist
+      - uses: actions/upload-artifact@v5
+        if: steps.guard.outputs.present == 'true'
+        with:
+          name: desktop-${{ matrix.os }}
+          path: desktop/dist/*
