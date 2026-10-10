@@ -49,6 +49,15 @@ export function canOpenExternally(url: string): boolean {
   }
 }
 
+/** Evidence reports are framed same-origin; the backend sends its own sandbox CSP for them. */
+export function isEvidenceUrl(url: string): boolean {
+  try {
+    return new URL(url).pathname.includes('/evidence/');
+  } catch {
+    return false;
+  }
+}
+
 export function csp(uiPort: number): string {
   const self = `http://127.0.0.1:${uiPort}`;
   return [
@@ -61,7 +70,7 @@ export function csp(uiPort: number): string {
     `connect-src 'self' ${self}`,
     `object-src 'none'`,
     `base-uri 'self'`,
-    `frame-ancestors 'none'`,
+    `frame-ancestors 'self'`,
     `form-action 'self'`,
   ].join('; ');
 }

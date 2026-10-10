@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { canOpenExternally, csp, isAppOrigin, makeToken, pickFreePort, pickTwoPorts } from './util';
+import { canOpenExternally, csp, isAppOrigin, isEvidenceUrl, makeToken, pickFreePort, pickTwoPorts } from './util';
 
 test('free ports are loopback-bindable and distinct', async () => {
   const [a, b] = await pickTwoPorts();
@@ -34,6 +34,12 @@ test('external links: https only', () => {
 
 test('csp restricts framing and objects', () => {
   const c = csp(4000);
-  assert.match(c, /frame-ancestors 'none'/);
+  assert.match(c, /frame-ancestors 'self'/);
   assert.match(c, /object-src 'none'/);
+});
+
+test('evidence report URLs are recognised', () => {
+  assert.ok(isEvidenceUrl('http://127.0.0.1:4000/api/harness/runs/r1/evidence/a.html/view.html'));
+  assert.ok(!isEvidenceUrl('http://127.0.0.1:4000/runs/r1'));
+  assert.ok(!isEvidenceUrl('not a url'));
 });

@@ -1,9 +1,10 @@
+import type { ChildProcess } from 'node:child_process';
 import { app, BrowserWindow, dialog, ipcMain, Menu, safeStorage, session, shell } from 'electron';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { KeyStore, ModelSettingsInput } from './keystore';
 import { ProcessManager, ServiceSpec, waitForHttp } from './process-manager';
-import { canOpenExternally, csp, isAppOrigin, makeToken, pickTwoPorts } from './util';
+import { canOpenExternally, csp, isAppOrigin, isEvidenceUrl, makeToken, pickTwoPorts } from './util';
 
 const pkg = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'package.json'), 'utf8')) as {
   homepage: string;
@@ -72,6 +73,17 @@ function specs(apiPort: number, uiPort: number, token: string): { backend: Servi
   };
 }
 
+/** False once the service exited or failed to spawn (e.g. ENOENT), so waits fail fast. */
+const alive = (child: ChildProcess) => child.exitCode === null && !pm.hasSpawnError(child);
+
+/** Running-run check for the settings handlers: a failed check must block the change, never pass as idle. */
+async function runsBusy(apiPort: number, headers: Record<string, string>): Promise<boolean> {
+  const r = await fetch(`http://127.0.0.1:${apiPort}/runs`, { headers }).catch(() => null);
+  const body = r?.ok ? await r.json().catch(() => null) as { busy?: unknown } | null : null;
+  if (typeof body?.busy !== 'boolean') throw new Error('Could not check whether a run is active; try again.');
+  return body.busy;
+}
+
 function buildMenu(dataDir: string) {
   const template: Electron.MenuItemConstructorOptions[] = [
     ...(process.platform === 'darwin' ? [{ role: 'appMenu' as const }] : []),
@@ -99,17 +111,17 @@ async function boot() {
 
   live = { backend, apiPort, token };
   const be = pm.start(backend, [token, store.get().api_key, ...store.mcpValues()]);
-  await waitForHttp(`http://127.0.0.1:${apiPort}/`, 'any', 90_000, () => be.exitCode === null).catch(() => {
+  await waitForHttp(`http://127.0.0.1:${apiPort}/`, 'any', 90_000, () => alive(be)).catch(() => {
     throw new Error('backend did not start; see logs in ' + path.join(dataDir, 'logs'));
   });
   const fe = pm.start(ui, [token]);
-  await waitForHttp(`http://127.0.0.1:${uiPort}/`, 200, 90_000, () => fe.exitCode === null);
+  await waitForHttp(`http://127.0.0.1:${uiPort}/`, 200, 90_000, () => alive(fe));
   await waitForHttp(`http://127.0.0.1:${uiPort}/api/harness/config`, 200, 30_000);
 
   const origin = `http://127.0.0.1:${uiPort}`;
   session.defaultSession.webRequest.onHeadersReceived((details, cb) => {
     const headers = { ...details.responseHeaders };
-    if (details.url.startsWith(origin)) headers['Content-Security-Policy'] = [csp(uiPort)];
+    if (details.url.startsWith(origin) && !isEvidenceUrl(details.url)) headers['Content-Security-Policy'] = [csp(uiPort)];
     cb({ responseHeaders: headers });
   });
   session.defaultSession.setPermissionRequestHandler((_wc, _perm, cb) => cb(false));
@@ -142,14 +154,14 @@ ipcMain.handle('desktop:getModelSettings', () => store.view());
 ipcMain.handle('desktop:saveModelSettings', async (_e, input: ModelSettingsInput) => {
   if (!live) throw new Error('Backend is not running.');
   const { apiPort, token } = live;
-  const runs = await fetch(`http://127.0.0.1:${apiPort}/runs`, { headers: { Authorization: `Bearer ${token}` } })
-    .then((r) => r.json() as Promise<{ busy?: boolean }>).catch(() => ({ busy: false }));
-  if (runs.busy) throw new Error('Wait for the current operation to finish before changing model settings.');
+  if (await runsBusy(apiPort, { Authorization: `Bearer ${token}` })) throw new Error('Wait for the current operation to finish before changing model settings.');
   const view = store.save(input); // validates before anything restarts
   const backend = specs(apiPort, 0, token).backend; // re-reads the new key into the spawn env
   live.backend = backend;
   const child = await pm.restart(backend, [token, store.get().api_key, ...store.mcpValues()]);
-  await waitForHttp(`http://127.0.0.1:${apiPort}/`, 'any', 60_000, () => child.exitCode === null).catch(() => undefined);
+  await waitForHttp(`http://127.0.0.1:${apiPort}/`, 'any', 60_000, () => alive(child)).catch(() => {
+    throw new Error(`Backend did not restart; see logs in ${path.join(app.getPath('userData'), 'logs')}`);
+  });
   return view;
 });
 ipcMain.handle('desktop:getMcpSecrets', () => store.mcpView());
@@ -157,9 +169,7 @@ ipcMain.handle('desktop:saveMcpSecrets', async (_e, server: string, values: Reco
   if (!live) throw new Error('Backend is not running.');
   const { apiPort, token } = live;
   const auth = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' };
-  const runs = await fetch(`http://127.0.0.1:${apiPort}/runs`, { headers: auth })
-    .then((r) => r.json() as Promise<{ busy?: boolean }>).catch(() => ({ busy: false }));
-  if (runs.busy) throw new Error('Wait for the current operation to finish before changing MCP secrets.');
+  if (await runsBusy(apiPort, auth)) throw new Error('Wait for the current operation to finish before changing MCP secrets.');
   const clean = store.checkMcpSecrets(server, values); // validate before anything is sent or stored
   pm.addRedactions(Object.values(clean)); // never let a value reach a service log, whatever happens next
   // Backend first (in memory, no restart): it also checks the server exists and the secret name is valid.
