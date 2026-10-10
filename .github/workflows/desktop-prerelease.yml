@@ -55,4 +55,9 @@ jobs:
         if: steps.guard.outputs.present == 'true'
         with:
           name: desktop-${{ matrix.os }}
-          path: desktop/release/*
+          # installers only: unpacked app folders and builder-debug.yml would collide across runners
+          path: |
+            desktop/release/*.exe
+            desktop/release/*.dmg
+            desktop/release/*.AppImage
+          if-no-files-found: error

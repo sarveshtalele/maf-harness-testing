@@ -1,5 +1,7 @@
 appId: com.internal.agenticqe
 productName: Agentic QE
+# Release assets: no spaces, OS and arch always visible (e.g. Agentic-QE-1.0.0-mac-arm64.dmg).
+artifactName: "Agentic-QE-${version}-${os}-${arch}.${ext}"
 directories:
   output: release
 files:
