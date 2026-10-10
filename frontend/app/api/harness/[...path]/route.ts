@@ -35,4 +35,4 @@ async function proxy(request: NextRequest, context: { params: Promise<{ path: st
     return Response.json({ error: 'Local backend is unavailable. Check the launcher terminal and reconnect.' }, { status: 503 });
   }
 }
-export { proxy as GET, proxy as POST };
+export { proxy as GET, proxy as POST, proxy as DELETE };

@@ -34,6 +34,7 @@ from ..workflow_support import atomic_json
 from .errors import run_errors
 from .eta import case_budget_view, run_eta
 from .evidence_api import EvidenceAPI
+from .mcp_api import McpAPI
 from .presentation import public
 from .progress import progress
 from .runtime_service import RuntimeService
@@ -113,7 +114,7 @@ def _budget_value(value) -> int:
     return value
 
 
-class LocalAPI(EvidenceAPI, SettingsAPI):
+class LocalAPI(EvidenceAPI, SettingsAPI, McpAPI):
     def __init__(
         self,
         runs: Path,
@@ -661,6 +662,8 @@ def make_server(api: LocalAPI, token: str, port: int = 8765):
                         self.reply(200, api.config())
                     elif parts == ["settings", "model"]:
                         self.reply(200, api.model_settings())
+                    elif parts == ["mcp-servers"]:
+                        self.reply(200, api.mcp_list())
                     elif parts == ["prompts"]:
                         self.reply(200, api.prompts())
                     elif parts == ["skills"]:
@@ -697,6 +700,11 @@ def make_server(api: LocalAPI, token: str, port: int = 8765):
                             raise FileNotFoundError("Route not found.")
                     else:
                         raise FileNotFoundError("Route not found.")
+                elif self.command == "DELETE":
+                    if len(parts) == 2 and parts[0] == "mcp-servers":
+                        self.reply(200, api.mcp_delete(parts[1]))
+                    else:
+                        raise FileNotFoundError("Route not found.")
                 elif self.command == "POST":
                     if self.headers.get("Content-Type", "").split(";")[0] != "application/json":
                         raise ValueError("JSON body required.")
@@ -714,6 +722,12 @@ def make_server(api: LocalAPI, token: str, port: int = 8765):
                         self.reply(200, api.save_model_settings(body))
                     elif parts == ["settings", "model", "test"]:
                         self.reply(200, api.test_model_settings())
+                    elif parts == ["mcp-servers"]:
+                        self.reply(200, api.mcp_save(body))
+                    elif len(parts) == 3 and parts[0] == "mcp-servers" and parts[2] == "test":
+                        self.reply(200, api.mcp_test(parts[1]))
+                    elif len(parts) == 3 and parts[0] == "mcp-servers" and parts[2] == "secrets":
+                        self.reply(200, api.mcp_set_secrets(parts[1], body))
                     elif parts == ["prompts"]:
                         self.reply(200, api.save_prompts(body))
                     elif parts == ["skills", "import"]:
@@ -765,6 +779,7 @@ def make_server(api: LocalAPI, token: str, port: int = 8765):
 
         do_GET = handle_request
         do_POST = handle_request
+        do_DELETE = handle_request
 
     return ThreadingHTTPServer(("127.0.0.1", port), Handler)
 

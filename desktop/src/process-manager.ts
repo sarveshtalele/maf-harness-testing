@@ -14,6 +14,7 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 /** Starts services in their own process group (POSIX) / tree (Windows) and kills the whole tree. */
 export class ProcessManager {
+  private extraRedact = new Set<string>();
   private procs = new Map<string, { child: ChildProcess; log: fs.WriteStream }>();
 
   constructor(private logDir: string) {
@@ -32,7 +33,7 @@ export class ProcessManager {
     });
     const pump = (buf: Buffer) => {
       let text = buf.toString('utf8');
-      for (const s of redact) if (s) text = text.split(s).join('[REDACTED]');
+      for (const s of [...redact, ...this.extraRedact]) if (s) text = text.split(s).join('[REDACTED]');
       log.write(text);
     };
     child.stdout?.on('data', pump);
@@ -41,6 +42,11 @@ export class ProcessManager {
     child.on('exit', (code, sig) => log.write(`\n[exit code=${code} signal=${sig}]\n`));
     this.procs.set(spec.name, { child, log });
     return child;
+  }
+
+  /** Values to hide from every service log from now on (e.g. a secret entered while services run). */
+  addRedactions(values: string[]): void {
+    for (const v of values) if (v) this.extraRedact.add(v);
   }
 
   isRunning(name: string): boolean {

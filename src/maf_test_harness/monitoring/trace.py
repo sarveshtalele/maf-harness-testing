@@ -35,6 +35,8 @@ def tool_category(name: str, harness_tools: tuple[str, ...] | list[str] = ()) ->
     """``skill_load`` / ``skill_resource`` / ``skill_script`` for the MAF skill tools, ``harness`` for central tools."""
     if name in SKILL_TOOLS:
         return SKILL_TOOLS[name]
+    if name.startswith("mcp_") and name in harness_tools:  # MCP functions are registered by the runtime
+        return "mcp"
     return "harness" if name in harness_tools else "unexpected"
 
 

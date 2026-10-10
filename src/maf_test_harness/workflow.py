@@ -310,7 +310,10 @@ class Harness(RerunSteps, ExecutionSteps, GenerationSteps, GreenfieldSteps, Plan
             if jira and jira_token:
                 jira = {**jira, "api_token": jira_token}
             if spec_intake is None:
-                spec_intake = await asyncio.to_thread(ingest_specs, docs, jira)
+                extra = {"jira_via_mcp": m} if (m := (spec_sources or {}).get("jira_mcp")) else {}
+                spec_intake = await asyncio.to_thread(
+                    lambda: ingest_specs(docs, jira, **extra)
+                )  # docs/MCP.md
             if not spec_intake.get("sections"):
                 raise ValueError(
                     "Greenfield mode needs at least one document section or Jira story. "
@@ -555,6 +558,8 @@ class Harness(RerunSteps, ExecutionSteps, GenerationSteps, GreenfieldSteps, Plan
                 if digest(state["artifacts"][stage]) != request["details"]["artifact_hash"]:
                     raise ValueError("Artifact changed since review.")
                 state.setdefault("approved", {})[stage] = request["details"]["artifact_hash"]
+                if hasattr(self.runtime, "close_stage"):
+                    await self.runtime.close_stage(stage)  # disconnect that stage's MCP servers
                 self.audit(
                     "artifact_approved",
                     stage=stage,

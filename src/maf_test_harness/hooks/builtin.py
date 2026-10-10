@@ -11,7 +11,7 @@ import re
 from pathlib import Path
 from typing import Any
 
-from .. import settings
+from .. import mcp_servers, settings
 from .engine import HookSpec
 from .events import (
     ASK,
@@ -54,6 +54,10 @@ def redact(text: str, *, keyed: bool = True) -> tuple[str, int]:
     if len(runtime_key) >= 8 and runtime_key in text:
         count += text.count(runtime_key)
         text = text.replace(runtime_key, REDACTED)
+    for value in mcp_servers.secret_values():  # MCP server env values / bearer tokens
+        if value in text:
+            count += text.count(value)
+            text = text.replace(value, REDACTED)
     for name in _SECRET_ENV:
         value = os.environ.get(name, "")
         if len(value) >= 8 and value in text:

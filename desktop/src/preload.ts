@@ -5,5 +5,8 @@ contextBridge.exposeInMainWorld('desktop', {
   openDataFolder: (): Promise<void> => ipcRenderer.invoke('desktop:openDataFolder'),
   getModelSettings: (): Promise<unknown> => ipcRenderer.invoke('desktop:getModelSettings'),
   saveModelSettings: (input: unknown): Promise<unknown> => ipcRenderer.invoke('desktop:saveModelSettings', input),
+  getMcpSecrets: (): Promise<unknown> => ipcRenderer.invoke('desktop:getMcpSecrets'),
+  saveMcpSecrets: (server: string, values: Record<string, string>): Promise<unknown> => ipcRenderer.invoke('desktop:saveMcpSecrets', server, values),
+  deleteMcpServer: (server: string): Promise<unknown> => ipcRenderer.invoke('desktop:deleteMcpServer', server),
   checkForUpdates: (): Promise<void> => ipcRenderer.invoke('desktop:checkForUpdates'),
 });

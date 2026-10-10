@@ -3,7 +3,7 @@ import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import { test } from 'node:test';
-import { KeyStore, SafeStorageLike } from './keystore';
+import { KeyStore, SafeStorageLike, mcpEnvName } from './keystore';
 
 const fake = (available = true): SafeStorageLike => ({
   isEncryptionAvailable: () => available,
@@ -56,4 +56,31 @@ test('rejects insecure urls, bad models and keys; corrupt file reads empty', () 
   const f = tmp();
   fs.writeFileSync(f, 'garbage');
   assert.equal(new KeyStore(f, fake()).view().key_configured, false);
+});
+
+test('MCP secrets: encrypted at rest, env names match Python, view has booleans only, clears', () => {
+  const f = tmp();
+  const ks = new KeyStore(f, fake());
+  assert.deepEqual(ks.saveMcpSecrets('atlassian-jira', { BEARER_TOKEN: 'tok-0123456789' }), { BEARER_TOKEN: true });
+  ks.saveMcpSecrets('playwright', { API_KEY: 'pw-secret-value' });
+  assert.ok(!fs.readFileSync(f).toString().includes('tok-0123456789'));
+  const again = new KeyStore(f, fake());
+  assert.equal(again.env()['HARNESS_MCP_SECRET_ATLASSIAN__JIRA_BEARER_TOKEN'], 'tok-0123456789');
+  assert.equal(again.env()['HARNESS_MCP_SECRET_PLAYWRIGHT_API_KEY'], 'pw-secret-value');
+  assert.ok(!JSON.stringify(again.mcpView()).includes('tok-'));
+  assert.deepEqual(again.mcpValues().sort(), ['pw-secret-value', 'tok-0123456789']);
+  again.saveMcpSecrets('playwright', { API_KEY: '' });
+  assert.deepEqual(again.mcpView(), { 'atlassian-jira': { BEARER_TOKEN: true } });
+  assert.throws(() => again.saveMcpSecrets('Bad Name', { A: 'x' }));
+  assert.throws(() => again.saveMcpSecrets('ok', { 'bad key': 'x' }));
+  assert.throws(() => again.saveMcpSecrets('ok', { A: 'line\nbreak' }));
+  assert.deepEqual(again.checkMcpSecrets('ok', { A: ' x ' }), { A: 'x' }); // validates and trims, stores nothing
+  assert.deepEqual(again.mcpView(), { 'atlassian-jira': { BEARER_TOKEN: true } });
+  again.removeMcpServer('atlassian-jira');
+  assert.deepEqual(again.mcpView(), {});
+});
+
+test('MCP env names encode - as __ (same as Python) so names cannot collide', () => {
+  assert.equal(mcpEnvName('a-b', 'C'), 'HARNESS_MCP_SECRET_A__B_C');
+  assert.equal(mcpEnvName('a', 'B_C'), 'HARNESS_MCP_SECRET_A_B_C');
 });

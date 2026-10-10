@@ -102,11 +102,35 @@ def parse_run_options(body: dict) -> dict[str, Any]:
             "issue_keys": keys,
             "email": email.strip(),
         }
-    if not parsed and not clean_jira:
+    clean_mcp = None
+    mcp = sources.get("jira_mcp")  # Jira through a configured MCP server (docs/MCP.md); no secrets here
+    if mcp:
+        keys = mcp.get("issue_keys") or [] if isinstance(mcp, dict) else None
+        jql = mcp.get("jql") or "" if isinstance(mcp, dict) else None
+        if (
+            keys is None
+            or not isinstance(jql, str)
+            or not isinstance(keys, list)
+            or any(not isinstance(k, str) or not _JIRA_KEY.fullmatch(k) for k in keys)
+            or not isinstance(mcp.get("server"), str)
+            or not (jql.strip() or keys)
+        ):
+            raise ValueError("jira_mcp needs a server name and a JQL query or issue keys.")
+        clean_mcp = {"server": mcp["server"], "jql": jql.strip(), "issue_keys": keys}
+        if mcp.get("cloud_id"):
+            if not isinstance(mcp["cloud_id"], str) or not re.fullmatch(
+                r"[A-Za-z0-9-]{1,64}", mcp["cloud_id"]
+            ):
+                raise ValueError("cloud_id must be 1-64 letters, digits or '-'.")
+            clean_mcp["cloud_id"] = mcp["cloud_id"]
+        if mcp.get("tool"):
+            clean_mcp["tool"] = str(mcp["tool"])
+    if not parsed and not clean_jira and not clean_mcp:
         raise ValueError("Greenfield runs need at least one document or a Jira source.")
     out["spec_sources"] = {
         "documents": [{"name": n, "size": len(d)} for n, d in parsed],
         "jira": clean_jira,
+        **({"jira_mcp": clean_mcp} if clean_mcp else {}),
     }
     return out
 
