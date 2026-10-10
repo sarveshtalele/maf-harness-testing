@@ -39,6 +39,9 @@ Retain the complete discovered declaration inventory, batch model work, and reje
 
 ## Module map
 
+Each directory has its own `CLAUDE.md` (purpose, key files, contracts, gotchas, test commands, change recipes); read the one for the area you change. Onboarding and how-to recipes: [docs/DEVELOPER_GUIDE.md](docs/DEVELOPER_GUIDE.md). Docs index: [docs/README.md](docs/README.md).
+
+
 - `workflow.py`: checkpointed MAF WorkflowBuilder, one StageExecutor per stage, request_info gates → workflow_steps/*, agent, repo, envs, qa, hooks
 - `workflow_steps/{planning,design,generation,test_review,execution,rerun}.py`: stage operations; generation = batched generate → static gates → build gate → independent review
 - `workflow_support.py`: shared policy incl. LANGUAGE_RULES / language_rules() / retry_reminder()
