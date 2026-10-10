@@ -50,8 +50,9 @@ class McpAPI:
             return _view(mcp_servers.get(name))
 
     def mcp_test(self, name: str) -> dict:
-        self._mcp_guard()
-        server = mcp_servers.get(name)
+        with self.lock:  # the guard is checked under the lock; the probe itself may take a long time
+            self._mcp_guard()
+            server = mcp_servers.get(name)
         try:
             result = asyncio.run((self.mcp_probe or mcp_servers.probe)(server))
         except Exception as exc:  # message is redacted: it may echo a URL or command output

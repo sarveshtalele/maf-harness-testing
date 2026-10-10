@@ -548,3 +548,21 @@ def test_clearing_secrets_does_not_reenable_env_fallback(monkeypatch):
     mcp_servers.clear_secrets("j")
     mcp_servers.set_secrets("j", {"BEARER_TOKEN": ""})
     assert mcp_servers.get_secret("j", "BEARER_TOKEN") == ""
+
+
+def test_api_test_probe_runs_without_holding_the_api_lock(api):
+    api.mcp_save(srv())
+    lock_was_free = []
+
+    def other_thread_can_lock():
+        if api.lock.acquire(timeout=2):
+            api.lock.release()
+            return True
+        return False
+
+    async def probe(server):
+        lock_was_free.append(await asyncio.to_thread(other_thread_can_lock))
+        return {"tools": ["browser_snapshot"], "count": 1}
+
+    api.mcp_probe = probe
+    assert api.mcp_test("pw")["ok"] is True and lock_was_free == [True]
