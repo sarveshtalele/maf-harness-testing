@@ -1,5 +1,5 @@
 'use client';
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useState, useRef } from 'react';
 import { api, apiDelete, label } from '@/lib/harness';
 import { Panel } from './data';
 
@@ -66,6 +66,7 @@ function ServerCard({ server, stages, onChange, onDeleted }: { server: Server; s
 }
 
 export default function McpServers() {
+  const addRef = useRef<HTMLDetailsElement>(null); // collapsed after a server is added
   const [data, setData] = useState<Data | null>(null);
   const [preset, setPreset] = useState('');
   const [custom, setCustom] = useState({ name: '', transport: 'stdio', command: '', args: '', env_keys: '', url: '' });
@@ -74,15 +75,15 @@ export default function McpServers() {
   useEffect(load, [load]);
   const add = async (body: Record<string, unknown>) => {
     setNotice(null);
-    try { await api('mcp-servers', body); setPreset(''); setCustom({ name: '', transport: 'stdio', command: '', args: '', env_keys: '', url: '' }); load(); }
+    try { await api('mcp-servers', body); setPreset(''); setCustom({ name: '', transport: 'stdio', command: '', args: '', env_keys: '', url: '' }); if (addRef.current) addRef.current.open = false; load(); }
     catch (e) { setNotice({ ok: false, text: (e as Error).message }); }
   };
   const p = data?.presets[preset];
   return <Panel title="MCP servers" storageKey="config:mcp">
     <p>Give the agents extra tools from MCP servers (Jira, Playwright, others). Servers start disabled; read-only tools run automatically, anything else needs human approval. Output from a server is treated as untrusted evidence.</p>
-    {data?.servers.map(s => <ServerCard key={s.name + JSON.stringify(s.stages)} server={s} stages={data.stages} onChange={load} onDeleted={load} />)}
+    {data?.servers.map(s => <ServerCard key={s.name} server={s} stages={data.stages} onChange={load} onDeleted={load} />)}
     {data && !data.servers.length && <p className="field-help">No MCP servers configured.</p>}
-    <details><summary>Add a server</summary>
+    <details ref={addRef}><summary>Add a server</summary>
       <label>From preset<select value={preset} onChange={e => setPreset(e.target.value)}><option value="">Choose a preset…</option>{Object.entries(data?.presets || {}).map(([k, v]) => <option key={k} value={k}>{v.label}</option>)}</select></label>
       {p && <><p className="field-help">{p.note}</p><button type="button" className="primary" onClick={() => add(p.server)}>Add preset</button></>}
       <h2 style={{ marginTop: 18 }}>Custom</h2>
