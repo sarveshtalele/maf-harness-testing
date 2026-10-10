@@ -87,11 +87,14 @@ Every change must work on Windows, macOS and Linux; pathlib; explicit encoding="
 
 ## Orchestration and memory (rules)
 
-- **Planning and approval.** Plan first; execute only after the user approves. Each plan task names its model: Opus orchestrates and reviews, Sonnet handles logic, UI and packaging, Haiku handles mechanical edits.
+- **Agent model.** Three models, each with a fixed role:
+  - Opus 5.5 (`claude-opus-5-5`): plans every task; the user approves the plan before execution. Opus also orchestrates and does the final review: it runs the merge gate, reviews security-sensitive changes (plugins, MCP, secrets, desktop), merges to `develop`, keeps `new-ui` equal and logs BEFORE/AFTER in `memory.md`.
+  - Haiku 5.5 (`claude-haiku-5-5`): implements each task in its own worktree (code, docs, tests, mechanical edits).
+  - Sonnet 5.5 (`claude-sonnet-5-5`): reviews each Haiku worktree diff against the brief (correctness, cross-OS, security, tests, docs accuracy) and returns findings; Haiku fixes them.
 - **Worktrees.**
   - The orchestrator creates them under the session scratchpad: `git worktree add -b task-<id> <scratchpad>/wt/task-<id> develop`. Never put them inside the repo `.claude/`, which the shell sandbox can't write.
   - Agents work only in their worktree, commit early and often, and never stash or push.
-- **Merging.** Only the orchestrator merges, through `git merge-tree` + `commit-tree` into `develop` while a live run uses the main checkout, or a normal merge otherwise. It then pushes `develop` and keeps `new-ui` equal.
+- **Merging.** Only Opus merges, through `git merge-tree` + `commit-tree` into `develop` while a live run uses the main checkout, or a normal merge otherwise. It then pushes `develop` and keeps `new-ui` equal.
 - **Gate before merge.** All of these must pass:
   - full pytest outside the sandbox (expect 0 failures);
   - ruff check and format;
@@ -99,7 +102,6 @@ Every change must work on Windows, macOS and Linux; pathlib; explicit encoding="
   - frontend tsc and `next build --webpack`;
   - Playwright with `PYTHONPATH=<worktree>/src` and a dummy `OPENAI_API_KEY`;
   - desktop `npm test`.
-- **Reviews.** Security-sensitive work (plugins, MCP, secrets, desktop) gets an Opus review before merge.
 - **Memory.** `memory.md` is the project log. Before any significant decision or action, append a `BEFORE` line to its Action log: intent, scope, risk. After it, append an `AFTER` line: result, commit and verification. Dated "Core memory log" entries summarise each task or wave.
 
 ## Permissions (what Claude may and may not do here)

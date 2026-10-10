@@ -1,12 +1,13 @@
 # ui/ (loopback API and its services)
 
-The Next.js app and desktop shell talk to this package over HTTP on 127.0.0.1 with a bearer token (`HARNESS_API_TOKEN`). Despite `__init__.py`'s old Streamlit wording, there is no Streamlit UI.
+The Next.js app and desktop shell talk to this package over HTTP on 127.0.0.1 with a bearer token (`HARNESS_API_TOKEN`).
 
 ## Key files
 - `api.py`: `LocalAPI` (`start`, `respond`, `rerun`, `stop_run`, `read`, `list_runs`, `delete_run`, `rename_run`, `set_case_budget`, `audit`), `make_server` (the `Handler.handle_request` route table), `main`.
 - `runtime_service.py`: `RuntimeService` owns one event loop; every MAF client lives and closes on it (`submit`, `stop_active`, `close`).
 - `evidence_api.py` `EvidenceAPI`: skills list/import/approve, `download`, `evidence`, `evidence_file`. `evidence.py`: contained read-only evidence access (`inventory`, `file_path`, `clean_content`).
 - `settings_api.py` `SettingsAPI`: `prompts`, `save_prompts`, `model_settings`, `save_model_settings`, `test_model_settings`, `config`.
+- `mcp_api.py` `McpAPI`: MCP server settings (`mcp_list`, `mcp_save`, `mcp_delete`, `mcp_set_secrets`, `mcp_test`); secret values go in, never out (docs/MCP.md).
 - `eta.py` (`run_eta`, `budget_recommendations`, `case_budget_view`, `DEFAULTS`), `progress.py` (`progress`), `errors.py` (`run_errors`, `categorize`: Errors tab), `presentation.py` (`public`: redaction boundary), `artifact_presenter.py` (`json_to_markdown`).
 
 ## Request flow
