@@ -799,6 +799,29 @@ _JSON_DEBRIS = re.compile(
 )
 
 
+_TRAILING_CLOSERS = re.compile(r"^\s*[\]}),\s]*\}[\]}),\s]*$")
+
+
+def _drop_trailing_json_closers(lines: list[str]) -> list[str]:
+    """A bare `}` / `}]` after the last line of a .py file is the model's JSON closing leaking in (seen live: batch 55,
+    ``unmatched '}'`` on the final line). Dropped only when the file does not compile with it and does without."""
+    cut = len(lines)
+    while cut and (not lines[cut - 1].strip() or _TRAILING_CLOSERS.match(lines[cut - 1])):
+        cut -= 1
+    if cut == len(lines):
+        return lines
+    try:
+        compile("\n".join(lines) + "\n", "t", "exec")
+        return lines
+    except SyntaxError:
+        pass
+    try:
+        compile("\n".join(lines[:cut]) + "\n", "t", "exec")
+    except SyntaxError:
+        return lines
+    return lines[:cut]
+
+
 def expand_generated_lines(payload: dict[str, Any]) -> dict[str, Any]:
     """Join model-supplied ``lines`` into ``content`` (the form validation, export and execution use)."""
     result = deepcopy(payload)
@@ -806,6 +829,8 @@ def expand_generated_lines(payload: dict[str, Any]) -> dict[str, Any]:
         if isinstance(item, dict) and "lines" in item:
             lines = [str(line).rstrip("\r\n") for line in item.pop("lines")]
             lines = [line for line in lines if not _JSON_DEBRIS.match(line)]
+            if str(item.get("path", "")).endswith(".py"):
+                lines = _drop_trailing_json_closers(lines)
             item["content"] = "\n".join(lines).strip("\n") + "\n"
     return result
 
@@ -889,6 +914,8 @@ def validate_generated_files(payload: dict[str, Any], case_ids: set[str]) -> dic
                         f" - {path} was truncated at line {len(lines)} (last line: {lines[-1].strip()[:80]!r}); "
                         "regenerate this file completely and keep it short"
                     )
+                if "unmatched" in str(exc):
+                    note = " - a stray closing bracket (JSON structure leaked into the source); remove it"
                 raise ValueError(f"generated Python source is invalid in {path}: {exc}{note}") from exc
             imports = [node for node in ast.walk(tree) if isinstance(node, (ast.Import, ast.ImportFrom))]
             if sum(len(node.names) for node in imports) > 20:

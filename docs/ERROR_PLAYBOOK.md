@@ -49,6 +49,7 @@ over 55 recorded or representative logs (`tests/error_cases.py`).
 | `ENV-PY-007` | environment | auto | Declared dependency is not installed | install-each-package, stub-dependency |
 | `ENV-PY-008` | environment | auto_once | Interpreter or venv executable not found | recreate-venv |
 | `ENV-PY-009` | environment | auto | Installed packages are mutually incompatible | fix-conflicts |
+| `ENV-PY-010` | environment | auto_once | Test client needs an extra package | add-test-dependency |
 | `ENV-JAVA-001` | environment | ask | JDK version does not match the project | provision-jdk |
 | `ENV-JAVA-002` | environment | ask | JAVA_HOME missing or not a JDK | provision-jdk |
 | `ENV-JAVA-003` | infra | auto_once | Maven/Gradle could not resolve dependencies | retry-update, configure-mirror |

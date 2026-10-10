@@ -17,7 +17,9 @@ venv and restart from ``create-venv``). Every other recipe is reported as not au
 
 from __future__ import annotations
 
+import re
 import shutil
+import subprocess
 import sys
 from collections.abc import Callable
 from dataclasses import dataclass, replace
@@ -130,6 +132,41 @@ def choose(
         considered.append({**entry, "status": "applied", "note": action.note})
         return action, considered
     return None, considered
+
+
+def test_client_packages(text: str, workspace: Path | None = None) -> list[str]:
+    """Packages a *test helper* (starlette.testclient...) says it needs (ENV-PY-010), for the generated-test tooling.
+
+    Never a package the repository declares (its pins are not ours to touch) and never a name that is not a plain
+    distribution name. The classifier only fires when the message comes from a test client/helper module, so a missing
+    application dependency is not installed this way.
+    """
+    from ..errors import classify
+    from .runners import _declared
+
+    found = []
+    for d in classify(text, "python"):
+        pkg = d.detail.get("package", "") if d.code == "ENV-PY-010" else ""
+        if re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,60}", pkg) and not (
+            workspace and _declared(workspace, pkg)
+        ):
+            found.append(pkg)
+    return found
+
+
+def testclient_http_package(python: str | Path) -> str | None:
+    """``httpx2`` or ``httpx``: whichever the installed starlette.testclient imports first (read from its source)."""
+    code = "import importlib.util as u;s=u.find_spec('starlette.testclient');print(s.origin if s else '')"
+    try:
+        out = subprocess.run(
+            [str(python), "-c", code], capture_output=True, text=True, timeout=60
+        ).stdout.strip()
+        source = Path(out).read_text(encoding="utf-8", errors="replace") if out else ""
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if re.search(r"^\s*import\s+httpx2\b", source, re.M):
+        return "httpx2"
+    return "httpx" if re.search(r"^\s*import\s+httpx\b", source, re.M) else None
 
 
 FALLBACK_CODES = frozenset(

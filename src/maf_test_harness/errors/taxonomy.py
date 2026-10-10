@@ -124,6 +124,16 @@ _c(
     "the dependent package declares.",
     ("fix-conflicts",),
 )
+_c(
+    "ENV-PY-010",
+    ENVIRONMENT,
+    AUTO_ONCE,
+    "Test client needs an extra package",
+    "A test helper (for example starlette.testclient) imports a package that the harness's static tooling map did "
+    "not install (httpx2 instead of httpx). Install it into the generated-test tooling only; repository pins and "
+    "application dependencies are never touched.",
+    ("add-test-dependency",),
+)
 # java
 _c(
     "ENV-JAVA-001",
