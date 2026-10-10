@@ -277,6 +277,17 @@ class ToolTraceMiddleware(FunctionMiddleware):
         )
 
 
+MCP_CLOSE_TIMEOUT = 10  # seconds a stuck MCP server may hold up Stop, rerun or a failed connect
+
+
+async def _close_bounded(tool) -> None:
+    """Close an MCP tool without letting a stuck server block the caller past MCP_CLOSE_TIMEOUT."""
+    try:
+        await asyncio.wait_for(asyncio.shield(tool.close()), MCP_CLOSE_TIMEOUT)
+    except TimeoutError:
+        pass  # abandon the close; the caller carries on (the server is no longer used)
+
+
 class MAFHarnessRuntime:
     """Builds one MAF harness agent per stage and verifies which skill it actually used."""
 
@@ -609,7 +620,7 @@ class MAFHarnessRuntime:
             finally:  # also on cancellation during connect(): never leave a spawned server behind
                 if tool is not None and not kept:
                     try:
-                        await asyncio.shield(tool.close())
+                        await _close_bounded(tool)
                     except BaseException:
                         pass
         self._mcp[stage] = tools
@@ -619,7 +630,7 @@ class MAFHarnessRuntime:
         """Disconnect a finished stage's MCP servers (called when its artifact is approved)."""
         for tool in self._mcp.pop(stage, []):
             try:
-                await tool.close()
+                await _close_bounded(tool)
             except Exception:
                 pass
         self._agents.pop(stage, None)  # its tools are gone; a rerun rebuilds the agent
@@ -1072,7 +1083,7 @@ class MAFHarnessRuntime:
         for tools in self._mcp.values():
             for tool in tools:
                 try:
-                    await tool.close()
+                    await _close_bounded(tool)
                 except Exception:
                     pass
         self._mcp.clear()

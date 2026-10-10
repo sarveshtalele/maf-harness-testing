@@ -325,10 +325,18 @@ def test_deliverable_audit_and_execution_reports_carry_no_planted_secret(tmp_pat
     attempt.mkdir(parents=True)
     (attempt / "report.json").write_text(json.dumps({"detail": f"token={secret}"}), encoding="utf-8")
     state = {
-        "artifacts": {"repo_analysis": {"repo_name": "demo"}, "requirements": {"note": f"token={secret}"}}
+        "artifacts": {
+            "repo_analysis": {"repo_name": "demo"},
+            "requirements": {"note": f"token={secret}"},
+            "test_execution": {
+                "qa_report": {"detail": f"token={secret}"},
+                "markdown": f"# QA\n\ntoken={secret}\n",
+                "execution": {},
+            },
+        }
     }
     with zipfile.ZipFile(build_deliverable(tmp_path, state)) as archive:
-        for name in ("audit.jsonl", "executions/attempt-1.json", "requirements.json"):
+        for name in ("audit.jsonl", "executions/attempt-1.json", "requirements.json", "qa_report.md"):
             content = archive.read(f"harness-report/{name}").decode("utf-8")
             assert secret not in content, name
 

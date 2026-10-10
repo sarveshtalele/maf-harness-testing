@@ -221,7 +221,7 @@ def build_deliverable(run_dir: Path, state: dict, executions_dir: Path | None = 
         for stage, artifact in arts.items():
             if stage == "test_execution":
                 qa = artifact["qa_report"]
-                archive.writestr(f"{REPORT_DIR}/qa_report.md", artifact["markdown"])
+                archive.writestr(f"{REPORT_DIR}/qa_report.md", redact(artifact["markdown"])[0])
                 archive.writestr(f"{REPORT_DIR}/qa_report.json", _json(qa))
                 archive.writestr(f"{REPORT_DIR}/execution.json", _json(artifact["execution"]))
                 for report_name, report in artifact.get("skill_reports", {}).items():

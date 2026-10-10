@@ -448,6 +448,6 @@ def test_trace_arguments_use_the_shared_secret_redaction():
     from maf_test_harness.monitoring.trace import summarize_arguments
 
     summary = summarize_arguments(
-        {"header": "Basic dXNlcjphYmNkZWZnaGlqa2xtbm9w", "note": "token=abcdefghijklmnop"}
+        {"header": "Authorization: Basic dXNlcjphYmNkZWZnaGlqa2xtbm9w", "note": "token=abcdefghijklmnop"}
     )
     assert "dXNlcj" not in summary["header"] and "abcdefghijklmnop" not in summary["note"]

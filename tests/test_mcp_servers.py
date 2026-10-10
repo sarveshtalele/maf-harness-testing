@@ -550,6 +550,22 @@ def test_clearing_secrets_does_not_reenable_env_fallback(monkeypatch):
     assert mcp_servers.get_secret("j", "BEARER_TOKEN") == ""
 
 
+def test_stuck_mcp_close_is_abandoned_after_the_bound(monkeypatch):
+    import time
+
+    from maf_test_harness.agent import runtime
+
+    monkeypatch.setattr(runtime, "MCP_CLOSE_TIMEOUT", 0.05)
+
+    class Stuck:
+        async def close(self):
+            await asyncio.sleep(30)
+
+    started = time.monotonic()
+    asyncio.run(runtime._close_bounded(Stuck()))
+    assert time.monotonic() - started < 5
+
+
 def test_api_test_probe_runs_without_holding_the_api_lock(api):
     api.mcp_save(srv())
     lock_was_free = []

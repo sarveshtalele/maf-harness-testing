@@ -548,11 +548,19 @@ def test_trace_archive_is_served_only_as_a_download(local_api):
     assert api.evidence_file(key, trace["id"], download=True)[0] == b"PK trace"
 
 
+def test_public_keeps_empty_and_numeric_values_under_credential_keys():
+    from maf_test_harness.ui.presentation import public
+
+    assert public({"api_key": None}) == {"api_key": None}
+    assert public({"token_limit": "12"}) == {"token_limit": "12"}
+    assert public({"token_limit": "lots"}) == {"token_limit": "[REDACTED]"}
+
+
 def test_public_redacts_credential_keys_and_basic_auth_but_keeps_counters():
     from maf_test_harness.ui.presentation import public
 
     basic = "Basic dXNlcjphYmNkZWZnaGlqa2xtbm9w"
-    assert public(f"Authorization: {basic}") == "Authorization: [REDACTED]"
+    assert public(f"Authorization: {basic}") == "Authorization: Basic [REDACTED]"
     assert public(
         {"jira_token": "abc123xyz", "Authorization": basic, "input_tokens": 12, "secrets": {"api_key": True}}
     ) == {

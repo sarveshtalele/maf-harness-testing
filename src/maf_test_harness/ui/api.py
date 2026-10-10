@@ -558,7 +558,7 @@ class LocalAPI(EvidenceAPI, SettingsAPI, McpAPI):
             trash = self.runs.parent / ".deleted-runs"  # inside this instance's root, also for legacy runs
             trash.mkdir(exist_ok=True, mode=0o700)
             destination = trash / f"{key}-{uuid4().hex}"
-            path.rename(destination)
+            shutil.move(path, destination)  # Path.rename fails when a legacy run lives on another volume
             self.errors.pop(key, None)
             return {"id": key, "deleted": True, "recoverable": True}
 
