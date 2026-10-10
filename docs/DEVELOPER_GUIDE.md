@@ -2,40 +2,198 @@
 
 Start here if you are going to change code. It tells you how to set up, where things live, how a run flows through the code, and the exact steps for the common changes. Rules that must never be broken are in [CLAUDE.md](../CLAUDE.md); branch and commit rules are in [CONTRIBUTING.md](../CONTRIBUTING.md). Every source directory also has its own short `CLAUDE.md` (purpose, key files, gotchas, test commands) that Claude Code loads automatically when you work there.
 
-Contents: [1 Setup](#1-setup) · [2 Layout](#2-repository-layout) · [3 Lifecycle](#3-request-to-workflow-to-stage-lifecycle) · [4 Recipes](#4-how-to-recipes) · [5 Debugging](#5-debugging) · [6 Testing](#6-testing-strategy) · [7 Conventions](#7-coding-conventions) · [8 Glossary](#8-glossary)
+Contents: [1 Dev environment](#1-dev-environment) · [2 Layout](#2-repository-layout) · [3 Lifecycle](#3-request-to-workflow-to-stage-lifecycle) · [4 Recipes](#4-how-to-recipes) · [5 Debugging](#5-debugging) · [6 Testing](#6-testing-strategy) · [7 Conventions](#7-coding-conventions) · [8 Glossary](#8-glossary)
 
-## 1. Setup
+## 1. Dev environment
 
-Prerequisites on every OS: [Git](https://git-scm.com/), [Node.js 24 LTS](https://nodejs.org/) (enforced by `engines`, `frontend/.npmrc` and `frontend/.nvmrc`) and [uv](https://docs.astral.sh/uv/getting-started/installation/). uv provisions Python 3.12.
+### 1.1 Prerequisites
+
+- [Git](https://git-scm.com/).
+- [Node.js 24](https://nodejs.org/). Exactly major 24 is required: `frontend/package.json` `engines` and `frontend/.npmrc` (`engine-strict=true`) refuse other versions. `frontend/.nvmrc` says `24`.
+- [uv](https://docs.astral.sh/uv/getting-started/installation/). uv provisions Python 3.12 for the project.
+- For the target repositories you test (not needed to develop the harness): their toolchains, such as a JDK with Maven or Gradle for Java, or the .NET SDK. See [ENVIRONMENTS.md](ENVIRONMENTS.md).
+
+### 1.2 Set up a checkout
+
+macOS and Linux:
 
 ```bash
-git clone https://github.com/sarveshtalele/maf-harness-testing.git && cd maf-harness-testing
+git clone https://github.com/sarveshtalele/maf-harness-testing.git
+cd maf-harness-testing
 git checkout develop
-uv sync --python 3.12 --extra dev --extra e2e     # Python deps (e2e = Playwright for Python, optional)
-npm --prefix frontend ci --include=dev            # UI deps
-cp .env.example .env && chmod 600 .env            # then edit: OPENAI_API_KEY, OPENAI_BASE_URL, OPENAI_MODEL
+uv sync --python 3.12 --extra dev --extra e2e
+cd frontend
+npm ci --include=dev
+cd ..
+cp .env.example .env
+chmod 600 .env
 ```
 
-| OS | Copy env file | Start app (API on 8765 + UI on 3000) |
-|---|---|---|
-| macOS | `cp .env.example .env` | `./start-macos.command` |
-| Linux | `cp .env.example .env` | `bash start-linux.sh` |
-| Windows (PowerShell) | `Copy-Item .env.example .env` | `.\start-windows.cmd` |
+Windows (PowerShell):
 
-The three launchers are thin wrappers around `scripts/start_ui.py`. For faster iteration after the first build use `uv run python scripts/start_ui.py` (flags: `--production`, `--prepare`, `--check-only`, `--smoke-test`, `--port`, `--api-port`). Open http://127.0.0.1:3000. Never commit `.env`. Gateway settings can also be entered in the UI under Configuration (see [DESKTOP.md](DESKTOP.md) for the precedence: runtime override, then environment, then `.env`).
+```powershell
+git clone https://github.com/sarveshtalele/maf-harness-testing.git
+cd maf-harness-testing
+git checkout develop
+uv sync --python 3.12 --extra dev --extra e2e
+cd frontend; npm ci --include=dev; cd ..
+Copy-Item .env.example .env
+```
 
-**Sample run from the CLI** (same workflow as the UI, headless):
+Notes:
+
+- `--extra e2e` installs Python Playwright used by the e2e tests; `ui.yml` installs it.
+- Edit `.env` to set `OPENAI_API_KEY`, `OPENAI_BASE_URL` and `OPENAI_MODEL`. Never commit it. It is git-ignored.
+- `.env` is read from the current directory and from the repository root. A variable already set in the shell wins over `.env`. The packaged desktop app reads its own copy in the app data folder.
+- Setting the key later in the UI (Configuration page) is also possible. See [DESKTOP.md](DESKTOP.md) for the precedence order.
+
+### 1.3 Run the API and the UI in dev mode
 
 ```bash
-uv run maf-harness run https://github.com/owner/repo            # prompts at each gate
-uv run maf-harness run https://github.com/owner/repo --no-execution       # stop after generation (no install/run)
-uv run maf-harness run https://github.com/owner/repo --auto-approve       # explicit consent to clone/install/run
-uv run maf-harness trace .maf-harness/runs/<run-id>              # observability report (md or --format json)
-uv run maf-harness verify-run .maf-harness/runs/<run-id>         # check MAF + skill evidence of a saved run
+uv run python scripts/start_ui.py
+```
+
+This starts the Python API on `127.0.0.1:8765` and the Next.js dev server on `127.0.0.1:3000`. Open http://127.0.0.1:3000. Press Ctrl+C in the same terminal to stop both. The step 1.2 `npm ci` must have run first.
+
+Flags (from `python scripts/start_ui.py --help`):
+
+| Flag | Effect |
+|---|---|
+| `--port N` | UI port. Default 3000. Without an explicit value the launcher moves to the next free port (up to 10 tries). |
+| `--api-port N` | API port. Default 8765, with the same recovery. |
+| `--check-only` | Checks Node 24 and the ports, then exits. Exit code 10 means this checkout's app is already running. |
+| `--prepare` | Runs `npm ci --include=dev` and the production UI build. |
+| `--production` | Serves the built UI with `next start` instead of the dev server. Run `--prepare` first. |
+| `--smoke-test` | Starts both services, checks the home page and the authenticated backend proxy, then stops. |
+
+Launcher logs are in `.maf-harness/logs/launch-*.log`.
+
+To run only the API, set a token of at least 32 characters:
+
+```bash
+HARNESS_API_TOKEN=<token-of-32-or-more-characters> uv run python -m maf_test_harness.ui.api --port 8765
+```
+
+### 1.4 Run from the command line
+
+The CLI runs the same workflow as the UI, without a browser. It reads `.env` from the repository root.
+
+```bash
+uv run maf-harness run https://github.com/owner/repo
+uv run maf-harness run https://github.com/owner/repo --no-execution
+uv run maf-harness run https://github.com/owner/repo --auto-approve
+uv run maf-harness trace .maf-harness/runs/<run-id>
+uv run maf-harness verify-run .maf-harness/runs/<run-id>
+```
+
+- Without `--auto-approve` every gate waits for an answer in the terminal.
+- `--auto-approve` is explicit consent to clone the repository, install dependencies and run the generated tests on this machine.
+- `--no-execution` stops after generation. No install and no test run.
+- Ctrl+C stops the run and exits with code 130.
+- Runs are written to `<repo-root>/.maf-harness/runs/<run-id>`. Override with `HARNESS_RUNS_DIR`.
+- Live runs spend tokens. The daily ledger cap is `HARNESS_DAILY_TOKEN_LIMIT`. See [CACHING.md](CACHING.md).
+
+### 1.5 Run the desktop shell in dev mode
+
+```bash
+cd frontend
+npm ci --include=dev
+DESKTOP_BUILD=1 npm run build
+cd ..
+cd desktop
+npm ci
+npm start
+```
+
+PowerShell (Windows):
+
+```powershell
+cd frontend
+npm ci --include=dev
+$env:DESKTOP_BUILD="1"; npm run build; Remove-Item Env:DESKTOP_BUILD
+cd ..\desktop
+npm ci
+npm start
+```
+
+`npm start` compiles the shell with `tsc` and then starts Electron. Packaging and the first-run notes for unsigned builds are in [DESKTOP.md](DESKTOP.md).
+
+### 1.6 Run each test layer
+
+| Layer | Command |
+|---|---|
+| Python unit, component and workflow tests | `uv run pytest -q --ignore=tests/targets` |
+| One file or one test subset | `uv run pytest -q tests/test_triage.py -k remedy` |
+| Python lint | `uv run ruff check src tests scripts` |
+| Python format check | `uv run ruff format --check src tests scripts` |
+| Frontend types | `cd frontend && npm run typecheck` |
+| Frontend production build | `cd frontend && npm run build` |
+| Browser tests (Playwright) | see below |
+| Desktop shell (`node:test`) | `cd desktop && npm ci && npm test` |
+| Skill lock check | `uv run maf-harness lint-skills --strict` |
+| Architecture map is current | `uv run python scripts/gen_architecture.py --check` |
+
+Browser tests need the production build first, because Playwright starts the built UI on port 3100 and a fixture API on port 8876. Run them from `frontend/`:
+
+```bash
+cd frontend
+npx playwright install chromium
+npm run build
+PYTHONPATH=<repo>/src OPENAI_API_KEY=dummy npm test
+```
+
+On Windows PowerShell:
+
+```powershell
+cd frontend
+npx playwright install chromium
+npm run build
+$env:PYTHONPATH="<repo>\src"; $env:OPENAI_API_KEY="dummy"; npm test
+```
+
+- `PYTHONPATH` lets the fixture server import the code under test. `OPENAI_API_KEY` only needs a non-empty value. The fixture uses a scripted model.
+- The Python used by the fixture is `HARNESS_TEST_PYTHON`, or `.venv` in the repository root.
+- Tests that bind ports (launcher, Playwright) fail in restrictive sandboxes. Run them outside the sandbox.
+
+### 1.7 Regenerate the architecture map
+
+`docs/ARCHITECTURE_MAP.md` is generated. Never edit it by hand. After you add, remove, move or re-wire a `.py` or `.ts` module:
+
+```bash
+uv run python scripts/gen_architecture.py
+```
+
+`gen_architecture.py --check` exits 1 when the file is stale. CI runs `--check` on Linux with Python 3.12, and `tests/test_architecture_map.py` also fails.
+
+### 1.8 Skill lint
+
+Every skill folder under `skills/` must be hash-locked in `skills/SKILLS.lock.json`. After you edit a locked file, refresh only that file's hash, then run:
+
+```bash
 uv run maf-harness lint-skills --strict
 ```
 
-Runs are written to `<repo-root>/.maf-harness/runs/<run-id>` (override with `HARNESS_RUNS_DIR`). Windows specifics (long paths, antivirus locks, log locations): [WINDOWS_SETUP_AND_DEBUGGING.md](WINDOWS_SETUP_AND_DEBUGGING.md). To try changes without a model or GitHub use the scripted tests ([section 6](#6-testing-strategy)); live runs spend tokens (daily ledger `HARNESS_DAILY_TOKEN_LIMIT`).
+Recipes for adding skills are in section 4.
+
+### 1.9 How the per-directory CLAUDE.md files work
+
+- The root `CLAUDE.md` holds the rules for the whole project. Claude Code loads it for every session.
+- Each area has its own `CLAUDE.md`: `frontend/`, `desktop/`, `scripts/`, `skills/`, `tests/`, and `src/maf_test_harness/` with one per subpackage (`agent/`, `envs/`, `errors/`, `hooks/`, `llm/`, `monitoring/`, `qa/`, `repo/`, `skills/`, `tools/`, `ui/`, `workflow_steps/`).
+- Claude Code loads a directory's `CLAUDE.md` when it works on files there. Humans should read the one for the area they change. Each file lists the key files, contracts, gotchas, test commands and change recipes for that area.
+- When you change behaviour in an area, update its `CLAUDE.md` in the same commit.
+
+### 1.10 Contribution flow
+
+1. Branch from `develop`: `git checkout -b feature/<short-name> develop`.
+2. Make one logical change per commit. Use Conventional Commits (section 7).
+3. Run the checks in section 1.6, plus section 1.7 and section 1.8 when relevant.
+4. Push the branch and open a pull request into `develop`.
+5. Wait for green checks: workflow `ci` (jobs `test` and `secrets-scan`) and workflow `Local UI compatibility` (job `local-ui`, from `ui.yml`). Desktop `npm test` runs in `ui.yml`; run it locally for desktop changes.
+6. Get a review. The repository owner sets up CODEOWNERS review rules; see [RELEASING.md](RELEASING.md). Security-sensitive changes (plugins, MCP, secrets, desktop) need extra care in review.
+7. Merge into `develop`. Releases are cut from `develop` as described in section 4.
+
+Branch and commit rules are in [CONTRIBUTING.md](../CONTRIBUTING.md).
+
 
 ## 2. Repository layout
 
@@ -230,14 +388,14 @@ Cut `release/x.y` from `develop`, bump `pyproject.toml` and `frontend/package.js
 
 ## 6. Testing strategy
 
-| Layer | What | Command |
+| Layer | What | Command (see section 1.6) |
 |---|---|---|
-| Unit / component | pure functions, classifiers, real MAF with a scripted transport | `uv run pytest -q --ignore=tests/targets` |
+| Unit / component | pure functions, classifiers, real MAF with a scripted transport | section 1.6 |
 | Workflow e2e | real `Harness` with `ScriptedStageRuntime` (`tests/fakes.py`) and `clone_fixture`; drives every gate through `RuntimeService` | same suite (`test_harness_gates.py`, `test_execution_stage.py`, `test_fail_soft_generation.py`) |
-| Static quality | lint, format, skills, architecture map | `uv run ruff check src tests scripts && uv run ruff format --check src tests scripts`, `uv run maf-harness lint-skills --strict`, `python scripts/gen_architecture.py --check` |
-| Frontend | types and production build | `cd frontend && npm run typecheck && npm run build` |
-| Browser (Playwright) | real UI against `tests/ui_fixture_server.py` (real `LocalAPI` and workflow, scripted model, fixture clone, no GitHub) | `cd frontend && npx playwright install chromium && PYTHONPATH=<repo>/src OPENAI_API_KEY=dummy npm test` |
-| Desktop | `node:test` for port/token/URL guards and keystore | `cd desktop && npm ci && npm test` |
+| Static quality | lint, format, skills, architecture map | section 1.6 and 1.7 |
+| Frontend | types and production build | section 1.6 |
+| Browser (Playwright) | real UI against `tests/ui_fixture_server.py` (real `LocalAPI` and workflow, scripted model, fixture clone, no GitHub). Needs `npm run build` first | section 1.6 |
+| Desktop | `node:test` for port/token/URL guards and keystore (runs in `ui.yml`) | section 1.6 |
 | Live E2E | real gateway and a real repository; costs tokens, needs network | `uv run maf-harness run <url>`; acceptance against deployed apps in `tests/targets/` (skipped unless `PETSTORE_BASE_URL` is set) |
 
 Notes:
@@ -256,7 +414,7 @@ Notes:
 - **Prompts:** language-neutral; language rules only in `LANGUAGE_RULES` and `skills/generic-test-generator/references/<lang>.md`; register section keys in `llm/prompts.py`.
 - **Skills:** hash-locked; after editing a locked file refresh its hash and run `lint-skills --strict`.
 - **Style:** ruff check and format (`pyproject.toml`), type hints on new public functions, small modules with a module docstring (the architecture map reads it), comments explain why.
-- **Git:** Conventional Commits (`feat`, `fix`, `docs`, `chore`, `test`, `refactor`, `ci`), one logical change per commit, PRs into `develop`; never push to `main`/`develop` directly. Agents work in worktrees and never stash or push.
+- **Git:** Conventional Commits (`feat`, `fix`, `docs`, `chore`, `test`, `refactor`, `ci`), one logical change per commit, PRs into `develop`; never push to `main`/`develop` directly (the orchestrator merge described in CLAUDE.md is the only exception). Agents work in worktrees and never stash or push.
 - **Docs travel with code:** update the directory `CLAUDE.md`, this guide or the relevant `docs/*.md`, and regenerate the architecture map in the same commit. Dated reports and `docs/audit/` are historical: do not edit.
 
 ## 8. Glossary

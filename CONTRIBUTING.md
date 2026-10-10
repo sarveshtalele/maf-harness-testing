@@ -1,27 +1,43 @@
 # Contributing
 
-Agentic QE Platform: Python harness on Microsoft Agent Framework plus a Next.js UI. Private repository, internal team.
+Agentic QE Platform is a Python harness on Microsoft Agent Framework with a Next.js UI and an Electron desktop shell. The repository is private, for the internal team.
 
-Onboarding and how-to recipes: [docs/DEVELOPER_GUIDE.md](docs/DEVELOPER_GUIDE.md) (docs index: [docs/README.md](docs/README.md)).
+Read first:
 
-Read first: [CLAUDE.md](CLAUDE.md) (project rules), [docs/ARCHITECTURE_MAP.md](docs/ARCHITECTURE_MAP.md) (where code lives), [docs/RELEASING.md](docs/RELEASING.md) (release and tagging).
+- [CLAUDE.md](CLAUDE.md): project rules.
+- [docs/DEVELOPER_GUIDE.md](docs/DEVELOPER_GUIDE.md): setup, checks and recipes (section 1 covers the dev environment).
+- [docs/RELEASING.md](docs/RELEASING.md): releases, tags and owner settings.
 
 ## Branch model
 
 | Branch | Purpose | Merges into |
 |---|---|---|
-| `feature/*` | New work | `develop` via PR |
-| `release/x.y` | Cut from `develop` for QA | `main` via PR |
-| `hotfix/*` | Urgent fix cut from `main` | `main` via PR, then back-merged to `develop` |
-| `main` | Released code only | Tagged `vX.Y.Z` |
+| `feature/*` | New work | `develop`, by pull request |
+| `release/x.y` | Cut from `develop` for QA | `main`, by pull request |
+| `hotfix/*` | Urgent fix, cut from `main` | `main`, by pull request, then back to `develop` |
 | `develop` | Integration branch and default branch | |
+| `main` | Released code only | Tagged `vX.Y.Z` |
+| `new-ui` | Mirrors `develop` during the transition | |
 
-- Never push directly to `main` or `develop`. Both are protected by rulesets (PR, one approving review, required checks).
-- Hotfix flow: branch `hotfix/*` from `main`, PR to `main`, tag, then merge `main` into `develop` (or open a second PR to `develop`).
+- Do not push directly to `main` or `develop` (the orchestrator merge described in CLAUDE.md is the only exception).
+- Open pull requests into `develop`. The repository owner sets branch protection (see [RELEASING.md](docs/RELEASING.md)). On the current GitHub plan these rules may not be enforced by GitHub, so follow the rule anyway.
+- After a hotfix reaches `main`, merge `main` back into `develop`.
+
+## Pull requests
+
+1. Branch from `develop`: `git checkout -b feature/<short-name> develop`.
+2. Keep each commit to one logical change.
+3. Run the local checks below.
+4. Open a pull request into `develop`. Describe what changed and why. For changes to file or process code, say how the Windows path was checked.
+5. Wait for these required checks to pass: `ci` (jobs `test` and `secrets-scan`) and `Local UI compatibility` (job `local-ui`, from `ui.yml`).
+6. Get an approving review. Code owners review the files they own.
+7. Merge.
+
+Significant changes (a new workflow stage, a new skill, an architecture change, a release, a non-trivial bug fix) also need a short dated entry in the "Core memory log" in [memory.md](memory.md). Mention the change in the pull request so the maintainers add it.
 
 ## Commits
 
-Conventional Commits, one logical change per commit:
+Use Conventional Commits:
 
 ```
 <type>(<optional scope>): <imperative summary>
@@ -31,41 +47,41 @@ Types: `feat`, `fix`, `docs`, `chore`, `test`, `refactor`, `ci`.
 
 Examples: `feat(evidence): resolve bare symbol targets`, `fix(ui): keep run table sorted`, `ci: pin checkout action`.
 
-## Local checks before opening a PR
+## Local checks
 
-Run from the repository root unless noted.
+Run these from the repository root before you open a pull request. The full list and the Playwright steps are in [docs/DEVELOPER_GUIDE.md](docs/DEVELOPER_GUIDE.md), section 1.6.
 
 ```bash
 uv sync --extra dev
 uv run ruff check src tests scripts
 uv run ruff format --check src tests scripts
-uv run maf-harness lint-skills
+uv run maf-harness lint-skills --strict
 uv run pytest -q --ignore=tests/targets
-python scripts/gen_architecture.py --check
-
+uv run python scripts/gen_architecture.py --check
 cd frontend
 npm ci --include=dev
 npm run typecheck
 npm run build
+cd ..
+cd desktop
+npm ci
 npm test
+cd ..
 ```
 
-Also run the Playwright suite when UI behaviour changes. Tests also run without uv: `.venv/bin/python -m pytest -q --ignore=tests/targets`.
+Run the Playwright tests when UI behaviour changes. Desktop `npm test` runs in `ui.yml`; run it locally when you change `desktop/`.
 
-## Memory log
-
-Significant changes (new workflow stage, new skill, architecture change, release, non-trivial bug fix) need a dated entry in the "Core memory log" section of [memory.md](memory.md). Keep entries short: what changed, why, and where to look.
+If you add, remove or move a `.py` or `.ts` file, regenerate the architecture map with `uv run python scripts/gen_architecture.py`. Never edit `docs/ARCHITECTURE_MAP.md` by hand.
 
 ## Cross-OS rule
 
-Every change must work on Windows, macOS and Linux:
+Every change must work on Windows, macOS and Linux.
 
 - Use `pathlib` and `encoding="utf-8"` explicitly.
-- Run subprocesses through `run_command` or `run_cancellable` (process groups). Never `shell=True`.
-- Keep launchers thin (`start-windows.cmd`, `start-macos.command`, `start-linux.sh`) and delegate to `scripts/start_ui.py`.
-- Node 24 and Python 3.12 are enforced by `engines`, `.npmrc` and `.nvmrc`.
-- CI runs the matrix on ubuntu, windows and macos. Check the Windows path in the PR description if you touch file or process code.
+- Run subprocesses through `run_command` or `run_cancellable`, which use process groups. Never use `shell=True`.
+- Keep the launchers thin (`start-windows.cmd`, `start-macos.command`, `start-linux.sh`). They delegate to `scripts/start_ui.py`.
+- Node 24 and Python 3.12 are enforced by `engines`, `frontend/.npmrc` and `frontend/.nvmrc`.
 
 ## Secrets and run evidence
 
-Never commit credentials, `.env`, local run evidence under `.maf-harness/runs/`, or `agent-framework.pdf`. Use placeholders such as `<api-key>` in docs and tests. The `secrets-scan` CI job will fail on token-shaped strings.
+Never commit credentials, `.env`, run evidence under `.maf-harness/`, or `docs/agent-framework.pdf`. Use placeholders such as `<api-key>` in docs and tests. The `secrets-scan` job in `ci.yml` fails on token-shaped strings.
