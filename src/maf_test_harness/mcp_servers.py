@@ -34,7 +34,7 @@ MAX_LISTED_TOOLS = (
     8  # per server: every tool description is resent with every model call (stage budget is 20)
 )
 MAX_MCP_TOOLS_PER_STAGE = 8
-CONNECT_TIMEOUT_SECONDS = 30
+CONNECT_TIMEOUT_SECONDS = 25  # below the UI proxy's 30 s limit
 _SLUG = re.compile(r"[a-z][a-z0-9-]{0,31}")
 _ENV_KEY = re.compile(r"[A-Z][A-Z0-9_]{0,63}")
 _TOOL_NAME = re.compile(r"[A-Za-z0-9_.:-]{1,100}")
