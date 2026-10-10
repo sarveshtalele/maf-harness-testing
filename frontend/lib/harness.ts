@@ -16,5 +16,11 @@ export async function api<T>(path: string, body?: Row, signal?: AbortSignal): Pr
   return response.json();
 }
 
+export async function apiDelete<T>(path: string): Promise<T> {
+  const response = await fetch(`/api/harness/${path}`, { method: 'DELETE', cache: 'no-store' });
+  if (!response.ok) { const error = await response.json(); throw new Error(error.error || `Request failed (${response.status})`); }
+  return response.json();
+}
+
 export const minutes = (s: number) => (s < 90 ? `${Math.max(1, Math.round(s))} s` : `${Math.round(s / 60)} min`);
 export const runTitle = (name: unknown, repo: unknown, id: string) => (typeof name === 'string' && name) || (typeof repo === 'string' && repo ? repo.replace(/^https?:\/\/github\.com\//, '').replace(/\.git$/, '') : id);
