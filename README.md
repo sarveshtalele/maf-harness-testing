@@ -241,7 +241,7 @@ Mention any significant change (a new stage, skill, architecture change, release
 
 **12. Release from `main`.** Releases are cut from `develop` as a `release/x.y` branch, merged to `main` by pull request, then tagged `vX.Y.Z`. The tag starts `desktop-release.yml`, which creates a **draft** GitHub Release for the owner to publish. Full procedure: [docs/RELEASING.md](docs/RELEASING.md). Branch and commit rules: [CONTRIBUTING.md](CONTRIBUTING.md).
 
-**Branches.** `develop` is the default branch and the integration branch. `main` holds released code. `release/x.y` is cut from `develop` for QA. `new-ui` mirrors `develop` during the transition.
+**Branches.** `develop` is the default branch and the integration branch. `main` holds released code. `release/x.y` is cut from `develop` for QA.
 
 **CI workflows** (in `.github/workflows/`):
 

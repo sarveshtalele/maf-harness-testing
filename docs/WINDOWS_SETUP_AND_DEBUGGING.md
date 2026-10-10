@@ -24,12 +24,12 @@ The reported `'next' is not recognized` message means npm could not resolve the 
 For a Git checkout:
 
 ```cmd
-git switch new-ui
-git pull --ff-only origin new-ui
+git switch develop
+git pull --ff-only origin develop
 start-windows.cmd
 ```
 
-For a downloaded ZIP, download the latest `new-ui` ZIP and extract it to a new folder. Preserve your existing `.env` privately and copy it into the new project root. Do not publish that file. Run `start-windows.cmd` in the new folder after checking Node 24. The launcher does not overwrite an existing `.env`.
+For a downloaded ZIP, download the latest `develop` ZIP (or install the desktop app from the latest GitHub Release) and extract it to a new folder. Preserve your existing `.env` privately and copy it into the new project root. Do not publish that file. Run `start-windows.cmd` in the new folder after checking Node 24. The launcher does not overwrite an existing `.env`.
 
 Both services use the same launcher. Open http://127.0.0.1:3000 and keep the terminal open. Ctrl+C stops both services. Use the command below to verify both services and stop them automatically:
 
