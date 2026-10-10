@@ -638,6 +638,10 @@ def make_server(api: LocalAPI, token: str, port: int = 8765):
                     "Content-Security-Policy",
                     "default-src 'none'; script-src 'unsafe-inline' blob:; style-src 'unsafe-inline'; img-src 'self' data: blob:; connect-src 'self' data: blob:; font-src data:; worker-src blob:; sandbox allow-scripts",
                 )
+            if isinstance(data, bytes):
+                # Evidence files (always bytes) are read by reports in a sandboxed, opaque-origin iframe: their
+                # fetch() of sibling assets is cross-origin and needs this. API replies (dicts) never get it.
+                self.send_header("Access-Control-Allow-Origin", "*")
             if filename:
                 safe = re.sub(r"[^A-Za-z0-9._-]", "_", filename)
                 self.send_header("Content-Disposition", f'attachment; filename="{safe}"')

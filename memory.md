@@ -455,3 +455,9 @@ Format: `YYYY-MM-DD HH:MM | BEFORE|AFTER | actor | action | scope/risk or result
   - Opus fixed stale macos-13 and desktop-CI lines and regenerated the map.
   - Gate: pytest 1121/1 skipped, Playwright 18/18, desktop 11/11, tsc/build ok, ruff/skills/map ok
 - 2026-10-11 | OPEN | docs/agent-framework.pdf is tracked in git since 4bdf168 (against the rules): untracking it needs user approval
+- 2026-10-11 | AFTER | Opus | review wave. Two Sonnet reviews (backend; frontend/desktop/CI), then Haiku fixes, then a Sonnet re-review, then Opus integration:
+  - Backend (safe to release per review): jsonl, ZIP, qa_report.md redaction; Playwright traces not packaged and download-only; key and Basic-auth redaction; Stop reports stopped only after the task ends; bounded MCP close; list_runs outside the lock; run-lock timeout; utf-8 reads; trash path via shutil.move; mcp_test guard; failed-start cleanup; empty skill zip.
+  - Frontend/desktop: evidence CSP; <dialog> for rename/stop/approve, since prompt is unsupported and confirm blocks Electron main; framing headers excluding /api; basic_text keystore migration; process-manager write-after-end and ENOENT; loud settings failures; proxy 504 and size check; FileReader uploads; check_version includes desktop; umask .env.
+  - Opus caught a regression: dropping ACAO broke the sandboxed report's fetch of data.json. ACAO is restored for evidence byte responses only.
+  - Gate: pytest 1133/5 skipped, Playwright 18/18, desktop 14/14, tsc/build, ruff/map/skills/version ok.
+- 2026-10-11 | AFTER | Opus | docs: develop README is now a developer guide (architecture and gates Mermaid, setup, change-and-merge steps, 75-row docs table); docs/USER_GUIDE.md is desktop-only and becomes main's README; the 4 Mermaid blocks were validated with mermaid 11.4.1. desktop-prerelease run 38079888032 built installers on win/mac-arm64/mac-x64/linux (all green)

@@ -12,6 +12,8 @@ How a version moves from `develop` to a desktop installer. Branch rules are in [
 6. Pushing a tag that matches `v*.*.*` (not `v*-rc*`) starts the `desktop-release` workflow, which builds the installers and creates a **draft** GitHub Release.
 7. Review the draft release notes and assets, then publish it manually.
 
+`README.md` differs by branch on purpose. On `main` it is the user guide: install the desktop app from Releases and use it (generated from `docs/USER_GUIDE.md`, with links rewritten for the repository root). On `develop` it is the developer README. When `develop` or `release/x.y` merges into `main`, keep the `main` version (`git checkout --ours README.md` during the merge). Then copy over any user-guide changes from `docs/USER_GUIDE.md`.
+
 ## Versioning rule
 
 These three values must be identical for a release:
