@@ -387,3 +387,35 @@ Final verification on `new-ui`:
   - A test-tooling map for the `install-test-tooling` step: `httpx` for starlette/fastapi testclient, plus `respx`, `pytest-mock`, `pytest-asyncio` and `freezegun`. It is skipped when the repo already declares the package, and repo pins are never changed.
   - Verification: 943 passed outside the sandbox.
 - **Gap:** a server stopped from outside leaves the run `interrupted`; Rerun from the active stage reuses the accepted batches. The desktop app should offer to resume on start.
+
+### 2026-10-10/11 Waves 1–3 progress (Sonnet implementers; Opus review and orchestration)
+- **Wave 1, plugin skills** (`4a9596d`):
+  - `plugin.yaml` per skill, `discover_skills`, and manifest-driven `skills_for`.
+  - `skills/trust.py` handles approve and import. Plugins are companion-only, cannot be host kind or have an entrypoint, and their approval hashes cover the full tree.
+  - Opus security review: 1 high (unhashed `.pyc`) and 4 medium findings, all fixed. Approved plugin scripts run with `-I` and no bytecode.
+  - Verification: 1012 pytest and 14 Playwright passed.
+- **Wave 2, unit/integration and greenfield** (`8600aea`):
+  - Run options: `run_mode` and `test_types`, with a level allowlist that maps api to integration.
+  - Greenfield intake (`repo/specs.py`): md, txt and docx (PDF gap: pypdf not installed), and Jira Cloud REST with the token kept in memory only.
+  - `spec-authoring` skill, `SPEC-xxxxxxxx-n` ids, and specs converted to requirements.
+  - No-repo runs use a scaffold and skip execution.
+  - `LANGUAGE_RULES` integration rules, plus a `_declared()` fix so hyphenated packages are recognised.
+  - Verification: 1024 pytest and 16 Playwright passed.
+- **Wave 3:**
+  - 3.0: `paths.py`, a resource and user-data resolver that works when frozen.
+  - 3.1: Electron shell in `desktop/`.
+  - Merged as `91cf167`; 1028 pytest passed.
+  - 3.2 (`b1674bd`): PyInstaller one-folder `maf-backend` with `contents_directory="."`, about 56 MB; `--self-check` passes locally; a standalone Next build; `scripts/build_desktop.py`; CI matrix with per-arch macOS runners. 1031 pytest passed.
+- **Live rerun** of mcp-skills-registry (`1a9bbae78ff0`, W0+W0b code), against the earlier run:
+  - passed 97 (was 78);
+  - error 8 (was 44);
+  - failed 27 (was 21);
+  - generation_failed 36 (was 27; 12 batches).
+- **Remaining issues:**
+  - starlette now wants `httpx2`;
+  - `scripts.main` ambiguity for tests placed inside the skill folder;
+  - a missing `import sys` in an autofix.
+  - Being fixed in W0c. W3.4 (API key UI) was relaunched after a rate-limit interruption.
+- **Lessons:**
+  - The scratchpad can be wiped between sessions, so agents must commit early.
+  - Playwright must be run with `PYTHONPATH=<worktree>/src` and a dummy `OPENAI_API_KEY`.
