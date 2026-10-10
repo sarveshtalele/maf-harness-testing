@@ -94,14 +94,37 @@ def audit(evaluator: Path, skill_dir: Path, out: Path) -> dict:
     }
 
 
+def lock_project_skills() -> int:
+    """Add lock entries (file hashes, no reviewed scripts) for project-owned skill folders that have none."""
+    path = SKILLS / "SKILLS.lock.json"
+    lock = json.loads(path.read_text(encoding="utf-8"))
+    for directory in sorted(p for p in SKILLS.iterdir() if p.is_dir() and not p.name.startswith(".")):
+        if directory.name not in lock["skills"] and directory.name not in SKIP_NAMES:
+            lock["skills"][directory.name] = {
+                "origin": "local",
+                "audit": {"status": "repo-reviewed"},
+                "files": package_files(directory),
+            }
+            print(f"locked local skill {directory.name}")
+    path.write_text(json.dumps(lock, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    return 0
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
     )
-    parser.add_argument("--source", type=Path, required=True, help="Clone of the upstream skills repository")
+    parser.add_argument("--source", type=Path, help="Clone of the upstream skills repository")
+    parser.add_argument(
+        "--lock-project", action="store_true", help="Only add lock entries for unlocked project-owned skills"
+    )
     parser.add_argument("--url", default="https://github.com/shivswami/awesome-agent-skills.git")
     parser.add_argument("--audit-dir", type=Path, default=ROOT / ".skill-audit")
     args = parser.parse_args()
+    if args.lock_project:
+        return lock_project_skills()
+    if not args.source:
+        parser.error("--source is required unless --lock-project is given")
     source = args.source.resolve()
     commit = subprocess.run(
         ["git", "-C", str(source), "rev-parse", "HEAD"], capture_output=True, text=True, check=True

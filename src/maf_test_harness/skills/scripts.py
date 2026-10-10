@@ -4,6 +4,8 @@ MAF treats skill scripts as third-party code: they need a ``script_runner`` and 
 
 * only scripts recorded in ``skills/SKILLS.lock.json`` (``reviewed_scripts``) may run, and only if their bytes still
   match the recorded SHA-256 — a modified script is refused, never executed;
+* skills outside the lock (unlocked repo folders, user plugins) have no reviewed scripts; once a user approves one
+  (``trust.approve``) its ``scripts/`` run as ``model`` tier, only while its whole-folder hash still matches the approval;
 * two tiers: ``model`` scripts (pure functions of their arguments) may be called by an agent through MAF's
   ``run_skill_script``; ``host`` scripts are run only by the harness itself, on its own artifacts;
 * every run is argv-only, in a fresh temporary directory, with a sanitized environment and a timeout, and is
@@ -25,7 +27,8 @@ from typing import Any
 from agent_framework import Content, SkillsProvider
 
 from ..envs.execution import run_command
-from .registry import reviewed_scripts
+from .registry import discover_skills, reviewed_scripts
+from .trust import trust
 
 SCRIPT_TIMEOUT_SECONDS = 30
 MAX_OUTPUT_CHARS = 20_000
@@ -39,21 +42,52 @@ class ScriptRefused(RuntimeError):
 class HarnessScriptRunner:
     """MAF ``SkillScriptRunner`` and the host's own script executor, both gated by the same allow-list."""
 
-    def __init__(self, skills_root: Path, tiers: tuple[str, ...] = ("model",)):
+    def __init__(
+        self, skills_root: Path, tiers: tuple[str, ...] = ("model",), plugin_roots: tuple[Path, ...] = ()
+    ):
         self.tiers = tiers
         self.skills_root = Path(skills_root).resolve()
         self.allowed = {
             key: sha for tier in tiers for key, sha in reviewed_scripts(self.skills_root, tier).items()
         }
+        self.plugin_roots = tuple(Path(r) for r in plugin_roots)
+        self.dirs: dict[str, Path] = {}  # approved unverified skills: name -> folder
+        if "model" in tiers:
+            for plugin in discover_skills([self.skills_root, *self.plugin_roots]):
+                self._load_approved(plugin.name, plugin.path)
         self.runs: list[dict[str, Any]] = []
 
     # ---- policy
+    def _load_approved(self, name: str, directory: Path) -> None:
+        directory = Path(directory).resolve()
+        if not trust(self.skills_root, directory)["approved"]:
+            return
+        self.dirs[name] = directory
+        for script in sorted((directory / "scripts").rglob("*")):
+            if script.is_file() and not script.is_symlink() and script.suffix in INTERPRETERS:
+                self.allowed[(name, script.relative_to(directory).as_posix())] = hashlib.sha256(
+                    script.read_bytes()
+                ).hexdigest()
+
+    def _refresh(self, skill: str) -> None:
+        """Pick up an approval made after this runner was built (revocation is checked live in ``check``)."""
+        if "model" not in self.tiers or skill in self.dirs:
+            return
+        for plugin in discover_skills([self.skills_root, *self.plugin_roots]):
+            if plugin.name == skill:
+                self._load_approved(skill, plugin.path)
+
     def check(self, skill: str, rel: str) -> Path:
-        path = (self.skills_root / skill / rel).resolve()
+        if (skill, rel) not in self.allowed:
+            self._refresh(skill)
+        base = self.dirs.get(skill, self.skills_root / skill)
+        path = (base / rel).resolve()
         expected = self.allowed.get((skill, rel))
         if expected is None:
             raise ScriptRefused(f"Script {skill}/{rel} is not on the reviewed allow-list for this caller.")
-        if not path.is_relative_to(self.skills_root / skill) or not path.is_file():
+        if skill in self.dirs and not trust(self.skills_root, base)["approved"]:
+            raise ScriptRefused(f"Skill {skill} changed since it was approved; refusing to run its scripts.")
+        if not path.is_relative_to(base) or not path.is_file():
             raise ScriptRefused(f"Script {skill}/{rel} does not exist inside its skill.")
         if hashlib.sha256(path.read_bytes()).hexdigest() != expected:
             raise ScriptRefused(f"Script {skill}/{rel} changed since it was reviewed; refusing to run it.")
@@ -89,8 +123,19 @@ class HarnessScriptRunner:
         if output_json and "host" not in self.tiers:
             raise ScriptRefused("JSON artifact output is host-only.")
         path = self.check(skill, rel)
-        argv = [*INTERPRETERS.get(path.suffix, [str(path)]), str(path), *self._clean_args(args)]
+        interpreter = INTERPRETERS.get(path.suffix, [str(path)])
         work = Path(tempfile.mkdtemp(prefix="skill-script-")).resolve()
+        if skill in self.dirs and path.suffix == ".py":  # approved plugin code: isolated, no stray bytecode
+            interpreter = [
+                *interpreter,
+                "-I",
+                "-B",
+                "--check-hash-based-pycs",
+                "always",
+                "-X",
+                f"pycache_prefix={work / 'pycache'}",
+            ]
+        argv = [*interpreter, str(path), *self._clean_args(args)]
         try:
             for name, content in (files or {}).items():
                 target = (work / "input" / name).resolve()
@@ -118,7 +163,7 @@ class HarnessScriptRunner:
             "skill": skill,
             "script": rel,
             "sha256": self.allowed[(skill, rel)],
-            "argv": argv[len(INTERPRETERS.get(path.suffix, [""])) :],
+            "argv": argv[len(interpreter) :],
             "exit_code": result.get("exit_code"),
             "status": result["status"],
             "duration_seconds": round(time.time() - started, 3),
@@ -134,7 +179,7 @@ class HarnessScriptRunner:
     # ---- MAF SkillScriptRunner protocol
     def __call__(self, skill: Any, script: Any, args: Any = None) -> str:
         name = skill.frontmatter.name
-        rel = Path(script.full_path).resolve().relative_to(self.skills_root / name).as_posix()
+        rel = Path(script.full_path).resolve().relative_to(self.dirs.get(name, self.skills_root / name)).as_posix()
         try:
             outcome = self.run(name, rel, args)
         except ScriptRefused as exc:

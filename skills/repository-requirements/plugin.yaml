@@ -1,0 +1,5 @@
+name: repository-requirements
+stages: ["requirements"]
+role: primary
+kind: model
+purpose: "derive structured requirements from the repository analysis"

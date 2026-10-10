@@ -1,0 +1,6 @@
+name: test-data-generator
+stages: ["test_design", "test_generation"]
+role: companion
+kind: model
+purpose: "make test data deterministic: seeds, stable IDs, fixtures, payload shapes"
+priority: 30

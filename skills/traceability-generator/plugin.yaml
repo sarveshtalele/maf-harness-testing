@@ -1,0 +1,5 @@
+name: traceability-generator
+stages: []
+role: companion
+kind: host
+purpose: "validate the requirement to test to artifact traceability matrix"

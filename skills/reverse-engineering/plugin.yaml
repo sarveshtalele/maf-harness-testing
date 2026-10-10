@@ -1,0 +1,6 @@
+name: reverse-engineering
+stages: ["repo_analysis"]
+role: primary
+kind: host
+purpose: "deterministic repository reverse engineering (no model calls)"
+entrypoint: maf_test_harness.repo.reverse_engineering:reverse_engineer

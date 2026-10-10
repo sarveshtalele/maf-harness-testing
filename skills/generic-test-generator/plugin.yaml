@@ -1,0 +1,5 @@
+name: generic-test-generator
+stages: ["test_generation"]
+role: primary
+kind: model
+purpose: "generate runnable test files from the approved design"

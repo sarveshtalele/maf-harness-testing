@@ -108,11 +108,15 @@ def test_vendored_upstream_skills_match_the_lock_and_tampering_is_detected(tmp_p
         "traceability-generator",
         "requirement-analysis",
         "reverse-engineering",
+        "generic-test-generator",
+        "repository-requirements",
+        "test-design-generator",
+        "test-planning",
     }
     assert all(
         v["audit"].get("security_findings") == 0
         if v["origin"] == "upstream"
-        else v["audit"]["status"] == "host-reviewed"
+        else v["audit"]["status"] in ("host-reviewed", "repo-reviewed")
         for v in lock["skills"].values()
     )
     assert verify_lock(SKILLS) == []

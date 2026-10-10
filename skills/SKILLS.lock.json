@@ -52,6 +52,7 @@
         "examples/input.yaml": "66b3921407e395e892f3e5f1cee3e8f51c4a90d0299ce8212ee7876541959a68",
         "examples/output-advanced.json": "f6091e58561a8e4536398ec5608c871d691ba4c6b7f363110dddf86f45105d98",
         "examples/output.json": "e31bfe41670eb34ef274dbeaa295ac9ffe34260d37b541808c591da78e021c1e",
+        "plugin.yaml": "a61de1d5c0198f32aa123f2c361e63732d5112b6ba52f859cdc230d5734e551e",
         "references/openapi_guidelines.md": "8576091f1f0d0ebc2113f1b42adb2f94148e17d763d4f29b75b84bbaac75ebde",
         "scripts/validate_contract.py": "fd2506d16935eef258ba5cabf944e5ea2e1343b9c4cd18c7796602865b32df1d",
         "skill-card.json": "db7960182fa82f053e5215ba5d6d021ed314a0071f54e5e43e1d722539bf778f"
@@ -72,12 +73,28 @@
         "assets/coverage_templates.yaml": "8c0c7b6bf495da8456779521abf2cd83b1bd6cabdfc05b36020a48e35a24db94",
         "examples/input.json": "425da68c547436d2f62342ee7e622db205342ece623151b4c72c9308ac8dc98f",
         "examples/output.json": "4593a7993b0f8672ae59cef1fa37eab500b5a029e2389e8a6426fbe102c540bd",
+        "plugin.yaml": "bec2f445826a92fed090221f7ecabedb56bcce1446fe80c2b30a4160b6979ede",
         "references/coverage_rules.md": "aeaa41e3cd54c2ee9f8d8b4bea90775c6c0130ce48c0fc6033cfc4544f9a55db",
         "scripts/run-coverage.js": "ffc3b45d996f4113886dfd84e347297f8e8d37bcf9f200ff42c68ea141632955",
         "skill-card.json": "0fafab7d9e3ecae0f8bc1162e1279aa666cba82a3f085aeff1b1ae997b55b3d7"
       },
       "origin": "upstream",
       "path": "Skills/coverage-analyzer"
+    },
+    "generic-test-generator": {
+      "audit": {
+        "status": "repo-reviewed"
+      },
+      "files": {
+        "SKILL.md": "0301341df63295bc9130251e5a0e18dc6c3bb24743c9879ff801b56f062cb6cc",
+        "plugin.yaml": "ca233658173a663911d00623107618ab84d7b6da4e96b8ac8fbfc42de5ce89d4",
+        "references/csharp.md": "6f6a2b182f07d55d55bb35ae8da7abf0bb6f372d53b73ffbca1007b9c10d6293",
+        "references/java.md": "2173b0447c5cde6fa0a79abe9d2f618977a89462c9de070ce0bc0467fa138fd8",
+        "references/javascript.md": "76ba60940e934da0e4dbaa1803146efe2f3c0ccf1a5ca2f623228705587ba6fb",
+        "references/python.md": "a36b285f8afa8025a66686f2d0cf3b96dfb6ea92c7c1be63b058497eb7e8e6b0",
+        "references/typescript.md": "052345a01a48d59c9e8c77cca79e9d624113db53520418163f36e40b1430adad"
+      },
+      "origin": "local"
     },
     "junit-generator": {
       "audit": {
@@ -94,6 +111,7 @@
         "examples/edge_case_output.java": "8b6c303b183c34208be34209a7ca31a97501163baf0938c9a29da2e917225c9f",
         "examples/input.json": "1493dda1d3992a082aa49173857ea0a311fa6f17a81468ba86a7707b4cda3aa7",
         "examples/output.java": "4256cbb00b28b2a866ce1659ad5a89d3b73914b60c4e2a01edb799dbb4ce21ad",
+        "plugin.yaml": "22d06373ae89171e175e49ded6fc994d44bd3d80e28c3256d694cca7376e89b5",
         "references/junit_best_practices.md": "016f67d8eac828ca65836c24b1665cf0f80a19a6e5d4e22b2953b6598ecef5f7",
         "scripts/generate_junit.js": "3be9c6cd29a51245e9caa097fcbd46eec1a6d32c6768874a23155cc34729f7ea",
         "skill-card.json": "da7057c1b5c977b7f89f1439bec15e627b275067cfe28579c50f1dc76b3453b2"
@@ -115,6 +133,7 @@
         "examples/api_output.spec.ts": "81c4dc257c24c27f949caf7947dbcc73d5d30a312b1c9c0fe1aba660b9f95377",
         "examples/input.json": "4b47f2e9c1c5f8ac79a644fef67098465db807021213ce91fe4ae0ad9bc837f2",
         "examples/output.spec.ts": "3ef93b84b734efdef02a7e043ff31f4e47afad0a777d3c4237eaae25a7813062",
+        "plugin.yaml": "d543ce20a94cb6e2b8ec86634e903bfb717c7bd70bceac22c2bc27bba6b97c06",
         "references/TESTING_GUIDE.md": "485e84cf63ad4f2c7be55d335e2d3fbbc91be84fb1fc69c4e61fd2a74ed9fa15",
         "references/api-tests.md": "69bcd2e214e9d8f1432cd2554710be19c000034e44e72e1b8db56b0f17613625",
         "references/gaps-and-anti-hallucination.md": "37ae21f146ac578176fa1ef4c9817256a187ed4d1defa17fa4d13865ca00b855",
@@ -126,12 +145,23 @@
       "origin": "upstream",
       "path": "Skills/playwright-test-generator"
     },
+    "repository-requirements": {
+      "audit": {
+        "status": "repo-reviewed"
+      },
+      "files": {
+        "SKILL.md": "17dc742ca91e10d3ab08aac5cc8c78002d4b782a35ececb875c11471460b858a",
+        "plugin.yaml": "c87c1cd9d786bffc17b43835a2ca4a63da30b821f6e74dd8f2c05e5e2e0862eb"
+      },
+      "origin": "local"
+    },
     "requirement-analysis": {
       "audit": {
         "status": "host-reviewed"
       },
       "files": {
         "SKILL.md": "865311c05ce69e3d5128346d82e207ebed1831d17962812bc41a76524bfe4a94",
+        "plugin.yaml": "44493d6fc2b3c73d9fa5b98661bc833cc5ea6c791f740f2d8a61c7356bd545fa",
         "scripts/analyze.py": "eff44397c2e02a5c434256dd82311847eb00b5e6c4ca26bba999d093171da295"
       },
       "origin": "host-adapted",
@@ -145,6 +175,7 @@
       },
       "files": {
         "SKILL.md": "52317f84d3bfe763efa768f6be01a7d761553412341cb6bb35e56fdb5285815c",
+        "plugin.yaml": "2476d503d9514e39df8eb0e4b3fc3f275f880504b5fe5da34249e5060014dac4",
         "scripts/analyze.py": "58f65f068bcc5033990e7816e72be7671171fd36c799b9f117905fcb5b407486"
       },
       "origin": "host-adapted",
@@ -165,6 +196,7 @@
         "assets/fixture_templates.yaml": "83c24ab8b615b2f1c6d2b9cbcf785f1f9cc5c9abd7e56d88db2347dfa1404624",
         "examples/input.json": "e5d505487377e7e93decccf1d8fa01875cb24b45eea96d74402ddfeb7dafc6cd",
         "examples/output.json": "27c4704c244840d8252b87c548abe93425a6f08057e7ea36cc693bdb776a2ce5",
+        "plugin.yaml": "26a64a121fd66b564660a1ff896801a1f57716997ff10677318a5d5944ad4c0b",
         "references/test_data_fixture_guidelines.md": "297a0a1520601d66106dca973c46ae18e8124182c1a0ed06d944bf835509b7d3",
         "scripts/deterministic_helpers.py": "41b820fdba943d59cb4240e56eb24881c3d970745d4f6d0004fab7b5477a87a2",
         "scripts/validate_fixtures.py": "a45d67224d2702407181402fde034055f654db54cabbe1d7da26d4c288668775",
@@ -172,6 +204,39 @@
       },
       "origin": "upstream",
       "path": "Skills/test-data-generator"
+    },
+    "test-design-generator": {
+      "audit": {
+        "status": "repo-reviewed"
+      },
+      "files": {
+        "README.md": "4fe11498fac12c6d9849e68045ebdffd2d685b563c4605aaa0d86cb1146eb8a0",
+        "SKILL.md": "7d4c4363e534c0824d01025b78041379c81a65c8776187405a1b2bafc88a8226",
+        "UPSTREAM.sha256": "658cb298a46982485897b91e07daf3d50f4cefdf60d3b4d3f4207b7ce8488d69",
+        "UPSTREAM_SOURCE.txt": "aadb04a2a7a93dec908c061c416aab8ddb8b2d67702c33180d6b4a7596ceb261",
+        "assets/EXAMPLE_REPORT.md": "fd4dd38ebd167d113073593ff0bb02cda6f67cd1b39f06bb8783069e36257a55",
+        "assets/summary_template.json": "7d3dd953e5926a776f0e0801bf50fc3601248f19a0fa0f0541d0dbe7e8756d51",
+        "assets/testcase_templates.yaml": "baf9cf66608a6f64fae22ff84aa2012fce2ae81eb8ab97dc16538fd4139fd2e9",
+        "examples/input.json": "6da110a4023e1c4e81438aa5f002e8416bd15ddb8341fd621d70ae7713aef921",
+        "examples/output.json": "1cd62adc7041643630b3eaee33574610b7e63b6daaaf93b66e72e77c687c53da",
+        "marketplace.yaml": "5b5cf396abc41044f2aa8a016fb68a01f88b503487797a5e77e3c367334e74bc",
+        "plugin.yaml": "4262c1d2412c59bbbdddd6d9c4ffd9c148a364be42c1126b96d593efc53031ea",
+        "references/REFERENCE_GUIDE.md": "453631f62dc8dd699619510d8830c0475af66eb7b826a41c77d38184c34c82c2",
+        "references/test_design_patterns.md": "19533d345f67c42cbf5749895eaf4d9d523e76d396a458a9ff2aecfc837899cc",
+        "scripts/validate_design.py": "331c074cb8509fced20d9727cffa1cb852b8e4ab9408928567cabc910030a2bc",
+        "skill-card.json": "b2c291cb1153177b35dbdc88e3e79e0af0f2e733ce13bd70692e3327b322d535"
+      },
+      "origin": "local"
+    },
+    "test-planning": {
+      "audit": {
+        "status": "repo-reviewed"
+      },
+      "files": {
+        "SKILL.md": "91b412a7190744b850517d92eb49542a3a5dcb27dc74129532566bd017d3e52f",
+        "plugin.yaml": "d35ef0c3b43e908a595dfee9420f1d44a0e88363bdee0fe0f7234c065d2cfafd"
+      },
+      "origin": "local"
     },
     "traceability-generator": {
       "audit": {
@@ -186,6 +251,7 @@
         "assets/matrix_templates.yaml": "76b393d0ee05481f9e5b20fcca3491968535a34039e8fe4254334756704c13c7",
         "examples/input.json": "ddf234a430906a3d522537f32d10394587aa8442bd595a75481ae4f7517306e2",
         "examples/output.json": "39a0766f00b9f0de9017b500c2e41fe68a6ee0293ac0a70af4c604a0631c2baa",
+        "plugin.yaml": "539eae5a9fc5bd783294776075c3b93ea10961445fcd9629c2cab607ffbcf545",
         "references/traceability_patterns.md": "74239b896a862873e8793449075b95cdd9256614aca332b7ad97ad5772572ecc",
         "scripts/validate_traceability.py": "9d394ef895bd411ee696c94a2f0085034b36c59ab1adf63b52fb47e3b911b3c1",
         "skill-card.json": "8af22db1bf01f3d00153e18f32d7c25885197bcba6b3ccaddb835c99f88f0305"

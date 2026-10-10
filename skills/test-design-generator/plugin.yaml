@@ -1,0 +1,5 @@
+name: test-design-generator
+stages: ["test_design"]
+role: primary
+kind: model
+purpose: "design traceable test cases from requirements"
