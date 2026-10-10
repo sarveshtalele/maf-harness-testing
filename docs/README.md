@@ -61,7 +61,7 @@ Plans give direction. They are not guaranteed to be current.
 - [WINDOWS_RUN_E9681C3_REVIEW.md](WINDOWS_RUN_E9681C3_REVIEW.md): **historical** review of one saved Windows run deliverable.
 - [agent-framework.pdf](agent-framework.pdf): reference copy of the Microsoft Agent Framework documentation. Per the root CLAUDE.md, do not commit or share it. It is currently tracked in git, so the owner should decide whether to untrack it.
 
-### audit/ (historical evidence, do not edit)
+### audit/ (historical evidence)
 
 - [audit/ERRORS.md](audit/ERRORS.md): defect register.
 - [audit/E2E_RESULTS.md](audit/E2E_RESULTS.md): results of live end-to-end runs.
