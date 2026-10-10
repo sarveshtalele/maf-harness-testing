@@ -40,13 +40,13 @@ jobs:
       - name: Agent Skills spec lint
         run: uv run maf-harness lint-skills --strict
       - name: Generation benchmark reference calibration (offline)
-        run: uv run python scripts/benchmark_generation.py --output .benchmark-results/calibration
+        run: uv run python scripts/benchmark_generation.py --output benchmark-results/calibration
       - name: Upload generation benchmark evidence
         if: always()
         uses: actions/upload-artifact@v5
         with:
           name: generation-benchmark-${{ matrix.os }}-py${{ matrix.python }}
-          path: .benchmark-results/calibration
+          path: benchmark-results/calibration
       - name: Unit, component (real MAF, scripted transport) and workflow e2e tests
         run: uv run pytest -q --ignore=tests/targets
 

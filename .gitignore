@@ -42,4 +42,4 @@ desktop/release/
 desktop/node_modules/
 
 # local generation benchmark evidence
-.benchmark-results/
+benchmark-results/
