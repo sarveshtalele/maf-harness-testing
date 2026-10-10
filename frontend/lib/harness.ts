@@ -12,13 +12,13 @@ export const artifacts = (run: Run) => record(run.state.artifacts);
 export const download = (id: string, kind: string, format = 'json', index?: number) => `/api/harness/runs/${encodeURIComponent(id)}/download?${new URLSearchParams({ kind, format, ...(index == null ? {} : { index: String(index) }) })}`;
 export async function api<T>(path: string, body?: Row, signal?: AbortSignal): Promise<T> {
   const response = await fetch(`/api/harness/${path}`, { method: body ? 'POST' : 'GET', headers: body ? { 'Content-Type': 'application/json' } : {}, body: body ? JSON.stringify(body) : undefined, cache: 'no-store', signal });
-  if (!response.ok) { const error = await response.json(); throw new Error(error.error || `Request failed (${response.status})`); }
+  if (!response.ok) { const error = await response.json().catch(() => ({})); throw new Error(error.error || `Request failed (${response.status})`); }
   return response.json();
 }
 
 export async function apiDelete<T>(path: string): Promise<T> {
   const response = await fetch(`/api/harness/${path}`, { method: 'DELETE', cache: 'no-store' });
-  if (!response.ok) { const error = await response.json(); throw new Error(error.error || `Request failed (${response.status})`); }
+  if (!response.ok) { const error = await response.json().catch(() => ({})); throw new Error(error.error || `Request failed (${response.status})`); }
   return response.json();
 }
 

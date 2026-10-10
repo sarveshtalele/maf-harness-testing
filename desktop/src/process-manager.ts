@@ -16,6 +16,7 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 export class ProcessManager {
   private extraRedact = new Set<string>();
   private procs = new Map<string, { child: ChildProcess; log: fs.WriteStream }>();
+  private spawnErrors = new WeakSet<ChildProcess>();
 
   constructor(private logDir: string) {
     fs.mkdirSync(logDir, { recursive: true, mode: 0o700 });
@@ -31,15 +32,20 @@ export class ProcessManager {
       detached: process.platform !== 'win32', // own process group so killpg reaches grandchildren
       windowsHide: true,
     });
+    log.on('error', () => {}); // a failed log write must not crash the main process
+    const write = (text: string) => { if (!log.writableEnded) log.write(text); };
     const pump = (buf: Buffer) => {
       let text = buf.toString('utf8');
       for (const s of [...redact, ...this.extraRedact]) if (s) text = text.split(s).join('[REDACTED]');
-      log.write(text);
+      write(text);
     };
     child.stdout?.on('data', pump);
     child.stderr?.on('data', pump);
-    child.on('error', (e) => log.write(`spawn error: ${e.message}\n`));
-    child.on('exit', (code, sig) => log.write(`\n[exit code=${code} signal=${sig}]\n`));
+    child.on('error', (e) => {
+      this.spawnErrors.add(child);
+      write(`spawn error: ${e.message}\n`);
+    });
+    child.on('exit', (code, sig) => write(`\n[exit code=${code} signal=${sig}]\n`));
     this.procs.set(spec.name, { child, log });
     return child;
   }
@@ -49,9 +55,14 @@ export class ProcessManager {
     for (const v of values) if (v) this.extraRedact.add(v);
   }
 
+  /** True when the child emitted 'error' (spawn failure such as ENOENT); it may never emit 'exit'. */
+  hasSpawnError(child: ChildProcess): boolean {
+    return this.spawnErrors.has(child);
+  }
+
   isRunning(name: string): boolean {
     const p = this.procs.get(name)?.child;
-    return !!p && p.exitCode === null && p.signalCode === null;
+    return !!p && p.exitCode === null && p.signalCode === null && !this.spawnErrors.has(p);
   }
 
   /** Stop then start again, e.g. when the API key changes and the backend must re-read its env. */

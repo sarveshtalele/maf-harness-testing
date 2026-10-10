@@ -80,7 +80,7 @@ Every change must work on Windows, macOS and Linux.
 - Use `pathlib` and `encoding="utf-8"` explicitly.
 - Run subprocesses through `run_command` or `run_cancellable`, which use process groups. Never use `shell=True`.
 - Keep the launchers thin (`start-windows.cmd`, `start-macos.command`, `start-linux.sh`). They delegate to `scripts/start_ui.py`.
-- Node 24 and Python 3.12 are enforced by `engines`, `frontend/.npmrc` and `frontend/.nvmrc`.
+- Node 24 is enforced by `engines`, `frontend/.npmrc` and `frontend/.nvmrc`. Python is `>=3.11` (`requires-python`); CI tests 3.11 and 3.12, and the launchers use 3.12.
 
 ## Secrets and run evidence
 

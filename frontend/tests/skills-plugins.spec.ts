@@ -33,11 +33,11 @@ test('skill cards show trust badges and stages; import and approve use the plugi
   await expect(go.getByText('Unverified', { exact: true })).toBeVisible();
   expect(imported).toBeTruthy();
 
-  let message = '';
-  page.once('dialog', async dialog => { message = dialog.message(); await dialog.accept(); });
   await go.getByRole('button', { name: 'Approve go-helper' }).click();
+  const approveDialog = page.getByRole('dialog', { name: 'Approve go-helper?' });
+  await expect(approveDialog).toContainText('scripts to run');
+  await approveDialog.getByRole('button', { name: 'Approve', exact: true }).click();
   await expect(go.getByText('Approved', { exact: true })).toBeVisible();
   expect(approved).toBeTruthy();
-  expect(message).toContain('scripts to run');
   await expect(go.getByRole('button', { name: /^Approve/ })).toHaveCount(0);
 });

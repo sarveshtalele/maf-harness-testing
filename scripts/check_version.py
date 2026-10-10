@@ -11,8 +11,9 @@ from pathlib import Path
 def check(root: Path) -> str | None:
     py = tomllib.loads((root / "pyproject.toml").read_text("utf-8"))["project"]["version"]
     js = json.loads((root / "frontend" / "package.json").read_text("utf-8"))["version"]
-    if py != js:
-        return f"version mismatch: pyproject.toml={py} frontend/package.json={js}"
+    desk = json.loads((root / "desktop" / "package.json").read_text("utf-8"))["version"]
+    if py != js or py != desk:
+        return f"version mismatch: pyproject.toml={py} frontend/package.json={js} desktop/package.json={desk}"
     if os.environ.get("GITHUB_REF_TYPE") == "tag":
         tag = os.environ.get("GITHUB_REF_NAME", "")
         if tag != f"v{py}" and tag.split("-rc")[0] != f"v{py}":

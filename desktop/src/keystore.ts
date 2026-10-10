@@ -17,11 +17,14 @@ export interface ModelSettingsView {
   key_configured: boolean;
   key_hint: string;
   encrypted: boolean; // false: held in memory only for this session
+  notice?: string; // set when a secrets file from an earlier, unsafe storage backend was discarded
 }
 export interface SafeStorageLike {
   isEncryptionAvailable(): boolean;
   encryptString(s: string): Buffer;
   decryptString(b: Buffer): string;
+  /** Linux only: 'basic_text' means the keyring fell back to a hardcoded password. */
+  getSelectedStorageBackend?(): string;
 }
 
 const EMPTY: Secrets = { api_key: '', base_url: '', model: '', stage_models: {}, mcp: {} };
@@ -69,13 +72,28 @@ export function validate(input: ModelSettingsInput): ModelSettingsInput {
 /** Secrets at rest: safeStorage-encrypted file, or session memory when the OS cannot encrypt. */
 export class KeyStore {
   private cache: Secrets | null = null;
+  private discarded = false;
 
-  constructor(private file: string, private ss: SafeStorageLike) {}
+  constructor(private file: string, private ss: SafeStorageLike, private platform: NodeJS.Platform = process.platform) {}
+
+  /** Linux keyring fallback with a hardcoded password: not a real OS keyring. */
+  private basicText(): boolean {
+    return this.platform === 'linux' && this.ss.getSelectedStorageBackend?.() === 'basic_text';
+  }
+
+  /** Encryption counts as available only when Electron is not using the hardcoded 'basic_text' Linux backend. */
+  private encrypted(): boolean {
+    return this.ss.isEncryptionAvailable() && !this.basicText();
+  }
 
   get(): Secrets {
     if (this.cache) return this.cache;
     let s = { ...EMPTY };
-    if (this.ss.isEncryptionAvailable() && fs.existsSync(this.file)) {
+    if (this.basicText() && fs.existsSync(this.file)) {
+      // Written by an earlier build under the hardcoded key: delete it rather than leave it decryptable on disk.
+      try { fs.rmSync(this.file, { force: true }); } catch { /* still ignored; the key is not loaded */ }
+      this.discarded = true;
+    } else if (this.encrypted() && fs.existsSync(this.file)) {
       try {
         s = { ...EMPTY, ...JSON.parse(this.ss.decryptString(fs.readFileSync(this.file))) };
       } catch { /* unreadable or from another user/machine: start empty */ }
@@ -86,7 +104,7 @@ export class KeyStore {
   /** Merge validated input (empty api_key keeps the stored one) and persist when encryption is available. */
   save(input: ModelSettingsInput): ModelSettingsView {
     this.cache = { ...this.get(), ...validate(input) };
-    if (this.ss.isEncryptionAvailable()) {
+    if (this.encrypted()) {
       fs.mkdirSync(path.dirname(this.file), { recursive: true, mode: 0o700 });
       const tmp = `${this.file}.tmp`;
       fs.writeFileSync(tmp, this.ss.encryptString(JSON.stringify(this.cache)), { mode: 0o600 });
@@ -97,7 +115,7 @@ export class KeyStore {
   }
 
   private persist() {
-    if (!this.ss.isEncryptionAvailable()) return;
+    if (!this.encrypted()) return;
     fs.mkdirSync(path.dirname(this.file), { recursive: true, mode: 0o700 });
     const tmp = `${this.file}.tmp`;
     fs.writeFileSync(tmp, this.ss.encryptString(JSON.stringify(this.cache)), { mode: 0o600 });
@@ -153,7 +171,8 @@ export class KeyStore {
       base_url: s.base_url, model: s.model, stage_models: s.stage_models,
       key_configured: !!s.api_key,
       key_hint: s.api_key.length >= 8 ? s.api_key.slice(-4) : s.api_key ? '****' : '',
-      encrypted: this.ss.isEncryptionAvailable(),
+      encrypted: this.encrypted(),
+      notice: this.discarded ? 'Saved key was discarded: no OS keyring; key is kept in memory only' : undefined,
     };
   }
 

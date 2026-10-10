@@ -45,6 +45,31 @@ test('without OS encryption the key stays in memory only', () => {
   assert.equal(new KeyStore(f, fake(false)).view().key_configured, false);
 });
 
+test('Linux basic_text keyring is treated as unencrypted (in memory only)', () => {
+  const basic: SafeStorageLike = { ...fake(), getSelectedStorageBackend: () => 'basic_text' };
+  const f = tmp();
+  const v = new KeyStore(f, basic, 'linux').save({ api_key: KEY });
+  assert.equal(v.encrypted, false);
+  assert.ok(!fs.existsSync(f));
+  assert.equal(new KeyStore(f, basic, 'linux').view().key_configured, false);
+  // Other platforms and real keychain backends keep using safeStorage.
+  const kwallet: SafeStorageLike = { ...fake(), getSelectedStorageBackend: () => 'kwallet5' };
+  assert.equal(new KeyStore(tmp(), kwallet, 'linux').save({ api_key: KEY }).encrypted, true);
+  assert.equal(new KeyStore(tmp(), basic, 'darwin').save({ api_key: KEY }).encrypted, true);
+});
+
+test('Linux basic_text: a secrets file from an earlier build is deleted and reported', () => {
+  const f = tmp();
+  new KeyStore(f, fake()).save({ api_key: KEY }); // written under the OS keychain earlier
+  assert.ok(fs.existsSync(f));
+  const basic: SafeStorageLike = { ...fake(), getSelectedStorageBackend: () => 'basic_text' };
+  const v = new KeyStore(f, basic, 'linux').view();
+  assert.equal(v.key_configured, false);
+  assert.match(v.notice ?? '', /Saved key was discarded/);
+  assert.ok(!fs.existsSync(f));
+  assert.equal(new KeyStore(f, basic, 'linux').view().notice, undefined);
+});
+
 test('rejects insecure urls, bad models and keys; corrupt file reads empty', () => {
   const ks = new KeyStore(tmp(), fake());
   assert.throws(() => ks.save({ base_url: 'http://example.com' }));

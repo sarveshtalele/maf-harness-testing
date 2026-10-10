@@ -11,10 +11,12 @@ cv = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(cv)
 
 
-def _root(tmp_path, py="1.2.0", js="1.2.0"):
+def _root(tmp_path, py="1.2.0", js="1.2.0", desk="1.2.0"):
     (tmp_path / "frontend").mkdir()
+    (tmp_path / "desktop").mkdir()
     (tmp_path / "pyproject.toml").write_text(f'[project]\nversion = "{py}"\n')
     (tmp_path / "frontend" / "package.json").write_text(json.dumps({"version": js}))
+    (tmp_path / "desktop" / "package.json").write_text(json.dumps({"version": desk}))
     return tmp_path
 
 
@@ -30,6 +32,11 @@ def test_match(tmp_path):
 
 def test_mismatch(tmp_path):
     assert "mismatch" in cv.check(_root(tmp_path, js="1.3.0"))
+
+
+def test_desktop_mismatch(tmp_path):
+    err = cv.check(_root(tmp_path, desk="1.3.0"))
+    assert err and "desktop/package.json=1.3.0" in err
 
 
 @pytest.mark.parametrize("tag", ["v1.2.0", "v1.2.0-rc1"])

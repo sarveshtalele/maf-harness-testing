@@ -12,7 +12,7 @@ if ! echo "$node_version" | grep -q '^v24\.'; then
     echo "Fix: Install Node.js 24 LTS (https://nodejs.org/), or with nvm run: nvm install 24 && nvm use 24; then remove older Node entries from PATH and open a new terminal."
     exit 1
 fi
-if [ ! -f .env ]; then cp .env.example .env; chmod 600 .env; echo "Created .env. Configure your gateway there before starting a run."; fi
+if [ ! -f .env ]; then (umask 077; cp .env.example .env); echo "Created .env. Configure your gateway there before starting a run."; fi
 qe_status=0
 uv run --no-project --python 3.12 python scripts/start_ui.py --check-only "$@" || qe_status=$?
 if [ "$qe_status" -eq 10 ]; then exit 0; fi
