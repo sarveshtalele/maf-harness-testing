@@ -81,6 +81,21 @@
       "origin": "upstream",
       "path": "Skills/coverage-analyzer"
     },
+    "generic-test-generator": {
+      "audit": {
+        "status": "repo-reviewed"
+      },
+      "files": {
+        "SKILL.md": "0301341df63295bc9130251e5a0e18dc6c3bb24743c9879ff801b56f062cb6cc",
+        "plugin.yaml": "ca233658173a663911d00623107618ab84d7b6da4e96b8ac8fbfc42de5ce89d4",
+        "references/csharp.md": "6f6a2b182f07d55d55bb35ae8da7abf0bb6f372d53b73ffbca1007b9c10d6293",
+        "references/java.md": "2173b0447c5cde6fa0a79abe9d2f618977a89462c9de070ce0bc0467fa138fd8",
+        "references/javascript.md": "76ba60940e934da0e4dbaa1803146efe2f3c0ccf1a5ca2f623228705587ba6fb",
+        "references/python.md": "a36b285f8afa8025a66686f2d0cf3b96dfb6ea92c7c1be63b058497eb7e8e6b0",
+        "references/typescript.md": "052345a01a48d59c9e8c77cca79e9d624113db53520418163f36e40b1430adad"
+      },
+      "origin": "local"
+    },
     "junit-generator": {
       "audit": {
         "gate": "PASS",
@@ -129,6 +144,16 @@
       },
       "origin": "upstream",
       "path": "Skills/playwright-test-generator"
+    },
+    "repository-requirements": {
+      "audit": {
+        "status": "repo-reviewed"
+      },
+      "files": {
+        "SKILL.md": "17dc742ca91e10d3ab08aac5cc8c78002d4b782a35ececb875c11471460b858a",
+        "plugin.yaml": "c87c1cd9d786bffc17b43835a2ca4a63da30b821f6e74dd8f2c05e5e2e0862eb"
+      },
+      "origin": "local"
     },
     "requirement-analysis": {
       "audit": {
@@ -179,6 +204,39 @@
       },
       "origin": "upstream",
       "path": "Skills/test-data-generator"
+    },
+    "test-design-generator": {
+      "audit": {
+        "status": "repo-reviewed"
+      },
+      "files": {
+        "README.md": "4fe11498fac12c6d9849e68045ebdffd2d685b563c4605aaa0d86cb1146eb8a0",
+        "SKILL.md": "7d4c4363e534c0824d01025b78041379c81a65c8776187405a1b2bafc88a8226",
+        "UPSTREAM.sha256": "658cb298a46982485897b91e07daf3d50f4cefdf60d3b4d3f4207b7ce8488d69",
+        "UPSTREAM_SOURCE.txt": "aadb04a2a7a93dec908c061c416aab8ddb8b2d67702c33180d6b4a7596ceb261",
+        "assets/EXAMPLE_REPORT.md": "fd4dd38ebd167d113073593ff0bb02cda6f67cd1b39f06bb8783069e36257a55",
+        "assets/summary_template.json": "7d3dd953e5926a776f0e0801bf50fc3601248f19a0fa0f0541d0dbe7e8756d51",
+        "assets/testcase_templates.yaml": "baf9cf66608a6f64fae22ff84aa2012fce2ae81eb8ab97dc16538fd4139fd2e9",
+        "examples/input.json": "6da110a4023e1c4e81438aa5f002e8416bd15ddb8341fd621d70ae7713aef921",
+        "examples/output.json": "1cd62adc7041643630b3eaee33574610b7e63b6daaaf93b66e72e77c687c53da",
+        "marketplace.yaml": "5b5cf396abc41044f2aa8a016fb68a01f88b503487797a5e77e3c367334e74bc",
+        "plugin.yaml": "4262c1d2412c59bbbdddd6d9c4ffd9c148a364be42c1126b96d593efc53031ea",
+        "references/REFERENCE_GUIDE.md": "453631f62dc8dd699619510d8830c0475af66eb7b826a41c77d38184c34c82c2",
+        "references/test_design_patterns.md": "19533d345f67c42cbf5749895eaf4d9d523e76d396a458a9ff2aecfc837899cc",
+        "scripts/validate_design.py": "331c074cb8509fced20d9727cffa1cb852b8e4ab9408928567cabc910030a2bc",
+        "skill-card.json": "b2c291cb1153177b35dbdc88e3e79e0af0f2e733ce13bd70692e3327b322d535"
+      },
+      "origin": "local"
+    },
+    "test-planning": {
+      "audit": {
+        "status": "repo-reviewed"
+      },
+      "files": {
+        "SKILL.md": "91b412a7190744b850517d92eb49542a3a5dcb27dc74129532566bd017d3e52f",
+        "plugin.yaml": "d35ef0c3b43e908a595dfee9420f1d44a0e88363bdee0fe0f7234c065d2cfafd"
+      },
+      "origin": "local"
     },
     "traceability-generator": {
       "audit": {

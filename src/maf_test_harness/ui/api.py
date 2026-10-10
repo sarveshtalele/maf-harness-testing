@@ -660,8 +660,9 @@ def make_server(api: LocalAPI, token: str, port: int = 8765):
                     if self.headers.get("Content-Type", "").split(";")[0] != "application/json":
                         raise ValueError("JSON body required.")
                     length = int(self.headers.get("Content-Length", "0"))
-                    if not 0 < length <= 2097152:
-                        raise ValueError("Body must be between 1 and 2,097,152 bytes.")
+                    limit = 28_000_000 if parts == ["skills", "import"] else 2097152  # 20 MB zip as base64
+                    if not 0 < length <= limit:
+                        raise ValueError(f"Body must be between 1 and {limit:,} bytes.")
                     body = json.loads(self.rfile.read(length))
                     if not isinstance(body, dict):
                         raise ValueError("JSON object required.")
@@ -669,6 +670,10 @@ def make_server(api: LocalAPI, token: str, port: int = 8765):
                         self.reply(200, public(preview_repository(str(body.get("repo_url", "")))))
                     elif parts == ["prompts"]:
                         self.reply(200, api.save_prompts(body))
+                    elif parts == ["skills", "import"]:
+                        self.reply(200, api.import_skill(body))
+                    elif len(parts) == 3 and parts[0] == "skills" and parts[2] == "approve":
+                        self.reply(200, api.approve_skill(parts[1]))
                     elif len(parts) == 3 and parts[0] == "runs" and parts[2] == "prompts":
                         self.reply(200, api.save_prompts(body, parts[1]))
                     elif parts == ["runs"]:

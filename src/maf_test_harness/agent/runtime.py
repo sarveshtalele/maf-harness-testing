@@ -39,8 +39,9 @@ from ..settings import (
     STAGE_MODELS,
 )
 from ..skills.config import purpose_of
-from ..skills.registry import require_valid
+from ..skills.registry import discover_skills, require_valid
 from ..skills.scripts import HarnessScriptRunner, script_approval_rule
+from ..skills.trust import plugin_dir, trust
 from ..storage import atomic_json
 from ..tools.agent_tools import CENTRAL_TOOL_NAMES, tool_instructions
 from ..tools.typed import TYPED_TOOL_NAMES
@@ -289,6 +290,7 @@ class MAFHarnessRuntime:
         tool_provider: Callable[[str], list] | None = None,
         hooks=None,
         hooks_backend: str | None = None,
+        plugin_roots: tuple[Path, ...] | None = None,
     ):
         if not api_key.strip() or not model.strip():
             raise ValueError("Model and API key are required before model stages.")
@@ -296,6 +298,7 @@ class MAFHarnessRuntime:
             raise ValueError("skill_mode must be 'progressive' or 'preloaded'.")
         self.api_key, self.model = api_key.strip(), model.strip()
         self.skills_root = skills_root.resolve()
+        self.plugin_roots = (plugin_dir(),) if plugin_roots is None else tuple(plugin_roots)
         self.base_url = base_url.strip() if base_url else None
         self.api_mode = api_mode
         self.skill_mode = skill_mode
@@ -322,7 +325,9 @@ class MAFHarnessRuntime:
         self.recorder: TraceRecorder | None = None  # set by the workflow host; None = no trace file
         self._trace_context: dict[str, Any] = {}
         # Reviewed, hash-pinned scripts the agent may call through MAF run_skill_script (model tier only).
-        self.script_runner = HarnessScriptRunner(self.skills_root, tiers=("model",))
+        self.script_runner = HarnessScriptRunner(
+            self.skills_root, tiers=("model",), plugin_roots=self.plugin_roots
+        )
 
     def _emit(self, kind: str, **fields: Any) -> None:
         """Write one trace event tagged with the stage/phase that is currently running (no-op without a recorder)."""
@@ -337,14 +342,32 @@ class MAFHarnessRuntime:
         )
 
     def _skill_dir(self, skill_name: str) -> Path:
-        skill_dir = (self.skills_root / skill_name).resolve()
-        try:
-            skill_dir.relative_to(self.skills_root)
-        except ValueError as exc:
-            raise ValueError(f"Invalid marketplace skill path: {skill_name}") from exc
-        if not (skill_dir / "SKILL.md").is_file():
+        """Folder of an assigned skill: repository skills/ first, then the user plugin directory."""
+        found = next(
+            (p.path for p in discover_skills([self.skills_root, *self.plugin_roots]) if p.name == skill_name),
+            None,
+        )
+        if found is None or not (found / "SKILL.md").is_file():
             raise ValueError(f"Marketplace skill not found: {skill_name}")
-        return skill_dir
+        return found.resolve()
+
+    def _trusted_skills(self, stage: str, skills: list[str], state: dict) -> list[str]:
+        """Drop unverified, unapproved companions (audit note); an unapproved primary fails the stage."""
+        kept = []
+        for name in skills:
+            try:
+                ok = trust(self.skills_root, self._skill_dir(name))["trusted"]
+            except ValueError:  # missing skill: require_valid reports it with the usual message
+                ok = True
+            if ok:
+                kept.append(name)
+            elif name == skills[0]:
+                raise ValueError(f"Primary skill {name} is unverified; approve it before this stage can run.")
+            else:
+                note = f"skill {name} skipped: unverified"
+                self._emit("skill_skipped", skill=name, reason="unverified", note=note)
+                state.setdefault("skills_skipped", []).append({"stage": stage, "skill": name, "note": note})
+        return kept
 
     def _load_assigned_skill(self, skill_name: str) -> str:
         """Fallback (preloaded mode): read the assigned SKILL.md so the host can inject it."""
@@ -361,7 +384,7 @@ class MAFHarnessRuntime:
         """
         allowed = set(self.script_runner.allowed)
         source = FileSkillsSource(
-            self.skills_root,
+            [self.skills_root, *(r for r in self.plugin_roots if r.is_dir())],
             script_runner=self.script_runner,
             script_filter=lambda skill, path: (skill, path) in allowed,
         )
@@ -374,7 +397,7 @@ class MAFHarnessRuntime:
         self, stage: str, skills: list[str], state: dict, persist, model: str | None = None
     ) -> None:
         hashes = require_valid(
-            self.skills_root, skills
+            self.skills_root, skills, self.plugin_roots
         )  # spec lint + lock verification for every assigned skill
         mode = "maf_skills_provider" if self.skill_mode == "progressive" else "host_preloaded"
 
@@ -383,6 +406,7 @@ class MAFHarnessRuntime:
                 "name": name,
                 "sha256": hashlib.sha256((self._skill_dir(name) / "SKILL.md").read_bytes()).hexdigest(),
                 "package_sha256": hashes[name],
+                "trust": trust(self.skills_root, self._skill_dir(name)),
             }
 
         state.setdefault("skill_provenance", {})[stage] = {
@@ -728,7 +752,8 @@ class MAFHarnessRuntime:
         companions: tuple[str, ...] | list[str] = (),
         temperature: float = 0.0,
     ) -> dict:
-        skills = [skill_name, *companions]
+        skills = self._trusted_skills(stage, [skill_name, *companions], state)
+        companions = tuple(skills[1:])
         cache_path = self._response_cache_path(stage, skills, persona, prompt, response_format, temperature)
         self._last_response.pop(stage, None)
         if cache_path is not None and cache_path.is_file():

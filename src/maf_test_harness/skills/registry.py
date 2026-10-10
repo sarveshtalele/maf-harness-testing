@@ -148,9 +148,13 @@ def reviewed_scripts(skills_root: Path, tier: str | None = None) -> dict[tuple[s
     }
 
 
-def require_valid(skills_root: Path, names: list[str]) -> dict[str, str]:
-    """Fail fast if an assigned skill is missing, invalid or (for upstream skills) modified; return package hashes."""
-    reports = {r.name: r for r in lint_all(skills_root)}
+def require_valid(skills_root: Path, names: list[str], extra_roots=()) -> dict[str, str]:
+    """Fail fast if an assigned skill is missing, invalid or (for upstream skills) modified; return package hashes.
+    ``extra_roots`` (user plugin dirs) are searched after ``skills_root``; the first folder of a name wins."""
+    reports: dict[str, SkillReport] = {}
+    for root in (skills_root, *(r for r in extra_roots if Path(r).is_dir())):
+        for r in lint_all(root):
+            reports.setdefault(r.name, r)
     tampered = verify_lock(skills_root, names)
     if tampered:
         raise ValueError("Vendored Agent Skill modified after review: " + "; ".join(tampered[:5]))

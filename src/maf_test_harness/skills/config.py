@@ -13,8 +13,8 @@ from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
 
-from ..settings import PLUGIN_DIR
 from .registry import SkillPlugin, discover_skills
+from .trust import plugin_dir, trust
 
 ROOT = Path(__file__).resolve().parents[3]
 STAGE_ORDER = (
@@ -30,8 +30,10 @@ STAGE_ORDER = (
 
 
 def plugins() -> list[SkillPlugin]:
-    """Valid plugins from the repository ``skills/`` folder plus the optional user plugin directory."""
-    return [p for p in discover_skills([ROOT / "skills", PLUGIN_DIR]) if p.ok]
+    """Valid, trusted plugins from the repository ``skills/`` folder plus the user plugin directory. Unverified skills
+    (no lock entry, or any user plugin) take part in selection only after a user approved their current files."""
+    repo = ROOT / "skills"
+    return [p for p in discover_skills([repo, plugin_dir()]) if p.ok and trust(repo, p.path)["trusted"]]
 
 
 def _repo_primaries(kind: str) -> dict[str, str]:

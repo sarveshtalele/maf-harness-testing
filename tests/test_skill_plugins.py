@@ -3,7 +3,7 @@ from pathlib import Path
 
 import pytest
 
-from maf_test_harness.skills import config
+from maf_test_harness.skills import config, trust
 from maf_test_harness.skills.config import SkillSet, skills_for
 from maf_test_harness.skills.registry import discover_skills, lint_plugins, load_plugin
 
@@ -79,7 +79,9 @@ def _drop(tmp_path, monkeypatch, body, name="go-test-helper"):
     d.mkdir()
     (d / "SKILL.md").write_text(f"---\nname: {name}\ndescription: d\n---\n# T\n", encoding="utf-8")
     (d / "plugin.yaml").write_text(body, encoding="utf-8")
-    monkeypatch.setattr(config, "PLUGIN_DIR", tmp_path)
+    monkeypatch.setenv("HARNESS_PLUGIN_DIR", str(tmp_path))
+    monkeypatch.setenv("HARNESS_PLUGIN_APPROVALS", str(tmp_path.parent / f"{tmp_path.name}-approvals.json"))
+    trust.approve(config.ROOT / "skills", name)
     return d
 
 

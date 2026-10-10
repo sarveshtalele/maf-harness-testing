@@ -74,13 +74,6 @@ BUILD_GATE = (
 # later stage starts. "off" restores the old behaviour (warn, then let the reviewer proceed). See docs/ENVIRONMENTS.md.
 STRICT_ENV = os.getenv("HARNESS_STRICT_ENV", "on").strip().lower() != "off"
 
-# Optional user skill-plugin folder (same layout as the repo skills/); unset by default.
-PLUGIN_DIR = (
-    Path(os.environ["HARNESS_PLUGIN_DIR"]).expanduser()
-    if os.getenv("HARNESS_PLUGIN_DIR", "").strip()
-    else None
-)
-
 # Hooks (see docs/HOOKS.md): "enforce" (default), "evaluate_only" (record what would be blocked, never block) or "off".
 HOOKS = os.getenv("HARNESS_HOOKS", "enforce").strip().lower()
 # Who enforces hooks inside the agent loop: "inhouse" (default, no extra package) or "sdk" (MAF AGENT-HOOKS-0.1 middleware,

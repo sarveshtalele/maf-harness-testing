@@ -1,4 +1,5 @@
 import json
+import shutil
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -91,8 +92,26 @@ def test_lint_skills_command_exit_code(capsys):
     assert cli.main(["lint-skills", str(SKILLS)]) == 0
     out = capsys.readouterr().out
     assert (
-        "OK   generic-test-generator" in out and "OK   SKILLS.lock.json" in out and "8 locked packages" in out
+        "OK   generic-test-generator" in out
+        and "OK   SKILLS.lock.json" in out
+        and "12 locked packages" in out
     )
+
+
+def test_lint_skills_strict_fails_for_unlocked_repo_skill(tmp_path, capsys):
+    copy = tmp_path / "skills"
+    shutil.copytree(SKILLS, copy)
+    assert cli.main(["lint-skills", "--strict", str(copy)]) == 0
+    shutil.copytree(copy / "test-planning", copy / "extra-skill")
+    (copy / "extra-skill" / "plugin.yaml").write_text(
+        (copy / "extra-skill" / "plugin.yaml").read_text().replace("test-planning", "extra-skill")
+    )
+    (copy / "extra-skill" / "SKILL.md").write_text(
+        (copy / "extra-skill" / "SKILL.md").read_text().replace("name: test-planning", "name: extra-skill")
+    )
+    assert cli.main(["lint-skills", str(copy)]) in (0, 1)  # non-strict ignores lock completeness
+    assert cli.main(["lint-skills", "--strict", str(copy)]) == 1
+    assert "extra-skill: no entry in SKILLS.lock.json" in capsys.readouterr().out
 
 
 def test_verify_run_checks_companion_skills_and_the_upstream_lock(tmp_path, capsys):

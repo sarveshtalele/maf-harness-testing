@@ -269,6 +269,9 @@ def main(argv: list[str] | None = None) -> int:
         "lint-skills", help="Validate bundled skills against the Agent Skills specification"
     )
     lint.add_argument("skills_dir", nargs="?", type=Path, default=ROOT / "skills")
+    lint.add_argument(
+        "--strict", action="store_true", help="Also fail when a skill folder has no lock entry (CI)"
+    )
     args = parser.parse_args(argv)
     if args.command == "verify-run":
         return verify_run(args.run_dir, args.skills_dir)
@@ -306,7 +309,12 @@ def main(argv: list[str] | None = None) -> int:
         )
         for problem in problems:
             _say(f"FAIL {problem}")
-        return 0 if all(r.ok for r in reports) and not problems else 1
+        unlocked = [r.name for r in reports if r.name not in lock.get("skills", {})] if args.strict else []
+        for name in unlocked:
+            _say(
+                f"FAIL {name}: no entry in SKILLS.lock.json (unverified; run scripts/vendor_skills.py --lock-project)"
+            )
+        return 0 if all(r.ok for r in reports) and not problems and not unlocked else 1
     try:
         return asyncio.run(run(args))
     except KeyboardInterrupt:

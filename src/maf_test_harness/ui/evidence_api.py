@@ -10,7 +10,8 @@ from pathlib import Path
 import yaml
 
 from ..monitoring.report import build_report, render_markdown
-from ..skills.registry import FRONTMATTER_RE, discover_skills, lint_all, load_lock, verify_lock
+from ..skills import trust as skill_trust
+from ..skills.registry import FRONTMATTER_RE, discover_skills, lint_skill, load_lock, verify_lock
 from ..storage import read_json
 from .artifact_presenter import json_to_markdown
 from .evidence import MIMES, file_path, inventory
@@ -20,14 +21,26 @@ ROOT = Path(__file__).resolve().parents[3]
 
 
 class EvidenceAPI:
+    def import_skill(self, body: dict) -> dict:
+        return skill_trust.import_skill(
+            ROOT / "skills", zip_base64=body.get("zip_base64"), folder=body.get("path")
+        )
+
+    def approve_skill(self, name: str) -> dict:
+        return {"name": name, **skill_trust.approve(ROOT / "skills", name)}
+
     def skills(self) -> dict:
         root = ROOT / "skills"
         lock = load_lock(root)
         problems = verify_lock(root)
-        manifests = {p.name: p for p in discover_skills([root])}
+        plugins = discover_skills(
+            [root, skill_trust.plugin_dir()]
+        )  # repo first; a repo name shadows a plugin
         cards = []
-        for report in lint_all(root):
-            directory = Path(report.path)
+        for plugin in plugins:
+            directory = plugin.path
+            report = lint_skill(directory)
+            status = skill_trust.trust(root, directory)
             source = (
                 (directory / "SKILL.md").read_text(encoding="utf-8")
                 if (directory / "SKILL.md").is_file()
@@ -39,7 +52,6 @@ class EvidenceAPI:
             except yaml.YAMLError:
                 meta = {}
             meta = meta if isinstance(meta, dict) else {}
-            plugin = manifests.get(report.name)
             entry = lock.get("skills", {}).get(report.name)
             issues = [p for p in problems if p.startswith(report.name + "/")]
             cards.append(
@@ -55,6 +67,12 @@ class EvidenceAPI:
                     "purpose": plugin.purpose
                     if plugin and plugin.role == "companion" and plugin.stages
                     else None,
+                    "stages": list(plugin.stages),
+                    "manifest_role": plugin.role,
+                    "kind": plugin.kind,
+                    "source": status["source"],
+                    "verified": status["verified"],
+                    "approved": status["approved"],
                     "metadata": meta,
                     "instructions": source[match.end() :] if match else source,
                     "resources": [
@@ -64,8 +82,8 @@ class EvidenceAPI:
                     ],
                     "reviewed_scripts": lock.get("reviewed_scripts", {}).get(report.name, {}),
                     "sha256": report.sha256,
-                    "valid": report.ok and not issues,
-                    "errors": report.errors + issues,
+                    "valid": report.ok and not issues and plugin.ok,
+                    "errors": report.errors + issues + [f"plugin.yaml: {e}" for e in plugin.errors],
                     "warnings": report.warnings,
                     "provenance": entry or {"source": "Project-owned skill"},
                     "locked": entry is not None,
