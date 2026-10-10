@@ -348,3 +348,11 @@ def test_default_approvals_store_is_outside_the_workspace(monkeypatch):
     monkeypatch.delenv("HARNESS_PLUGIN_APPROVALS")
     assert trust.approvals_path() == Path.home() / ".maf-harness" / "plugins.lock.json"
     assert not trust.approvals_path().is_relative_to(REPO.parent)
+
+
+def test_empty_zip_is_refused_with_a_clear_message():
+    empty = io.BytesIO()
+    with zipfile.ZipFile(empty, "w"):
+        pass
+    with pytest.raises(ValueError, match="Archive is empty"):
+        trust.import_skill(REPO, zip_base64=base64.b64encode(empty.getvalue()).decode())
