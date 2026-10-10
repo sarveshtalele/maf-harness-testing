@@ -22,6 +22,8 @@ export interface SafeStorageLike {
   isEncryptionAvailable(): boolean;
   encryptString(s: string): Buffer;
   decryptString(b: Buffer): string;
+  /** Linux only: 'basic_text' means the keyring fell back to a hardcoded password. */
+  getSelectedStorageBackend?(): string;
 }
 
 const EMPTY: Secrets = { api_key: '', base_url: '', model: '', stage_models: {}, mcp: {} };
@@ -70,12 +72,18 @@ export function validate(input: ModelSettingsInput): ModelSettingsInput {
 export class KeyStore {
   private cache: Secrets | null = null;
 
-  constructor(private file: string, private ss: SafeStorageLike) {}
+  constructor(private file: string, private ss: SafeStorageLike, private platform: NodeJS.Platform = process.platform) {}
+
+  /** Encryption counts as available only when Electron is not using the hardcoded 'basic_text' Linux backend. */
+  private encrypted(): boolean {
+    if (!this.ss.isEncryptionAvailable()) return false;
+    return !(this.platform === 'linux' && this.ss.getSelectedStorageBackend?.() === 'basic_text');
+  }
 
   get(): Secrets {
     if (this.cache) return this.cache;
     let s = { ...EMPTY };
-    if (this.ss.isEncryptionAvailable() && fs.existsSync(this.file)) {
+    if (this.encrypted() && fs.existsSync(this.file)) {
       try {
         s = { ...EMPTY, ...JSON.parse(this.ss.decryptString(fs.readFileSync(this.file))) };
       } catch { /* unreadable or from another user/machine: start empty */ }
@@ -86,7 +94,7 @@ export class KeyStore {
   /** Merge validated input (empty api_key keeps the stored one) and persist when encryption is available. */
   save(input: ModelSettingsInput): ModelSettingsView {
     this.cache = { ...this.get(), ...validate(input) };
-    if (this.ss.isEncryptionAvailable()) {
+    if (this.encrypted()) {
       fs.mkdirSync(path.dirname(this.file), { recursive: true, mode: 0o700 });
       const tmp = `${this.file}.tmp`;
       fs.writeFileSync(tmp, this.ss.encryptString(JSON.stringify(this.cache)), { mode: 0o600 });
@@ -97,7 +105,7 @@ export class KeyStore {
   }
 
   private persist() {
-    if (!this.ss.isEncryptionAvailable()) return;
+    if (!this.encrypted()) return;
     fs.mkdirSync(path.dirname(this.file), { recursive: true, mode: 0o700 });
     const tmp = `${this.file}.tmp`;
     fs.writeFileSync(tmp, this.ss.encryptString(JSON.stringify(this.cache)), { mode: 0o600 });
@@ -153,7 +161,7 @@ export class KeyStore {
       base_url: s.base_url, model: s.model, stage_models: s.stage_models,
       key_configured: !!s.api_key,
       key_hint: s.api_key.length >= 8 ? s.api_key.slice(-4) : s.api_key ? '****' : '',
-      encrypted: this.ss.isEncryptionAvailable(),
+      encrypted: this.encrypted(),
     };
   }
 
