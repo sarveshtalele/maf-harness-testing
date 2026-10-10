@@ -310,7 +310,10 @@ class Harness(RerunSteps, ExecutionSteps, GenerationSteps, GreenfieldSteps, Plan
             if jira and jira_token:
                 jira = {**jira, "api_token": jira_token}
             if spec_intake is None:
-                spec_intake = await asyncio.to_thread(ingest_specs, docs, jira)
+                jira_mcp = (spec_sources or {}).get(
+                    "jira_mcp"
+                )  # Jira through a configured MCP server (docs/MCP.md)
+                spec_intake = await asyncio.to_thread(ingest_specs, docs, jira, None, jira_mcp)
             if not spec_intake.get("sections"):
                 raise ValueError(
                     "Greenfield mode needs at least one document section or Jira story. "

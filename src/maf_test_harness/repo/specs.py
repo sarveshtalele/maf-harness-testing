@@ -8,6 +8,7 @@ The Jira API token is used for one request header and is never logged, returned 
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import io
 import json
@@ -299,10 +300,67 @@ def fetch_jira(jira: dict, fetch: Fetch | None = None) -> tuple[list[dict], dict
     return sections, source, warnings
 
 
+def _mcp_call(server: dict, tool_name: str, arguments: dict) -> str:
+    """Call one tool on a configured MCP server (own event loop: ingest runs in a worker thread)."""
+    from .. import mcp_servers
+
+    async def run() -> str:
+        tool = mcp_servers.build_tool(server)
+        try:
+            await mcp_servers.connect(tool)
+            out = await tool.call_tool(tool_name, **arguments)
+        finally:
+            await tool.close()
+        return out if isinstance(out, str) else "\n".join(getattr(c, "text", "") or "" for c in out)
+
+    return asyncio.run(run())
+
+
+def fetch_jira_via_mcp(spec: dict, call: Callable[[dict, str, dict], str] | None = None):
+    """Jira stories through a configured MCP server: ``{server, jql | issue_keys, tool?, arguments?}``.
+
+    Only a tool on the server's auto-approved (read-only) list may be used here, because this call does not go through
+    the model's approval gate. The result must be Jira search JSON (``{"issues": [...]}``) or a list of issues."""
+    from .. import mcp_servers
+
+    server = mcp_servers.get(str(spec.get("server") or ""))
+    if not server["enabled"]:
+        raise ValueError("That MCP server is disabled.")
+    tool_name = str(spec.get("tool") or "searchJiraIssuesUsingJql")
+    if tool_name not in server["allowed_tools"]:
+        raise ValueError(f"MCP tool {tool_name!r} is not in the server's auto-approved (read-only) list.")
+    keys = [str(k).strip().upper() for k in spec.get("issue_keys") or []]
+    if any(not KEY_RE.match(k) for k in keys):
+        raise ValueError("issue_keys must look like PROJ-123")
+    jql = str(spec.get("jql") or "").strip() or (f"key in ({','.join(keys)}) ORDER BY key" if keys else "")
+    if not jql:
+        raise ValueError("Provide jql or issue_keys")
+    arguments = {**(spec.get("arguments") or {}), "jql": jql}
+    text = (call or _mcp_call)(server, tool_name, arguments)
+    try:
+        body = json.loads(text)
+    except ValueError:
+        raise ValueError("The MCP server did not return JSON issues.") from None
+    issues = body.get("issues") if isinstance(body, dict) else body
+    if not isinstance(issues, list):
+        raise ValueError("The MCP server did not return a list of issues.")
+    names = body.get("names") if isinstance(body, dict) else {}
+    sections = [_issue_section(i, names or {}) for i in issues[:MAX_JIRA_ISSUES] if isinstance(i, dict)]
+    warnings = [f"Jira results capped at {MAX_JIRA_ISSUES} issues"] if len(issues) > MAX_JIRA_ISSUES else []
+    source = {"kind": "jira", "via": f"mcp:{server['name']}", "query": jql, "issues": len(sections)}
+    return sections, source, warnings
+
+
 # ---- public API -------------------------------------------------------------------------------------------------------
 
 
-def ingest_specs(documents: list[dict] | None, jira: dict | None = None, fetch: Fetch | None = None) -> dict:
+def ingest_specs(
+    documents: list[dict] | None,
+    jira: dict | None = None,
+    fetch: Fetch | None = None,
+    jira_via_mcp: dict | None = None,
+    mcp_call=None,
+) -> dict:
     """Parse documents ``[{name, content: bytes}]`` and/or Jira issues into ``{"sources", "sections", "warnings"}``."""
     sources, sections, warnings = [], [], []
     for item in documents or []:
@@ -338,6 +396,11 @@ def ingest_specs(documents: list[dict] | None, jira: dict | None = None, fetch: 
         sections += found
     if jira:
         found, source, notes = fetch_jira(jira, fetch)
+        sources.append(source)
+        sections += found
+        warnings += notes
+    if jira_via_mcp:
+        found, source, notes = fetch_jira_via_mcp(jira_via_mcp, mcp_call)
         sources.append(source)
         sections += found
         warnings += notes
