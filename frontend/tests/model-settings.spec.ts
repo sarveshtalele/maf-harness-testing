@@ -1,6 +1,6 @@
 import { test, expect } from '@playwright/test';
 
-const KEY = 'sk-playwright-0123456789abcdef';
+const KEY = 'fake-playwright-0123456789abcdef';
 
 test('model & API key panel saves, tests and never shows the key again', async ({ page }) => {
   let saved: Record<string, unknown> = {};

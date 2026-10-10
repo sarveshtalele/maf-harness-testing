@@ -11,7 +11,7 @@ const fake = (available = true): SafeStorageLike => ({
   decryptString: (b) => Buffer.from(b.toString().replace(/!enc$/, ''), 'base64').toString(),
 });
 const tmp = () => path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'ks-')), 'secrets.bin');
-const KEY = 'sk-test-0123456789abcdef';
+const KEY = 'fake-test-0123456789abcdef';
 
 test('saves encrypted, round-trips, view hides the key', () => {
   const f = tmp();

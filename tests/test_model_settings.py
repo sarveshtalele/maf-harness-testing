@@ -8,7 +8,7 @@ from maf_test_harness import paths, settings
 from maf_test_harness.hooks.builtin import redact
 from maf_test_harness.ui.api import LocalAPI
 
-KEY = "sk-test-0123456789abcdefWXYZ"
+KEY = "fake-test-0123456789abcdefWXYZ"
 
 
 @pytest.fixture(autouse=True)

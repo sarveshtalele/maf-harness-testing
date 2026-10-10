@@ -398,8 +398,10 @@ class MAFHarnessRuntime:
             where = Path(skill.path).resolve()
             return folder is not None and where in (folder, folder / "SKILL.md")
 
+        # Scan only the exact folders: scanning whole roots lets a same-named decoy win MAF's name dedupe when the
+        # OS lists it first (Linux/Windows directory order), and the filter below would then drop both.
         source = FileSkillsSource(
-            [self.skills_root, *(r for r in self.plugin_roots if r.is_dir())],
+            [folder for folder in exact.values() if folder.is_dir()],
             script_runner=self.script_runner,
             script_filter=lambda skill, path: (skill, path) in allowed,
         )
