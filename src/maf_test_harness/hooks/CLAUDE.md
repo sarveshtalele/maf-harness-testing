@@ -5,7 +5,7 @@ User- and harness-defined checks before/after tool calls and model calls and at 
 ## Key files
 - `events.py`: `HookEvent`, `Decision`, `strongest` (verdict combination).
 - `engine.py`: `HookSpec`, `HookEngine`, `command_handler`, `python_handler`; runs matching hooks, combines verdicts, fail-closed.
-- `builtin.py`: on by default: `secret_redaction`, `path_scope`, `download_consent`, `stage_budget`, `audit_events`; `build_builtins`, `redact`.
+- `builtin.py`: on by default: `secret_redaction`, `path_scope`, `download_consent`, `stage_budget`, `audit` (function `audit_events`); `build_builtins`, `redact`.
 - `config.py`: `load_config`, `parse_config`, `config_paths` (`~/.maf-harness/hooks.json`, `./.harness/hooks.json`), `validate_entry`.
 - `maf_bridge.py`: `HookFunctionMiddleware`, `HookChatMiddleware`, `hook_middleware`; a deny/stop raises MAF `MiddlewareFailure`.
 - `agent_hooks_bridge.py`: optional AGENT-HOOKS-0.1 interceptor (`EngineInterceptor`, `sdk_available`); backend picked by `HARNESS_HOOKS_BACKEND`, hooks on/off by `HARNESS_HOOKS`.

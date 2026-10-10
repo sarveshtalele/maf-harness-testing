@@ -14,6 +14,7 @@ Checkpointed Microsoft Agent Framework (MAF) workflow that turns a repository (b
 - `models.py`: pydantic output schemas for model stages. `paths.py`: bundled-resource vs user-data roots (frozen/desktop aware).
 - `run_options.py`: `parse_run_options` (mode brownfield/greenfield, unit/integration allowlist, `restrict_levels`).
 - `storage.py`: `read_json` / `atomic_json` (Windows-lock tolerant; use these, not bare `open`).
+- `mcp_servers.py`: MCP server config (`validate`, `load`, `get`; `<user-data>/mcp_servers.json`, see docs/MCP.md).
 
 ## Subpackages (each has its own CLAUDE.md)
 `agent/` model runtime, personas · `repo/` intake/analysis · `skills/` plugin registry/trust/host scripts · `envs/` isolated envs, runners, toolchains · `errors/` taxonomy+classifiers · `hooks/` fail-closed hook engine · `tools/` deterministic central tools · `qa/` reports, triage, ZIP · `llm/` prompt order, token ledger · `monitoring/` trace/report · `ui/` API services · `workflow_steps/`.

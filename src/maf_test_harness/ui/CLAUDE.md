@@ -7,6 +7,7 @@ The Next.js app and desktop shell talk to this package over HTTP on 127.0.0.1 wi
 - `runtime_service.py`: `RuntimeService` owns one event loop; every MAF client lives and closes on it (`submit`, `stop_active`, `close`).
 - `evidence_api.py` `EvidenceAPI`: skills list/import/approve, `download`, `evidence`, `evidence_file`. `evidence.py`: contained read-only evidence access (`inventory`, `file_path`, `clean_content`).
 - `settings_api.py` `SettingsAPI`: `prompts`, `save_prompts`, `model_settings`, `save_model_settings`, `test_model_settings`, `config`.
+- `mcp_api.py` `McpAPI`: MCP server settings (`mcp_list`, `mcp_save`, `mcp_delete`, `mcp_set_secrets`, `mcp_test`); secret values go in, never out (docs/MCP.md).
 - `eta.py` (`run_eta`, `budget_recommendations`, `case_budget_view`, `DEFAULTS`), `progress.py` (`progress`), `errors.py` (`run_errors`, `categorize`: Errors tab), `presentation.py` (`public`: redaction boundary), `artifact_presenter.py` (`json_to_markdown`).
 
 ## Request flow
