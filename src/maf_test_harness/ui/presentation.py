@@ -4,6 +4,9 @@ import re
 
 from ..hooks.builtin import redact
 
+# Scalars only: token counters (input_tokens, tokens) and status maps (secrets) are not credentials.
+_SECRET_KEY = re.compile(r"(?i)(api[_-]?key|password|secret|token|authorization|bearer)")
+
 
 def public(value):
     """Redact secrets on the presentation boundary without changing checkpoint hashes."""
@@ -14,7 +17,9 @@ def public(value):
     if isinstance(value, dict):
         return {
             key: "[REDACTED]"
-            if re.search(r"(?i)^(api_key|password|secret|access_token)$", key)
+            if isinstance(key, str)
+            and _SECRET_KEY.search(key)
+            and not isinstance(item, dict | list | bool | int | float)
             else public(item)
             for key, item in value.items()
         }

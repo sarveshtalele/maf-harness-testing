@@ -442,3 +442,12 @@ def test_telemetry_is_off_by_default_never_captures_content_and_survives_a_missi
         and "pip install opentelemetry-sdk opentelemetry-exporter-otlp" in result["reason"]
     )
     monkeypatch.setattr(telemetry, "_configured", None)
+
+
+def test_trace_arguments_use_the_shared_secret_redaction():
+    from maf_test_harness.monitoring.trace import summarize_arguments
+
+    summary = summarize_arguments(
+        {"header": "Basic dXNlcjphYmNkZWZnaGlqa2xtbm9w", "note": "token=abcdefghijklmnop"}
+    )
+    assert "dXNlcj" not in summary["header"] and "abcdefghijklmnop" not in summary["note"]

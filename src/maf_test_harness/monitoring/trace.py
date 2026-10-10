@@ -41,7 +41,9 @@ def tool_category(name: str, harness_tools: tuple[str, ...] | list[str] = ()) ->
 
 
 def redact(text: str) -> str:
-    return _SECRET.sub("[redacted]", text)
+    from ..hooks.builtin import redact as redact_secrets  # local import: hooks never load the trace module
+
+    return redact_secrets(_SECRET.sub("[redacted]", text))[0]
 
 
 def summarize_arguments(arguments: Any) -> dict[str, Any]:

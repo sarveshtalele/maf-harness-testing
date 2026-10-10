@@ -36,6 +36,7 @@ _TOKENS = [
     re.compile(r"gh[pousr]_[A-Za-z0-9]{20,}"),
     re.compile(r"AKIA[0-9A-Z]{16}"),
     re.compile(r"(?i)\bBearer\s+[A-Za-z0-9._~+/=-]{20,}"),
+    re.compile(r"(?i)\bBasic\s+[A-Za-z0-9+/=]{16,}"),
 ]
 _SECRET_ENV = (
     "OPENAI_API_KEY",

@@ -544,3 +544,18 @@ def test_trace_archive_is_served_only_as_a_download(local_api):
     with pytest.raises(ValueError, match="only as downloads"):
         api.evidence_file(key, trace["id"])
     assert api.evidence_file(key, trace["id"], download=True)[0] == b"PK trace"
+
+
+def test_public_redacts_credential_keys_and_basic_auth_but_keeps_counters():
+    from maf_test_harness.ui.presentation import public
+
+    basic = "Basic dXNlcjphYmNkZWZnaGlqa2xtbm9w"
+    assert public(f"Authorization: {basic}") == "Authorization: [REDACTED]"
+    assert public(
+        {"jira_token": "abc123xyz", "Authorization": basic, "input_tokens": 12, "secrets": {"api_key": True}}
+    ) == {
+        "jira_token": "[REDACTED]",
+        "Authorization": "[REDACTED]",
+        "input_tokens": 12,
+        "secrets": {"api_key": True},
+    }
