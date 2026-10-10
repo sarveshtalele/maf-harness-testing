@@ -1,0 +1,24 @@
+{
+  "name": "agentic-qe-desktop",
+  "private": true,
+  "version": "1.0.0",
+  "description": "Agentic QE Platform desktop shell",
+  "homepage": "https://github.com/sarveshtalele/maf-harness-testing",
+  "author": "Agentic QE <noreply@example.com>",
+  "main": "dist/main.js",
+  "scripts": {
+    "build": "tsc",
+    "start": "npm run build && electron .",
+    "test": "npm run build && node --test dist/",
+    "dist": "npm run build && electron-builder",
+    "dist:win": "npm run build && electron-builder --win",
+    "dist:mac": "npm run build && electron-builder --mac",
+    "dist:linux": "npm run build && electron-builder --linux"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "electron": "^38.0.0",
+    "electron-builder": "^26.0.0",
+    "typescript": "^5.9.0"
+  }
+}
