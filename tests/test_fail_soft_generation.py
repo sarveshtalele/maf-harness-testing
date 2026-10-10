@@ -115,3 +115,49 @@ def test_each_stage_keeps_a_small_unique_tool_set():
     for stage, tools in STAGE_TOOLS.items():
         assert len(tools) == len(set(tools)), stage
         assert len(tools) <= 20, stage
+
+
+class DroppingProvider:
+    """Real run 1a9bbae78ff0 batch 39: the reviewer flagged one case; the repair answer returned only that one."""
+
+    def __init__(self):
+        self.generations = 0
+        self.reviews = 0
+
+    async def run_stage(self, **kwargs):
+        if review := review_response(kwargs):
+            self.reviews += 1
+            if self.reviews == 1:
+                review["artifact"]["reviews"][0].update(verdict="needs_revision", confidence=40)
+            return review
+        asked = [c["id"] for c in json.loads(kwargs["prompt"])["approved_inputs"]["approved_cases"]]
+        self.generations += 1
+        ids = asked if self.generations == 1 else asked[:1]
+        files = [{"path": f"test_{c}.py", "lines": GOOD, "case_ids": [c]} for c in ids]
+        return {
+            "status": "completed",
+            "artifact": {
+                "selected_language": "Python",
+                "selected_framework": "pytest",
+                "rationale": "native",
+                "files": files,
+            },
+        }
+
+
+def test_repair_that_drops_sibling_cases_keeps_their_earlier_files(tmp_path, monkeypatch):
+    monkeypatch.setattr(generation_steps, "TEST_GENERATION_BATCH_SIZE", 3)
+    (tmp_path / "repo").mkdir(exist_ok=True)
+    (tmp_path / "repo" / "service.py").write_text("def value(): return 2", encoding="utf-8")
+    provider = DroppingProvider()
+    host = Harness(tmp_path, skills_root=Path("skills"), requirements_mode="model", runtime=provider)
+    state = {
+        "artifacts": {
+            "repo_analysis": {"languages": {"Python": 1}},
+            "test_design": {"positive_tests": [{"id": i} for i in ("TC-1", "TC-2", "TC-3")]},
+        }
+    }
+    result = asyncio.run(host._generate_tests_batched(state))
+    assert provider.generations == 2 and not result["generation_failures"]
+    assert sorted(i for f in result["files"] for i in f["case_ids"]) == ["TC-1", "TC-2", "TC-3"]
+    assert "generation_case_carried_over" in (tmp_path / "audit.jsonl").read_text(encoding="utf-8")

@@ -281,3 +281,21 @@ def test_missing_import_is_added_before_code_that_needs_it():
         ),
         ns,
     )
+
+
+def test_trailing_json_closer_after_python_source_is_dropped():
+    # real run 1a9bbae78ff0 batch 55: the last `lines` entry was a bare "}" -> "unmatched '}' (line 105)"
+    from maf_test_harness.skills.contracts import expand_generated_lines
+
+    lines = [
+        "def test_x():",
+        "    with pytest.raises(KeyError, match='delete-me'):",
+        "        {}['delete-me']",
+        "}",
+    ]
+    out = expand_generated_lines({"files": [{"path": "tests/t.py", "lines": lines, "case_ids": ["TC-1"]}]})
+    assert out["files"][0]["content"].endswith("{}['delete-me']\n")
+    # a closer that real code needs is kept
+    keep = ["x = {", "    1: 2,", "}"]
+    out = expand_generated_lines({"files": [{"path": "t.py", "lines": keep, "case_ids": ["TC-1"]}]})
+    assert out["files"][0]["content"] == "x = {\n    1: 2,\n}\n"

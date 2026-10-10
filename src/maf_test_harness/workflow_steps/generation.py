@@ -3,6 +3,7 @@
 import asyncio
 import json
 import re
+from copy import deepcopy
 from typing import Any
 from uuid import uuid4
 
@@ -179,6 +180,9 @@ class GenerationSteps:
                 targets=[str(c.get("target") or "") for c in work],
             )
             rounds = state.setdefault("generation_rounds", {})
+            carried: dict[
+                str, dict
+            ] = {}  # case id -> its file from an earlier attempt that passed static checks
             for attempt in range(1, 1 if accepted is not None else TEST_GENERATION_MAX_ATTEMPTS + 1):
                 # A deterministic model repeats a rejected answer verbatim: vary the sampling on every retry.
                 retry_temperature = min(0.4, 0.3 * (attempt - 1) + 0.25 * rounds.get(str(batch_index), 0))
@@ -313,6 +317,16 @@ class GenerationSteps:
                         tooling["autofix"] += len(fixes)
                         for fix in fixes:
                             self.audit("autofix", batch=batch_index, attempt=attempt, **fix)
+                    # A repair answer that fixes the one reviewed case and drops its siblings (seen live: batch 39
+                    # returned 1 of 3 files) keeps the siblings' earlier, already validated files.
+                    have = {i for f in candidate["files"] for i in f["case_ids"]}
+                    used = {f["path"] for f in candidate["files"]}
+                    for cid in sorted(work_ids - have):
+                        old = carried.get(cid)
+                        if old and old["path"] not in used:
+                            candidate["files"].append(deepcopy(old))
+                            used.add(old["path"])
+                            self.audit("generation_case_carried_over", batch=batch_index, case_id=cid)
                     raw_batches.append(json.dumps(candidate, separators=(",", ":"), default=str))
                     validation = validate_generated_files(candidate, work_ids)
                     validate_java_traceability(candidate, work, requirements, self.run_dir / "repo")
@@ -332,6 +346,7 @@ class GenerationSteps:
                             + ", ".join(sorted(collisions))
                         )
                     await self._build_gate(candidate, batch_index)
+                    carried.update({i: f for f in candidate["files"] for i in f["case_ids"]})
                     self._settle_response_cache("test_generation", True)  # accepted: cache this model answer
                     # The source-backed reviewer needs application code; a no-repo greenfield run has none yet.
                     candidate["case_reviews"] = (
