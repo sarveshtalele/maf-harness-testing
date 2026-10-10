@@ -9,7 +9,7 @@ type Server = {
 };
 type Preset = { label: string; note: string; server: Omit<Server, 'secrets' | 'ready'> };
 type Data = { servers: Server[]; presets: Record<string, Preset>; stages: string[]; max_tools_per_server: number };
-type Desktop = { saveMcpSecrets(server: string, values: Record<string, string>): Promise<unknown> };
+type Desktop = { saveMcpSecrets(server: string, values: Record<string, string>): Promise<unknown>; deleteMcpServer(server: string): Promise<unknown> };
 const desktop = (): Desktop | undefined => (typeof window === 'undefined' ? undefined : (window as unknown as { desktop?: Desktop }).desktop);
 type Notice = { ok: boolean; text: string } | null;
 const pick = (s: Server) => ({ name: s.name, transport: s.transport, command: s.command, args: s.args, env_keys: s.env_keys, url: s.url, enabled: s.enabled, stages: s.stages, allowed_tools: s.allowed_tools, approval_required_tools: s.approval_required_tools, preset: s.preset });
@@ -45,7 +45,7 @@ function ServerCard({ server, stages, onChange, onDeleted }: { server: Server; s
     setSecrets({}); const fresh = await api<Data>('mcp-servers'); const me = fresh.servers.find(x => x.name === s.name); if (me) setS(v => ({ ...v, secrets: me.secrets, ready: me.ready })); onChange();
     return 'Secrets stored (write-only).';
   });
-  const remove = () => run(async () => { await apiDelete(`mcp-servers/${s.name}`); onDeleted(); });
+  const remove = () => run(async () => { const d = desktop(); if (d) await d.deleteMcpServer(s.name); else await apiDelete(`mcp-servers/${s.name}`); onDeleted(); });
 
   return <section aria-label={`MCP server ${s.name}`} className="notice" style={{ borderLeftColor: s.enabled ? 'var(--good)' : undefined }}>
     <h2>{s.name} <span className="badge">{s.transport}</span> {s.enabled && <span className={`badge ${s.ready ? 'good' : 'warn'}`}>{s.ready ? 'enabled' : 'needs secrets'}</span>}</h2>
@@ -59,6 +59,7 @@ function ServerCard({ server, stages, onChange, onDeleted }: { server: Server; s
     {Object.keys(s.secrets).length > 0 && <fieldset><legend>Secrets (write-only, kept in memory{desktop() ? ' and your OS keychain' : ''})</legend>
       {Object.entries(s.secrets).map(([k, set]) => <label key={k}>{k === 'BEARER_TOKEN' ? 'Token (Bearer, or "Basic …")' : k}<input type="password" autoComplete="new-password" spellCheck={false} value={secrets[k] || ''} onChange={e => setSecrets({ ...secrets, [k]: e.target.value })} placeholder={set ? 'Set — leave empty to keep' : 'Not set'} /></label>)}
       <button type="button" disabled={busy} onClick={saveSecrets}>Save secrets</button></fieldset>}
+    <p className="field-help">The first Test of an npx server can time out while npx downloads the package; run it again.</p>
     <div className="header-actions"><button className="primary" disabled={busy} onClick={save}>Save</button><button disabled={busy} onClick={test}>Test</button><button className="danger-button" disabled={busy} onClick={remove}>Delete</button></div>
     {notice && <p role="status" className={notice.ok ? '' : 'bad'}>{notice.text}</p>}
   </section>;

@@ -161,11 +161,23 @@ ipcMain.handle('desktop:saveMcpSecrets', async (_e, server: string, values: Reco
   const runs = await fetch(`http://127.0.0.1:${apiPort}/runs`, { headers: auth })
     .then((r) => r.json() as Promise<{ busy?: boolean }>).catch(() => ({ busy: false }));
   if (runs.busy) throw new Error('Wait for the current operation to finish before changing MCP secrets.');
-  const view = store.saveMcpSecrets(server, values); // validates and stores in the keychain first
-  // Hand the values to the running backend's memory (no restart); a later spawn gets them through env().
-  const r = await fetch(`http://127.0.0.1:${apiPort}/mcp-servers/${encodeURIComponent(server)}/secrets`, { method: 'POST', headers: auth, body: JSON.stringify(values) });
+  const clean = store.checkMcpSecrets(server, values); // validate before anything is sent or stored
+  pm.addRedactions(Object.values(clean)); // never let a value reach a service log, whatever happens next
+  // Backend first (in memory, no restart): it also checks the server exists and the secret name is valid.
+  const r = await fetch(`http://127.0.0.1:${apiPort}/mcp-servers/${encodeURIComponent(server)}/secrets`, { method: 'POST', headers: auth, body: JSON.stringify(clean) });
   if (!r.ok) throw new Error(((await r.json().catch(() => ({}))) as { error?: string }).error || 'Backend rejected the secrets.');
+  const view = store.saveMcpSecrets(server, clean); // only now persist to the keychain (a later spawn gets them via env())
+  pm.addRedactions(store.mcpValues());
   return view;
+});
+ipcMain.handle('desktop:deleteMcpServer', async (_e, server: string) => {
+  if (!live) throw new Error('Backend is not running.');
+  const { apiPort, token } = live;
+  store.checkMcpSecrets(server, {}); // validates the name
+  const r = await fetch(`http://127.0.0.1:${apiPort}/mcp-servers/${encodeURIComponent(server)}`, { method: 'DELETE', headers: { Authorization: `Bearer ${token}` } });
+  if (!r.ok) throw new Error(((await r.json().catch(() => ({}))) as { error?: string }).error || 'Backend refused the delete.');
+  store.removeMcpServer(server); // the keychain forgets its secrets only after the backend deleted the server
+  return store.mcpView();
 });
 ipcMain.handle('desktop:checkForUpdates', () => shell.openExternal(RELEASES_URL));
 

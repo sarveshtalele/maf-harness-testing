@@ -540,3 +540,11 @@ def test_jira_cloud_id_is_validated_and_free_arguments_ignored():
         "issue_keys": [],
         "cloud_id": "abc-123",
     }
+
+
+def test_clearing_secrets_does_not_reenable_env_fallback(monkeypatch):
+    mcp_servers.upsert({"name": "j", "transport": "http", "url": "https://a.example.com/mcp"})
+    monkeypatch.setenv("HARNESS_MCP_SECRET_J_BEARER_TOKEN", SECRET)
+    mcp_servers.clear_secrets("j")
+    mcp_servers.set_secrets("j", {"BEARER_TOKEN": ""})
+    assert mcp_servers.get_secret("j", "BEARER_TOKEN") == ""

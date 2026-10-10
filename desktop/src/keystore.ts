@@ -106,13 +106,22 @@ export class KeyStore {
   }
 
   /** Merge MCP secrets for one server (empty value clears). Returns that server's names only, never values. */
-  saveMcpSecrets(server: string, values: Record<string, string>): Record<string, boolean> {
+  /** Validate without storing (so the caller can hand the values to the backend first). */
+  checkMcpSecrets(server: string, values: Record<string, string>): Record<string, string> {
     if (!MCP_NAME.test(server)) throw new Error('Invalid MCP server name.');
-    const next = { ...(this.get().mcp[server] ?? {}) };
+    const clean: Record<string, string> = {};
     for (const [k, v] of Object.entries(values ?? {})) {
-      if (!MCP_KEY.test(k) && k !== 'BEARER_TOKEN') throw new Error('Invalid secret name.');
+      if (!MCP_KEY.test(k)) throw new Error('Invalid secret name.');
       if (typeof v !== 'string' || v.length > 4000 || /[\r\n]/.test(v)) throw new Error('A secret must be a single-line string of at most 4000 characters.');
-      if (v.trim()) next[k] = v.trim(); else delete next[k];
+      clean[k] = v.trim();
+    }
+    return clean;
+  }
+
+  saveMcpSecrets(server: string, values: Record<string, string>): Record<string, boolean> {
+    const next = { ...(this.get().mcp[server] ?? {}) };
+    for (const [k, v] of Object.entries(this.checkMcpSecrets(server, values))) {
+      if (v) next[k] = v; else delete next[k];
     }
     const cur = this.get();
     this.cache = { ...cur, mcp: { ...cur.mcp, [server]: next } };

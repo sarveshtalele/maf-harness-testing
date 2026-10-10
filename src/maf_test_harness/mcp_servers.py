@@ -285,7 +285,8 @@ def set_secrets(name: str, values: dict) -> None:
             raise ValueError("A secret must be a single-line string of at most 4000 characters.")
         clean[key] = value.strip()
     with _secret_lock:
-        _revoked.discard(name)
+        if any(clean.values()):
+            _revoked.discard(name)  # env values are trusted again only once new secrets are entered
         store = _secrets.setdefault(name, {})
         for key, value in clean.items():  # empty string clears
             if value:
