@@ -79,7 +79,7 @@ Language-specific rules live only in LANGUAGE_RULES and skills/generic-test-gene
 
 ## Stopping a run
 
-UI Stop (confirm) → status stopping → cancel event + task.cancel + MiddlewareFailure in MAF middleware + process-tree kill → stopped after the task ends (≤30 s). Cancel points between batches and before model calls. CLI Ctrl-C → stopped, exit 130. Resume = rerun from the active stage.
+UI Stop (confirm) → status stopping → cancel event + task.cancel + MiddlewareFailure in MAF middleware + process-tree kill → stopped only after the task really ends (the service stays busy, status `stopping`, until then). Cancel points between batches and before model calls. CLI Ctrl-C → stopped, exit 130. Resume = rerun from the active stage.
 
 ## Cross-OS rules (strict)
 

@@ -21,7 +21,6 @@ from maf_test_harness.envs.platform_compat import RUN_CANCEL, raise_if_cancelled
 from maf_test_harness.hooks.engine import HookEngine, command_handler
 from maf_test_harness.hooks.events import HookEvent
 from maf_test_harness.hooks.maf_bridge import HookFunctionMiddleware
-from maf_test_harness.ui import runtime_service
 from maf_test_harness.ui.api import LocalAPI
 from maf_test_harness.ui.runtime_service import RuntimeService
 from maf_test_harness.workflow_steps import execution as execution_steps
@@ -97,23 +96,31 @@ def test_stopping_is_visible_until_the_operation_really_ends_then_stopped(api):
     assert audit.count("run_stopped_by_user") == 1
 
 
-def test_stopped_is_reported_after_grace_even_if_work_ignores_cancel(monkeypatch):
-    monkeypatch.setattr(runtime_service, "STOP_GRACE_SECONDS", 0.3)
+def test_service_stays_busy_until_work_that_ignores_cancel_really_ends():
     service = RuntimeService()
+    stopped = []
 
     async def stubborn():
-        for _ in range(2):  # swallows the first cancellation, like a thread stuck in a blocking call
+        deadline = time.monotonic() + 1.0
+        while time.monotonic() < deadline:  # swallows cancellation, like a thread stuck in a blocking call
             try:
-                await asyncio.sleep(3)
+                await asyncio.sleep(0.05)
             except asyncio.CancelledError:
                 pass
 
+    async def other():
+        return "never runs"
+
     try:
         service.submit(stubborn())
-        time.sleep(0.2)
-        started = time.monotonic()
-        service.stop_active(lambda: None).result(10)
-        assert time.monotonic() - started < 2.5
+        time.sleep(0.1)
+        stop = service.stop_active(lambda: stopped.append(1))
+        time.sleep(0.3)  # past any grace period, while the task still runs
+        assert not stop.done() and stopped == []
+        with pytest.raises(RuntimeError, match="already running"):
+            service.submit(other())
+        stop.result(10)
+        assert stopped == [1]
     finally:
         service.close()
 
