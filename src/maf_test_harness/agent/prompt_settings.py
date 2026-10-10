@@ -14,7 +14,7 @@ def defaults() -> dict:
     example = paths.prompts_dir() / "repository-review.md"
     persona_file = paths.prompts_dir() / "personas.json"
     personas = (
-        json.loads(persona_file.read_text())
+        json.loads(persona_file.read_text(encoding="utf-8"))
         if persona_file.is_file()
         else {stage: persona.instructions() for stage, persona in PERSONAS.items()}
     )
@@ -25,7 +25,7 @@ def defaults() -> dict:
             "Default persona file must contain every configured stage with nonempty instructions."
         )
     return {
-        "repository_prompt": example.read_text() if example.is_file() else "",
+        "repository_prompt": example.read_text(encoding="utf-8") if example.is_file() else "",
         "personas": personas,
         "overrides": {},
     }
@@ -54,7 +54,7 @@ def validate(value: dict) -> dict:
 
 
 def load(path: Path) -> dict:
-    return validate(json.loads(path.read_text())) if path.is_file() else defaults()
+    return validate(json.loads(path.read_text(encoding="utf-8"))) if path.is_file() else defaults()
 
 
 def save(path: Path, value: dict) -> dict:
