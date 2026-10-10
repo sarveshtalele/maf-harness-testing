@@ -1,6 +1,6 @@
 # Agentic QE Platform — contributor guidance
 
-Current branch: `new-ui`. Next.js frontend plus a loopback Python HTTP adapter over the checkpointed Microsoft Agent Framework Harness. The CLI uses the same workflow. Windows, macOS and Linux launchers use Node.js 24 and Python 3.12.
+Branches: `develop` (default, integration), `main` (releases), `release/*`, `feature/*`; `new-ui` mirrors `develop` during the transition. Product: Agentic QE Platform. It is a Next.js UI plus a loopback Python HTTP API over the checkpointed Microsoft Agent Framework Harness, shipped both as a local launcher (Node.js 24, Python 3.12) and as an Electron desktop app (`desktop/`). It covers brownfield (repository) and greenfield (specs from documents or Jira Cloud) runs, and generates unit and integration tests. Plan: `docs/plans/PLAN_2026-10-10_DESKTOP_GREENFIELD.md`.
 
 ## Commands
 
@@ -19,6 +19,10 @@ npm ci --include=dev
 npm run typecheck
 npm run build
 npm test
+cd ../desktop && npm ci && npm test          # Electron shell (tsc + node:test)
+python scripts/gen_architecture.py --check     # docs/ARCHITECTURE_MAP.md must be current
+uv run maf-harness lint-skills --strict        # every repo skill must be hash-locked
+uv run python scripts/build_desktop.py --dry-run   # PyInstaller backend + standalone Next + electron-builder
 ```
 
 Gateway settings belong in the git-ignored `.env`. Never print or commit credentials, local run evidence or `agent-framework.pdf`. Do not delete files or rewrite user evidence without explicit authorization.
@@ -39,10 +43,22 @@ Retain the complete discovered declaration inventory, batch model work, and reje
 - `workflow_steps/{planning,design,generation,test_review,execution,rerun}.py`: stage operations; generation = batched generate → static gates → build gate → independent review
 - `workflow_support.py`: shared policy incl. LANGUAGE_RULES / language_rules() / retry_reminder()
 - `agent/{runtime,personas,prompt_settings,diagnosis}.py`: create_harness_agent, SkillsProvider, middleware, per-stage models (settings.STAGE_MODELS)
-- `repo/{analyzer,reverse_engineering,requirements,stack,routes,git_transport,testability}.py`: intake; analyzer has brace-aware _brace_body_end + extract_target_sources; testability.analyze_testability / retarget_cases
-- `skills/{config,registry,contracts,scripts,host,reports}.py` + repo-root skills/ packages (SKILL.md + references/, SKILLS.lock.json)
+- `repo/{analyzer,reverse_engineering,requirements,stack,routes,git_transport,testability,import_recipes,preview,specs}.py`: intake; analyzer has brace-aware _brace_body_end + extract_target_sources; testability.analyze_testability / retarget_cases
+- `skills/{config,registry,contracts,scripts,host,reports,trust}.py` + repo-root `skills/` packages. Each package has `SKILL.md`, `plugin.yaml` (stages, role, kind, applies_when, priority), `scripts/`, `assets/` and `references/`, and all are locked in `SKILLS.lock.json`. User plugins live in the plugin dir: they are unverified until approved, companion-only, and never host kind.
 - `qa/{quality,report,triage,packaging}.py`: existing_requirement_witnesses, QA report, REMEDIES/remedy_for
-- `envs/` (platform_compat RUN_CANCEL/raise_if_cancelled/run_cancellable/kill_process_tree, execution.run_command, runners, toolchains), `errors/`, `hooks/` (maf_bridge raises MiddlewareFailure on stop), `tools/`, `llm/prompts.py` (section ORDER lists—register new prompt section keys there), `monitoring/`, `ui/` (loopback API, runtime_service), `frontend/` (Next.js 16 on Node 24)
+- `envs/` (platform_compat RUN_CANCEL/raise_if_cancelled/run_cancellable/kill_process_tree, execution.run_command, runners, toolchains), `errors/`, `hooks/` (maf_bridge raises MiddlewareFailure on stop), `tools/`, `llm/prompts.py` (section ORDER lists—register new prompt section keys there), `monitoring/`, and `ui/`, which holds:
+  - the loopback API and `runtime_service`;
+  - `eta.py` (predictions and the case budget);
+  - `errors.py` (Errors tab);
+  - `settings_api` (runtime model/API key).
+
+  Other top-level pieces:
+  - `frontend/`: Next.js 16 on Node 24.
+  - `paths.py`: resource and user-data roots, with frozen/desktop support.
+  - `run_options.py`: brownfield/greenfield mode and the unit/integration allowlist.
+  - `desktop_backend.py`: the `maf-backend` entry and `--self-check`.
+  - `desktop/`: Electron main, preload, process manager and keystore.
+  - `packaging/backend.spec`: PyInstaller.
 
 Run history defaults to `<repo-root>/.maf-harness/runs`, service logs to `<repo-root>/.maf-harness/logs`; explicit overrides and old history discovery are retained. Shared toolchain/usage caches have their separate configured locations. Local execution isolation is not a security sandbox.
 
@@ -66,8 +82,44 @@ UI Stop (confirm) → status stopping → cancel event + task.cancel + Middlewar
 
 Every change must work on Windows, macOS and Linux; pathlib; explicit encoding="utf-8"; subprocesses via run_command/run_cancellable with process groups, never shell=True; launchers stay thin (start-windows.cmd, start-macos.command, start-linux.sh) and delegate to scripts/start_ui.py; Node 24 enforced by engines + frontend/.npmrc engine-strict + .nvmrc; CI matrix ubuntu/windows/macos.
 
-## Orchestration and memory
+## Orchestration and memory (rules)
 
-Large changes are planned as tasks run by isolated worktree subagents (Sonnet for logic, Haiku for mechanical edits); only the orchestrator merges and appends a dated entry to memory.md "Core memory log".
+- **Planning and approval.** Plan first; execute only after the user approves. Each plan task names its model: Opus orchestrates and reviews, Sonnet handles logic, UI and packaging, Haiku handles mechanical edits.
+- **Worktrees.**
+  - The orchestrator creates them under the session scratchpad: `git worktree add -b task-<id> <scratchpad>/wt/task-<id> develop`. Never put them inside the repo `.claude/`, which the shell sandbox can't write.
+  - Agents work only in their worktree, commit early and often, and never stash or push.
+- **Merging.** Only the orchestrator merges, through `git merge-tree` + `commit-tree` into `develop` while a live run uses the main checkout, or a normal merge otherwise. It then pushes `develop` and keeps `new-ui` equal.
+- **Gate before merge.** All of these must pass:
+  - full pytest outside the sandbox (expect 0 failures);
+  - ruff check and format;
+  - `lint-skills --strict` and `gen_architecture.py --check`;
+  - frontend tsc and `next build --webpack`;
+  - Playwright with `PYTHONPATH=<worktree>/src` and a dummy `OPENAI_API_KEY`;
+  - desktop `npm test`.
+- **Reviews.** Security-sensitive work (plugins, MCP, secrets, desktop) gets an Opus review before merge.
+- **Memory.** `memory.md` is the project log. Before any significant decision or action, append a `BEFORE` line to its Action log: intent, scope, risk. After it, append an `AFTER` line: result, commit and verification. Dated "Core memory log" entries summarise each task or wave.
+
+## Permissions (what Claude may and may not do here)
+
+- **Allowed:** edit code and docs in this repo, run tests and builds, start the app via preview, use `gh` and git push to `develop`/`new-ui`, and configure repo settings through the GitHub API when asked.
+- **Sandbox:** binding local ports (Playwright, launcher tests), cloning target repos, live runs and `gh` (keychain) need the sandbox disabled. That is fine for those commands only.
+- **Ask first:** deleting files, dead-code removal (`docs/DEAD_CODE_REVIEW_2026-10-07.md` needs approval), force-pushing, pushing to `main`, creating releases or tags, and changing repo visibility.
+- **Never:** commit secrets, `.env`, run evidence or `agent-framework.pdf`; print API keys (UI shows the last 4 only); relax dependency pins; bypass the skill lock or plugin approval; delete user evidence.
+- **GitHub limits (private repo on a free plan):** rulesets, branch protection, required reviewers and secret scanning are unavailable (HTTP 403, needs Pro/GHAS). The `dev`/`prod` environments exist (`prod` deploys from `main` and `v*` only), and Dependabot alerts and fixes are on.
+
+## Remember (recent behaviour)
+
+- **Batching:** planning and design batches pack small components (5 planning and 16 design calls for 191 requirements).
+- **Case budget:** per requirement, user-editable until design is approved.
+- **Unit/integration focus:** runs design only `unit`/`integration` (api maps to integration).
+- **Greenfield:** documents (md/txt/docx; PDF needs pypdf) or Jira Cloud, then the `spec-authoring` skill produces `SPEC-<hash8>-<n>` specs, then requirements. The Jira token stays in memory only.
+- **Import recipes and autofixes** are deterministic:
+  - literal bootstrap code;
+  - a purge of colliding top-level packages;
+  - a tie-break by test file location;
+  - test-tooling installs (httpx/httpx2 probe, plus recovery `ENV-PY-010`).
+- **Validators:** the design review (Chief Principal Architect persona per stack) and the independent generation review. Errors are grouped in the Errors tab.
+- **Model settings:** resolved at runtime by `settings.current()`, in the order runtime override > env > `.env`. The desktop app stores secrets with Electron safeStorage in `secrets.bin`.
+- **Benchmark (mcp-skills-registry, budget 1):** 97 passed / 27 failed / 8 error / 36 generation_failed out of 171 cases (2026-10-11).
 
 See [strict generation and QA scope](docs/PETSTORE_STRICT_TEST_GENERATION.md), [architecture](docs/ARCHITECTURE.md), [setup](README.md), [Windows debugging](docs/WINDOWS_SETUP_AND_DEBUGGING.md) and [modular workflow](docs/MODULAR_WORKFLOW_IMPLEMENTATION.md). Dated plans and audit reports describe historical evidence; their old counts are not current release claims.

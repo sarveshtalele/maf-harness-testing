@@ -419,3 +419,19 @@ Final verification on `new-ui`:
 - **Lessons:**
   - The scratchpad can be wiped between sessions, so agents must commit early.
   - Playwright must be run with `PYTHONPATH=<worktree>/src` and a dummy `OPENAI_API_KEY`.
+
+## Action log (BEFORE/AFTER for every significant decision or action)
+
+Format: `YYYY-MM-DD HH:MM | BEFORE|AFTER | actor | action | scope/risk or result/commit/verification`. Append-only.
+
+- 2026-10-11 | AFTER | Opus | merged W0c (test-client package recovery `ENV-PY-010` with httpx2 probe, recipe tie-break by test location, import placement after the leading import block, carry-over of files a repair answer dropped, stray-closer removal) | full pytest 1044 passed outside the sandbox
+- 2026-10-11 | AFTER | Opus | merged W3.4 (`settings.current()`, `/settings/model` + test, safeStorage keystore, Model & API key panel; the runtime key is also redacted) | 1060 pytest, 17 Playwright, desktop 9/9; pushed 422430d
+- 2026-10-11 | BEFORE | Opus | configure GitHub via the API at the user's request: default branch, rulesets, environments, Dependabot, secret scanning | risk: outward-facing repo settings, all reversible
+- 2026-10-11 | AFTER | Opus | GitHub API results:
+  - default branch is `develop` (already set);
+  - the ruleset was rejected (HTTP 403: needs GitHub Pro for a private repo); classic branch protection and required reviewers have the same limit;
+  - environments `dev` and `prod` created, with `prod` deployments limited to `main` and `v*`;
+  - Dependabot vulnerability alerts and automated security fixes enabled;
+  - secret scanning not available (needs GHAS).
+- 2026-10-11 | BEFORE | Opus | launch W3.5 MCP servers (Sonnet; Opus security review before merge) and W5 `azure-plan-desktop.md` (Sonnet) in scratchpad worktrees from `develop` 422430d | risk: new dependency `mcp`; secrets handling
+- 2026-10-11 | AFTER | Opus | updated CLAUDE.md: branch model, desktop/greenfield summary, module map, orchestration rules, a permissions section, and the before/after logging rule
