@@ -531,3 +531,16 @@ def test_a_running_run_without_a_live_job_reads_as_interrupted(local_api):
     )
     view = local_api.read("orphan01")
     assert view["status"] == "interrupted" and view["busy"] is False
+
+
+def test_trace_archive_is_served_only_as_a_download(local_api):
+    api = local_api
+    key = api.start({"repo_url": "https://github.com/acme/demo"})["id"]
+    wait(api)
+    folder = api.run_path(key) / "browser-reports" / "playwright-report"
+    folder.mkdir(parents=True)
+    (folder / "trace.zip").write_bytes(b"PK trace")
+    trace = next(f for f in api.evidence(key)["files"] if f["name"] == "trace.zip")
+    with pytest.raises(ValueError, match="only as downloads"):
+        api.evidence_file(key, trace["id"])
+    assert api.evidence_file(key, trace["id"], download=True)[0] == b"PK trace"
