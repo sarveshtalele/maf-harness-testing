@@ -21,7 +21,7 @@ Builds are **unsigned**, so the operating system warns on first launch.
 
 - **macOS:** after copying the app to Applications, run `xattr -dr com.apple.quarantine "/Applications/Agentic QE.app"`. Or right-click the app and choose Open, once.
 - **Windows:** SmartScreen shows "Windows protected your PC". Choose More info, then Run anyway.
-- **Linux:** make the AppImage executable with `chmod +x Agentic-QE-*.AppImage`, then run it. It needs FUSE 2, or run it with `--appimage-extract-and-run`.
+- **Linux:** make the AppImage executable with `chmod +x ./Agentic*QE*.AppImage`, then run it. It needs FUSE 2, or run it with `--appimage-extract-and-run`.
 
 Set your model key in the app under **Configuration**, Model & API key. Where the operating system can encrypt it, the key is stored encrypted. Otherwise it is kept in memory for the session. The app shows only its last 4 characters.
 
