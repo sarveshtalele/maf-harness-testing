@@ -17,6 +17,7 @@ export interface ModelSettingsView {
   key_configured: boolean;
   key_hint: string;
   encrypted: boolean; // false: held in memory only for this session
+  notice?: string; // set when a secrets file from an earlier, unsafe storage backend was discarded
 }
 export interface SafeStorageLike {
   isEncryptionAvailable(): boolean;
@@ -71,19 +72,28 @@ export function validate(input: ModelSettingsInput): ModelSettingsInput {
 /** Secrets at rest: safeStorage-encrypted file, or session memory when the OS cannot encrypt. */
 export class KeyStore {
   private cache: Secrets | null = null;
+  private discarded = false;
 
   constructor(private file: string, private ss: SafeStorageLike, private platform: NodeJS.Platform = process.platform) {}
 
+  /** Linux keyring fallback with a hardcoded password: not a real OS keyring. */
+  private basicText(): boolean {
+    return this.platform === 'linux' && this.ss.getSelectedStorageBackend?.() === 'basic_text';
+  }
+
   /** Encryption counts as available only when Electron is not using the hardcoded 'basic_text' Linux backend. */
   private encrypted(): boolean {
-    if (!this.ss.isEncryptionAvailable()) return false;
-    return !(this.platform === 'linux' && this.ss.getSelectedStorageBackend?.() === 'basic_text');
+    return this.ss.isEncryptionAvailable() && !this.basicText();
   }
 
   get(): Secrets {
     if (this.cache) return this.cache;
     let s = { ...EMPTY };
-    if (this.encrypted() && fs.existsSync(this.file)) {
+    if (this.basicText() && fs.existsSync(this.file)) {
+      // Written by an earlier build under the hardcoded key: delete it rather than leave it decryptable on disk.
+      try { fs.rmSync(this.file, { force: true }); } catch { /* still ignored; the key is not loaded */ }
+      this.discarded = true;
+    } else if (this.encrypted() && fs.existsSync(this.file)) {
       try {
         s = { ...EMPTY, ...JSON.parse(this.ss.decryptString(fs.readFileSync(this.file))) };
       } catch { /* unreadable or from another user/machine: start empty */ }
@@ -162,6 +172,7 @@ export class KeyStore {
       key_configured: !!s.api_key,
       key_hint: s.api_key.length >= 8 ? s.api_key.slice(-4) : s.api_key ? '****' : '',
       encrypted: this.encrypted(),
+      notice: this.discarded ? 'Saved key was discarded: no OS keyring; key is kept in memory only' : undefined,
     };
   }
 

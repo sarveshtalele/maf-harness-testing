@@ -52,7 +52,7 @@ export function canOpenExternally(url: string): boolean {
 /** Evidence reports are framed same-origin; the backend sends its own sandbox CSP for them. */
 export function isEvidenceUrl(url: string): boolean {
   try {
-    return new URL(url).pathname.includes('/evidence/');
+    return /^\/api\/harness\/runs\/[^/]+\/evidence\//.test(new URL(url).pathname);
   } catch {
     return false;
   }

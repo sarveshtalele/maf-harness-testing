@@ -41,5 +41,6 @@ test('csp restricts framing and objects', () => {
 test('evidence report URLs are recognised', () => {
   assert.ok(isEvidenceUrl('http://127.0.0.1:4000/api/harness/runs/r1/evidence/a.html/view.html'));
   assert.ok(!isEvidenceUrl('http://127.0.0.1:4000/runs/r1'));
+  assert.ok(!isEvidenceUrl('http://127.0.0.1:4000/api/harness/skills/evidence/x'));
   assert.ok(!isEvidenceUrl('not a url'));
 });

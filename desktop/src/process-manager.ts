@@ -62,7 +62,7 @@ export class ProcessManager {
 
   isRunning(name: string): boolean {
     const p = this.procs.get(name)?.child;
-    return !!p && p.exitCode === null && p.signalCode === null;
+    return !!p && p.exitCode === null && p.signalCode === null && !this.spawnErrors.has(p);
   }
 
   /** Stop then start again, e.g. when the API key changes and the backend must re-read its env. */
