@@ -347,3 +347,16 @@ def test_deliverable_excludes_playwright_trace_archives(tmp_path):
         names = archive.namelist()
     assert "harness-report/evidence/browser-reports/playwright-report/data/screenshot.png" in names
     assert not any(name.endswith("trace.zip") for name in names)
+
+
+def test_run_lock_held_by_another_process_fails_clearly_instead_of_blocking(tmp_path, monkeypatch):
+    import pytest
+    from filelock import FileLock
+
+    import maf_test_harness.workflow as wf
+
+    monkeypatch.setattr(wf, "RUN_LOCK_TIMEOUT", 0.1)
+    with FileLock(str(tmp_path / "run.lock")):
+        with pytest.raises(RuntimeError, match="locked by another process"):
+            with wf._run_lock(tmp_path):
+                pass

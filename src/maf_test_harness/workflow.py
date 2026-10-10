@@ -5,6 +5,7 @@ import asyncio
 import json
 import re
 import traceback
+from contextlib import contextmanager
 from pathlib import Path
 from uuid import uuid4
 
@@ -16,7 +17,7 @@ from agent_framework import (
     handler,
     response_handler,
 )
-from filelock import FileLock
+from filelock import FileLock, Timeout
 
 from .agent import prompt_settings
 from .agent.personas import PERSONAS
@@ -103,6 +104,21 @@ from .workflow_support import (
 from .workflow_support import (
     _undeclared_libraries as _undeclared_libraries,
 )
+
+RUN_LOCK_TIMEOUT = 5  # seconds; another process holding the run must not block this one forever
+
+
+@contextmanager
+def _run_lock(run_dir: Path):
+    lock = FileLock(str(run_dir / "run.lock"), timeout=RUN_LOCK_TIMEOUT)
+    try:
+        lock.acquire()
+    except Timeout as exc:
+        raise RuntimeError("Run is locked by another process.") from exc
+    try:
+        yield
+    finally:
+        lock.release()
 
 
 class StageExecutor(Executor):
@@ -377,7 +393,7 @@ class Harness(RerunSteps, ExecutionSteps, GenerationSteps, GreenfieldSteps, Plan
         return await self._collect(result)
 
     async def respond(self, request_id: str, response: dict):
-        with FileLock(str(self.run_dir / "run.lock")):
+        with _run_lock(self.run_dir):
             fresh = read_json(self.view_path)
             pending = fresh.get("pending")
             if not pending or pending["id"] != request_id or request_id in fresh.get("consumed", []):
