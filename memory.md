@@ -347,3 +347,18 @@ Final verification on `new-ui`:
   - **O5:** review keys are by case ID.
 - **Verification:** 868 passed; the failures are the sandbox socket baseline. tsc, ruff and lint-skills pass, and the map check passes.
 - **Leftover:** the git-ignored directory `.claude/worktrees/task-h` could not be deleted from the sandbox.
+
+### 2026-10-10 Plan approval + Wave A GitHub organisation (Opus orchestrated; Haiku A.1, Sonnet A.2)
+- **Plan:** `docs/plans/PLAN_2026-10-10_DESKTOP_GREENFIELD.md` covers the desktop app (Electron, Windows/macOS/Linux, internal team, unsigned at first), plugin skills, greenfield specs, the unit/integration focus, the GitHub organisation, the custom API key and `azure-plan-desktop.md`.
+  - The user decided the GitHub organisation runs first.
+  - An Opus plan review added: `paths.py` for frozen builds, a runtime `settings.current()`, the `mcp` dependency, `plugin.yaml` instead of nested frontmatter, lock completeness for skill folders, native-runner installers, and deferring auto-update.
+- **Wave 0.1:** bare symbol targets now resolve to their defining file. Braces inside parameter lists are ignored, and declarations ending in `;` end on their own line (commit 8d438b7).
+- **Branches:** `develop` was cut from `new-ui` and pushed. `new-ui` is kept equal to `develop` for now.
+- **A.1 files:** CONTRIBUTING.md, CODEOWNERS, the PR and issue templates, `dependabot.yml` (ecosystem "uv"; switch to "pip" if Dependabot rejects it) and `docs/RELEASING.md` with the owner settings checklist.
+- **A.2 workflows:**
+  - `ci.yml` and `ui.yml` run on pushes to main, develop and release/** plus PRs, with concurrency and read permissions. `ci.yml` also runs the architecture-map check.
+  - New `nightly.yml`.
+  - `desktop-prerelease.yml` and `desktop-release.yml` use a guarded 4-runner matrix that does nothing until `desktop/package.json` exists. The release job creates a draft release.
+  - `scripts/check_version.py` makes the tag match the versions in pyproject and package.json.
+- **Lesson:** worktrees live in the session scratchpad. `.claude/` is not writable by the shell inside the repo, so merges into `develop` go through `merge-tree` and `commit-tree`.
+- **Owner actions still pending:** set `develop` as the default branch, add rulesets on main and develop, create the dev/prod environments, and enable Dependabot and secret scanning.
