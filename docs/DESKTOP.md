@@ -45,7 +45,7 @@ GitHub Releases page (`homepage` in `desktop/package.json`).
 
 ## Unsigned builds (internal distribution)
 
-- **macOS**: unsigned/not notarized. After download run `xattr -dr com.apple.quarantine "/Applications/Agentic QE.app"`, or right-click > Open once.
+- **macOS**: unsigned/not notarized, so macOS says *Apple could not verify "Agentic QE" is free of malware*. Drag the app to Applications, then either click **Open Anyway** in System Settings → Privacy & Security after the first blocked launch, or run `xattr -dr com.apple.quarantine "/Applications/Agentic QE.app"`. On macOS 15+ right-click > Open no longer bypasses Gatekeeper. Removing the prompt for everyone needs Developer ID signing + notarization (Apple Developer Program); see RELEASING.md.
 - **Windows**: SmartScreen shows "Windows protected your PC"; choose More info > Run anyway.
 - **Linux**: `chmod +x Agentic-QE-*.AppImage` then run it (needs FUSE 2, or `--appimage-extract-and-run`).
 
