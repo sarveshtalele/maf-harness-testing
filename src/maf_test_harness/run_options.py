@@ -16,7 +16,8 @@ RUN_MODES = ("brownfield", "greenfield")
 TEST_TYPES = ("unit", "integration")
 DOC_EXTENSIONS = {".md", ".txt", ".docx", ".pdf"}
 MAX_DOCS = 10
-MAX_DOC_BYTES = 10 * 1024 * 1024
+MAX_DOC_FILE_BYTES = 10_000_000  # per file, matches repo/specs.py MAX_DOC_BYTES
+MAX_DOC_BYTES = 10 * 1024 * 1024  # all documents together
 _JIRA_BASE = re.compile(r"https://[a-z0-9][a-z0-9-]*\.atlassian\.net/?")
 _JIRA_KEY = re.compile(r"[A-Z][A-Z0-9_]+-\d+")
 _NON_BOUNDARY = {"ui", "e2e", "accessibility", "performance", "security", "cli"}
@@ -68,14 +69,19 @@ def parse_run_options(body: dict) -> dict[str, Any]:
             raise ValueError("Each document needs a name and content_base64.")
         name = PurePosixPath(doc["name"].replace("\\", "/")).name
         if not name or name.startswith("."):
-            raise ValueError("Documents must be .md, .txt, .docx or .pdf files.")
+            raise ValueError(f"Document name is not valid: {doc['name']!r}. Use a name such as spec.md.")
         if name in names:
             raise ValueError(f"Duplicate document name: {name}")
         names.add(name)
+        encoded = doc.get("content_base64") or ""
+        if len(encoded) > (MAX_DOC_FILE_BYTES * 4) // 3 + 4:  # cheap pre-check before decoding
+            raise ValueError(f"Document {name} is larger than 10 MB (10,000,000 bytes) per file.")
         try:
-            data = base64.b64decode(doc.get("content_base64") or "", validate=True)
+            data = base64.b64decode(encoded, validate=True)
         except (binascii.Error, ValueError, TypeError) as exc:
             raise ValueError(f"Document {name} is not valid base64.") from exc
+        if len(data) > MAX_DOC_FILE_BYTES:
+            raise ValueError(f"Document {name} is larger than 10 MB (10,000,000 bytes) per file.")
         total += len(data)
         if total > MAX_DOC_BYTES:
             raise ValueError("Specification documents may total at most 10 MB.")

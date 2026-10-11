@@ -14,8 +14,18 @@ export const download = (id: string, kind: string, format = 'json', index?: numb
 export class ApiError extends Error {
   constructor(message: string, readonly status: number) { super(message); }
 }
-/** Connection failures: the request never reached the API (no ApiError) or the proxy reported it unavailable. */
-export const isConnectionError = (error: unknown) => !(error instanceof ApiError) || error.status === 503 || error.status === 504;
+/** The fetch itself failed (network down, proxy unreachable): no HTTP answer was received. */
+export class NetworkError extends Error {}
+/** Connection failures only: a network failure or an HTTP 503/504 from the proxy. Other errors are not connection errors. */
+export const isConnectionError = (error: unknown) => error instanceof NetworkError || (error instanceof ApiError && (error.status === 503 || error.status === 504));
+async function send(path: string, init: RequestInit): Promise<Response> {
+  try {
+    return await fetch(`/api/harness/${path}`, { ...init, cache: 'no-store' });
+  } catch (error) {
+    if (init.signal?.aborted) throw error;
+    throw new NetworkError(error instanceof Error ? error.message : 'Network request failed');
+  }
+}
 /** The window bridge exposed by the desktop shell; undefined in the browser. */
 export function desktop<T>(): T | undefined { return typeof window === 'undefined' ? undefined : (window as unknown as { desktop?: T }).desktop; }
 
@@ -25,13 +35,13 @@ async function failure(response: Response): Promise<never> {
 }
 
 export async function api<T>(path: string, body?: Row, signal?: AbortSignal): Promise<T> {
-  const response = await fetch(`/api/harness/${path}`, { method: body ? 'POST' : 'GET', headers: body ? { 'Content-Type': 'application/json' } : {}, body: body ? JSON.stringify(body) : undefined, cache: 'no-store', signal });
+  const response = await send(path, { method: body ? 'POST' : 'GET', headers: body ? { 'Content-Type': 'application/json' } : {}, body: body ? JSON.stringify(body) : undefined, signal });
   if (!response.ok) await failure(response);
   return response.json();
 }
 
 export async function apiDelete<T>(path: string): Promise<T> {
-  const response = await fetch(`/api/harness/${path}`, { method: 'DELETE', cache: 'no-store' });
+  const response = await send(path, { method: 'DELETE' });
   if (!response.ok) await failure(response);
   return response.json();
 }

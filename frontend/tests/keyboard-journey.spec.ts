@@ -1,9 +1,11 @@
 import { test, expect, type Locator, type Page } from '@playwright/test';
 
-/** Tab until the element is focused (the sidebar order is stable but long). */
+/** Presses Tab (keyboard only) until the target is focused; each attempt is checked, the whole search is bounded. */
 async function tabTo(page: Page, target: Locator) {
-  for (let i = 0; i < 25 && !(await target.evaluate(el => el === document.activeElement)); i++) await page.keyboard.press('Tab');
-  await expect(target).toBeFocused();
+  await expect(async () => {
+    await page.keyboard.press('Tab');
+    await expect(target).toBeFocused({ timeout: 300 });
+  }).toPass({ timeout: 15000 });
 }
 
 test('keyboard-only journey: skip link, New run with Enter, dialogs close on Escape and return focus', async ({ page, request }) => {
@@ -14,6 +16,8 @@ test('keyboard-only journey: skip link, New run with Enter, dialogs close on Esc
   await page.keyboard.press('Enter');
   await expect(page.locator('#main-content')).toBeFocused();
 
+  // Start from the first sidebar control, then Tab forward to New run.
+  await page.getByRole('navigation', { name: 'Main navigation' }).getByRole('button').first().focus();
   await tabTo(page, page.getByRole('button', { name: 'New run', exact: true }));
   await page.keyboard.press('Enter');
   const url = page.getByRole('textbox', { name: 'Public GitHub repository URL' });

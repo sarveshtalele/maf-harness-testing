@@ -179,7 +179,11 @@ class APIConnectionError(Exception):
             RuntimeError("Error code: 404 - model not found"),
             "The model or endpoint was not found — check the model name and base URL.",
         ),
-        (RuntimeError("429 quota exceeded"), "The gateway's quota or rate limit is exhausted."),
+        (RuntimeError("status 429 quota exceeded"), "The gateway's quota or rate limit is exhausted."),
+        (
+            RuntimeError("upstream at localhost:401 refused"),
+            "The gateway returned an unexpected error. Check the model, base URL and key, then test again.",
+        ),
         (
             APIConnectionError("connection refused"),
             "Could not reach the gateway at gw.example.com — check the URL, network or VPN.",
@@ -203,3 +207,43 @@ def test_friendly_message_with_redacted_detail(api, exc, expected):
     assert out["ok"] is False and out["message"] == expected
     assert set(out) == {"ok", "message", "detail"}
     assert KEY not in json.dumps(out) and type(exc).__name__ in out["detail"]
+
+
+def test_exception_text_with_typed_key_is_redacted_before_truncation(api):
+    def boom(cur):
+        raise RuntimeError(f"bad key {KEY}")
+
+    api.model_probe = boom
+    out = api.test_model_settings({"base_url": "https://gw.example.com/v1", "api_key": KEY})
+    assert KEY not in json.dumps(out) and "[REDACTED]" in out["detail"]
+
+
+def test_key_split_across_truncation_point_is_not_leaked(api):
+    def boom(cur):
+        raise RuntimeError("x" * 297 + KEY)
+
+    api.model_probe = boom
+    out = api.test_model_settings({"base_url": "https://gw.example.com/v1", "api_key": KEY})
+    for start in range(len(KEY) - 3):
+        assert KEY[start : start + 4] not in out["detail"]
+
+
+def test_typed_base_url_with_saved_key_is_refused_without_probe(api):
+    settings.set_runtime(api_key=KEY, base_url="https://saved.example.com/v1")
+    calls = []
+    api.model_probe = lambda cur: calls.append(cur)
+    out = api.test_model_settings({"base_url": "https://other.example.com/v1"})
+    assert out == {"ok": False, "message": "Enter the API key to test a different base URL."}
+    assert calls == []
+    # the same saved URL may use the saved key
+    assert api.test_model_settings({"base_url": "https://saved.example.com/v1"}) == {
+        "ok": True,
+        "message": "Connection works.",
+    }
+    assert len(calls) == 1
+
+
+@pytest.mark.parametrize("bad", [{"base_url": 5}, {"model": ["m"]}, {"api_key": {"k": 1}}])
+def test_non_text_fields_are_rejected_as_value_errors(api, bad):
+    with pytest.raises(ValueError):
+        api.test_model_settings(bad)

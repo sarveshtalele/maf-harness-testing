@@ -62,11 +62,11 @@ test('model test uses typed values and shows friendly errors', async ({ page }) 
   await page.getByLabel('Base URL').fill('http://typed.example.com/v1');
   await page.getByLabel('Base URL').press('Tab');
   await expect(page.locator('#base-url-error')).toContainText('Plain http:// is allowed only for localhost');
+  // Test and Save both stop at the inline error: the error stays, no request is made, the button stays usable.
   await page.getByRole('button', { name: 'Test connection' }).click();
-  await page.waitForTimeout(300);
-  expect(tests).toHaveLength(2);
-  await expect(page.getByRole('button', { name: 'Save', exact: true })).toBeEnabled();
+  await expect(page.locator('#base-url-error')).toBeVisible();
   await page.getByRole('button', { name: 'Save', exact: true }).click();
-  await page.waitForTimeout(300);
+  await expect(page.locator('#base-url-error')).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Save', exact: true })).toBeEnabled();
   expect(tests).toHaveLength(2);
 });

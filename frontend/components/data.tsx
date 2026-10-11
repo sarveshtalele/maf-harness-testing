@@ -33,13 +33,16 @@ export function usePreference<T>(key: string, initial: T): [T, (value: T) => voi
   return [value, save];
 }
 
-/** Returns focus to the element that had it when a modal opened (Escape or Cancel close it). */
-export function useReturnFocus(open: boolean) {
+/**
+ * Focus return for a modal: call the returned `remember(event.currentTarget)` in the handler that opens the dialog.
+ * When `open` becomes false, focus goes back to that trigger (if it is still in the document).
+ */
+export function useReturnFocus(open: boolean): (trigger: EventTarget | null) => void {
   const trigger = useRef<HTMLElement | null>(null);
   useEffect(() => {
-    if (open) trigger.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
-    else if (trigger.current) { trigger.current.focus(); trigger.current = null; }
+    if (!open && trigger.current) { trigger.current.focus(); trigger.current = null; }
   }, [open]);
+  return (element: EventTarget | null) => { trigger.current = element instanceof HTMLElement ? element : null; };
 }
 
 export function Panel({ title, children, storageKey, actions, defaultOpen = true, revealKey }: { title: string; children: ReactNode; storageKey: string; actions?: ReactNode; defaultOpen?: boolean; revealKey?: string }) {

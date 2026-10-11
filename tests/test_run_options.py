@@ -162,3 +162,19 @@ def test_unsupported_documents_are_named_in_the_error():
         parse_run_options(
             {"run_mode": "greenfield", "spec_sources": {"documents": [doc(f"s{i}.md") for i in range(11)]}}
         )
+
+
+def test_per_file_limit_and_extension_only_names_are_rejected():
+    def doc(name, size=4):
+        return {"name": name, "content_base64": base64.b64encode(b"x" * size).decode()}
+
+    with pytest.raises(ValueError, match="big.md is larger than 10 MB"):
+        parse_run_options(
+            {"run_mode": "greenfield", "spec_sources": {"documents": [doc("big.md", 10_000_001)]}}
+        )
+    accepted = parse_run_options(
+        {"run_mode": "greenfield", "spec_sources": {"documents": [doc("ok.md", 10_000_000)]}}
+    )
+    assert accepted["spec_sources"]["documents"][0]["size"] == 10_000_000
+    with pytest.raises(ValueError, match=r"Unsupported document type: \.md"):
+        parse_run_options({"run_mode": "greenfield", "spec_sources": {"documents": [doc(".md")]}})

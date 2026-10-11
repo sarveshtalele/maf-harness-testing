@@ -55,13 +55,15 @@ test('review gates have no horizontal overflow at 390px', async ({ page, request
   await page.goto(`/?run=${id}&tab=Review`);
   await expect(page.getByRole('button', { name: 'Stop run' })).toHaveCount(0);
   for (const tab of ['Review', 'Errors', 'Artifacts', 'Generated tests', 'QA report', 'Test reports', 'Logs', 'Observability', 'Audit', 'Prompts']) {
-    await page.getByRole('button', { name: new RegExp(`^${tab}( \\d+)?$`) }).first().click();
-    await page.waitForLoadState('networkidle');
+    const tabButton = page.getByRole('button', { name: new RegExp(`^${tab}( \\d+)?$`) }).first();
+    await tabButton.click();
+    await expect(tabButton).toHaveAttribute('aria-pressed', 'true');
     await expectNoHorizontalScroll(page, `tab ${tab}`);
   }
   for (const pageName of ['Runs', 'New run', 'Agent skills', 'Configuration']) {
-    await page.getByRole('navigation', { name: 'Main navigation' }).getByRole('button', { name: new RegExp(`^${pageName}\\b`) }).click();
-    await page.waitForLoadState('networkidle');
+    const navButton = page.getByRole('navigation', { name: 'Main navigation' }).getByRole('button', { name: new RegExp(`^${pageName}\\b`) });
+    await navButton.click();
+    await expect(navButton).toHaveClass(/active/);
     await expectNoHorizontalScroll(page, `page ${pageName}`);
   }
   await page.goto('/?page=prompts');
