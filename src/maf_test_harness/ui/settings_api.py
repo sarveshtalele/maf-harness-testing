@@ -153,12 +153,17 @@ class SettingsAPI:
             raise ValueError(f"Unknown settings: {', '.join(sorted(unknown))}")
         typed_key = body.get("api_key") or None
         if typed_key is not None and (
-            not isinstance(typed_key, str) or not typed_key.strip() or len(typed_key) > 500 or re.search(r"\s", typed_key.strip())
+            not isinstance(typed_key, str)
+            or not typed_key.strip()
+            or len(typed_key) > 500
+            or re.search(r"\s", typed_key.strip())
         ):
             raise ValueError("API key must be a single non-empty string.")
         base_url = settings.validate_base_url(body["base_url"]) if body.get("base_url") is not None else None
         model = body.get("model")
-        if model is not None and (not isinstance(model, str) or not model.strip() or len(model.strip()) > 100):
+        if model is not None and (
+            not isinstance(model, str) or not model.strip() or len(model.strip()) > 100
+        ):
             raise ValueError("Model must be 1-100 characters.")
         cur = settings.current()
         cur = {

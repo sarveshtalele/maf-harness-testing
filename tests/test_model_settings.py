@@ -133,3 +133,73 @@ def test_save_to_env_preserves_lines_and_mode(api, tmp_path):
 def test_not_saved_to_env_by_default(api, tmp_path):
     api.save_model_settings({"api_key": KEY})
     assert not (tmp_path / ".env").exists()
+
+
+def test_test_endpoint_probes_typed_values_without_saving(api):
+    seen = {}
+
+    def probe(cur):
+        seen.update(base_url=cur["base_url"], model=cur["model"], api_key=cur["api_key"])
+
+    api.model_probe = probe
+    body = {"base_url": "https://typed.example.com/v1", "model": "typed-model", "api_key": KEY}
+    assert api.test_model_settings(body) == {"ok": True, "message": "Connection works."}
+    assert seen == {"base_url": "https://typed.example.com/v1", "model": "typed-model", "api_key": KEY}
+    assert settings.current()["api_key"] == "" and settings.current()["base_url"] == ""  # nothing saved
+    assert api.test_model_settings({}) == {"ok": False, "message": "No API key is configured."}
+
+
+@pytest.mark.parametrize(
+    "bad",
+    [
+        {"base_url": "http://example.com/v1"},
+        {"api_key": "has space"},
+        {"model": "x" * 101},
+        {"surprise": 1},
+    ],
+)
+def test_test_endpoint_validates_like_save(api, bad):
+    with pytest.raises(ValueError):
+        api.test_model_settings(bad)
+
+
+class AuthenticationError(Exception):
+    status_code = 401
+
+
+class APIConnectionError(Exception):
+    pass
+
+
+@pytest.mark.parametrize(
+    ("exc", "expected"),
+    [
+        (AuthenticationError("Error code: 401 - invalid key"), "The API key was rejected by the gateway."),
+        (
+            RuntimeError("Error code: 404 - model not found"),
+            "The model or endpoint was not found — check the model name and base URL.",
+        ),
+        (RuntimeError("429 quota exceeded"), "The gateway's quota or rate limit is exhausted."),
+        (
+            APIConnectionError("connection refused"),
+            "Could not reach the gateway at gw.example.com — check the URL, network or VPN.",
+        ),
+        (
+            ConnectionError("dns failure"),
+            "Could not reach the gateway at gw.example.com — check the URL, network or VPN.",
+        ),
+        (
+            ValueError("weird"),
+            "The gateway returned an unexpected error. Check the model, base URL and key, then test again.",
+        ),
+    ],
+)
+def test_friendly_message_with_redacted_detail(api, exc, expected):
+    def boom(cur):
+        raise exc
+
+    api.model_probe = boom
+    out = api.test_model_settings({"base_url": "https://gw.example.com/v1", "api_key": KEY})
+    assert out["ok"] is False and out["message"] == expected
+    assert set(out) == {"ok", "message", "detail"}
+    assert KEY not in json.dumps(out) and type(exc).__name__ in out["detail"]

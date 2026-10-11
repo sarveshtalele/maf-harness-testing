@@ -145,3 +145,20 @@ def test_design_prompt_has_restriction(local_api, monkeypatch):  # noqa: F811
     while api.read(key)["pending"]["stage"] != "test_design":
         approve(api, key)
     assert any("Design ONLY unit cases (per run test_types)" in p for p in prompts)
+
+
+def test_unsupported_documents_are_named_in_the_error():
+    def doc(name):
+        return {"name": name, "content_base64": base64.b64encode(b"x").decode()}
+
+    with pytest.raises(ValueError, match=r"Unsupported document type: stories\.xlsx, notes\.zip\."):
+        parse_run_options(
+            {
+                "run_mode": "greenfield",
+                "spec_sources": {"documents": [doc("spec.md"), doc("stories.xlsx"), doc("notes.zip")]},
+            }
+        )
+    with pytest.raises(ValueError, match="At most 10 specification documents"):
+        parse_run_options(
+            {"run_mode": "greenfield", "spec_sources": {"documents": [doc(f"s{i}.md") for i in range(11)]}}
+        )
