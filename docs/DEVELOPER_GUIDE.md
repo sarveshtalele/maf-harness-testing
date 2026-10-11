@@ -317,7 +317,7 @@ User-editable prompt templates are separate (`agent/prompt_settings.py`, UI Prom
 ### Add a language
 1. `workflow_support.py`: add a family to `LANGUAGE_RULES` (`declaration`, `parametrize`, `stdlib`, `retry`, `integration`, `rules`) and map the language name in `_FAMILY_BY_LANGUAGE`.
 2. `skills/generic-test-generator/references/<lang>.md` (language conventions; the rest of the skill stays neutral). Refresh its hash in `skills/SKILLS.lock.json`, run `uv run maf-harness lint-skills --strict`.
-3. Tooling map: detection in `repo/analyzer.py` (`_detect_frameworks`) and `repo/stack.py` (`detect_stack`, `StackProfile`); environment spec in `envs/spec.py` plus a `envs/<lang>_env.py` `spec`; toolchain detect/provision in `envs/toolchains.py`.
+3. Tooling map: detection in `repo/analyzer.py` (`_detect_frameworks`) and `repo/stack.py` (`detect_stack`, `StackProfile`); environment spec in `envs/spec.py` (follow the `spec` pattern in `envs/python_env.py`); toolchain detect/provision in `envs/toolchains.py`.
 4. Runners: add the ecosystem to `resolve_ecosystem` and the plan builder in `envs/runners.py` (setup steps, test command, JUnit/report parsing via `execution.read_junit`).
 5. Errors: classifier table in `errors/classifiers/<lang>.py`, registered in `BY_ECOSYSTEM` / `ALL_LANGUAGES` / `EXECUTION`; codes in `errors/taxonomy.py`.
 6. Static gates for generated code (imports, mock pitfalls) in `tools/` and `workflow_steps/generation.py` as needed.

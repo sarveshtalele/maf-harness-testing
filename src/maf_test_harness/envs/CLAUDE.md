@@ -6,7 +6,7 @@ Turns a detected stack into a reviewable install + run plan, provisions toolchai
 - `platform_compat.py`: every OS-specific decision (`venv_python`, `resolve_tool`, `raise_if_cancelled`, `run_cancellable`, `kill_process_tree`, `RUN_CANCEL`).
 - `execution.py`: `run_command` (argv only, timeout, process group), `copy_repo`, `write_generated`, `read_junit`.
 - `runners.py`: per-ecosystem adapters. `resolve_ecosystem`, `setup_steps`, `generated_groups`, `repository_components`, `Step`, `RunPlan`.
-- `environment.py`: `build_environment_plan`, `steps_from_plan`. `spec.py` / `python_env.py` / `java_env.py` / `dotnet_env.py`: what the repo asks for (`EnvSpec`, `ToolRequirement`).
+- `environment.py`: `build_environment_plan`, `steps_from_plan`. `spec.py` (Python, JDK, Maven/Gradle and .NET detection) / `python_env.py`: what the repo asks for (`EnvSpec`, `ToolRequirement`).
 - `toolchains.py`: detect/provision JDK, Maven, .NET into `cache_root()`. `env_check.py`: `missing_packages`, `ui_tooling`, `installed_distributions`.
 - `recovery.py`: bounded, allow-listed recovery (`choose`, `Action`, `test_client_packages`, `wipe_venv`). `app_launcher.py`: start the app under test (`detect_launch`, `running`).
 - `regression.py`, `setup_guide.py`: Maven regression scopes; manual setup text (never executed).
@@ -24,5 +24,5 @@ Turns a detected stack into a reviewable install + run plan, provisions toolchai
 `uv run pytest -q tests/test_envs.py tests/test_stack_and_runners.py tests/test_platform_compat.py tests/test_env_recovery.py tests/test_execution.py tests/test_strict_environment.py tests/test_test_tooling_recovery.py`
 
 ## Recipes
-- New ecosystem/runner: add `spec` in a `*_env.py`, adapter branch in `runners.py` (`resolve_ecosystem` + plan), classifier table in `errors/classifiers/`, entry in `BY_ECOSYSTEM`, `LANGUAGE_RULES` in `workflow_support.py`.
+- New ecosystem/runner: add detection in `envs/spec.py` (pattern: `python_env.py`), adapter branch in `runners.py` (`resolve_ecosystem` + plan), classifier table in `errors/classifiers/`, entry in `BY_ECOSYSTEM`, `LANGUAGE_RULES` in `workflow_support.py`.
 - New recovery: add an `Action` in `recovery.py`, reference its recipe id from the code in `errors/taxonomy.py`, document in `docs/ERROR_PLAYBOOK.md`.

@@ -43,7 +43,7 @@ Keep `workflow.py` as the public compatibility facade and orchestration owner; e
 
 Keep checkpoint persistence, approval dispatch and stage transitions centrally owned. Reuse `envs/` for platform-specific installation/execution, `agent/` for runtime/personas, `qa/` for reporting and `monitoring/` for audit/observability. Do not split every helper into a file or introduce a framework. Use ordinary functions and explicit context inputs; maintain the public Harness interface and CLI/API imports.
 
-Split `ui/api.py` only where distinct route responsibilities justify it: run lifecycle, prompt/settings, evidence/export. Shared authentication, origin validation and filesystem containment remain centralized. Review `envs/runners.py` for ecosystem-specific extraction using its existing `python_env.py`, `java_env.py` and `dotnet_env.py` modules before creating alternatives. Determine final extraction boundaries from dependency/caller review, not file size alone.
+Split `ui/api.py` only where distinct route responsibilities justify it: run lifecycle, prompt/settings, evidence/export. Shared authentication, origin validation and filesystem containment remain centralized. Review `envs/runners.py` for ecosystem-specific extraction using the existing `envs/spec.py` detection and `python_env.py` before creating alternatives. Determine final extraction boundaries from dependency/caller review, not file size alone.
 
 ```mermaid
 flowchart LR
