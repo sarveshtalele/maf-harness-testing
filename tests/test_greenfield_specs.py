@@ -423,3 +423,25 @@ def test_business_rules_restating_acceptance_criteria_do_not_duplicate_requireme
         "Points are never negative.",
         "The discount threshold is 100.00.",
     ]
+
+
+def test_gateway_outage_aborts_spec_authoring_without_repair_attempts(tmp_path):
+    import asyncio
+
+    from maf_test_harness.agent.runtime import GatewayUnavailableError
+
+    class Down:
+        def __init__(self):
+            self.calls = 0
+
+        async def run_stage(self, **kwargs):
+            self.calls += 1
+            raise GatewayUnavailableError("[gateway] The model gateway was unreachable for about 5 minutes.")
+
+    runtime = Down()
+    host = Harness(tmp_path, skills_root=Path("skills"), requirements_mode="model", runtime=runtime)
+    sections = ingest_specs([{"name": "req.md", "content": MD}])["sections"]
+    state = {"artifacts": {}, "spec_intake": {"sources": [], "warnings": []}}
+    with pytest.raises(GatewayUnavailableError):
+        asyncio.run(host._author_batch(state, sections, {}, 1))
+    assert runtime.calls == 1  # no schema-repair attempts against a dead gateway

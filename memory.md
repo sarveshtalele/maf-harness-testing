@@ -461,3 +461,11 @@ Format: `YYYY-MM-DD HH:MM | BEFORE|AFTER | actor | action | scope/risk or result
   - Opus caught a regression: dropping ACAO broke the sandboxed report's fetch of data.json. ACAO is restored for evidence byte responses only.
   - Gate: pytest 1133/5 skipped, Playwright 18/18, desktop 14/14, tsc/build, ruff/map/skills/version ok.
 - 2026-10-11 | AFTER | Opus | docs: develop README is now a developer guide (architecture and gates Mermaid, setup, change-and-merge steps, 75-row docs table); docs/USER_GUIDE.md is desktop-only and becomes main's README; the 4 Mermaid blocks were validated with mermaid 11.4.1. desktop-prerelease run 38079888032 built installers on win/mac-arm64/mac-x64/linux (all green)
+- 2026-10-11 | AFTER | Opus | v1.0.0 RELEASED on user approval: main fast-forwarded to develop plus the user README (21acf14), tag v1.0.0, desktop-release run 38082467375 built all 4 installers, release published (https://github.com/sarveshtalele/maf-harness-testing/releases/tag/v1.0.0)
+- 2026-10-11 | BEFORE | Opus | user approved: untrack docs/agent-framework.pdf (file kept on disk; it remains in git history), delete branches new-ui, windows-compat-docs, assistant-instructions-generation-benchmark (PR #7 closed first); drop new-ui from docs
+- 2026-10-11 | AFTER | Opus | azure-litellm-proxy E2E (0b2aa5ad8b5e) aborted in generation: a gateway outage made 61/99 batches fail in seconds (no transient retry). Fix (Haiku, Sonnet-reviewed twice, Opus final):
+  - _run_agent retries connection/timeout/429/5xx errors with backoff 5..60 s inside a 360 s deadline; Stop works during waits; definite 4xx errors are never retried.
+  - GatewayUnavailableError ("[gateway] ...") aborts the stage without counting batch failures and without repair loops (generation, greenfield, planning, diagnosis). Cached batches resume on Retry.
+  - Errors tab "gateway" category and remedy match only the harness tag or the MAF wrapper text.
+  - httpx added to the PyInstaller collect_all.
+  - Gate: pytest 1155/1 skipped, Playwright 18/18, ruff/map/skills ok. The run was retried with the gateway back up.

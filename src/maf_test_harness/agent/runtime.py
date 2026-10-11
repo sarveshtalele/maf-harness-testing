@@ -14,6 +14,8 @@ from importlib.metadata import version
 from pathlib import Path
 from typing import Any
 
+import httpx
+import openai
 from agent_framework import (
     AgentSession,
     ChatMiddleware,
@@ -54,6 +56,75 @@ HARNESS_TOOL_NAMES = (*CENTRAL_TOOL_NAMES, *TYPED_TOOL_NAMES)
 
 class AgentOutputError(RuntimeError):
     pass
+
+
+class GatewayUnavailableError(AgentOutputError):
+    """The model gateway stayed unreachable through every transient-error retry (see GATEWAY_RETRY_DELAYS)."""
+
+
+# Backoff before each retry of a transient gateway error (about 5 minutes in total). Tests monkeypatch these to zeros.
+GATEWAY_RETRY_DELAYS: tuple[float, ...] = (5, 10, 20, 40, 60, 60, 60, 60)
+# Total wall-clock budget across attempts and waits; a retry that would start past it is not made.
+GATEWAY_RETRY_DEADLINE_SECONDS: float = 360
+GATEWAY_TAG = (
+    "[gateway] "  # prefix of every GatewayUnavailableError message; the error categorizer keys on it
+)
+_TRANSIENT_GATEWAY_TYPES = (
+    openai.APIConnectionError,  # includes openai.APITimeoutError
+    openai.RateLimitError,
+    openai.InternalServerError,
+    httpx.TransportError,  # connect/read/write/protocol failures and pool timeouts
+)
+
+
+def _is_transient_gateway_error(exc: BaseException) -> bool:
+    """True when ``exc`` or anything it wraps (cause, context, args) is a retryable gateway/connection failure.
+
+    A definite answer from the gateway (openai 4xx such as BadRequest, Authentication or PermissionDenied) anywhere in
+    the chain makes the whole error non-transient, even when a wrapper's text repeats "Connection error".
+    """
+    if isinstance(exc, GatewayUnavailableError):
+        return False
+    chain: list[BaseException] = []
+    pending: list[BaseException] = [exc]
+    while pending:
+        item = pending.pop()
+        if any(item is seen for seen in chain):
+            continue
+        chain.append(item)
+        pending.extend(a for a in item.args if isinstance(a, BaseException))
+        pending.extend(
+            c
+            for c in (item.__cause__, item.__context__, getattr(item, "inner_exception", None))
+            if isinstance(c, BaseException)
+        )
+    for item in chain:
+        if isinstance(item, GatewayUnavailableError):
+            return False  # already retried to exhaustion; its text quotes the last error
+        if isinstance(item, openai.APIStatusError) and not (
+            item.status_code >= 500 or item.status_code == 429
+        ):
+            return False  # 400/401/403/404...: definite, never retried, wrapper text not inspected
+    for item in chain:
+        if isinstance(item, _TRANSIENT_GATEWAY_TYPES) or (
+            isinstance(item, openai.APIStatusError) and (item.status_code >= 500 or item.status_code == 429)
+        ):
+            return True
+        # MAF wraps the openai error into a ChatClientException whose text carries the original message
+        if "Connection error" in str(item) or "Server disconnected" in str(item):
+            return True
+    return False
+
+
+async def _sleep_cancellable(seconds: float) -> None:
+    """Sleep in short steps so a Stop request interrupts the wait (raise_if_cancelled raises CancelledError)."""
+    end = time.monotonic() + seconds
+    while True:
+        raise_if_cancelled()
+        remaining = end - time.monotonic()
+        if remaining <= 0:
+            return
+        await asyncio.sleep(min(0.5, remaining))
 
 
 def response_cache_dir() -> Path | None:
@@ -485,13 +556,34 @@ class MAFHarnessRuntime:
         return client
 
     async def _run_agent(self, agent, prompt, **kwargs):
-        raise_if_cancelled()
-        try:
-            return await asyncio.wait_for(agent.run(prompt, **kwargs), timeout=MODEL_TIMEOUT_SECONDS)
-        except TimeoutError as exc:
-            raise AgentOutputError(
-                f"Model operation timed out after {MODEL_TIMEOUT_SECONDS:g} seconds. Check the gateway URL/model and connectivity, then Retry. HARNESS_MODEL_TIMEOUT_SECONDS controls this limit."
-            ) from exc
+        retries = iter(GATEWAY_RETRY_DELAYS)
+        started = time.monotonic()
+        attempts = 0
+        while True:
+            raise_if_cancelled()
+            attempts += 1
+            try:
+                return await asyncio.wait_for(agent.run(prompt, **kwargs), timeout=MODEL_TIMEOUT_SECONDS)
+            except TimeoutError as exc:
+                raise AgentOutputError(
+                    f"Model operation timed out after {MODEL_TIMEOUT_SECONDS:g} seconds. Check the gateway URL/model and connectivity, then Retry. HARNESS_MODEL_TIMEOUT_SECONDS controls this limit."
+                ) from exc
+            except Exception as exc:
+                if not _is_transient_gateway_error(exc):
+                    raise
+                delay = next(retries, None)
+                last = f"{type(exc).__name__}: {str(exc)[:300]}"
+                over_deadline = delay is not None and (
+                    time.monotonic() - started + delay > GATEWAY_RETRY_DEADLINE_SECONDS
+                )
+                if delay is None or over_deadline:
+                    raise GatewayUnavailableError(
+                        f"{GATEWAY_TAG}The model gateway was unreachable for several minutes ({attempts} attempts; "
+                        f"last error: {last}). Check the gateway URL, network or VPN, then Retry the stage; "
+                        "completed batches are kept."
+                    ) from exc
+                self._emit("gateway_retry", delay_seconds=delay, error=last)
+                await _sleep_cancellable(delay)
 
     async def run_tool_agent(
         self,

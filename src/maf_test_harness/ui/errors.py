@@ -15,6 +15,11 @@ CATEGORIES = (
     ("unknown_case_ids", r"unknown case id|unknown_case_ids|unapproved case"),
     ("schema", r"schema validation"),
     ("build_gate", r"build gate"),
+    (
+        "gateway",
+        r"\[gateway\]|gateway was unreachable|service failed to complete the prompt: "
+        r"(?:Connection error|.*Error code: (?:429|50[234]))",
+    ),
     ("quarantined", r"quarantined"),
 )
 

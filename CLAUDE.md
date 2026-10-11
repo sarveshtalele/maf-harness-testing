@@ -1,6 +1,6 @@
 # Agentic QE Platform — contributor guidance
 
-Branches: `develop` (default, integration), `main` (releases), `release/*`, `feature/*`; `new-ui` mirrors `develop` during the transition. Product: Agentic QE Platform. It is a Next.js UI plus a loopback Python HTTP API over the checkpointed Microsoft Agent Framework Harness, shipped both as a local launcher (Node.js 24, Python 3.12) and as an Electron desktop app (`desktop/`). It covers brownfield (repository) and greenfield (specs from documents or Jira Cloud) runs, and generates unit and integration tests. Plan: `docs/plans/PLAN_2026-10-10_DESKTOP_GREENFIELD.md`.
+Branches: `develop` (default, integration), `main` (releases), `release/*`, `feature/*`; `main` README is the user guide (docs/RELEASING.md). Product: Agentic QE Platform. It is a Next.js UI plus a loopback Python HTTP API over the checkpointed Microsoft Agent Framework Harness, shipped both as a local launcher (Node.js 24, Python 3.12) and as an Electron desktop app (`desktop/`). It covers brownfield (repository) and greenfield (specs from documents or Jira Cloud) runs, and generates unit and integration tests. Plan: `docs/plans/PLAN_2026-10-10_DESKTOP_GREENFIELD.md`.
 
 ## Commands
 
@@ -88,13 +88,13 @@ Every change must work on Windows, macOS and Linux; pathlib; explicit encoding="
 ## Orchestration and memory (rules)
 
 - **Agent model.** Three models, each with a fixed role:
-  - Opus 5.5 (`claude-opus-5-5`): plans every task; the user approves the plan before execution. Opus also orchestrates and does the final review: it runs the merge gate, reviews security-sensitive changes (plugins, MCP, secrets, desktop), merges to `develop`, keeps `new-ui` equal and logs BEFORE/AFTER in `memory.md`.
+  - Opus 5.5 (`claude-opus-5-5`): plans every task; the user approves the plan before execution. Opus also orchestrates and does the final review: it runs the merge gate, reviews security-sensitive changes (plugins, MCP, secrets, desktop), merges to `develop` and logs BEFORE/AFTER in `memory.md`.
   - Haiku 5.5 (`claude-haiku-5-5`): implements each task in its own worktree (code, docs, tests, mechanical edits).
   - Sonnet 5.5 (`claude-sonnet-5-5`): reviews each Haiku worktree diff against the brief (correctness, cross-OS, security, tests, docs accuracy) and returns findings; Haiku fixes them.
 - **Worktrees.**
   - The orchestrator creates them under the session scratchpad: `git worktree add -b task-<id> <scratchpad>/wt/task-<id> develop`. Never put them inside the repo `.claude/`, which the shell sandbox can't write.
   - Agents work only in their worktree, commit early and often, and never stash or push.
-- **Merging.** Only Opus merges, through `git merge-tree` + `commit-tree` into `develop` while a live run uses the main checkout, or a normal merge otherwise. It then pushes `develop` and keeps `new-ui` equal.
+- **Merging.** Only Opus merges, through `git merge-tree` + `commit-tree` into `develop` while a live run uses the main checkout, or a normal merge otherwise. It then pushes `develop`. `main` only moves for releases (see docs/RELEASING.md).
 - **Gate before merge.** All of these must pass:
   - full pytest outside the sandbox (expect 0 failures);
   - ruff check and format;
@@ -106,7 +106,7 @@ Every change must work on Windows, macOS and Linux; pathlib; explicit encoding="
 
 ## Permissions (what Claude may and may not do here)
 
-- **Allowed:** edit code and docs in this repo, run tests and builds, start the app via preview, use `gh` and git push to `develop`/`new-ui`, and configure repo settings through the GitHub API when asked.
+- **Allowed:** edit code and docs in this repo, run tests and builds, start the app via preview, use `gh` and git push to `develop`, and configure repo settings through the GitHub API when asked.
 - **Sandbox:** binding local ports (Playwright, launcher tests), cloning target repos, live runs and `gh` (keychain) need the sandbox disabled. That is fine for those commands only.
 - **Ask first:** deleting files, dead-code removal (`docs/DEAD_CODE_REVIEW_2026-10-07.md` needs approval), force-pushing, pushing to `main`, creating releases or tags, and changing repo visibility.
 - **Never:** commit secrets, `.env`, run evidence or `agent-framework.pdf`; print API keys (UI shows the last 4 only); relax dependency pins; bypass the skill lock or plugin approval; delete user evidence.

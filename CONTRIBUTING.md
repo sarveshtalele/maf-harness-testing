@@ -17,7 +17,6 @@ Read first:
 | `hotfix/*` | Urgent fix, cut from `main` | `main`, by pull request, then back to `develop` |
 | `develop` | Integration branch and default branch | |
 | `main` | Released code only | Tagged `vX.Y.Z` |
-| `new-ui` | Mirrors `develop` during the transition | |
 
 - Do not push directly to `main` or `develop` (the orchestrator merge described in CLAUDE.md is the only exception).
 - Open pull requests into `develop`. The repository owner sets branch protection (see [RELEASING.md](docs/RELEASING.md)). On the current GitHub plan these rules may not be enforced by GitHub, so follow the rule anyway.

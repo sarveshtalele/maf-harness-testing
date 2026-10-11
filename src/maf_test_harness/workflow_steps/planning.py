@@ -11,7 +11,7 @@ from pydantic import ValidationError
 
 from ..agent import prompt_settings
 from ..agent.personas import persona_instructions
-from ..agent.runtime import AgentOutputError
+from ..agent.runtime import AgentOutputError, GatewayUnavailableError
 from ..envs.environment import build_environment_plan
 from ..envs.setup_guide import setup_guide
 from ..llm.prompts import build_prompt
@@ -371,6 +371,9 @@ class PlanningSteps:
                     prompt_batch=prompt_batch,
                     response_format=response_format,
                 )
+            except GatewayUnavailableError:
+                self._settle_response_cache(stage, False)
+                raise  # an outage is not a bad answer: no repair attempts
             except (
                 ValidationError,
                 AgentOutputError,

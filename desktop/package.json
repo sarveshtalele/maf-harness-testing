@@ -1,7 +1,7 @@
 {
   "name": "agentic-qe-desktop",
   "private": true,
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Agentic QE Platform desktop shell",
   "homepage": "https://github.com/sarveshtalele/maf-harness-testing",
   "author": "Agentic QE <noreply@example.com>",

@@ -76,6 +76,14 @@ ACTION = {
 
 REMEDIES: list[tuple[re.Pattern[str], str]] = [
     (
+        re.compile(
+            r"\[gateway\]|gateway was unreachable|service failed to complete the prompt: "
+            r"(?:Connection error|.*Error code: (?:429|50[234]))",
+            re.I,
+        ),
+        "The model gateway was unreachable or overloaded; check the gateway URL/network, then Retry. Completed work is kept.",
+    ),
+    (
         re.compile(r"patch(?:\.object)?\(\s*(?:sys\s*,\s*)?['\"](?:sys\.)?exit['\"]"),
         "Do not mock sys.exit: execution then continues past the exit and fails later. Use "
         "`with pytest.raises(SystemExit) as exc:` and assert `exc.value.code`. To also assert which code sys.exit "

@@ -14,7 +14,7 @@ datas = [
 ]
 binaries = []
 hiddenimports = collect_submodules("maf_test_harness")
-for pkg in ("agent_framework", "agent_framework_core", "agent_framework_openai", "openai", "pydantic", "jsonschema",
+for pkg in ("agent_framework", "agent_framework_core", "agent_framework_openai", "openai", "httpx", "pydantic", "jsonschema",
             "jsonschema_specifications"):
     try:
         d, b, h = collect_all(pkg)
