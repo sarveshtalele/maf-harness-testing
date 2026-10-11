@@ -8,6 +8,7 @@ import copy
 import hashlib
 import json
 import os
+import re
 import time
 from collections.abc import Callable
 from importlib.metadata import version
@@ -77,6 +78,9 @@ _TRANSIENT_GATEWAY_TYPES = (
 )
 
 
+_QUOTA = re.compile(r"quota|limit exceeded|insufficient_quota|billing", re.I)
+
+
 def _is_transient_gateway_error(exc: BaseException) -> bool:
     """True when ``exc`` or anything it wraps (cause, context, args) is a retryable gateway/connection failure.
 
@@ -105,6 +109,8 @@ def _is_transient_gateway_error(exc: BaseException) -> bool:
             item.status_code >= 500 or item.status_code == 429
         ):
             return False  # 400/401/403/404...: definite, never retried, wrapper text not inspected
+        if isinstance(item, openai.APIStatusError) and item.status_code == 429 and _QUOTA.search(str(item)):
+            return False  # an exhausted quota does not recover within the retry window; a rate limit does
     for item in chain:
         if isinstance(item, _TRANSIENT_GATEWAY_TYPES) or (
             isinstance(item, openai.APIStatusError) and (item.status_code >= 500 or item.status_code == 429)
