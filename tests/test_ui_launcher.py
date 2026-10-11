@@ -263,14 +263,18 @@ def _state(module, tmp_path, monkeypatch, launcher_pid=111, cmd="node /x/next/di
     killed = []
     monkeypatch.setattr(module, "pid_alive", lambda pid: pid == 222)
     monkeypatch.setattr(module, "command_line", lambda pid: cmd if pid == 222 else None)
+    monkeypatch.setattr(module, "tree_commands", lambda pid: [(222, cmd)] if pid == 222 and cmd else [])
     monkeypatch.setattr(module, "port_available", lambda port: False)
     monkeypatch.setattr(module, "terminate_tree", killed.append)
     return killed
 
 
-def test_orphaned_child_of_dead_launcher_is_terminated(tmp_path, monkeypatch, capsys):
+@pytest.mark.parametrize("cmd", ["node /x/next/dist/bin/next start", "next-server (v16.4.0)"])
+def test_orphaned_child_of_dead_launcher_is_terminated(tmp_path, monkeypatch, capsys, cmd):
     module = _launcher()
-    killed = _state(module, tmp_path, monkeypatch)
+    killed = _state(module, tmp_path, monkeypatch, cmd=cmd)
+    child = {"name": "frontend", "pid": 222, "port": 3000, "marker": ["next/dist/bin/next", "next-server"]}
+    module.STATE_FILE.write_text(__import__("json").dumps({"launcher_pid": 111, "children": [child]}))
     module.clean_orphans()
     assert killed == [222] and not module.STATE_FILE.exists()
     assert "orphaned frontend" in capsys.readouterr().out
@@ -281,7 +285,7 @@ def test_unverified_processes_are_never_killed(tmp_path, monkeypatch, case):
     module = _launcher()
     killed = _state(module, tmp_path, monkeypatch, cmd="vim notes.txt" if case == "foreign command" else None)
     if case == "unverifiable":
-        monkeypatch.setattr(module, "command_line", lambda pid: None)
+        monkeypatch.setattr(module, "tree_commands", lambda pid: [])
     if case == "port free":
         monkeypatch.setattr(module, "port_available", lambda port: True)
     if case == "launcher alive":
@@ -289,3 +293,113 @@ def test_unverified_processes_are_never_killed(tmp_path, monkeypatch, case):
         monkeypatch.setattr(module, "command_line", lambda pid: "python scripts/start_ui.py")
     module.clean_orphans()
     assert killed == []
+
+
+FAKE_SERVICE = """
+import os, signal, socket, subprocess, sys, time
+from pathlib import Path
+
+port = int(sys.argv[sys.argv.index("--port") + 1])
+# A grandchild that ignores SIGTERM, like a Next.js server outliving its CLI parent.
+grandchild = subprocess.Popen(
+    [sys.executable, "-c", "import signal, time; signal.signal(signal.SIGTERM, signal.SIG_IGN); time.sleep(600)"]
+)
+Path(os.environ["FAKE_PIDS"], f"{port}.pid").write_text(f"{os.getpid()} {grandchild.pid}")
+server = socket.socket()
+server.bind(("127.0.0.1", port))
+server.listen()
+time.sleep(600)
+"""
+
+DRIVER = """
+import importlib.util, sys
+from pathlib import Path
+
+root, state, fakes = Path(sys.argv[1]), Path(sys.argv[2]), Path(sys.argv[3])
+spec = importlib.util.spec_from_file_location("start_ui", root / "scripts" / "start_ui.py")
+launcher = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(launcher)
+launcher.node_runtime = lambda: sys.executable
+launcher.frontend_command = lambda node, mode, port=None: [node, str(fakes / "fake_ui.py"), "--port", str(port)]
+launcher.API_MODULE = "fake_api"
+launcher.STATE_FILE = state
+sys.argv = ["start_ui.py", "--production", "--port", sys.argv[4], "--api-port", sys.argv[5]]
+sys.exit(launcher.main())
+"""
+
+
+@pytest.mark.skipif(
+    os.name == "nt", reason="POSIX signals; Windows console events are covered by the unit test below"
+)
+@pytest.mark.parametrize("signum", ["SIGTERM", "SIGHUP"])
+def test_signal_to_launcher_stops_both_child_trees(tmp_path, signum):
+    launcher = launcher_module()
+    root = Path(__file__).resolve().parents[1]
+    for name in ("fake_api.py", "fake_ui.py"):
+        (tmp_path / name).write_text(FAKE_SERVICE, encoding="utf-8")
+    (tmp_path / "pids").mkdir()
+    ports = []
+    for _ in range(2):
+        with socket.socket() as probe:
+            probe.bind(("127.0.0.1", 0))
+            ports.append(probe.getsockname()[1])
+    state = tmp_path / "launcher.json"
+    env = {
+        **os.environ,
+        "PYTHONPATH": str(tmp_path),
+        "FAKE_PIDS": str(tmp_path / "pids"),
+        "HARNESS_RUNS_DIR": str(tmp_path / "runs"),
+    }
+    with (tmp_path / "console.log").open("w", encoding="utf-8") as console:
+        process = subprocess.Popen(
+            [sys.executable, "-c", DRIVER, str(root), str(state), str(tmp_path), *map(str, ports)],
+            cwd=root,
+            env=env,
+            stdout=console,
+            stderr=subprocess.STDOUT,
+        )
+        try:
+            deadline = time.monotonic() + 60
+            while len(list((tmp_path / "pids").glob("*.pid"))) < 2 or "Ctrl+C stops" not in (
+                tmp_path / "console.log"
+            ).read_text(encoding="utf-8"):
+                if process.poll() is not None or time.monotonic() > deadline:
+                    pytest.fail((tmp_path / "console.log").read_text(encoding="utf-8"))
+                time.sleep(0.2)
+            pids = [int(pid) for f in (tmp_path / "pids").glob("*.pid") for pid in f.read_text().split()]
+            process.send_signal(getattr(signal, signum))
+            process.wait(timeout=30)
+        finally:
+            if process.poll() is None:
+                process.kill()
+    assert process.returncode == 0, (tmp_path / "console.log").read_text(encoding="utf-8")
+    deadline = time.monotonic() + 5
+    while time.monotonic() < deadline and any(launcher.pid_alive(pid) for pid in pids):
+        time.sleep(0.1)
+    assert not [pid for pid in pids if launcher.pid_alive(pid)], "launcher left child processes running"
+    assert all(launcher.port_available(port) for port in ports) and not state.exists()
+
+
+def test_windows_console_close_stops_children_before_the_process_ends(monkeypatch):
+    import ctypes
+
+    launcher = launcher_module()
+    registered, closed = [], []
+
+    class Kernel32:
+        def SetConsoleCtrlHandler(self, handler, add):
+            registered.append((handler, add))
+            return True
+
+    monkeypatch.setattr(ctypes, "WINFUNCTYPE", ctypes.CFUNCTYPE, raising=False)
+    monkeypatch.setattr(ctypes, "windll", type("WinDLL", (), {"kernel32": Kernel32()})(), raising=False)
+    previous, console = launcher.install_stop_handlers(lambda: closed.append(True), windows=True)
+    try:
+        assert registered == [(console, True)]
+        assert console(0) is False and closed == []  # Ctrl+C stays with the Python signal handler
+        assert console(2) is True and closed == [True]  # CTRL_CLOSE_EVENT stops the children synchronously
+        with pytest.raises(KeyboardInterrupt):
+            signal.getsignal(signal.SIGTERM)(signal.SIGTERM, None)
+    finally:
+        for signum, handler in previous.items():
+            signal.signal(signum, handler)
