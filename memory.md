@@ -503,3 +503,9 @@ Format: `YYYY-MM-DD HH:MM | BEFORE|AFTER | actor | action | scope/risk or result
   - Windows launcher killed a live app's children: clean_orphans treated an unreadable launcher command line (the PowerShell CIM lookup timed out) as "not a launcher"; unverifiable now means skip. This was also the cause of the earlier intermittent failure at a95006d.
   - The rerun test used errno 13, which Windows retries as a sharing lock; it now uses EPERM.
   - The keyboard Playwright spec waited only 15 s for the first gate on the macOS runner; it now waits 60 s like the other specs.
+- 2026-10-11 | BEFORE | Opus | the owner approved deleting the listed dead code and asked that the requirement-analysis-skill E2E not be run. The queue watcher was stopped; only the azure watcher for run d9cb36095900 stays.
+- 2026-10-11 | AFTER | Opus | dead code removed (Haiku; Sonnet reviewed):
+  - _display_value, .filter-label, current_interpreter_satisfies, route_prefixes, model_for, logs_dir, envs/java_env.py, envs/dotnet_env.py, plus the root html, design/, patches/ and azure-plan/.
+  - Doc links were rewritten.
+  - The docs/audit evidence was kept, because docs/README.md links all of it (the review's "unlinked" claim was wrong).
+  - The review caught that .resize-both is built dynamically (`resize-${axis}` in data.tsx). The rule was restored. Lesson: grep for template-built class names before deleting CSS.
