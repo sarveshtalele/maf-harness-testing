@@ -509,3 +509,8 @@ Format: `YYYY-MM-DD HH:MM | BEFORE|AFTER | actor | action | scope/risk or result
   - Doc links were rewritten.
   - The docs/audit evidence was kept, because docs/README.md links all of it (the review's "unlinked" claim was wrong).
   - The review caught that .resize-both is built dynamically (`resize-${axis}` in data.tsx). The rule was restored. Lesson: grep for template-built class names before deleting CSS.
+- 2026-10-11 | AFTER | Opus | Dependabot triage, approved by the owner:
+  - Applied pytest 9.1.1 (fixes GHSA-6w46-j5rx-g56g), agent-hooks-sdk 0.1.0b1 and the Node 24 action majors (e9ef61d).
+  - Closed #16 (filelock 4) and #21 (TypeScript 7) to keep the pins.
+  - Dismissed the sprintf-js alert as tolerable risk: no patched release exists, and it is a build-time-only dependency.
+  - v1.0.4 cut with the review-wave, dead-code and dependency fixes.
