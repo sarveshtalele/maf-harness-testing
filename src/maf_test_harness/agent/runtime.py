@@ -62,42 +62,57 @@ class GatewayUnavailableError(AgentOutputError):
     """The model gateway stayed unreachable through every transient-error retry (see GATEWAY_RETRY_DELAYS)."""
 
 
-# Backoff before each retry of a transient gateway error (about 5 minutes in total). Tests monkeypatch this to zeros.
+# Backoff before each retry of a transient gateway error (about 5 minutes in total). Tests monkeypatch these to zeros.
 GATEWAY_RETRY_DELAYS: tuple[float, ...] = (5, 10, 20, 40, 60, 60, 60, 60)
+# Total wall-clock budget across attempts and waits; a retry that would start past it is not made.
+GATEWAY_RETRY_DEADLINE_SECONDS: float = 360
+GATEWAY_TAG = (
+    "[gateway] "  # prefix of every GatewayUnavailableError message; the error categorizer keys on it
+)
 _TRANSIENT_GATEWAY_TYPES = (
     openai.APIConnectionError,  # includes openai.APITimeoutError
     openai.RateLimitError,
     openai.InternalServerError,
-    httpx.ConnectError,
-    httpx.ReadTimeout,
-    httpx.RemoteProtocolError,
+    httpx.TransportError,  # connect/read/write/protocol failures and pool timeouts
 )
 
 
 def _is_transient_gateway_error(exc: BaseException) -> bool:
-    """True when ``exc`` or anything it wraps (cause, context, args) is a retryable gateway/connection failure."""
+    """True when ``exc`` or anything it wraps (cause, context, args) is a retryable gateway/connection failure.
+
+    A definite answer from the gateway (openai 4xx such as BadRequest, Authentication or PermissionDenied) anywhere in
+    the chain makes the whole error non-transient, even when a wrapper's text repeats "Connection error".
+    """
     if isinstance(exc, GatewayUnavailableError):
         return False
+    chain: list[BaseException] = []
     pending: list[BaseException] = [exc]
-    seen: set[int] = set()
     while pending:
         item = pending.pop()
-        if id(item) in seen:
+        if any(item is seen for seen in chain):
             continue
-        seen.add(id(item))
-        if isinstance(item, _TRANSIENT_GATEWAY_TYPES):
-            return True
-        if isinstance(item, openai.APIStatusError) and (item.status_code >= 500 or item.status_code == 429):
-            return True
-        message = str(item)
-        if "Connection error" in message or "Server disconnected" in message:
-            return True  # MAF wraps the openai error into a ChatClientException with this text
+        chain.append(item)
         pending.extend(a for a in item.args if isinstance(a, BaseException))
         pending.extend(
             c
             for c in (item.__cause__, item.__context__, getattr(item, "inner_exception", None))
             if isinstance(c, BaseException)
         )
+    for item in chain:
+        if isinstance(item, GatewayUnavailableError):
+            return False  # already retried to exhaustion; its text quotes the last error
+        if isinstance(item, openai.APIStatusError) and not (
+            item.status_code >= 500 or item.status_code == 429
+        ):
+            return False  # 400/401/403/404...: definite, never retried, wrapper text not inspected
+    for item in chain:
+        if isinstance(item, _TRANSIENT_GATEWAY_TYPES) or (
+            isinstance(item, openai.APIStatusError) and (item.status_code >= 500 or item.status_code == 429)
+        ):
+            return True
+        # MAF wraps the openai error into a ChatClientException whose text carries the original message
+        if "Connection error" in str(item) or "Server disconnected" in str(item):
+            return True
     return False
 
 
@@ -542,8 +557,11 @@ class MAFHarnessRuntime:
 
     async def _run_agent(self, agent, prompt, **kwargs):
         retries = iter(GATEWAY_RETRY_DELAYS)
+        started = time.monotonic()
+        attempts = 0
         while True:
             raise_if_cancelled()
+            attempts += 1
             try:
                 return await asyncio.wait_for(agent.run(prompt, **kwargs), timeout=MODEL_TIMEOUT_SECONDS)
             except TimeoutError as exc:
@@ -555,10 +573,14 @@ class MAFHarnessRuntime:
                     raise
                 delay = next(retries, None)
                 last = f"{type(exc).__name__}: {str(exc)[:300]}"
-                if delay is None:
+                over_deadline = delay is not None and (
+                    time.monotonic() - started + delay > GATEWAY_RETRY_DEADLINE_SECONDS
+                )
+                if delay is None or over_deadline:
                     raise GatewayUnavailableError(
-                        f"The model gateway was unreachable for about 5 minutes ({last}). Check the gateway URL, "
-                        "network or VPN, then Retry the stage; completed batches are kept."
+                        f"{GATEWAY_TAG}The model gateway was unreachable for several minutes ({attempts} attempts; "
+                        f"last error: {last}). Check the gateway URL, network or VPN, then Retry the stage; "
+                        "completed batches are kept."
                     ) from exc
                 self._emit("gateway_retry", delay_seconds=delay, error=last)
                 await _sleep_cancellable(delay)

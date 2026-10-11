@@ -17,8 +17,8 @@ CATEGORIES = (
     ("build_gate", r"build gate"),
     (
         "gateway",
-        r"Connection error|gateway was unreachable|APIConnectionError|Server disconnected|Rate limit|"
-        r"(?:HTTP|status(?: code)?|error)\D{0,12}\b(?:502|503|504)\b",
+        r"\[gateway\]|gateway was unreachable|service failed to complete the prompt: "
+        r"(?:Connection error|.*Error code: (?:429|50[234]))",
     ),
     ("quarantined", r"quarantined"),
 )

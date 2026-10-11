@@ -16,6 +16,7 @@ from typing import Any, Literal
 from pydantic import BaseModel, Field
 
 from ..llm.prompts import build_prompt
+from .runtime import GatewayUnavailableError
 
 AGENT_NAME = "diagnosis"  # the trace/tool-map name of this loop; deliberately not a workflow stage
 LOG_TAIL_CHARS = 4_000
@@ -88,6 +89,8 @@ async def diagnose(
             response_format=DiagnosisNote,
         )
         return DiagnosisNote.model_validate(note).model_dump() | {"source": "agent"}
+    except GatewayUnavailableError:
+        raise  # the gateway is down for the whole run: surface it instead of a silent note
     except Exception as exc:  # advisory only
         return {"error": f"{type(exc).__name__}: {str(exc)[:300]}", "source": "agent"}
 

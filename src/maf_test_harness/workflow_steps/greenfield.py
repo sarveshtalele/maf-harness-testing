@@ -7,7 +7,7 @@ from datetime import UTC, datetime
 from pydantic import ValidationError
 
 from ..agent.personas import persona_instructions
-from ..agent.runtime import AgentOutputError
+from ..agent.runtime import AgentOutputError, GatewayUnavailableError
 from ..llm.prompts import build_prompt
 from ..models import RepoAnalysis, SpecsDraft
 from ..repo.specs import build_specs, section_ref, specs_to_requirements
@@ -221,6 +221,9 @@ class GreenfieldSteps:
                 draft = SpecsDraft.model_validate(result["artifact"])
                 local = dict(counters)
                 built = build_specs([d.model_dump() for d in draft.specs], batch, local)
+            except GatewayUnavailableError:
+                self._settle_response_cache(stage, False)
+                raise  # an outage is not a bad answer: no repair attempts
             except (ValidationError, AgentOutputError, ValueError) as exc:
                 self._settle_response_cache(stage, False)
                 self.audit("stage_repair", stage=stage, attempt=attempt, error=str(exc)[:600])

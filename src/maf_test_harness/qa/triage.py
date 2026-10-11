@@ -77,7 +77,8 @@ ACTION = {
 REMEDIES: list[tuple[re.Pattern[str], str]] = [
     (
         re.compile(
-            r"Connection error|gateway was unreachable|APIConnectionError|Server disconnected|Rate limit",
+            r"\[gateway\]|gateway was unreachable|service failed to complete the prompt: "
+            r"(?:Connection error|.*Error code: (?:429|50[234]))",
             re.I,
         ),
         "The model gateway was unreachable or overloaded; check the gateway URL/network, then Retry. Completed work is kept.",

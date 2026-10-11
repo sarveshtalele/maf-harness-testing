@@ -16,17 +16,16 @@ from maf_test_harness.ui.errors import categorize, run_errors
         ("needs exactly one concrete test declaration", "one_test_per_file"),
         ("generated file references unknown case IDs: ['A']", "unknown_case_ids"),
         ("Structured output failed schema validation", "schema"),
-        ("Connection error.", "gateway"),
-        (
-            "The model gateway was unreachable for about 5 minutes (APIConnectionError: Connection error.).",
-            "gateway",
-        ),
-        ("RemoteProtocolError: Server disconnected without sending a response", "gateway"),
-        ("Error code: 503 - upstream overloaded", "gateway"),
-        ("HTTP 502 Bad Gateway from the model endpoint", "gateway"),
-        ("Rate limit reached for requests", "gateway"),
+        ("[gateway] The model gateway was unreachable for several minutes (5 attempts).", "gateway"),
+        ("MiddlewareFailure: service failed to complete the prompt: Connection error.", "gateway"),
+        ("service failed to complete the prompt: Error code: 503 - upstream overloaded", "gateway"),
+        ("service failed to complete the prompt: Error code: 429 - rate limited", "gateway"),
         ("boom", "other"),
         ("generated 503 cases for the module", "other"),
+        # ordinary test output that mentions the same words must not be gateway failures
+        ("assert resp.status_code == 503", "other"),
+        ("Rate limit exceeded in test_rate_limit", "other"),
+        ("'Connection error' in msg", "other"),
     ],
 )
 def test_categories(text, cat):
@@ -38,6 +37,12 @@ def test_gateway_outage_has_a_remedy_and_import_errors_do_not():
 
     assert "unreachable or overloaded" in remedy_for("The model gateway was unreachable for about 5 minutes")
     assert "unreachable or overloaded" not in remedy_for("No module named 'foo'")
+    for test_output in (
+        "assert resp.status_code == 503",
+        "Rate limit exceeded in test_rate_limit",
+        "'Connection error' in msg",
+    ):
+        assert "unreachable or overloaded" not in remedy_for(test_output)
 
 
 def write_audit(d, events):

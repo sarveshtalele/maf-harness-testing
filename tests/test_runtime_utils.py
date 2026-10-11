@@ -165,3 +165,40 @@ def test_gateway_error_detection_walks_causes_and_args():
         GatewayUnavailableError("gateway was unreachable (Connection error.)")
     )
     assert not _is_transient_gateway_error(ValueError("plain"))
+
+
+def test_definite_gateway_answers_and_transport_errors_are_classified():
+    import httpx
+    import openai
+
+    from maf_test_harness.agent.runtime import _is_transient_gateway_error
+
+    request = httpx.Request("POST", "http://gateway.test")
+    for cls, status in (
+        (openai.BadRequestError, 400),
+        (openai.AuthenticationError, 401),
+        (openai.PermissionDeniedError, 403),
+    ):
+        error = cls("Connection error.", response=httpx.Response(status, request=request), body=None)
+        assert not _is_transient_gateway_error(error)
+        wrapper = RuntimeError("service failed to complete the prompt: Connection error.")
+        wrapper.__cause__ = error
+        assert not _is_transient_gateway_error(wrapper)
+    assert _is_transient_gateway_error(httpx.ReadTimeout("slow", request=request))
+    assert _is_transient_gateway_error(httpx.WriteError("broken pipe", request=request))
+
+
+def test_gateway_retry_deadline_stops_before_the_next_wait(monkeypatch):
+    import asyncio
+    import time
+
+    from maf_test_harness.agent import runtime
+
+    monkeypatch.setattr(runtime, "GATEWAY_RETRY_DELAYS", (1, 1, 1))
+    monkeypatch.setattr(runtime, "GATEWAY_RETRY_DEADLINE_SECONDS", 0.5)
+    agent = _ScriptedAgent(failures=10**6, error=_gateway_down())
+    started = time.monotonic()
+    with pytest.raises(runtime.GatewayUnavailableError, match=r"\[gateway\].*1 attempts"):
+        asyncio.run(_adapter()._run_agent(agent, "p"))
+    assert agent.calls == 1  # the 1 s wait would already pass the 0.5 s deadline
+    assert time.monotonic() - started < 0.5
