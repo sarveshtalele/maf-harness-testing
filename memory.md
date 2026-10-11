@@ -469,3 +469,14 @@ Format: `YYYY-MM-DD HH:MM | BEFORE|AFTER | actor | action | scope/risk or result
   - Errors tab "gateway" category and remedy match only the harness tag or the MAF wrapper text.
   - httpx added to the PyInstaller collect_all.
   - Gate: pytest 1155/1 skipped, Playwright 18/18, ruff/map/skills ok. The run was retried with the gateway back up.
+- 2026-10-11 | AFTER | Opus | v1.0.1 released (gateway resilience): main merged from develop keeping the user README, tag v1.0.1, all 4 installers built, published
+- 2026-10-11 | AFTER | Opus | end-to-end traceability (user request):
+  - Host-assigned PLN-xx plan areas and CTL-xxx controls (one per requirement, run-scoped, natural sort) are created at planning. Cases carry control_ids, and generated headers carry `| CTL:` (a model-written CASE_ID line is replaced with the canonical one).
+  - QA report "End-to-end traceability" matrix shows status and failed_at (planning/design/generation/environment_setup/test_execution). Existing-witness and excluded requirements are not failures; skipped is not a failure.
+  - Step reports gain Control columns; the deliverable gains traceability.json and a formula-safe traceability.csv.
+  - Report theme: verdict banner, contents nav, status badges, sticky tables, print CSS, report variant only, memoised, unique anchors per panel.
+  - Process: Haiku implemented, Sonnet reviewed both (blockers fixed), Opus merged. Gate: pytest 1174/1 skipped, Playwright 19/19, desktop 14/14, tsc/build/ruff/map/skills ok
+- 2026-10-11 | AFTER | Opus | azure-litellm-proxy E2E result: FAIL with 296 cases (34 passed, 7 failed, 106 errors, 83 not_executed, 66 generation_failed). Two harness bugs found: jest crashed writing .harness-reports/jest.json (missing dir, so JS results were lost), and self-rooted backend/ (bare sibling imports, PYTHONPATH=backend) is not on PYTHONPATH (109 ModuleNotFoundError). Fix in progress (task-source-roots)
+- 2026-10-11 | AFTER | Opus | azure-litellm-proxy rerun from environment_setup on the fixed runner: 193 tests ran, 152 passed (was 36), 37 failed, 4 errors (was 106). jest results now kept; backend/ treated as a self-rooted import root.
+- 2026-10-11 | AFTER | Opus | JS/TS import gate check_js_imports (Haiku, Sonnet-reviewed, hardened to fail open on unmodelled config): rejects undeclared packages (repo-wide package.json union), missing relative files, unresolvable aliases, and DOM use under a single node testEnvironment. On the azure workspace it rejects the 42 tests that import undeclared @testing-library/react. Gate: pytest 1214/1 skipped, Playwright 19/19, desktop 14/14
+- 2026-10-11 | BEFORE | Opus | release v1.0.2 (traceability control IDs, report theme, jest report dir, self-rooted import roots, JS import gate): bump versions, merge develop into main keeping the user README, tag, publish

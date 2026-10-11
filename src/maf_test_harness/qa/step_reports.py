@@ -156,9 +156,10 @@ def _plan(a: dict, ctx: dict) -> tuple[dict, list[Check]]:
     sections = {
         "inputs": _kv([("Requirements", ctx["requirements"]), ("Objective", a.get("objective"))]),
         "results": _table(
-            ["Area", "Level", "Risk", "Scenarios", "Evidence files"],
+            ["Area ID", "Area", "Level", "Risk", "Scenarios", "Evidence files"],
             [
                 [
+                    x.get("area_id") or "",
                     x.get("name"),
                     x.get("level"),
                     x.get("risk"),
@@ -172,7 +173,21 @@ def _plan(a: dict, ctx: dict) -> tuple[dict, list[Check]]:
         + (", ".join(a.get("recommended_frameworks") or []) or "none")
         + "\n\n**Execution order**\n\n"
         + "\n".join(f"{i}. {md_cell(s, 300)}" for i, s in enumerate(a.get("execution_order") or [], 1)),
-        "extra": "**Setup actions**\n\n"
+        "extra": "**Controls**\n\n"
+        + _table(
+            ["Control", "Requirement", "Plan area", "Level"],
+            [
+                [
+                    c.get("control_id"),
+                    c.get("requirement_id"),
+                    f"{c.get('plan_area_id')} {c.get('plan_area_name')}",
+                    c.get("level"),
+                ]
+                for c in a.get("controls") or []
+            ],
+            empty="_No controls._",
+        )
+        + "\n\n**Setup actions**\n\n"
         + _bullets(a.get("setup_actions") or [])
         + "\n\n**Assumptions**\n\n"
         + _bullets(a.get("assumptions") or [])
@@ -214,10 +229,21 @@ def _design(a: dict, ctx: dict) -> tuple[dict, list[Check]]:
         )
         + "\n\n"
         + _table(
-            ["ID", "Title", "Type", "Level", "Pri", "Requirements", "Confidence", "Review verdict"],
+            [
+                "ID",
+                "Control",
+                "Title",
+                "Type",
+                "Level",
+                "Pri",
+                "Requirements",
+                "Confidence",
+                "Review verdict",
+            ],
             [
                 [
                     c.get("id"),
+                    ", ".join(c.get("control_ids") or []),
                     c.get("title"),
                     c.get("type"),
                     c.get("level"),
@@ -357,10 +383,11 @@ def _generation(a: dict, ctx: dict) -> tuple[dict, list[Check]]:
         )
         + "\n\n"
         + _table(
-            ["Case", "File", "Reviewer verdict", "Confidence"],
+            ["Case", "Control", "File", "Reviewer verdict", "Confidence"],
             [
                 [
                     cid,
+                    ctx["control_by_case"].get(cid, ""),
                     ", ".join(per_case.get(cid, [])) or ("generation failed" if cid in failed else "none"),
                     "generation_failed"
                     if cid in failed and cid not in per_case
@@ -452,9 +479,15 @@ def _execution(a: dict, ctx: dict) -> tuple[dict, list[Check]]:
         "results": _kv([(k, v) for k, v in sorted(counts.items())] + [("Total cases", len(cases))])
         + "\n\n"
         + _table(
-            ["Case", "Title", "Status", "File"],
+            ["Case", "Control", "Title", "Status", "File"],
             [
-                [c.get("id"), c.get("title"), c.get("status"), c.get("file") or ""]
+                [
+                    c.get("id"),
+                    ", ".join(c.get("control_ids") or []),
+                    c.get("title"),
+                    c.get("status"),
+                    c.get("file") or "",
+                ]
                 for c in sorted(cases, key=lambda c: str(c.get("id")))
             ],
         ),
@@ -614,6 +647,7 @@ def _context(run_dir: Path, state: dict) -> dict:
         "requirement_ids": [str(r.get("id")) for r in reqs],
         "areas": len((arts.get("test_planning") or {}).get("areas") or []),
         "case_ids": [str(c.get("id")) for c in cases],
+        "control_by_case": {str(c.get("id")): ", ".join(c.get("control_ids") or []) for c in cases},
         "files": len((arts.get("test_generation") or {}).get("files") or []),
         "budget": state.get("budget") or {},
     }

@@ -51,6 +51,7 @@ class RepoAnalysis(BaseModel):
     test_frameworks: list[str] = Field(default_factory=list)
     likely_test_directories: list[str] = Field(default_factory=list)
     has_tests: bool = False
+    python_source_roots: list[str] = Field(default_factory=list)
     notes: list[str] = Field(default_factory=list)
 
 

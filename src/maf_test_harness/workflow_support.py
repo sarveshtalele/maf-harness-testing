@@ -235,6 +235,7 @@ LANGUAGE_RULES: dict[str, dict[str, Any]] = {
         "rules": [
             'Make the test title string `"<case_id>: <title>"` and any helper names descriptive camelCase.',
             "Use the runner declared in package.json (jest, vitest or mocha) and match the module system (ESM `import` vs CommonJS `require`) of the nearest package.json and the source under test.",
+            "Import only packages declared in the component's package.json and use its existing test runner, environment and aliases; with testEnvironment 'node' do not render components.",
         ],
     },
     "typescript": {
@@ -248,6 +249,7 @@ LANGUAGE_RULES: dict[str, dict[str, Any]] = {
         "rules": [
             'Make the test title string `"<case_id>: <title>"` and any helper names descriptive camelCase.',
             "Use the runner declared in package.json (jest, vitest or mocha) and the repository tsconfig/ESM settings; import only exports that exist in the source.",
+            "Import only packages declared in the component's package.json and use its existing test runner, environment and aliases; with testEnvironment 'node' do not render components.",
         ],
     },
     "csharp": {
@@ -316,8 +318,15 @@ def _generation_policy(repo: dict[str, Any], state: dict[str, Any] | None = None
         "integration_rules": integration_rules(repo, state),
         **(
             {
-                "python_import_roots": python_import_roots(
-                    [*(repo.get("source_files") or []), *(repo.get("package_files") or [])]
+                "python_import_roots": list(
+                    dict.fromkeys(
+                        [
+                            *python_import_roots(
+                                [*(repo.get("source_files") or []), *(repo.get("package_files") or [])]
+                            ),
+                            *(repo.get("python_source_roots") or []),
+                        ]
+                    )
                 )
             }
             if "python" in families

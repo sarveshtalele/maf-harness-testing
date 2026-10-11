@@ -215,6 +215,16 @@ sequenceDiagram
 | A green verdict means something | `envs.runners.execute_plan` (fresh reports only), `qa.report.verdict_for` |
 | Every failure names the files/lines to change | `qa.triage.build_updates` → `qa_report["updates"]` |
 
+## 4.1 End-to-end traceability (control IDs)
+
+The host assigns every ID; models never write one, so model schemas and the provider prompt cache are unchanged.
+
+- `qa/controls.py` (pure): `assign_controls` makes one `CTL-nnn` control per requirement (natural requirement-ID order) and maps it to a plan area `PLN-xx` by the largest overlap of source files with area evidence files (symbol match adds one; ties keep plan order; none gives `PLN-00 Not planned`).
+- Planning validation adds `areas[i].area_id` and `controls` to the stored test plan; design validation sets `control_ids` on every case; the generated CASE_ID header gains `| CTL: ...` (old headers still parse via `parse_case_marker`). Runs without stored controls get them recomputed.
+- `trace_rows` joins each control to its cases and reports the generation, environment and execution outcome, `final_status` (passed, failed, error, not_executed, generation_failed, not_designed) and `failed_at` (planning, design, generation, environment_setup, test_execution, or empty when passed). A multi-case control takes its worst status and earliest failing step.
+- Control IDs are sequential and run-scoped: `CTL-nnn` follows the sorted requirement set. The same requirement set always gets the same IDs, so rerunning planning keeps them; a different requirement set renumbers them. The `CASE_ID` header and the QA report reference these IDs only within the same run.
+- `build_qa_report` returns `traceability` and `traceability_summary`; the QA Markdown has an "End-to-end traceability" section and the deliverable ZIP has `harness-report/traceability.json` and `traceability.csv`.
+
 ## 5. Run directory (`.maf-harness/runs/<run>/`)
 
 | Path | Content |
@@ -302,6 +312,7 @@ this is a private repo with no external consumers of the old paths, so there was
 | `qa/report.py` | QA report | `build_qa_report`, `verdict_for`, `render_markdown` | requirement → case → file → result |
 | `qa/triage.py` | Files/lines to update | `locations`, `classify`, `build_updates`, `REMEDIES` / `remedy_for` (concrete fix per failure pattern) | Test-defect vs application-first classification; remedies feed regeneration and the QA report |
 | `qa/packaging.py` | Deliverable ZIP | `build_deliverable`, `run_instructions` | Repo + generated tests + `harness-report/` |
+| `qa/controls.py` | End-to-end traceability | `assign_controls`, `add_plan_controls`, `case_controls`, `trace_rows`, `trace_matrix` | Plan area → control → case → generation → environment → execution, with the failing step |
 | `ui/artifact_presenter.py` | JSON → readable UI/Markdown | `json_to_markdown`, `humanize` | Shared by UI and `scripts/json_to_markdown.py` |
 | `monitoring/trace.py` | Run trace recorder | `TraceRecorder` (thread-safe JSON Lines), `read_trace`, `summarize_arguments` / `redact`, `tool_category` | Never stores prompts, responses or complete files |
 | `monitoring/report.py` | Observability and traceability report | `build_report` (from `trace.jsonl`, `audit.jsonl`, `run.json`, `qa_report.json`), `render_markdown` | Works for runs made before tracing existed (summary level); integrity checks |

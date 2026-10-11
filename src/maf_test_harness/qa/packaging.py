@@ -6,12 +6,16 @@ Layout inside the archive::
     harness-report/qa_report.md   verdict, per-case results, files to update (file:line)
     harness-report/steps/*.md     one validated Markdown report per workflow step (00-summary … 08-qa-verdict)
     harness-report/*.json         requirements, environment, test plan, test design, generation catalog, executions
+    harness-report/traceability.json  one row per control (plan -> design -> generation -> execution)
+    harness-report/traceability.csv   one row per control/case pair
     harness-report/audit.jsonl    approvals and tool calls
     harness-report/RUN_TESTS.md   the exact commands the harness used, to reproduce the run
 """
 
 from __future__ import annotations
 
+import csv
+import io
 import json
 import shlex
 import zipfile
@@ -20,6 +24,7 @@ from pathlib import Path, PureWindowsPath
 from ..envs.execution import EXPORT_SKIP_DIRS, FORWARDED_ENV, _exportable
 from ..hooks.builtin import redact
 from ..ui.evidence import MAX_FILE_BYTES, ROOTS, clean_content
+from .controls import trace_matrix
 from .step_reports import build_step_reports
 
 REPORT_DIR = "harness-report"
@@ -39,6 +44,46 @@ def _add_tree(archive: zipfile.ZipFile, repo: Path, prefix: str, skip: set[str])
             and relative.as_posix() not in skip
         ):
             archive.write(path, f"{prefix}/{relative.as_posix()}")
+
+
+def _csv_cell(value: object) -> str:
+    """Redacted cell; a leading formula character gets a quote so spreadsheets never evaluate it."""
+    text = redact(str(value))[0]
+    return "'" + text if text.startswith(("=", "+", "-", "@", "\t", "\r")) else text
+
+
+def _traceability_csv(rows: list[dict]) -> str:
+    header = [
+        "control_id",
+        "requirement_id",
+        "plan_area_id",
+        "level",
+        "case_id",
+        "case_title",
+        "test_file",
+        "generation",
+        "execution",
+        "environment",
+        "final_status",
+        "failed_at",
+        "reason",
+    ]
+    buffer = io.StringIO(newline="")
+    writer = csv.writer(buffer)
+    writer.writerow(header)
+    for row in rows:
+        base = [row["control_id"], row["requirement_id"], row["plan_area_id"], row["level"]]
+        tail = [row["environment"], row["final_status"], row["failed_at"], row["reason"]]
+        for case in row["cases"] or [{}]:
+            values = [
+                case.get("case_id", ""),
+                case.get("title", ""),
+                case.get("file", ""),
+                case.get("generation", row["generation"]),
+                case.get("execution", row["execution"]),
+            ]
+            writer.writerow([_csv_cell(v) for v in base + values + tail])
+    return buffer.getvalue()
 
 
 def run_instructions(state: dict) -> str:
@@ -238,6 +283,9 @@ def build_deliverable(run_dir: Path, state: dict, executions_dir: Path | None = 
             archive.writestr(f"{REPORT_DIR}/executions/{report.parent.name}.json", clean_content(report))
         for step_name, markdown in build_step_reports(run_dir, state).items():
             archive.writestr(f"{REPORT_DIR}/steps/{step_name}.md", redact(markdown)[0])
+        traceability = trace_matrix(state)
+        archive.writestr(f"{REPORT_DIR}/traceability.json", _json(traceability))
+        archive.writestr(f"{REPORT_DIR}/traceability.csv", _traceability_csv(traceability))
         archive.writestr(f"{REPORT_DIR}/RUN_TESTS.md", run_instructions(state))
         archive.writestr(f"{REPORT_DIR}/rerun.py", RERUN)
         archive.writestr(f"{REPORT_DIR}/rerun-plan.json", json.dumps(portable_plan(state, run_dir), indent=2))

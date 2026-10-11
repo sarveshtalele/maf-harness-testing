@@ -7,7 +7,9 @@ from ..skills.contracts import _repo_module_files
 
 def check_fixture_contracts(content, path, ctx):
     tree = ast.parse(content)
-    modules = _repo_module_files([*ctx.source_files, *getattr(ctx, "package_files", [])])
+    modules = _repo_module_files(
+        [*ctx.source_files, *getattr(ctx, "package_files", [])], root=getattr(ctx, "root", None)
+    )
     contracts = {}
     for node in tree.body:
         if not isinstance(node, ast.ImportFrom) or node.level or node.module not in modules:

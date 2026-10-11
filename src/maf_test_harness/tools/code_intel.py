@@ -25,11 +25,13 @@ from ..repo.analyzer import declared_dependencies, java_signatures
 from ..skills.contracts import (
     _PLACEHOLDER,
     _SKIP_MARKERS,
+    JS_SUFFIXES,
     _bound_names,
     _module_symbols,
     _native_syntax_check,
     _repo_module_files,
     check_java_imports,
+    check_js_imports,
     check_python_imports,
     check_python_test_hygiene,
     check_route_literals,
@@ -148,7 +150,7 @@ def resolve_import(ctx: RepoContext, module: str, language: str = "python") -> d
     stdlib = getattr(sys, "stdlib_module_names", frozenset())
     if top in stdlib:
         return {"module": module, "status": "stdlib"}
-    modules = _repo_module_files([*ctx.source_files, *ctx.package_files])
+    modules = _repo_module_files([*ctx.source_files, *ctx.package_files], root=ctx.root)
     if module in modules:
         return {"module": module, "status": "repo", "file": modules[module]}
     if any(m.startswith(module + ".") for m in modules):
@@ -419,8 +421,9 @@ def static_gate(ctx: RepoContext, path: str, content: str, preferred: list[str] 
                 read_source=ctx.read,
                 installed=installed,
                 preferred=preferred,
+                root=ctx.root,
             )
-        check_python_test_hygiene(content, path, ctx.source_files, read_source=ctx.read)
+        check_python_test_hygiene(content, path, ctx.source_files, read_source=ctx.read, root=ctx.root)
         check_fixture_contracts(content, path, ctx)
         check_mock_pitfalls(content, path, ctx)
         check_stateful_fixtures(ctx, path, content)
@@ -436,6 +439,10 @@ def static_gate(ctx: RepoContext, path: str, content: str, preferred: list[str] 
             check_java_imports(content, [*ctx.source_files, *ctx.test_files], ctx.dependency_text, path)
     elif problem := _native_syntax_check(path, content):
         raise ValueError(f"{path}: {problem}")
+    elif path.endswith(JS_SUFFIXES):
+        check_js_imports(
+            content, path, [*ctx.source_files, *ctx.test_files, *ctx.package_files], read_source=ctx.read
+        )
     if marker := _SKIP_MARKERS.search(content) or _PLACEHOLDER.search(content):
         raise ValueError(f"{path} contains a skip/placeholder marker ('{marker.group(0)}'); tests must run")
     check_route_literals(content, path, ctx.routes, ctx.app_url)

@@ -224,6 +224,27 @@ REMEDIES: list[tuple[re.Pattern[str], str]] = [
         "mutations on the FX thread (Platform.runLater + latch).",
     ),
     (
+        re.compile(r"is not declared in \S*package\.json"),
+        "Import only packages declared in that package.json; use its existing test runner (jest, vitest or Playwright), "
+        "aliases and @testing-library only when declared. Otherwise test through the real module's exported API with "
+        "no new dependency, or record a gap.",
+    ),
+    (
+        re.compile(r"testEnvironment is 'node'"),
+        "Keep the test to logic: with the repository's node test environment do not render components or touch "
+        "document/window; test pure functions or hooks, or record a testability gap.",
+    ),
+    (
+        re.compile(r"neither a repository file nor a configured alias"),
+        "Use a relative path from the test file to an existing source file, or an alias already configured in "
+        "tsconfig/jest; do not invent an alias.",
+    ),
+    (
+        re.compile(r"does not match any repository file"),
+        "Use a relative path from the test file to an existing source file, or an alias already configured in "
+        "tsconfig/jest; do not invent an alias.",
+    ),
+    (
         re.compile(r"Cannot find module|ERR_MODULE_NOT_FOUND"),
         'Use the repository\'s module system (ESM vs CJS from package.json "type"), relative paths from the test file, '
         "and existing path aliases from tsconfig.",

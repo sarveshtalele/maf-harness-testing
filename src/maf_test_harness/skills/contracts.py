@@ -5,14 +5,18 @@ from __future__ import annotations
 import ast
 import difflib
 import json
+import posixpath
 import re
 import shutil
 import subprocess
+import sys
 import tempfile
 import uuid
+from collections import Counter
 from collections.abc import Callable
 from copy import deepcopy
 from datetime import UTC, datetime
+from functools import lru_cache
 from pathlib import Path, PurePosixPath
 from typing import Any
 from urllib.parse import urlsplit
@@ -180,7 +184,11 @@ def finalize_discovered_requirements(document: dict[str, Any], repo_url: str) ->
                 "source_files": _clean_paths(item.get("source_files"), "inferred requirement"),
                 "category": item.get("category", "functional"),
                 "actor": actor,
-                **({"source_symbol": item["source_symbol"], "source_line": item.get("source_line", 0)} if item.get("source_symbol") else {}),
+                **(
+                    {"source_symbol": item["source_symbol"], "source_line": item.get("source_line", 0)}
+                    if item.get("source_symbol")
+                    else {}
+                ),
             }
         )
     criteria = []
@@ -317,7 +325,9 @@ def _case_id(section: str, case: dict[str, Any], repo_url: str) -> str:
 _PRIORITY_RANK = {"P0": 0, "P1": 1, "P2": 2}
 
 
-def _trim_to_budget(result: dict[str, Any], tests: list[dict[str, Any]], by_id: dict, budget: int) -> list[str]:
+def _trim_to_budget(
+    result: dict[str, Any], tests: list[dict[str, Any]], by_id: dict, budget: int
+) -> list[str]:
     """Drop the lowest-ranked cases of over-budget requirements (in place); return the dropped case IDs.
 
     Cases are ranked priority, then type order, then id. A case counts toward every requirement it links and is
@@ -774,21 +784,56 @@ def _case_marker_comment(path: str, case_id: str, meta: dict[str, str] | None = 
         line += f" | RUN: {meta['run']}"
     if meta.get("req"):
         line += f" | REQ: {meta['req']}"
+    if meta.get("ctl"):
+        line += f" | CTL: {meta['ctl']}"
     if meta.get("title"):
         line += f" | TITLE: {meta['title']}"
     return line
 
 
+def _fit_ids(ids: list[Any], limit: int = 200) -> str:
+    """Comma-joined IDs that fit ``limit`` characters; whole IDs only, never cut mid-ID."""
+    kept: list[str] = []
+    for item in ids:
+        candidate = ", ".join([*kept, str(item)])
+        if len(candidate) > limit:
+            break
+        kept.append(str(item))
+    return ", ".join(kept)
+
+
 def case_marker_meta(case: dict[str, Any], run_id: str = "", run_name: str = "") -> dict[str, str]:
     """Header fields for one approved case; every value is single-line text."""
-    reqs = [str(link.get("id", "")) for link in case.get("traceability_links") or [] if isinstance(link, dict)]
+    reqs = [
+        str(link.get("id", "")) for link in case.get("traceability_links") or [] if isinstance(link, dict)
+    ]
     run = _one_line(run_id, 40)
     if run and run_name:
         run += f" ({_one_line(run_name, 80)})"
     return {
         "run": run,
         "req": ", ".join(dict.fromkeys(r for r in reqs if r))[:200],
+        "ctl": _fit_ids(case.get("control_ids") or []),
         "title": _one_line(case.get("title"), 120),
+    }
+
+
+_MARKER = re.compile(r"CASE_ID:\s*(?P<case>[^\s|]+)(?P<rest>.*)$")
+_MARKER_FIELD = re.compile(r"\|\s*(RUN|REQ|CTL|TITLE):\s*(.*?)\s*(?=\|\s*(?:RUN|REQ|CTL|TITLE):|$)")
+
+
+def parse_case_marker(line: str) -> dict[str, Any] | None:
+    """Fields of a host CASE_ID header line. CTL is optional: headers written before control IDs still parse."""
+    match = _MARKER.search(str(line))
+    if not match:
+        return None
+    fields = dict(_MARKER_FIELD.findall(match["rest"]))
+    return {
+        "case_id": match["case"],
+        "run": fields.get("RUN", ""),
+        "req": [r.strip() for r in fields.get("REQ", "").split(",") if r.strip()],
+        "ctl": [c.strip() for c in fields.get("CTL", "").split(",") if c.strip()],
+        "title": fields.get("TITLE", ""),
     }
 
 
@@ -862,10 +907,23 @@ def ensure_generated_case_markers(
         ):
             continue
         case_id = linked[0]
-        marker = f"CASE_ID: {case_id}"
-        if marker in content:
+        marker = re.compile(rf"CASE_ID: {re.escape(case_id)}(?![\w-])")
+        meta = (meta_by_case or {}).get(case_id)
+        if marker.search(content):
+            if meta is None:
+                continue
+            # The model wrote its own marker: replace that line with the canonical host line, in place.
+            lines = content.split("\n")
+            index = next(i for i, line in enumerate(lines) if marker.search(line))
+            indent = lines[index][: len(lines[index]) - len(lines[index].lstrip())]
+            lines = [
+                indent + _case_marker_comment(path, case_id, meta) if i == index else line
+                for i, line in enumerate(lines)
+                if i == index or not marker.search(line)
+            ]
+            item["content"] = "\n".join(lines)
             continue
-        comment = _case_marker_comment(path, case_id, (meta_by_case or {}).get(case_id))
+        comment = _case_marker_comment(path, case_id, meta)
         if PurePosixPath(path).suffix.lower() == ".php" and content.lstrip().startswith("<?php"):
             start = content.find("<?php") + len("<?php")
             content = content[:start] + "\n" + comment + content[start:]
@@ -1142,11 +1200,170 @@ def extra_import_roots(py_files: list[str], limit: int = 12) -> list[str]:
 PYTHON_PROJECT_FILES = frozenset({"pyproject.toml", "setup.py", "setup.cfg"})
 
 
-def python_import_roots(files: list[str], limit: int = 12) -> list[str]:
+SELF_ROOTED_MAX_FILES = 3000
+SELF_ROOTED_MAX_BYTES = 64 * 1024
+SELF_ROOTED_LIMIT = 4
+_ENTRY_POINTS = frozenset({"main.py", "app.py"})
+# Directories that hold tests, tooling, docs or vendored code: their modules are not the application's source tree.
+NON_SOURCE_SEGMENTS = frozenset(
+    {
+        "tests",
+        "test",
+        "testing",
+        "scripts",
+        "script",
+        "tools",
+        "third_party",
+        "vendor",
+        "vendored",
+        "site-packages",
+        "examples",
+        "example",
+        "docs",
+        "migrations",
+    }
+)
+
+
+def _is_entry_point(name: str) -> bool:
+    return name in _ENTRY_POINTS or (name.startswith("run") and name.endswith(".py"))
+
+
+def _is_source_path(rel: str) -> bool:
+    from ..envs.execution import EXPORT_SKIP_DIRS  # lazy: envs.execution -> repo.analyzer -> this module
+
+    return not any(
+        part in NON_SOURCE_SEGMENTS or part in EXPORT_SKIP_DIRS or part.startswith(".")
+        for part in PurePosixPath(rel).parts[:-1]
+    )
+
+
+def _normal_name(name: str) -> str:
+    return name.lower().replace("-", "_")
+
+
+def _absolute_import_names(path: Path) -> set[str]:
+    """Top-level package names of the absolute imports in one file (empty when unreadable or unparseable)."""
+    if path.is_symlink():
+        return set()
+    try:
+        with path.open("rb") as handle:
+            tree = ast.parse(handle.read(SELF_ROOTED_MAX_BYTES).decode("utf-8", errors="replace"))
+    except (OSError, SyntaxError, ValueError):
+        return set()
+    names: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            names.update(alias.name.split(".")[0] for alias in node.names)
+        elif isinstance(node, ast.ImportFrom) and node.level == 0 and node.module:
+            names.add(node.module.split(".")[0])
+    return names
+
+
+@lru_cache(maxsize=8)
+def _self_rooted_cached(
+    root: str, py_files: tuple[str, ...], limit: int, skip: frozenset[str]
+) -> tuple[str, ...]:
+    all_files = list(py_files)[:SELF_ROOTED_MAX_FILES]
+    stdlib = getattr(sys, "stdlib_module_names", frozenset())
+    skipped = {_normal_name(name) for name in skip}
+    # Names importable from the repository root (or its src/ and lib/), tests and tooling included: a name that is
+    # importable there never needs its directory on PYTHONPATH.
+    rooted: set[str] = set()
+    for f in all_files:
+        parts = PurePosixPath(f).parts
+        if parts[0] in {"src", "lib"} and len(parts) > 1:
+            rooted.add(parts[1].removesuffix(".py"))
+        rooted.add(parts[0].removesuffix(".py"))
+    source = [f for f in all_files if _is_source_path(f)]
+    children: dict[str, set[str]] = {}
+    for f in source:
+        parts = PurePosixPath(f).parts
+        for depth in range(1, len(parts)):
+            child = parts[depth].removesuffix(".py")
+            if child != "__init__":
+                children.setdefault("/".join(parts[:depth]), set()).add(child)
+    hits: Counter[str] = Counter()
+    own: Counter[str] = Counter()  # hits from files directly inside the directory
+    entries: set[str] = set()
+    for f in source:
+        parts = PurePosixPath(f).parts
+        if len(parts) > 1 and _is_entry_point(parts[-1]):
+            entries.add("/".join(parts[:-1]))
+        if not f.endswith(".py"):
+            continue
+        names = _absolute_import_names(Path(root) / f)
+        for depth in range(1, len(parts)):
+            directory = "/".join(parts[:depth])
+            if any(
+                n in children.get(directory, ())
+                and n not in rooted
+                and n not in stdlib
+                and _normal_name(n) not in skipped
+                for n in names
+            ):
+                hits[directory] += 1
+                if depth == len(parts) - 1:
+                    own[directory] += 1
+
+    def qualifies(count: int, directory: str) -> bool:
+        return count >= 2 or (count >= 1 and directory in entries)
+
+    chosen = [d for d in hits if qualifies(hits[d], d)]
+    dropped: set[str] = set()
+    # Nested roots: the outer one wins only when it has hits of its own; otherwise the inner one is kept.
+    for outer in chosen:
+        for inner in chosen:
+            if inner.startswith(outer + "/"):
+                dropped.add(inner if qualifies(own[outer], outer) else outer)
+    remaining = [d for d in chosen if d not in dropped]
+    # Sibling roots that both provide a child of the same name: the one with more hits wins, a tie drops both.
+    for i, a in enumerate(remaining):
+        for b in remaining[i + 1 :]:
+            if children.get(a, set()) & children.get(b, set()):
+                if hits[a] > hits[b]:
+                    dropped.add(b)
+                elif hits[b] > hits[a]:
+                    dropped.add(a)
+                else:
+                    dropped.update({a, b})
+    kept = [d for d in chosen if d not in dropped]
+    return tuple(sorted(kept, key=lambda d: (-hits[d], d))[:limit])
+
+
+def clear_self_rooted_cache() -> None:
+    """Forget cached results. The cache key is the file list, not the file contents, so a fresh analysis clears it."""
+    _self_rooted_cached.cache_clear()
+
+
+def self_rooted_dirs(
+    root: Path, py_files: list[str], limit: int = SELF_ROOTED_LIMIT, skip: frozenset[str] | set[str] = frozenset()
+) -> list[str]:
+    """Directories whose modules import their siblings by bare name (``backend/admin/dashboard.py``: ``from database
+    import get_db`` with ``backend/database/`` beside it). Such a project's entry point inserts that directory into
+    ``sys.path``, so the runner and validator must treat it as an import root too.
+
+    A directory qualifies when two source files below it (or one file plus an entry point such as ``main.py`` directly
+    in it) import a name that is a direct child of it and is not importable from the repository root. Full dotted
+    imports (``from backend.database import x``), root-importable names, stdlib names and ``skip`` names (declared or
+    installed distributions, compared case-insensitively with ``-``/``_`` equal) do not count. Tests, tooling, docs,
+    vendored and hidden directories are never roots.
+    """
+    py = tuple(f for f in py_files if f.endswith(".py"))
+    return list(_self_rooted_cached(str(Path(root)), py, limit, frozenset(skip)))
+
+
+def python_import_roots(
+    files: list[str],
+    limit: int = 12,
+    root: Path | None = None,
+    skip: frozenset[str] | set[str] = frozenset(),
+) -> list[str]:
     """``extra_import_roots`` plus nested Python projects (``backend/pyproject.toml``).
 
     A sub-project's own suite imports its modules from its own directory (``from core.seed import seed`` in
     ``backend/tests/conftest.py``), so the runner puts that directory on PYTHONPATH and the validator accepts it.
+    With ``root`` (the repository on disk) self-rooted source directories are appended (``self_rooted_dirs``).
     """
     py_files = [f for f in files if f.endswith(".py")]
     nested = {
@@ -1155,7 +1372,10 @@ def python_import_roots(files: list[str], limit: int = 12) -> list[str]:
         if PurePosixPath(f).name in PYTHON_PROJECT_FILES and PurePosixPath(f).parent.as_posix() != "."
     }
     nested = {d for d in nested if any(f.startswith(d + "/") for f in py_files)}
-    return [*extra_import_roots(py_files, limit), *sorted(nested)[:limit]]
+    roots = [*extra_import_roots(py_files, limit), *sorted(nested)[:limit]]
+    if root is not None:
+        roots += self_rooted_dirs(root, py_files, skip=skip)
+    return list(dict.fromkeys(roots))
 
 
 def _recipe_hint(files: list[str], read: Callable[[str], str | None] | None, targets: list[str]) -> str:
@@ -1173,6 +1393,7 @@ def check_python_imports(
     read_source: Callable[[str], str | None] | None = None,
     installed: frozenset[str] | None = None,
     preferred: list[str] | None = None,
+    root: Path | None = None,
 ) -> None:
     """Reject imports that cannot resolve: not stdlib, not a repository module, not declared or installed.
 
@@ -1190,7 +1411,17 @@ def check_python_imports(
     stdlib = getattr(__import__("sys"), "stdlib_module_names", frozenset())
     # The runner puts the workspace root and src/ (and lib/) on PYTHONPATH, so all three layouts resolve.
     py_files = [f for f in repo_files if f.endswith(".py")]
-    import_roots = ("", "src/", "lib/", *(f"{r}/" for r in python_import_roots(repo_files)))
+    # Declared and installed distributions are never self-rooted: `app/requests.py` must not shadow `import requests`.
+    declared = frozenset(re.findall(r"[a-z0-9][a-z0-9_.-]*", dependency_text.lower()))
+    import_roots = (
+        "",
+        "src/",
+        "lib/",
+        *(
+            f"{r}/"
+            for r in python_import_roots(repo_files, root=root, skip=declared | frozenset(installed or ()))
+        ),
+    )
     rooted = {f[len(root) :] for f in py_files for root in import_roots if f.startswith(root)}
     modules_in_repo = {PurePosixPath(f).with_suffix("").as_posix() for f in rooted}
     packages = {PurePosixPath(f).parent.as_posix() for f in rooted}
@@ -1243,7 +1474,9 @@ def check_python_imports(
                 # The case's own linked source files decide among several look-alikes (many skills/*/scripts/main.py).
                 real = [f for f in matches if f in (preferred or ())] or matches
                 if real:
-                    bad = next(c for c in PurePosixPath(real[0]).with_suffix("").parts if not c.isidentifier())
+                    bad = next(
+                        c for c in PurePosixPath(real[0]).with_suffix("").parts if not c.isidentifier()
+                    )
                     real = real[:3]
                     target = (
                         real[0]
@@ -1254,12 +1487,12 @@ def check_python_imports(
                         f"import '{name}' in {path or 'generated test'} cannot work: the apparent repository target is "
                         f"{target}, whose path component '{bad}' is not a valid Python identifier. Do not translate "
                         "'-' to '_'. Use the repository's public loader/executor API or an existing test fixture; load "
-                        "the file by path only if the application itself does so." + _recipe_hint(py_files, read_source, real)
+                        "the file by path only if the application itself does so."
+                        + _recipe_hint(py_files, read_source, real)
                     )
                 raise ValueError(
                     f"import '{name}' in {path or 'generated test'} does not match any repository path "
-                    f"(top-level '{top}' exists). "
-                    + _repository_import_hint(dotted, modules_in_repo)
+                    f"(top-level '{top}' exists). " + _repository_import_hint(dotted, modules_in_repo)
                 )
             if top.lower().replace("_", "-") in dependencies:
                 continue
@@ -1393,10 +1626,10 @@ def _bound_names(tree: ast.AST) -> set[str] | None:
     return bound
 
 
-def _repo_module_files(repo_files: list[str]) -> dict[str, str]:
+def _repo_module_files(repo_files: list[str], root: Path | None = None) -> dict[str, str]:
     """Dotted module name -> repository file, for every layout the runner puts on PYTHONPATH."""
     py_files = [f for f in repo_files if f.endswith(".py")]
-    roots = ("", "src/", "lib/", *(f"{r}/" for r in python_import_roots(repo_files)))
+    roots = ("", "src/", "lib/", *(f"{r}/" for r in python_import_roots(repo_files, root=root)))
     modules: dict[str, str] = {}
     for f in py_files:
         for root in roots:
@@ -1411,6 +1644,7 @@ def check_python_test_hygiene(
     path: str = "",
     repo_files: list[str] | None = None,
     read_source: Callable[[str], str | None] | None = None,
+    root: Path | None = None,
 ) -> None:
     """Static defects that always fail at run time, found before a run is spent on them.
 
@@ -1424,7 +1658,7 @@ def check_python_test_hygiene(
     except SyntaxError:
         return
     where = path or "generated test"
-    modules = _repo_module_files(repo_files or [])
+    modules = _repo_module_files(repo_files or [], root=root)
     for node in ast.walk(tree):
         if not isinstance(node, ast.Call):
             continue
@@ -1596,4 +1830,454 @@ def check_java_imports(content: str, repo_files: list[str], dependency_text: str
             "repository classes and the dependencies already declared; do not assume RestAssured, AssertJ or Mockito "
             "unless the build file declares them. For HTTP calls use java.net.http.HttpClient (JDK 11+) or "
             'java.net.HttpURLConnection, reading the base URL from System.getenv("BASE_URL").'
+        )
+
+
+# ------------------------------------------------------------------------------ JavaScript / TypeScript imports
+
+JS_SUFFIXES = (".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs", ".mts", ".cts")
+_JS_EXTENSIONS = (".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs", ".json")
+_JS_TS_TWINS = {".js": (".ts", ".tsx"), ".jsx": (".tsx",), ".mjs": (".mts",), ".cjs": (".cts",)}
+_NODE_BUILTINS = frozenset(
+    {
+        "assert",
+        "async_hooks",
+        "buffer",
+        "child_process",
+        "cluster",
+        "console",
+        "constants",
+        "crypto",
+        "dgram",
+        "diagnostics_channel",
+        "dns",
+        "domain",
+        "events",
+        "fs",
+        "http",
+        "http2",
+        "https",
+        "inspector",
+        "module",
+        "net",
+        "os",
+        "path",
+        "perf_hooks",
+        "process",
+        "punycode",
+        "querystring",
+        "readline",
+        "repl",
+        "stream",
+        "string_decoder",
+        "sys",
+        "timers",
+        "tls",
+        "trace_events",
+        "tty",
+        "url",
+        "util",
+        "v8",
+        "vm",
+        "wasi",
+        "worker_threads",
+        "zlib",
+    }
+)
+# runners.py installs Playwright whenever a generated spec imports @playwright/test, so that import is always provisioned.
+_HARNESS_PROVISIONED = frozenset({"@playwright/test"})
+_NPM_NAME = re.compile(r"^(?:@[A-Za-z0-9][\w.~-]*/)?[A-Za-z0-9][\w.~-]*(?:/.*)?$")
+_TEST_LIBRARY = re.compile(
+    r"^(?:@types/(?:jest|mocha)|@testing-library/|@jest/|@vitest/|@playwright/|@cypress/|jest|jest-|ts-jest|vitest|"
+    r"playwright|mocha|chai|cypress|supertest|msw|nock)"
+)
+_DEP_GROUPS = ("dependencies", "devDependencies", "peerDependencies", "optionalDependencies")
+_BUNDLED_KEYS = ("bundledDependencies", "bundleDependencies")
+_JEST_CONFIGS = (
+    "jest.config.ts",
+    "jest.config.js",
+    "jest.config.mjs",
+    "jest.config.cjs",
+    "jest.config.mts",
+    "jest.config.cts",
+    "jest.config.json",
+)
+_VITE_CONFIGS = tuple(
+    f"{stem}.config{ext}"
+    for stem in ("vite", "vitest")
+    for ext in (".ts", ".js", ".mjs", ".mts", ".cjs", ".cts")
+)
+_TSCONFIG_VARIANTS = (
+    "tsconfig.app.json",
+    "tsconfig.spec.json",
+    "tsconfig.test.json",
+    "tsconfig.node.json",
+    "tsconfig.build.json",
+    "tsconfig.lib.json",
+    "tsconfig.base.json",
+)
+_ASSET = re.compile(r"\.(?:css|scss|sass|less|svg|png|jpe?g|gif|webp|ico|woff2?|ttf)$", re.IGNORECASE)
+# Patterns run on a masked copy (comments and string/template contents blanked), so only real code can match.
+_JS_IMPORT_FROM = re.compile(
+    r"(?m)^[ \t]*(?:import|export)\b[ \t]*(type\s+)?[^'\"`;]*?\bfrom\s*(['\"`])([^'\"`\n]+)\2"
+)
+_JS_SIDE_EFFECT = re.compile(r"(?m)^[ \t]*import\s*(['\"`])([^'\"`\n]+)\1")
+_JS_REQUIRE = re.compile(r"\b(?:require|import)\s*\(\s*(['\"`])([^'\"`\n]+)\1\s*\)")
+_JS_MOCK = re.compile(
+    r"\b(?:jest|vi)\.(?:mock|doMock|unmock|requireActual|importActual)\s*\(\s*(['\"`])([^'\"`\n]+)\1"
+)
+_JEST_MAPPER = re.compile(r"['\"](\^[^'\"\n]+)['\"]\s*:\s*['\"`]([^'\"`\n]+)['\"`]")
+_JEST_ENV = re.compile(r"testEnvironment['\"]?\s*:\s*['\"`]([\w-]+)")
+_JEST_PROJECTS = re.compile(r"\bprojects['\"]?\s*:")
+_MODULE_PATHS = re.compile(r"modulePaths['\"]?\s*:\s*\[([^\]]*)\]")
+_JS_DOCBLOCK_ENV = re.compile(r"@jest-environment\s+([\w-]+)")
+_DOM_USE = re.compile(r"\bdocument\.|\bwindow\.")
+_RENDER_CALL = re.compile(r"\brender\(")
+_REASSIGNS_GLOBAL = re.compile(r"\b(?:window|document)\s*=(?!=)|\bglobalThis\.window\s*=")
+
+
+def _norm(rel: str) -> str:
+    return posixpath.normpath(rel.replace("\\", "/") or ".")
+
+
+def _join(directory: str, name: str) -> str:
+    return name if directory in ("", ".") else f"{directory}/{name}"
+
+
+def _ancestor_dirs(start: str) -> list[str]:
+    """``start`` and each parent up to the repository root."""
+    dirs = [start]
+    while dirs[-1] not in ("", "."):
+        dirs.append(posixpath.dirname(dirs[-1]) or ".")
+    return dirs
+
+
+def _mask_js(source: str) -> str:
+    """Same-length copy where comments and string/template contents are blanked (newlines kept, quotes kept)."""
+    out: list[str] = []
+    i = 0
+    n = len(source)
+    while i < n:
+        char = source[i]
+        if char in "'\"`":
+            end = i + 1
+            while end < n and source[end] != char:
+                end += 2 if source[end] == "\\" else 1
+            body = re.sub(r"[^\n]", " ", source[i + 1 : min(end, n)])
+            out.append(char + body + (char if end < n else ""))
+            i = end + 1
+        elif source.startswith("//", i):
+            end = source.find("\n", i)
+            end = n if end < 0 else end
+            out.append(" " * (end - i))
+            i = end
+        elif source.startswith("/*", i):
+            end = source.find("*/", i + 2)
+            end = n if end < 0 else end + 2
+            out.append(re.sub(r"[^\n]", " ", source[i:end]))
+            i = end
+        else:
+            out.append(char)
+            i += 1
+    return "".join(out)
+
+
+def _brace_block(text: str, key: str) -> str | None:
+    """Body of the first ``{...}`` after ``key``, with braces balanced; None when the key is absent."""
+    start = text.find(key)
+    if start < 0:
+        return None
+    open_at = text.find("{", start)
+    if open_at < 0:
+        return ""
+    depth = 0
+    for i in range(open_at, len(text)):
+        if text[i] == "{":
+            depth += 1
+        elif text[i] == "}":
+            depth -= 1
+            if depth == 0:
+                return text[open_at + 1 : i]
+    return text[open_at + 1 :]
+
+
+def _js_specifiers(content: str) -> list[tuple[str, bool]]:
+    """(specifier, type_only) for each statement-level import/export, require(), import(), jest/vi mock, in source order."""
+    masked = _mask_js(content)
+    found: list[tuple[int, str, bool]] = []
+    for pattern, group, type_group in (
+        (_JS_IMPORT_FROM, 3, 1),
+        (_JS_SIDE_EFFECT, 2, None),
+        (_JS_REQUIRE, 2, None),
+        (_JS_MOCK, 2, None),
+    ):
+        for match in pattern.finditer(masked):
+            start, end = match.span(group)
+            spec = content[start:end]
+            if not spec.strip() or "${" in spec:  # a template with interpolation is not a static specifier
+                continue
+            found.append((start, spec, bool(type_group and match.group(type_group))))
+    return [(spec, type_only) for _pos, spec, type_only in sorted(found)]
+
+
+def _nearest_config(
+    start: str, names: tuple[str, ...], read: Callable[[str], str | None]
+) -> tuple[str, str] | None:
+    """(directory, text) of the nearest file named in ``names``, walking up from ``start`` to the repository root."""
+    for directory in _ancestor_dirs(start):
+        for name in names:
+            text = read(_join(directory, name))
+            if text is not None:
+                return directory, text
+    return None
+
+
+def _json_file(text: str | None) -> dict[str, Any] | None:
+    if text is None:
+        return None
+    try:
+        data = json.loads(text)
+    except ValueError:
+        return None
+    return data if isinstance(data, dict) else None
+
+
+def _json_loose(text: str) -> dict[str, Any] | None:
+    """tsconfig/jsconfig tolerate line comments and trailing commas; anything else unparseable is None (unknown)."""
+    stripped = re.sub(r"(?m)^\s*//.*$", "", text)
+    return _json_file(re.sub(r",(\s*[}\]])", r"\1", stripped))
+
+
+def _declared_map(package: dict[str, Any]) -> dict[str, str]:
+    declared: dict[str, str] = {}
+    for group in _DEP_GROUPS:
+        block = package.get(group)
+        if isinstance(block, dict):
+            declared.update({str(name): str(version) for name, version in block.items()})
+    return declared
+
+
+def _js_package_name(spec: str) -> str:
+    parts = spec.split("/")
+    return "/".join(parts[:2]) if spec.startswith("@") else parts[0]
+
+
+def check_js_imports(
+    content: str,
+    path: str,
+    repo_files: list[str],
+    read_source: Callable[[str], str | None] | None = None,
+) -> None:
+    """Reject only certain JS/TS import errors: missing repo files, packages declared nowhere, unknown aliases.
+
+    The gate fails open on configurations it cannot model. Declarations are the union of every package.json from the
+    file's directory up to the repository root (hoisting), workspace package names and bundled dependencies. Aliases
+    come from the nearest tsconfig/jsconfig ``paths`` and jest ``moduleNameMapper``; a vite/vitest config, extra
+    tsconfig variants or an unparseable config accepts unknown aliases. Bare names are also tried against baseUrl,
+    jest modulePaths and the component/repository roots before they count as undeclared. The DOM rule runs only for a
+    single, unambiguous node test environment.
+    """
+    source = read_source or (lambda _rel: None)
+    cache: dict[str, str | None] = {}
+
+    def read(rel: str) -> str | None:
+        if rel not in cache:
+            cache[rel] = source(rel)
+        return cache[rel]
+
+    repo_list = [_norm(f) for f in repo_files]
+    repo = set(repo_list)
+    here = posixpath.dirname(_norm(path)) or "."
+
+    def exists(rel: str) -> bool:
+        return rel in repo or read(rel) is not None
+
+    def resolves(base: str) -> bool:
+        stem, ext = posixpath.splitext(base)
+        candidates = [base, *(stem + twin for twin in _JS_TS_TWINS.get(ext, ()))]
+        candidates += [base + e for e in _JS_EXTENSIONS] + [_join(base, "index" + e) for e in _JS_EXTENSIONS]
+        return any(exists(_norm(c)) for c in candidates)
+
+    manifests = [
+        (directory, data)
+        for directory in _ancestor_dirs(here)
+        if (data := _json_file(read(_join(directory, "package.json")))) is not None
+    ]
+    package_dir = manifests[0][0] if manifests else None
+    jest_dir = package_dir or "."
+    manifest = f"{package_dir or '.'}/package.json"
+    declared: dict[str, str] | None = None
+    names: set[str] = set()
+    if manifests:
+        declared = {}
+        for _directory, data in manifests:
+            declared.update(_declared_map(data))
+            for key in _BUNDLED_KEYS:
+                if isinstance(data.get(key), list):
+                    declared.update({str(item): "*" for item in data[key]})
+            if isinstance(data.get("name"), str):
+                names.add(data["name"])
+    for rel in repo_list:  # workspace siblings: every package.json the repository lists
+        if posixpath.basename(rel) == "package.json" and isinstance(
+            (data := _json_file(read(rel))) and data.get("name"), str
+        ):
+            names.add(data["name"])
+    known = declared or {}
+
+    unknown = False
+    mappings: list[tuple[re.Pattern[str], str, str]] = []
+    ts_base = None
+    if found := _nearest_config(here, ("tsconfig.json", "jsconfig.json"), read):
+        config_dir, text = found
+        data = _json_loose(text)
+        if data is None:
+            unknown = True
+        else:
+            options = data["compilerOptions"] if isinstance(data.get("compilerOptions"), dict) else {}
+            ts_base = _norm(_join(config_dir, str(options.get("baseUrl", "."))))
+            paths = options.get("paths")
+            if isinstance(paths, dict):
+                for key, targets in paths.items():
+                    pattern = re.compile("^" + re.escape(str(key)).replace(r"\*", "(.*)") + "$")
+                    for target in targets if isinstance(targets, list) else [targets]:
+                        if isinstance(target, str):
+                            mappings.append((pattern, target, ts_base))
+            elif "extends" in data:
+                unknown = True
+
+    jest_package = manifests[0][1] if manifests else None
+    if jest_package is not None and isinstance(jest_package.get("jest"), dict):
+        jest_text = json.dumps(jest_package["jest"])
+    else:
+        jest_text = next((t for n in _JEST_CONFIGS if (t := read(_join(jest_dir, n))) is not None), None)
+    module_bases = [ts_base] if ts_base else []
+    mapper_present = False
+    if jest_text:
+        block = _brace_block(jest_text, "moduleNameMapper")
+        if block is not None:
+            mapper_present = True
+            pairs = _JEST_MAPPER.findall(block)
+            if not pairs:
+                unknown = True
+            for pattern, target in pairs:
+                try:
+                    compiled = re.compile(pattern)
+                except re.error:
+                    unknown = True
+                    continue
+                mappings.append(
+                    (compiled, target.replace("<rootDir>/", "").replace("<rootDir>", ""), jest_dir)
+                )
+        if found_paths := _MODULE_PATHS.search(jest_text):
+            for raw in re.findall(r"['\"`]([^'\"`]+)['\"`]", found_paths.group(1)):
+                module_bases.append(
+                    _norm(_join(jest_dir, raw.replace("<rootDir>/", "").replace("<rootDir>", "")))
+                )
+    module_bases += [jest_dir, "."]
+
+    siblings = {
+        posixpath.basename(f)
+        for f in repo_list
+        if (posixpath.dirname(f) or ".") == jest_dir
+        and re.match(r"(?:vite|vitest)\.config\.|tsconfig\..+\.json$", posixpath.basename(f))
+    }
+    vite_present = any(read(_join(jest_dir, n)) is not None for n in _VITE_CONFIGS) or any(
+        s.startswith(("vite.config.", "vitest.config.")) for s in siblings
+    )
+    if (
+        vite_present
+        or any(read(_join(jest_dir, n)) is not None for n in _TSCONFIG_VARIANTS)
+        or any(s.startswith("tsconfig.") for s in siblings)
+    ):
+        unknown = True  # vite/vitest resolve aliases we cannot model: fail open on unknown aliases
+    mapper_present = mapper_present or vite_present
+
+    specifiers = _js_specifiers(content)
+    uses_playwright = any(spec in _HARNESS_PROVISIONED for spec, _ in specifiers)
+    imports_vitest = any(spec == "vitest" or spec.startswith("vitest/") for spec, _ in specifiers)
+    for spec, type_only in specifiers:
+        if spec.startswith(("./", "../")) or spec in (".", ".."):
+            if not resolves(_norm(_join(here, spec))):
+                raise ValueError(f"relative import '{spec}' in {path} does not match any repository file")
+            continue
+        if spec.startswith("/"):
+            if not resolves(_norm(spec)):
+                raise ValueError(f"relative import '{spec}' in {path} does not match any repository file")
+            continue
+        if ":" in spec or spec.startswith("#") or spec.split("/", 1)[0] in _NODE_BUILTINS:
+            continue  # node: / data: / package "imports" subpaths and built-ins are never repository files
+        if not _NPM_NAME.match(spec):  # '@/lib/x', '~/x': an alias, not a package
+            if _ASSET.search(spec) and mapper_present:
+                continue  # stylesheet/image aliases are mapped to stubs by the configured mapper
+            targets = []
+            for pattern, template, base in mappings:
+                if match := pattern.match(spec):
+                    group = match.group(1) if match.groups() else ""
+                    targets.append(_norm(_join(base, template.replace("$1", group).replace("*", group))))
+            if any(resolves(t) for t in targets) or unknown:
+                continue
+            if targets:
+                raise ValueError(f"alias '{spec}' in {path} does not match any repository file")
+            raise ValueError(
+                f"import '{spec}' in {path} is neither a repository file nor a configured alias (tsconfig paths / jest moduleNameMapper)"
+            )
+        if declared is None:
+            continue  # no readable package.json: nothing to compare against
+        name = _js_package_name(spec)
+        if name in known or name in names or name in _HARNESS_PROVISIONED:
+            continue
+        if name.startswith("@jest/") and "jest" in known:
+            continue
+        if name == "vitest" and "vitest" in known:
+            continue
+        types_name = "@types/" + (name[1:].replace("/", "__") if name.startswith("@") else name)
+        if type_only and types_name in known:
+            continue
+        if any(resolves(_norm(_join(base, spec))) for base in module_bases):
+            continue  # a bare-looking path inside baseUrl, a jest modulePath, or the component/repository root
+        listing = ", ".join(sorted(n for n in known if _TEST_LIBRARY.match(n))) or "none"
+        raise ValueError(
+            f"import '{name}' in {path} is not declared in {manifest} (dependencies/devDependencies). Use only the "
+            f"repository's declared test libraries (declared here: {listing}); do not add packages."
+        )
+
+    jest_major = None
+    if major := re.search(r"\d+", known.get("jest", "")):
+        jest_major = int(major.group())
+    docblock = _JS_DOCBLOCK_ENV.search(content)
+    if (
+        docblock
+        and docblock.group(1) == "jsdom"
+        and declared is not None
+        and jest_major is not None
+        and jest_major >= 27
+        and "jest-environment-jsdom" not in known
+    ):
+        raise ValueError(
+            f"{path} sets @jest-environment jsdom but jest-environment-jsdom is not declared in {manifest}"
+        )
+
+    values = set(_JEST_ENV.findall(jest_text)) if jest_text else set()
+    if docblock:
+        env = docblock.group(1)
+    elif len(values) == 1:
+        env = next(iter(values))
+    elif not values and jest_major is not None and jest_major >= 27:
+        env = "node"  # jest 27+ default
+    else:
+        env = None
+    masked = _mask_js(content)
+    dom = _DOM_USE.search(masked) or ("@testing-library/" in content and _RENDER_CALL.search(masked))
+    unambiguous = not (
+        (jest_text and _JEST_PROJECTS.search(jest_text))
+        or "vitest" in known
+        or imports_vitest
+        or _REASSIGNS_GLOBAL.search(masked)
+        or uses_playwright
+        or len(values) > 1
+    )
+    if env == "node" and dom and unambiguous:
+        raise ValueError(
+            f"{path} touches the DOM, and the repository's jest testEnvironment is 'node' (no DOM); test pure "
+            "functions/hooks without rendering, or record a gap"
         )

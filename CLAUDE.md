@@ -71,7 +71,7 @@ validate_generated_files → validate_java_traceability → _check_imports → _
 
 ## Coverage accounting
 
-Every requirement must be a new case, a pre_existing_witness (existing repo test directly invokes its source_symbol; static match, not measured coverage), or an ID-linked gap with a reason (exact ID tokens; REQ-1 ≠ REQ-10). Report states: new / pre_existing_witness / excluded / unexplained.
+Every requirement must be a new case, a pre_existing_witness (existing repo test directly invokes its source_symbol; static match, not measured coverage), or an ID-linked gap with a reason (exact ID tokens; REQ-1 ≠ REQ-10). Report states: new / pre_existing_witness / excluded / unexplained. End-to-end traceability: the host assigns `PLN-xx` plan areas and `CTL-nnn` controls (qa/controls.py), carried on cases and the generated `CASE_ID` header; the QA report shows each control's `failed_at` step.
 
 ## Prompts and skills
 
