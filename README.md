@@ -42,7 +42,7 @@ flowchart TD
   B -->|macOS| D["Open the .dmg and copy the app to Applications"]
   B -->|Linux| E["Make the .AppImage executable and run it"]
   C --> F["Windows: More info, then Run anyway"]
-  D --> G["Run the xattr command or right-click, Open"]
+  D --> G["Privacy & Security: Open Anyway, or the xattr command"]
   E --> H["Run with FUSE 2, or use --appimage-extract-and-run"]
   F --> I["Open Configuration and add your model API key"]
   G --> I
@@ -56,16 +56,27 @@ flowchart TD
 
 ### First launch on macOS
 
-1. Open the `.dmg` and drag **Agentic QE** to **Applications**.
-2. Open Terminal and run:
+The app is not signed with an Apple Developer ID, so macOS shows **"Agentic QE" Not Opened — Apple could not verify "Agentic QE" is free of malware**. The app is not damaged. Click **Done** (not *Move to Bin*), then use one of these:
+
+**Option A — System Settings (no Terminal)**
+
+1. Open the `.dmg` and drag **Agentic QE** to **Applications**. Do not run it from the `.dmg` window.
+2. Open the app once from Applications. When the warning appears, click **Done**.
+3. Open **System Settings → Privacy & Security**, scroll to **Security**, and click **Open Anyway** next to *"Agentic QE" was blocked*.
+4. Confirm with **Open Anyway** and your password or Touch ID.
+
+**Option B — Terminal**
+
+1. Drag **Agentic QE** to **Applications**.
+2. Run:
 
    ```bash
    xattr -dr com.apple.quarantine "/Applications/Agentic QE.app"
    ```
 
-   Or, in Finder, right-click the app, choose **Open**, and confirm once.
+3. Open the app normally.
 
-Only do this for installers you downloaded from the team's GitHub Releases page.
+On macOS 15 (Sequoia) and later, right-click → **Open** no longer bypasses this check; use Option A or B. You need to do this once per installed version. Only do it for installers from the team's GitHub Releases page.
 
 ### First launch on Linux
 
