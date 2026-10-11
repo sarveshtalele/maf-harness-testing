@@ -6,6 +6,21 @@ import { ExportButtons, Panel } from './data';
 
 type Step = { name: string; title: string; status: string };
 
+// The saved QA report document (same Markdown as the QA export), rendered with its verdict banner and contents.
+export function QaDocument({ run }: { run: Run }) {
+  const [body, setBody] = useState('');
+  const [error, setError] = useState('');
+  useEffect(() => {
+    const controller = new AbortController();
+    void fetch(download(run.id, 'qa', 'md'), { cache: 'no-store', signal: controller.signal }).then(r => r.ok ? r.text() : Promise.reject(new Error('QA report document unavailable.'))).then(setBody).catch(e => { if (!controller.signal.aborted) setError(e.message); });
+    return () => controller.abort();
+  }, [run.id, run.busy]);
+  return <Panel title="QA report document" storageKey={`${run.id}:qa:document`}>
+    {error && <p className="notice bad" role="alert">{error}</p>}
+    {body ? <Markdown text={body} variant="report" /> : error ? null : <p className="empty-inline">Loading report…</p>}
+  </Panel>;
+}
+
 // Deterministic per-step reports (summary, then one report for each workflow step) rendered from the saved run.
 export default function StepReports({ run }: { run: Run }) {
   const [steps, setSteps] = useState<Step[]>([]);
@@ -25,6 +40,6 @@ export default function StepReports({ run }: { run: Run }) {
   return <Panel title="Step reports" storageKey={`${run.id}:qa:steps`} actions={<ExportButtons id={run.id} kind="qa" />}>
     {error && <p className="notice bad" role="alert">{error}</p>}
     <div className="evidence-types" role="tablist" aria-label="Step reports">{steps.map(s => <button key={s.name} role="tab" aria-selected={name === s.name} aria-pressed={name === s.name} onClick={() => setName(s.name)}>{s.title.replace(/^Step \d+: /, '')}{s.status === 'Not run' ? ' (not run)' : ''}</button>)}</div>
-    {body ? <Markdown text={body} /> : <p className="empty-inline">Loading report…</p>}
+    {body ? <Markdown text={body} variant="report" /> :<p className="empty-inline">Loading report…</p>}
   </Panel>;
 }
