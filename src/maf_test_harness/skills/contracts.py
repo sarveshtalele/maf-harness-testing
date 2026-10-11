@@ -781,6 +781,17 @@ def _case_marker_comment(path: str, case_id: str, meta: dict[str, str] | None = 
     return line
 
 
+def _fit_ids(ids: list[Any], limit: int = 200) -> str:
+    """Comma-joined IDs that fit ``limit`` characters; whole IDs only, never cut mid-ID."""
+    kept: list[str] = []
+    for item in ids:
+        candidate = ", ".join([*kept, str(item)])
+        if len(candidate) > limit:
+            break
+        kept.append(str(item))
+    return ", ".join(kept)
+
+
 def case_marker_meta(case: dict[str, Any], run_id: str = "", run_name: str = "") -> dict[str, str]:
     """Header fields for one approved case; every value is single-line text."""
     reqs = [str(link.get("id", "")) for link in case.get("traceability_links") or [] if isinstance(link, dict)]
@@ -790,7 +801,7 @@ def case_marker_meta(case: dict[str, Any], run_id: str = "", run_name: str = "")
     return {
         "run": run,
         "req": ", ".join(dict.fromkeys(r for r in reqs if r))[:200],
-        "ctl": ", ".join(str(c) for c in case.get("control_ids") or [])[:200],
+        "ctl": _fit_ids(case.get("control_ids") or []),
         "title": _one_line(case.get("title"), 120),
     }
 
@@ -884,10 +895,23 @@ def ensure_generated_case_markers(
         ):
             continue
         case_id = linked[0]
-        marker = f"CASE_ID: {case_id}"
-        if marker in content:
+        marker = re.compile(rf"CASE_ID: {re.escape(case_id)}(?![\w-])")
+        meta = (meta_by_case or {}).get(case_id)
+        if marker.search(content):
+            if meta is None:
+                continue
+            # The model wrote its own marker: replace that line with the canonical host line, in place.
+            lines = content.split("\n")
+            index = next(i for i, line in enumerate(lines) if marker.search(line))
+            indent = lines[index][: len(lines[index]) - len(lines[index].lstrip())]
+            lines = [
+                indent + _case_marker_comment(path, case_id, meta) if i == index else line
+                for i, line in enumerate(lines)
+                if i == index or not marker.search(line)
+            ]
+            item["content"] = "\n".join(lines)
             continue
-        comment = _case_marker_comment(path, case_id, (meta_by_case or {}).get(case_id))
+        comment = _case_marker_comment(path, case_id, meta)
         if PurePosixPath(path).suffix.lower() == ".php" and content.lstrip().startswith("<?php"):
             start = content.find("<?php") + len("<?php")
             content = content[:start] + "\n" + comment + content[start:]

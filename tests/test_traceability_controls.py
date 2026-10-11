@@ -11,7 +11,10 @@ from maf_test_harness.qa.controls import (
     assign_controls,
     case_controls,
     plan_controls,
+    summarize_trace,
+    summary_text,
     trace_matrix,
+    trace_rows,
 )
 from maf_test_harness.qa.packaging import build_deliverable
 from maf_test_harness.qa.report import build_qa_report, render_markdown
@@ -188,7 +191,7 @@ def test_multi_case_control_takes_the_worst_status_and_earliest_failed_step():
     (row,) = trace_matrix(state)
     assert row["final_status"] == "generation_failed" and row["failed_at"] == "generation"
     assert [c["case_id"] for c in row["cases"]] == ["TC-1", "TC-2"]
-    assert row["generation"] == "generation_failed" and row["execution"] == "generation_failed"
+    assert row["generation"] == "generation_failed" and row["execution"] == "not_executed"
 
 
 def test_environment_failure_stops_cases_at_environment_setup():
@@ -241,11 +244,11 @@ def test_markdown_has_traceability_section_and_control_columns():
     )
     assert "| ID | Control | Case |" in md
     assert (
-        "| CTL-001 | REQ-1 | PLN-01 Core | TC-1 | tests/test_a.py | generated | passed | passed | none |"
-        in md
+        "| CTL-001 | REQ-1 | PLN-01 Core | TC-1 | tests/test_a.py | generated | passed | passed | - |" in md
     )
     assert "| CTL-002 | REQ-2 | PLN-00 Not planned |  |  | n/a | n/a | not_designed | planning |" in md
-    assert qa["traceability_summary"]["failed_at"] == {"none": 1, "planning": 1}
+    assert qa["traceability_summary"]["failed_at"] == {"planning": 1}
+    assert "Controls: **2** · passed 1 · failed at: planning 1" in md
 
 
 def test_deliverable_contains_traceability_json_and_csv(tmp_path: Path):
@@ -294,3 +297,139 @@ def test_workflow_assigns_plan_controls_and_case_control_ids(tmp_path: Path, mon
         assert len(rows) == len(controls)
     finally:
         svc.close()
+
+
+def test_witness_excluded_and_skipped_outcomes_are_not_failures():
+    requirements = [_req("REQ-1", "src/a.py"), _req("REQ-2", "src/a.py"), _req("REQ-3", "src/a.py")]
+    execution = {
+        "status": "passed",
+        "cases": [
+            {"name": "test_a", "classname": "tests.test_a", "status": "skipped", "message": "no fixture"}
+        ],
+    }
+    state = _state(
+        requirements, [AREA], [_case("TC-1", "REQ-1")], [_test_file("TC-1", "a")], execution=execution
+    )
+    state["artifacts"]["test_design"]["gaps_report"] = {
+        "pre_existing_test_witnesses": {
+            "REQ-2": [
+                {"test_file": "tests/test_old.py", "symbol": "add", "line": 3, "kind": "direct_invocation"}
+            ]
+        },
+        "excluded_requirements": ["REQ-3"],
+        "notes": "REQ-3 needs a live database; unrelated",
+    }
+    rows = {r["requirement_id"]: r for r in trace_matrix(state)}
+    assert (rows["REQ-1"]["final_status"], rows["REQ-1"]["failed_at"], rows["REQ-1"]["reason"]) == (
+        "not_executed",
+        "",
+        "skipped: no fixture",
+    )
+    assert (rows["REQ-2"]["final_status"], rows["REQ-2"]["failed_at"], rows["REQ-2"]["reason"]) == (
+        "covered_by_existing_test",
+        "",
+        "tests/test_old.py",
+    )
+    assert (rows["REQ-3"]["final_status"], rows["REQ-3"]["failed_at"], rows["REQ-3"]["reason"]) == (
+        "excluded",
+        "",
+        "REQ-3 needs a live database",
+    )
+    assert summarize_trace(list(rows.values()))["failed_at"] == {}
+
+
+def test_summary_line_omits_zero_parts_and_uses_pipeline_order():
+    rows = [
+        {"final_status": "passed", "failed_at": ""},
+        {"final_status": "covered_by_existing_test", "failed_at": ""},
+        {"final_status": "generation_failed", "failed_at": "generation"},
+        {"final_status": "not_designed", "failed_at": "planning"},
+    ]
+    assert summary_text(summarize_trace(rows)) == (
+        "Controls: **4** · passed 1 · covered by existing 1 · failed at: planning 1, generation 1"
+    )
+    assert summary_text(summarize_trace([])) == "Controls: **0**"
+
+
+def test_run_without_a_plan_falls_through_to_design_not_planning():
+    controls = assign_controls({"requirement_model": {"requirements": [_req("REQ-1", "src/a.py")]}}, None)
+    assert controls[0]["plan_area_id"] == ""
+    (row,) = trace_rows(controls, [], {}, None, {"gaps_report": {}})
+    assert (row["final_status"], row["failed_at"]) == ("not_designed", "design")
+
+
+def test_case_controls_ignore_non_requirement_links():
+    controls = assign_controls(
+        {"requirement_model": {"requirements": [_req("REQ-1", "src/a.py")]}}, {"areas": [AREA]}
+    )
+    case = {"id": "TC-1", "traceability_links": [{"type": "acceptance_criterion", "id": "REQ-1"}]}
+    assert case_controls(case, controls) == []
+
+
+def test_traceability_csv_cells_are_formula_safe():
+    from maf_test_harness.qa.packaging import _traceability_csv
+
+    row = {
+        "control_id": "CTL-001",
+        "requirement_id": "REQ-1",
+        "plan_area_id": "PLN-01",
+        "level": "unit",
+        "environment": "ok",
+        "final_status": "failed",
+        "failed_at": "test_execution",
+        "reason": "=cmd|' /C calc'!A0",
+        "generation": "generated",
+        "execution": "failed",
+        "cases": [
+            {
+                "case_id": "TC-1",
+                "title": "-2 != 3",
+                "file": "tests/x.py",
+                "generation": "generated",
+                "execution": "failed",
+            }
+        ],
+    }
+    (parsed,) = list(csv.DictReader(io.StringIO(_traceability_csv([row]))))
+    assert parsed["reason"] == "'=cmd|' /C calc'!A0"
+    assert parsed["case_title"] == "'-2 != 3"
+
+
+def test_model_written_case_marker_is_replaced_by_the_host_line():
+    from maf_test_harness.skills.contracts import ensure_generated_case_markers
+
+    payload = {
+        "files": [
+            {
+                "path": "tests/test_x.py",
+                "case_ids": ["TC-1"],
+                "content": "# CASE_ID: TC-1 (model)\ndef test_x():\n    assert True\n",
+            }
+        ]
+    }
+    meta = {"TC-1": {"run": "r1", "req": "REQ-1", "ctl": "CTL-001", "title": "x"}}
+    out = ensure_generated_case_markers(payload, meta)["files"][0]["content"]
+    assert out.splitlines()[0] == "# CASE_ID: TC-1 | RUN: r1 | REQ: REQ-1 | CTL: CTL-001 | TITLE: x"
+    assert out.count("CASE_ID: TC-1") == 1
+
+
+def test_ctl_header_field_is_truncated_on_id_boundaries():
+    ids = [f"CTL-{i:03d}" for i in range(1, 80)]
+    meta = case_marker_meta({"id": "TC-1", "title": "t", "control_ids": ids}, "r1")
+    kept = meta["ctl"].split(", ")
+    assert len(meta["ctl"]) <= 200 and kept == ids[: len(kept)] and kept[-1].count("-") == 1
+
+
+def test_case_reasons_in_the_trace_are_redacted(monkeypatch):
+    import maf_test_harness.qa.controls as controls_module
+
+    monkeypatch.setattr(controls_module, "redact", lambda text, **_: (text.replace("hunter2", "***"), 1))
+    state = _state(
+        [_req("REQ-1", "src/a.py")],
+        [AREA],
+        [_case("TC-1", "REQ-1")],
+        [_test_file("TC-1", "a")],
+        execution={"status": "failed", "cases": [_result("a", "failed", "login with hunter2 failed")]},
+    )
+    (row,) = trace_matrix(state)
+    assert "hunter2" not in str(row["cases"]) and "login with ***" in row["cases"][0]["reason"]

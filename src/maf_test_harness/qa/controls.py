@@ -61,10 +61,17 @@ def assign_controls(
                 "control_id": f"CTL-{number:0{width}d}",
                 "requirement_id": str(requirement["id"]),
                 "requirement_text": " ".join(str(requirement.get("text") or "").split())[:160],
-                "plan_area_id": str(area.get("area_id") or area_id(index + 1))
-                if index is not None
-                else NOT_PLANNED,
-                "plan_area_name": str(area.get("name") or "") if index is not None else "Not planned",
+                # No plan at all (older runs) leaves the area blank so the design path decides the failure.
+                "plan_area_id": (
+                    str(area.get("area_id") or area_id(index + 1))
+                    if index is not None
+                    else NOT_PLANNED
+                    if areas
+                    else ""
+                ),
+                "plan_area_name": (
+                    str(area.get("name") or "") if index is not None else "Not planned" if areas else ""
+                ),
                 "level": str(area.get("level") or "") if index is not None else "",
             }
         )
@@ -86,7 +93,11 @@ def plan_controls(requirements_artifact: dict[str, Any], plan_artifact: dict[str
 
 def case_controls(case: dict[str, Any], controls: list[dict]) -> list[str]:
     """Control IDs whose requirement is linked by the case. Exact ID tokens: REQ-1 never matches REQ-10."""
-    linked = {str(link.get("id")) for link in case.get("traceability_links") or [] if isinstance(link, dict)}
+    linked = {
+        str(link.get("id"))
+        for link in case.get("traceability_links") or []
+        if isinstance(link, dict) and link.get("type") == "requirement"
+    }
     return [control["control_id"] for control in controls if control["requirement_id"] in linked]
 
 
@@ -121,6 +132,8 @@ def _case_outcome(case: dict[str, Any], failures: dict[str, str], env_status: st
             final, failed_at, reason = status, "test_execution", message
         elif status == "passed":
             final = "passed"
+        elif status == "skipped":
+            final, failed_at, reason = "not_executed", "", f"skipped: {message}"
         elif env_status == "failed":
             final, failed_at, reason = "not_executed", "environment_setup", env_reason
         else:
@@ -131,10 +144,10 @@ def _case_outcome(case: dict[str, Any], failures: dict[str, str], env_status: st
         "level": case.get("level", ""),
         "file": file,
         "generation": generation,
-        "execution": status,
+        "execution": status if file else "not_executed",
         "final_status": final,
         "failed_at": failed_at,
-        "reason": reason,
+        "reason": redact(reason)[0][:300],
     }
 
 
@@ -160,21 +173,31 @@ def trace_rows(
         for cid in failure.get("case_ids") or []
     }
     env_status, env_reason = environment_outcome(environment)
-    notes = str(((design or {}).get("gaps_report") or {}).get("notes") or "")
+    gaps = (design or {}).get("gaps_report") or {}
+    notes = str(gaps.get("notes") or "")
     rows = []
     for control in controls:
         linked = [case for case in cases if control["requirement_id"] in case.get("requirements", [])]
         outcomes = [_case_outcome(case, failures, env_status, env_reason) for case in linked]
         if not outcomes:
-            final = "not_designed"
-            failed_at = "planning" if control["plan_area_id"] == NOT_PLANNED else "design"
-            reason = (
-                "Requirement is not in any planned test area."
-                if failed_at == "planning"
-                else _design_gap(control["requirement_id"], notes)
-                or "No test case was designed for this requirement."
-            )
+            requirement_id = control["requirement_id"]
+            witnesses = gaps.get("pre_existing_test_witnesses") or {}
             generation_state = execution_state = "n/a"
+            if requirement_id in witnesses:
+                final, failed_at = "covered_by_existing_test", ""
+                reason = ", ".join(sorted({str(w.get("test_file")) for w in witnesses[requirement_id]}))
+            elif requirement_id in (gaps.get("excluded_requirements") or []):
+                final, failed_at = "excluded", ""
+                reason = _design_gap(requirement_id, notes) or "Excluded with an ID-linked reason."
+            else:
+                final = "not_designed"
+                failed_at = "planning" if control["plan_area_id"] == NOT_PLANNED else "design"
+                reason = (
+                    "Requirement is not in any planned test area."
+                    if failed_at == "planning"
+                    else _design_gap(requirement_id, notes)
+                    or "No test case was designed for this requirement."
+                )
         else:
             worst = max(outcomes, key=lambda o: SEVERITY[o["final_status"]])
             final = worst["final_status"]
@@ -214,13 +237,30 @@ def summarize_trace(rows: list[dict]) -> dict[str, Any]:
     failed: dict[str, int] = {}
     for row in rows:
         final[row["final_status"]] = final.get(row["final_status"], 0) + 1
-        key = row["failed_at"] or "none"
-        failed[key] = failed.get(key, 0) + 1
+        if row["failed_at"]:
+            failed[row["failed_at"]] = failed.get(row["failed_at"], 0) + 1
     return {
         "controls": len(rows),
         "final_status": dict(sorted(final.items())),
-        "failed_at": dict(sorted(failed.items())),
+        "failed_at": {step: failed[step] for step in FAILED_AT_ORDER if step in failed},
     }
+
+
+def summary_text(summary: dict[str, Any]) -> str:
+    """One line: controls, passed, covered by existing test, excluded and failed-at counts; zero parts omitted."""
+    final = summary.get("final_status") or {}
+    parts = [f"**{summary.get('controls', 0)}**"]
+    for label, key in (
+        ("passed", "passed"),
+        ("covered by existing", "covered_by_existing_test"),
+        ("excluded", "excluded"),
+    ):
+        if final.get(key):
+            parts.append(f"{label} {final[key]}")
+    failed = summary.get("failed_at") or {}
+    if failed:
+        parts.append("failed at: " + ", ".join(f"{step} {count}" for step, count in failed.items()))
+    return "Controls: " + " · ".join(parts)
 
 
 def trace_matrix(state: dict[str, Any], execution: dict[str, Any] | None = None) -> list[dict]:

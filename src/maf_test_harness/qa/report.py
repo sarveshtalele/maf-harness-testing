@@ -8,7 +8,7 @@ from __future__ import annotations
 from typing import Any
 
 from ..envs.runners import map_results_to_cases
-from .controls import case_controls, plan_controls, summarize_trace, trace_rows
+from .controls import case_controls, plan_controls, summarize_trace, summary_text, trace_rows
 from .triage import build_updates
 
 SECTIONS = ("positive", "negative", "boundary", "validation", "contract")
@@ -345,8 +345,7 @@ def _traceability_markdown(report: dict[str, Any]) -> list[str]:
         "Each control follows one requirement from planning (PLN) through design, generation, environment setup "
         "and execution. Failed at names the first step that did not pass.",
         "",
-        f"Controls: **{summary.get('controls', len(rows))}** · "
-        + ", ".join(f"{k}={v}" for k, v in (summary.get("failed_at") or {}).items()),
+        summary_text(summary or summarize_trace(rows)),
         "",
         "| Control | Requirement | Plan area | Test case(s) | Test file(s) | Generation | Execution | Status | Failed at | Reason |",
         "|---|---|---|---|---|---|---|---|---|---|",
@@ -355,7 +354,7 @@ def _traceability_markdown(report: dict[str, Any]) -> list[str]:
         f"| {md_cell(r['control_id'])} | {md_cell(r['requirement_id'])} "
         f"| {md_cell(r['plan_area_id'])} {md_cell(r['plan_area_name'], 40)} "
         f"| {md_cell(', '.join(r['case_ids']), 120)} | {md_cell(', '.join(r['test_files']), 120)} "
-        f"| {r['generation']} | {r['execution']} | {r['final_status']} | {r['failed_at'] or 'none'} "
+        f"| {r['generation']} | {r['execution']} | {r['final_status']} | {r['failed_at'] or '-'} "
         f"| {md_cell(r['reason'], 300)} |"
         for r in rows
     ]

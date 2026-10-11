@@ -46,6 +46,12 @@ def _add_tree(archive: zipfile.ZipFile, repo: Path, prefix: str, skip: set[str])
             archive.write(path, f"{prefix}/{relative.as_posix()}")
 
 
+def _csv_cell(value: object) -> str:
+    """Redacted cell; a leading formula character gets a quote so spreadsheets never evaluate it."""
+    text = redact(str(value))[0]
+    return "'" + text if text.startswith(("=", "+", "-", "@", "\t", "\r")) else text
+
+
 def _traceability_csv(rows: list[dict]) -> str:
     header = [
         "control_id",
@@ -76,7 +82,7 @@ def _traceability_csv(rows: list[dict]) -> str:
                 case.get("generation", row["generation"]),
                 case.get("execution", row["execution"]),
             ]
-            writer.writerow([redact(str(v))[0] for v in base + values + tail])
+            writer.writerow([_csv_cell(v) for v in base + values + tail])
     return buffer.getvalue()
 
 
