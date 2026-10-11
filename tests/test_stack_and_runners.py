@@ -408,3 +408,14 @@ def test_node_report_folder_exists_in_component_before_jest_writes_json(tmp_path
     plan = runners.build_plan(stack, tmp_path, generated, cache_dir=tmp_path / "c")
     assert plan.steps[-1].name == "jest"
     assert (tmp_path / "frontend-next" / ".harness-reports").is_dir()
+
+
+def test_blocked_report_folder_still_returns_the_node_plan(tmp_path):
+    # Review fix 6: a file where the report folder should be makes mkdir fail; the plan must still come back.
+    (tmp_path / ".harness-reports").write_text("not a folder", encoding="utf-8")
+    (tmp_path / "package.json").write_text('{"devDependencies": {"jest": "^29"}}', encoding="utf-8")
+    generated = [{"path": "tests/a.test.ts", "content": "test('x', () => {})"}]
+    plan = runners.build_plan(
+        StackProfile(primary="node", test_runner="jest"), tmp_path, generated, cache_dir=tmp_path / "c"
+    )
+    assert plan.steps and plan.steps[-1].name == "jest"

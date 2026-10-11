@@ -15,7 +15,7 @@ from urllib.parse import urlparse
 from uuid import uuid4
 
 from ..models import RepoAnalysis
-from ..skills.contracts import self_rooted_dirs
+from ..skills.contracts import clear_self_rooted_cache, self_rooted_dirs
 from .git_transport import run_git
 
 IGNORED_DIRS = {
@@ -413,6 +413,7 @@ def _commit_sha(root: Path) -> str | None:
 
 def analyze_repository(root: Path, repo_url: str, repo_name: str | None = None) -> RepoAnalysis:
     root = root.resolve()
+    clear_self_rooted_cache()  # its key is the file list; a new analysis may see the same list with new contents
     if not root.is_dir():
         raise RepoInputError(f"Repository path does not exist: {root}")
 
@@ -471,7 +472,11 @@ def analyze_repository(root: Path, repo_url: str, repo_name: str | None = None) 
         test_frameworks=test_frameworks,
         likely_test_directories=test_dirs,
         has_tests=bool(test_files),
-        python_source_roots=self_rooted_dirs(root, [rel for rel in relative if rel.endswith(".py")]),
+        python_source_roots=self_rooted_dirs(
+            root,
+            [rel for rel in relative if rel.endswith(".py")],
+            skip=frozenset(declared_dependencies(root, package_files)),
+        ),
         notes=notes,
     )
 

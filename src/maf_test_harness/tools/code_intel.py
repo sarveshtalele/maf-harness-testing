@@ -421,7 +421,7 @@ def static_gate(ctx: RepoContext, path: str, content: str, preferred: list[str] 
                 preferred=preferred,
                 root=ctx.root,
             )
-        check_python_test_hygiene(content, path, ctx.source_files, read_source=ctx.read)
+        check_python_test_hygiene(content, path, ctx.source_files, read_source=ctx.read, root=ctx.root)
         check_fixture_contracts(content, path, ctx)
         check_mock_pitfalls(content, path, ctx)
         check_stateful_fixtures(ctx, path, content)
