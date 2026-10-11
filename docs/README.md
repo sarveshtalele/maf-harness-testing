@@ -49,9 +49,8 @@ Plans give direction. They are not guaranteed to be current.
 - [IMPLEMENTATION_PLAN.md](IMPLEMENTATION_PLAN.md): **historical** implementation plan for the harness, with counts from its date.
 - [WORKFLOW_SERVICE_MIGRATION_PLAN.md](WORKFLOW_SERVICE_MIGRATION_PLAN.md): **historical** proposal for moving the workflow behind a service.
 - [AZURE_DEPLOYMENT_PROPOSAL.md](AZURE_DEPLOYMENT_PROPOSAL.md): Azure hosting proposal. Documentation only. No Azure resources exist.
-- [Azure-deployment.md](Azure-deployment.md): short pointer to the Azure proposal and the Terraform in `azure-plan/`.
+- [Azure-deployment.md](Azure-deployment.md): short pointer to the Azure proposal. Its Terraform in `azure-plan/` (removed 2026-10-11; see git history).
 - [azure-plan-desktop.md](azure-plan-desktop.md): proposal for an Azure workspace for the desktop app. Nothing is built or deployed.
-- [../azure-plan/README.md](../azure-plan/README.md): Terraform, price data and validation files behind the Azure proposals.
 - [BACKEND_REVIEW_2026-10-01.md](BACKEND_REVIEW_2026-10-01.md): **historical** backend review and approval plan, 1 October 2026.
 - [BACKEND_FIX_PLAN_2026-10-02.md](BACKEND_FIX_PLAN_2026-10-02.md): **historical** backend correction and cleanup plan, 2 October 2026.
 - [DEAD_CODE_REVIEW_2026-10-01.md](DEAD_CODE_REVIEW_2026-10-01.md): **historical** dead-code review, 1 October 2026.

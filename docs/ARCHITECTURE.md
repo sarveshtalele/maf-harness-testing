@@ -339,7 +339,7 @@ this is a private repo with no external consumers of the old paths, so there was
 | `scripts/start_ui.py`, `start-*.{command,cmd,sh}` | Launcher: checks, build, both servers (the platform scripts are thin wrappers) |
 | `scripts/gen_architecture.py`, `scripts/check_version.py`, `scripts/build_desktop.py` | Regenerate and check [ARCHITECTURE_MAP](ARCHITECTURE_MAP.md); pyproject and frontend version check; PyInstaller backend plus desktop build (`--dry-run` prints the plan) |
 | `desktop/`, `packaging/backend.spec` | Electron shell (main, preload, process manager, keystore) and the PyInstaller spec for `maf-backend` |
-| `azure-plan/` | Proposal-only Terraform and price evidence; not applied |
+| `azure-plan/` | (removed 2026-10-11; see git history) |
 | `.github/workflows/ci.yml`, `ui.yml`, `desktop-*.yml`, `nightly.yml` | Lint, format, skills lint, tests, offline generation-benchmark calibration and secrets scan (`ci.yml`); launcher, browser, platform and desktop `npm test` checks on macOS, Windows and Ubuntu (`ui.yml`); desktop builds on tags and manual runs, one runner per arch (`desktop-*.yml`); nightly runs |
 
 ### 6.3 Agent Skills `skills/`
@@ -421,7 +421,7 @@ its own artifacts. Everything else is refused, and every run is recorded in `sta
 | `docs/audit/ERRORS.md` | Defect register with fixes |
 | `docs/audit/E2E_RESULTS.md` | Live end-to-end results and analysis of the original failing runs |
 | `docs/audit/*-e2e.xml`, `screenshots/` | Test evidence for defects found in the target applications |
-| `patches/*.patch` | Upstream fixes for those target defects |
+| `patches/*.patch` | (removed 2026-10-11; see git history) |
 
 ## 7. MAF integration in detail (`agent/runtime.py`, `skills/config.py`, `skills/scripts.py`)
 

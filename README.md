@@ -268,17 +268,15 @@ Skill files (`skills/*/SKILL.md`, `skills/*/references/`) and the document templ
 | `CLAUDE.md` | agent | Project rules for contributors and coding agents: commands, workflow gates, cross-OS rules, agent model, permissions. |
 | `CONTRIBUTING.md` | developer | Branch model, pull request steps, Conventional Commits, local checks, cross-OS rule. |
 | `README.md` | developer, user | Entry point. Desktop app use, architecture, developer setup, change and merge steps, documentation index. |
-| `azure-plan/README.md` | developer | Terraform, price data and validation files behind the Azure proposals. |
 | `benchmarks/generation/csv/PROMPT.md` | developer | Task prompt for the csv case of the generation benchmark. |
 | `benchmarks/generation/sqlite/PROMPT.md` | developer | Task prompt for the sqlite case of the generation benchmark. |
 | `benchmarks/generation/transcript/PROMPT.md` | developer | Task prompt for the transcript case of the generation benchmark. |
-| `design/MIGRATION_PLAN.md` | historical | Approval draft for the Next.js UI migration. Approved and implemented. |
 | `desktop/CLAUDE.md` | agent | Electron shell: key files, contracts, gotchas and test commands. |
 | `docs/ARCHITECTURE.md` | developer | Design of the harness, its stages and its guarantees. |
 | `docs/ARCHITECTURE_MAP.md` | developer | Generated module table with imports and importers. Regenerate with scripts/gen_architecture.py; never edit by hand. |
 | `docs/AUTOMATION.md` | developer | Recovery between gates, the diagnosis agent, prompt assembly and evaluators. |
 | `docs/AZURE_DEPLOYMENT_PROPOSAL.md` | developer | Azure hosting proposal. Documentation only; no Azure resources exist. |
-| `docs/Azure-deployment.md` | developer | Short pointer to the Azure proposal and the Terraform in azure-plan/. |
+| `docs/Azure-deployment.md` | developer | Short pointer to the Azure proposal. Its Terraform in azure-plan/ (removed 2026-10-11; see git history). |
 | `docs/BACKEND_FIX_PLAN_2026-10-02.md` | historical | Backend correction and cleanup plan, 2 October 2026. |
 | `docs/BACKEND_REVIEW_2026-10-01.md` | historical | Backend review and approval plan, 1 October 2026. |
 | `docs/CACHING.md` | developer | Token spend, prompt caching, daily token ledger and the response cache. |

@@ -241,7 +241,7 @@ These are set by the launcher, the desktop app or the code itself. They are not 
 ├── prompts/                   persona and reviewer prompt text shipped with the app
 ├── docs/                      documentation index in docs/README.md
 ├── .github/workflows/         ci, ui, nightly, desktop-prerelease, desktop-release
-├── azure-plan/, design/, patches/, agentic-testing-harness-v5-fixed.html
+├── (azure-plan/, design/, patches/, agentic-testing-harness-v5-fixed.html (removed 2026-10-11; see git history))
 │                              historical/design material, not part of the runtime
 └── memory.md                  project log (orchestrator-owned)
 ```
