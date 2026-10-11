@@ -206,9 +206,8 @@ class GenerationSteps:
                 elif validate_generated_files(accepted, batch_ids)["uncovered_case_ids"]:
                     accepted = None
             work_ids = {str(case["id"]) for case in work}
-            if (
-                batch_index > total_batches
-            ):  # an accuracy round: the earlier reviewer notes are the repair feedback
+            # An accuracy round (index above total_batches) repairs from the earlier reviewer notes.
+            if batch_index > total_batches:
                 repair_feedback = " ".join(f"{cid}: {verification_reason(cid)}." for cid in sorted(work_ids))
             source_files = state["artifacts"]["repo_analysis"].get("source_files", [])
             # Targets are usually symbols ("Class.method"); the linked requirements' source files name the modules,
