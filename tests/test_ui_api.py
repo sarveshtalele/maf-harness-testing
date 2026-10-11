@@ -623,3 +623,29 @@ def test_deleting_a_legacy_run_keeps_its_trash_inside_this_instance(tmp_path):
         assert not (legacy.parent / ".deleted-runs").exists()
     finally:
         api.close()
+
+
+def test_http_model_test_route_passes_the_typed_values(local_api, monkeypatch):
+    # The UI sends the typed (unsaved) settings; the route must forward the body, not test the saved ones.
+    seen = {}
+    monkeypatch.setattr(
+        local_api, "test_model_settings", lambda body=None: seen.update(body=body) or {"ok": True}
+    )
+    server = make_server(local_api, "test-authorization-token-32-characters", 0)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    try:
+        typed = {"base_url": "https://gateway.example/v1", "model": "m"}
+        request = Request(
+            f"http://127.0.0.1:{server.server_port}/settings/model/test",
+            data=json.dumps(typed).encode(),
+            headers={
+                "Authorization": "Bearer test-authorization-token-32-characters",
+                "Content-Type": "application/json",
+            },
+            method="POST",
+        )
+        assert json.load(urlopen(request)) == {"ok": True}
+        assert seen["body"] == typed
+    finally:
+        server.shutdown()
+        server.server_close()

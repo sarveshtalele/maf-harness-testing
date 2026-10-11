@@ -731,7 +731,7 @@ def make_server(api: LocalAPI, token: str, port: int = 8765):
                     elif parts == ["settings", "model"]:
                         self.reply(200, api.save_model_settings(body))
                     elif parts == ["settings", "model", "test"]:
-                        self.reply(200, api.test_model_settings())
+                        self.reply(200, api.test_model_settings(body))
                     elif parts == ["mcp-servers"]:
                         self.reply(200, api.mcp_save(body))
                     elif len(parts) == 3 and parts[0] == "mcp-servers" and parts[2] == "test":
