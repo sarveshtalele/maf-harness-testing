@@ -23,6 +23,8 @@ test('keyboard-only journey: skip link, New run with Enter, dialogs close on Esc
   const url = page.getByRole('textbox', { name: 'Public GitHub repository URL' });
   await url.focus();
   await page.keyboard.type('https://github.com/acme/keyboard');
+  // Enter submits only once the default button is enabled (config loaded, no prior operation still busy).
+  await expect(page.getByRole('button', { name: 'Start repository review →' })).toBeEnabled({ timeout: 60000 });
   await page.keyboard.press('Enter');
   await expect(page.getByRole('button', { name: 'Approve repository inspection' })).toBeEnabled({ timeout: 60000 }); // CI runners reach the first gate slower
   const id = new URL(page.url()).searchParams.get('run')!;
