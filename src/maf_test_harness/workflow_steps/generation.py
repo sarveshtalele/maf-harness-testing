@@ -13,6 +13,7 @@ from ..envs import Provisioned
 from ..envs.platform_compat import raise_if_cancelled
 from ..llm.prompts import generation_prompt
 from ..models import GeneratedFilesDraft
+from ..qa.confidence import review_accepted, verification_note
 from ..qa.quality import (
     existing_requirement_witnesses,
     existing_test_evidence,
@@ -31,9 +32,12 @@ from ..repo.routes import extract_routes
 from ..repo.stack import detect_stack
 from ..repo.testability import testability_for_targets
 from ..settings import (
+    ACCURACY_ROUNDS,
     AUTOFIX,
     BUILD_GATE,
     MAX_FAILED_BATCH_RATIO,
+    REQUIRE_FULL_ACCURACY,
+    TEST_REVIEW_MIN_CONFIDENCE,
 )
 from ..skills.config import skills_for
 from ..skills.contracts import (
@@ -110,9 +114,57 @@ class GenerationSteps:
         raw_batches: list[str] = []
 
         total_batches = (len(cases) + TEST_GENERATION_BATCH_SIZE - 1) // TEST_GENERATION_BATCH_SIZE
-        for batch_index, start in enumerate(range(0, len(cases), TEST_GENERATION_BATCH_SIZE), 1):
+        # Greenfield runs without application code have no source to review against, so the gate cannot apply.
+        gate_on = REQUIRE_FULL_ACCURACY and not has_no_code(state)
+        verification_rounds: dict[str, int] = {}
+
+        def unverified_cases() -> list[dict]:
+            done = {r["case_id"] for r in case_reviews if review_accepted(r, TEST_REVIEW_MIN_CONFIDENCE)}
+            return [case for case in cases if str(case["id"]) not in done]
+
+        def verification_reason(case_id: str) -> str:
+            """The latest reviewer note, else the latest generation error, for a case that is not verified."""
+            review = next(
+                (
+                    r
+                    for batch in reversed(state.get("test_reviews", []))
+                    for r in batch["reviews"]
+                    if r["case_id"] == case_id
+                ),
+                None,
+            )
+            if review:
+                return verification_note(review, TEST_REVIEW_MIN_CONFIDENCE)
+            error = next((f["last_error"] for f in reversed(failures) if case_id in f["case_ids"]), "")
+            return f"generation failed: {error}" if error else "no generated test for this case"
+
+        def batch_passes():
+            """The approved cases in batches, then (full-accuracy gate) targeted rounds for cases still unverified."""
+            size = TEST_GENERATION_BATCH_SIZE
+            yield from ((i, cases[s : s + size]) for i, s in enumerate(range(0, len(cases), size), 1))
+            if failures and (len(failures) / total_batches > MAX_FAILED_BATCH_RATIO or not accepted_files):
+                raise ValueError(
+                    f"Test generation failed for {len(failures)}/{total_batches} batches "
+                    f"(limit {MAX_FAILED_BATCH_RATIO:.0%}). Last error: {failures[-1]['last_error']}"
+                )
+            next_index = total_batches
+            for round_no in range(1, (ACCURACY_ROUNDS if gate_on else 0) + 1):
+                missing = unverified_cases()
+                if not missing:
+                    return
+                for case in missing:
+                    verification_rounds[str(case["id"])] = verification_rounds.get(str(case["id"]), 0) + 1
+                self.audit(
+                    "accuracy_round",
+                    round=round_no,
+                    case_ids=[str(case["id"]) for case in missing],
+                )
+                for start in range(0, len(missing), size):
+                    next_index += 1
+                    yield next_index, missing[start : start + size]
+
+        for batch_index, batch in batch_passes():
             raise_if_cancelled()
-            batch = cases[start : start + TEST_GENERATION_BATCH_SIZE]
             batch_ids = {str(case["id"]) for case in batch}
             requirements = state["artifacts"].get("requirements", {})
             linked_ids = {link["id"] for case in batch for link in case.get("traceability_links", [])}
@@ -154,6 +206,10 @@ class GenerationSteps:
                 elif validate_generated_files(accepted, batch_ids)["uncovered_case_ids"]:
                     accepted = None
             work_ids = {str(case["id"]) for case in work}
+            if (
+                batch_index > total_batches
+            ):  # an accuracy round: the earlier reviewer notes are the repair feedback
+                repair_feedback = " ".join(f"{cid}: {verification_reason(cid)}." for cid in sorted(work_ids))
             source_files = state["artifacts"]["repo_analysis"].get("source_files", [])
             # Targets are usually symbols ("Class.method"); the linked requirements' source files name the modules,
             # so both are passed (files select recipes, symbols pick the import names).
@@ -424,13 +480,19 @@ class GenerationSteps:
             if accepted["rationale"] not in rationales:
                 rationales.append(accepted["rationale"])
 
-        failed_case_ids = {cid for failure in failures for cid in failure["case_ids"]}
-        if failures and (len(failures) / total_batches > MAX_FAILED_BATCH_RATIO or not accepted_files):
-            raise ValueError(
-                f"Test generation failed for {len(failures)}/{total_batches} batches "
-                f"(limit {MAX_FAILED_BATCH_RATIO:.0%}). Last error: {failures[-1]['last_error']}"
-            )
         all_ids = {str(case["id"]) for case in cases}
+        if gate_on:
+            missing = unverified_cases()
+            if missing:
+                lines = [f"{case['id']}: {verification_reason(str(case['id']))}"[:600] for case in missing]
+                raise ValueError(
+                    f"Accuracy gate: {len(missing)} of {len(cases)} cases are not verified; execution is blocked.\n"
+                    + "\n".join(lines[:30])
+                    + "\nRetry generation (completed cases are kept), revise the design for these cases, "
+                    "or set HARNESS_REQUIRE_FULL_ACCURACY=0 to allow partial execution."
+                )
+            failures.clear()  # every case is verified, so earlier failure records are superseded
+        failed_case_ids = {cid for failure in failures for cid in failure["case_ids"]}
         final_payload = {
             "selected_language": ", ".join(languages)[:80] or "Repository native stack",
             "selected_framework": ", ".join(frameworks)[:120] or "Repository native test framework",
@@ -461,8 +523,35 @@ class GenerationSteps:
                 if case["id"] in failed_case_ids
                 else review.get("verdict"),
                 reviewer_reason=review.get("reason"),
+                scores=review.get("scores"),
+                model_score=review.get("model_score"),
+                caps=review.get("caps", []),
             )
         final_payload["case_catalog"].sort(key=lambda c: -(c.get("confidence") or 0))
+        final_payload["case_verification"] = {
+            cid: {
+                "confidence": reviews_by_id.get(cid, {}).get("confidence"),
+                "verdict": "generation_failed"
+                if cid in failed_case_ids
+                else reviews_by_id.get(cid, {}).get("verdict"),
+                "scores": reviews_by_id.get(cid, {}).get("scores"),
+                "caps": reviews_by_id.get(cid, {}).get("caps", []),
+                "rounds": verification_rounds.get(cid, 0),
+            }
+            for cid in sorted(all_ids)
+        }
+        verified = [
+            reviews_by_id[cid]["confidence"]
+            for cid in all_ids
+            if review_accepted(reviews_by_id.get(cid), TEST_REVIEW_MIN_CONFIDENCE)
+        ]
+        final_payload["verification_summary"] = {
+            "enforced": gate_on,
+            "verified": len(verified),
+            "total": len(all_ids),
+            "min_confidence": min(verified, default=None),
+            "threshold": TEST_REVIEW_MIN_CONFIDENCE,
+        }
         validation = validate_generated_files(final_payload, all_ids - failed_case_ids)
         validation["generation_failed_case_ids"] = sorted(failed_case_ids)
         validation["quality"] = validate_java_traceability(

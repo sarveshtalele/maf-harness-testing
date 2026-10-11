@@ -104,6 +104,19 @@ GENERATION_MAX_ATTEMPTS = max(1, int(os.getenv("HARNESS_GENERATION_MAX_ATTEMPTS"
 # Default 0.5 allows up to half the batches to fail; clamp to [0, 1].
 MAX_FAILED_BATCH_RATIO = max(0.0, min(1.0, float(os.getenv("HARNESS_MAX_FAILED_BATCH_RATIO", "0.5"))))
 
+# Independent review: a generated case is accepted only with verdict supported and host confidence at least this.
+TEST_REVIEW_MIN_CONFIDENCE = max(50, min(100, int(os.getenv("HARNESS_TEST_REVIEW_MIN_CONFIDENCE", "85"))))
+# Full-accuracy gate (default on): every designed case must be generated and accepted before execution can start.
+# Off restores the fail-soft behaviour, where failed or unverified cases run and report generation_failed.
+REQUIRE_FULL_ACCURACY = os.getenv("HARNESS_REQUIRE_FULL_ACCURACY", "1").strip().lower() not in {
+    "0",
+    "false",
+    "off",
+    "no",
+}
+# Targeted regeneration rounds for cases still unverified before the gate blocks (clamped to 0-5).
+ACCURACY_ROUNDS = max(0, min(5, int(os.getenv("HARNESS_ACCURACY_ROUNDS", "2"))))
+
 
 # Per-stage model overrides: JSON object {stage_name: model_id}. Unset or invalid JSON defaults to MODEL.
 # Example: {"test_generation": "claude-opus-4", "test_design": "claude-sonnet-4"}

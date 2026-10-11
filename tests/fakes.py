@@ -9,7 +9,16 @@ def clone_fixture(url, destination):
     (destination / "service.py").write_text("def add(a, b):\n    return a + b\n", encoding="utf-8")
 
 
-def review_response(kwargs, source="service.py"):
+FULL_MARKS = {
+    "source_and_api_match": 25,
+    "assertion_checks_real_behavior": 30,
+    "fixture_validity": 20,
+    "isolation_and_determinism": 15,
+    "traceability": 10,
+}
+
+
+def review_response(kwargs, source="service.py", scores=None):
     from maf_test_harness.models import TestReviewDraft
 
     if kwargs.get("response_format") is not TestReviewDraft:
@@ -21,6 +30,7 @@ def review_response(kwargs, source="service.py"):
             "reviews": [
                 {
                     "case_id": c["id"],
+                    "scores": dict(scores or FULL_MARKS),
                     "confidence": 90,
                     "verdict": "supported",
                     "reason": "Scripted reviewer transport: source and assertions match the fixture.",

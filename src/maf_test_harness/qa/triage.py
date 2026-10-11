@@ -76,6 +76,17 @@ ACTION = {
 
 REMEDIES: list[tuple[re.Pattern[str], str]] = [
     (
+        re.compile(r"^Accuracy gate:"),
+        "Some cases are not verified at the required confidence. Retry generation (completed cases are kept), or revise "
+        "the design for the listed cases. HARNESS_REQUIRE_FULL_ACCURACY=0 allows partial execution instead.",
+    ),
+    (
+        re.compile(r"Independent test review requires repair"),
+        "Fix the lowest-scoring rubric dimension or the named cap: call the real target from target_source, assert its "
+        "actual result or effect, and use source-valid fixtures. A cap is applied when the target is not invoked, is mocked, "
+        "has no assertion, or has no source.",
+    ),
+    (
         re.compile(
             r"\[gateway\]|gateway was unreachable|service failed to complete the prompt: "
             r"(?:Connection error|.*Error code: (?:429|50[234]))",

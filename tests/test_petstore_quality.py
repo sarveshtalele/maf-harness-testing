@@ -237,6 +237,13 @@ def test_independent_reviewer_scores_every_case_and_rejects_missing_evidence(tmp
                     "reviews": [
                         {
                             "case_id": cid,
+                            "scores": {
+                                "source_and_api_match": 25,
+                                "assertion_checks_real_behavior": 30,
+                                "fixture_validity": 20,
+                                "isolation_and_determinism": 15,
+                                "traceability": 10,
+                            },
                             "confidence": score,
                             "verdict": self.verdict,
                             "reason": "Source supports actual add invocation and its result assertion.",
@@ -256,12 +263,22 @@ def test_independent_reviewer_scores_every_case_and_rejects_missing_evidence(tmp
     host = Host()
     state = {"artifacts": {"requirements": {}}}
     cases = [{"id": cid} for cid in ["low", "high"]]
-    reviews = asyncio.run(review_generated_tests(host, state, {"files": []}, cases, 1))
+    candidate = {
+        "files": [
+            {
+                "path": f"tests/test_{cid}.py",
+                "case_ids": [cid],
+                "content": "add(1, 2)\nassert add(1, 2) == 3\n",
+            }
+            for cid in ["low", "high"]
+        ]
+    }
+    reviews = asyncio.run(review_generated_tests(host, state, candidate, cases, 1))
     assert [r["case_id"] for r in reviews] == ["high", "low"]
     host.bad_citation = True
-    reviews = asyncio.run(review_generated_tests(host, state, {"files": []}, cases, 1))
+    reviews = asyncio.run(review_generated_tests(host, state, candidate, cases, 1))
     assert reviews[0]["source_files"] == ["service.py"]
     assert "not generated test paths" in host.repairs[-1]
     host.verdict = "insufficient_evidence"
     with pytest.raises(ValueError, match="Independent test review requires repair"):
-        asyncio.run(review_generated_tests(host, state, {"files": []}, cases, 1))
+        asyncio.run(review_generated_tests(host, state, candidate, cases, 1))

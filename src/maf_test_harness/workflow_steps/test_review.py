@@ -3,8 +3,19 @@
 from ..agent.personas import chief_architect_persona
 from ..llm.prompts import generation_prompt
 from ..models import TestReviewDraft
+from ..qa.confidence import RUBRIC, review_accepted, score_review, target_symbol, verification_note
 from ..repo.analyzer import build_repository_evidence, extract_target_sources
+from ..settings import TEST_REVIEW_MIN_CONFIDENCE
 from ..workflow_support import MODEL_REPAIR_ATTEMPTS
+
+
+def _source_found(root, target: str, source_files: list[str]) -> bool:
+    """A "module.function" target resolves through its symbol when no class/module of that name declares it."""
+    if not target.strip():
+        return True
+    return bool(extract_target_sources(root, [target], source_files)) or bool(
+        extract_target_sources(root, [target_symbol(target)], source_files)
+    )
 
 
 async def review_generated_tests(host, state, candidate, cases, batch):
@@ -26,15 +37,9 @@ async def review_generated_tests(host, state, candidate, cases, batch):
         target_symbols=targets,
     )
     sections = {
-        "assignment": "Independently review EACH generated test against actual repository source. Do not rewrite tests or trust author claims or explanatory comments. Independently derive every expected literal from the actual fixture and implementation, including string lengths, counts, rounding and arithmetic; author calculations are unverified input. Flag nonexistent imports/APIs, wrong assumptions/assertions, invalid fixtures, ineffective mocks and missing invocation of claimed methods. Return one review per supplied case ID. Missing evidence must be insufficient_evidence, not supported. Scores are evidence-based judgments, not calibrated probabilities or runtime proof. Use target_source as the authoritative complete implementation of each targeted method. Do not return insufficient_evidence merely because repository_evidence is a truncated whole-file excerpt when target_source contains the complete method.",
+        "assignment": "Independently review EACH generated test against actual repository source. Score every rubric dimension conservatively from evidence (scores field); full marks only when the behaviour is verifiable in target_source; name the lowest-scoring dimension in reason. The host computes the final confidence from your scores and deterministic caps, so do not inflate scores. Do not rewrite tests or trust author claims or explanatory comments. Independently derive every expected literal from the actual fixture and implementation, including string lengths, counts, rounding and arithmetic; author calculations are unverified input. Flag nonexistent imports/APIs, wrong assumptions/assertions, invalid fixtures, ineffective mocks and missing invocation of claimed methods. Return one review per supplied case ID. Missing evidence must be insufficient_evidence, not supported. Scores are evidence-based judgments, not calibrated probabilities or runtime proof. Use target_source as the authoritative complete implementation of each targeted method. Do not return insufficient_evidence merely because repository_evidence is a truncated whole-file excerpt when target_source contains the complete method.",
         "strict_quality_rules": {
-            "rubric_points": {
-                "source_and_api_match": 25,
-                "assertion_checks_real_behavior": 30,
-                "fixture_validity": 20,
-                "isolation_and_determinism": 15,
-                "traceability": 10,
-            },
+            "rubric_points": RUBRIC,
             "supported": "Source supports target, setup and assertion; execution is still required.",
             "needs_revision": "Concrete source contradiction or ineffective test.",
             "insufficient_evidence": "Needed behavior cannot be established from supplied source.",
@@ -47,6 +52,8 @@ async def review_generated_tests(host, state, candidate, cases, batch):
         "output_contract": TestReviewDraft.model_json_schema(),
         "json_rules": {"single_complete_object": True, "markdown_fences": False},
     }
+    root = (host.run_dir / "repo").resolve()
+    source_files = state["artifacts"].get("repo_analysis", {}).get("source_files", [])
     repair = None
     for attempt in range(1, MODEL_REPAIR_ATTEMPTS + 1):
         try:
@@ -75,7 +82,6 @@ async def review_generated_tests(host, state, candidate, cases, batch):
                 raise ValueError(
                     "Reviewer must assess every supplied case ID exactly once, without inventing IDs."
                 )
-            root = (host.run_dir / "repo").resolve()
             for review in reviews:
                 for path in review["source_files"]:
                     target = root / path
@@ -100,13 +106,30 @@ async def review_generated_tests(host, state, candidate, cases, batch):
             host.save()
             if attempt == MODEL_REPAIR_ATTEMPTS:
                 raise
-    rejected = [r for r in reviews if r["verdict"] != "supported"]
+    by_case = {str(c["id"]): c for c in cases}
+    scored = []
+    for review in reviews:
+        case = by_case[review["case_id"]]
+        target = str(case.get("target") or "")
+        content = "\n".join(f["content"] for f in candidate["files"] if review["case_id"] in f["case_ids"])
+        scored.append(
+            score_review(
+                review,
+                target=target,
+                content=content,
+                source_found=_source_found(root, target, source_files),
+            )
+        )
+    reviews = scored
+    rejected = [r for r in reviews if not review_accepted(r, TEST_REVIEW_MIN_CONFIDENCE)]
     host.audit("test_reviewer_result", stage="test_generation", batch=batch, reviews=reviews)
     state.setdefault("test_reviews", []).append({"batch": batch, "reviews": reviews})
     host.save()
     if rejected:
         raise ValueError(
             "Independent test review requires repair: "
-            + "; ".join(f"{r['case_id']}: {r['reason']}" for r in rejected)
+            + "; ".join(
+                f"{r['case_id']}: {verification_note(r, TEST_REVIEW_MIN_CONFIDENCE)}" for r in rejected
+            )
         )
     return sorted(reviews, key=lambda r: (-r["confidence"], r["case_id"]))
