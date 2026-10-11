@@ -498,6 +498,14 @@ class PlanningSteps:
                 )
             return requirements
         if stage == "test_planning":
+            # Host fields (area_id, controls) are re-derived below: batched planning merges plans that were already
+            # validated, so strip them before the model schema (extra="forbid") sees the draft.
+            if isinstance(draft, dict):
+                draft = {k: v for k, v in draft.items() if k != "controls"}
+                draft["areas"] = [
+                    {k: v for k, v in area.items() if k != "area_id"} if isinstance(area, dict) else area
+                    for area in draft.get("areas") or []
+                ]
             plan = TestPlan.model_validate(draft)
             if not plan.areas or not plan.execution_order:
                 raise ValueError("Test plan must contain at least one area and execution step.")
