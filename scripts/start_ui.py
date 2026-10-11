@@ -51,6 +51,9 @@ def build_id():
 
 
 STATE_FILE = ROOT / ".maf-harness" / "launcher.json"
+API_MODULE = "maf_test_harness.ui.api"
+# Next.js retitles its server process, so the recorded entry path alone cannot verify an orphaned frontend.
+NEXT_TITLE = "next-server"
 
 
 def _probe(argv):
@@ -90,22 +93,106 @@ def command_line(pid):
     return (out.strip() or None) if out is not None else None
 
 
+def tree_commands(pid):
+    """(pid, command line) of a recorded child's tree, also after the child itself exited: its POSIX process group
+    (start_new_session made it the leader) or, on Windows, the child and its direct children."""
+    if os.name == "nt":
+        out = _probe(
+            [
+                "powershell",
+                "-NoProfile",
+                "-Command",
+                f"Get-CimInstance Win32_Process -Filter 'ProcessId={pid} or ParentProcessId={pid}' | "
+                'ForEach-Object { "$($_.ProcessId) $($_.CommandLine)" }',
+            ]
+        )
+        rows = [line.split(None, 1) for line in (out or "").splitlines()]
+        return [(int(r[0]), r[1]) for r in rows if len(r) == 2 and r[0].isdigit()]
+    out = _probe(["ps", "-A", "-o", "pid=,pgid=,command="])
+    rows = [line.split(None, 2) for line in (out or "").splitlines()]
+    return [(int(r[0]), r[2]) for r in rows if len(r) == 3 and r[1] == str(pid)]
+
+
 def terminate_tree(pid):
     if os.name == "nt":
         subprocess.run(
             ["taskkill", "/PID", str(pid), "/T", "/F"], check=False, capture_output=True, timeout=10
         )
         return
-    # Children were started with start_new_session, so the pid is also the process-group id.
+    # Children were started with start_new_session, so the pid is also the process-group id; the group can
+    # outlive its leader, so wait on the group rather than the pid.
     for sig in (signal.SIGTERM, signal.SIGKILL):
         try:
             os.killpg(pid, sig)
         except OSError:
             return
         for _ in range(30):
-            if not pid_alive(pid):
+            try:
+                os.killpg(pid, 0)
+            except OSError:
                 return
             time.sleep(0.1)
+
+
+def stop_children(processes, grace=5):
+    """Stop every child tree: SIGTERM each process group (POSIX) or taskkill /T /F (Windows), then force-kill what
+    is left after `grace` seconds. Groups are killed even when their leader already exited, so a grandchild such as
+    next-server cannot outlive the launcher."""
+    from maf_test_harness.envs.platform_compat import kill_process_tree
+
+    for process in reversed(processes):
+        if os.name == "nt":
+            if process.poll() is None:
+                kill_process_tree(process)
+        else:
+            try:
+                os.killpg(process.pid, signal.SIGTERM)
+            except OSError:
+                pass
+    deadline = time.monotonic() + grace
+    for process in processes:
+        try:
+            process.wait(timeout=max(deadline - time.monotonic(), 0.1))
+        except subprocess.TimeoutExpired:
+            pass
+    for process in processes:
+        if os.name != "nt" or process.poll() is None:
+            try:
+                kill_process_tree(process)
+            except OSError:
+                pass
+        try:
+            process.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            pass
+
+
+def install_stop_handlers(on_close, windows=os.name == "nt"):
+    """Make SIGTERM, SIGHUP and Ctrl+Break take the Ctrl+C path (KeyboardInterrupt, then the cleanup in main).
+    Windows ends the process as soon as a console close/logoff/shutdown handler returns, so those events stop the
+    children synchronously in on_close. Returns (previous signal handlers, console handler or None)."""
+
+    def interrupt(signum, frame):
+        raise KeyboardInterrupt
+
+    previous = {}
+    for name in ("SIGTERM", "SIGBREAK", "SIGHUP"):
+        if hasattr(signal, name):
+            signum = getattr(signal, name)
+            previous[signum] = signal.signal(signum, interrupt)
+    console = None
+    if windows:
+        import ctypes
+
+        def on_console(event):
+            if event in (2, 5, 6):  # CTRL_CLOSE_EVENT, CTRL_LOGOFF_EVENT, CTRL_SHUTDOWN_EVENT
+                on_close()
+                return True
+            return False  # Ctrl+C / Ctrl+Break reach the Python signal handlers
+
+        console = ctypes.WINFUNCTYPE(ctypes.c_bool, ctypes.c_uint)(on_console)
+        ctypes.windll.kernel32.SetConsoleCtrlHandler(console, True)
+    return previous, console
 
 
 def write_state(children):
@@ -134,12 +221,14 @@ def clean_orphans():
         return  # a live launcher owns these
     for child in children:
         try:
-            pid, port, marker = int(child["pid"]), int(child["port"]), str(child["marker"])
+            pid, port, markers = int(child["pid"]), int(child["port"]), child["marker"]
+            markers = [markers] if isinstance(markers, str) else [str(m) for m in markers]
         except (KeyError, ValueError, TypeError):
             continue
-        cmd = command_line(pid) if pid_alive(pid) else None
-        if cmd and marker in cmd and not port_available(port):
-            terminate_tree(pid)
+        members = tree_commands(pid)
+        if any(m in cmd for _, cmd in members for m in markers) and not port_available(port):
+            for target in [m for m, _ in members] if os.name == "nt" else [pid]:
+                terminate_tree(target)
             print(
                 f"Stopped orphaned {child.get('name', 'service')} (pid {pid}, port {port}) from a previous launch.",
                 flush=True,
@@ -367,14 +456,7 @@ def main():
         else {"start_new_session": True}
     )
 
-    def interrupt(signum, frame):
-        raise KeyboardInterrupt
-
-    previous_handlers = {}
-    for name in ("SIGTERM", "SIGBREAK", "SIGHUP"):
-        if hasattr(signal, name):
-            signum = getattr(signal, name)
-            previous_handlers[signum] = signal.signal(signum, interrupt)
+    previous_handlers, console_handler = install_stop_handlers(lambda: stop_children(processes))
     try:
         if args.prepare:
             install = launch(
@@ -389,11 +471,11 @@ def main():
                 raise RuntimeError(f"Next.js build failed. See {log_path}")
             return
         backend = launch(
-            [sys.executable, "-m", "maf_test_harness.ui.api", "--port", str(args.api_port)],
+            [sys.executable, "-m", API_MODULE, "--port", str(args.api_port)],
             ROOT,
             "backend",
             args.api_port,
-            "maf_test_harness.ui.api",
+            [API_MODULE],
         )
         # Cold MAF imports on hosted runners can exceed the old ten-second startup budget.
         deadline = time.monotonic() + 90
@@ -408,7 +490,7 @@ def main():
         else:
             raise RuntimeError("The local API did not become ready.")
         command = frontend_command(node, "start" if args.production else "dev", args.port)
-        launch(command, ROOT / "frontend", "frontend", args.port, command[1])
+        launch(command, ROOT / "frontend", "frontend", args.port, [command[1], NEXT_TITLE])
         if args.smoke_test:
             for _ in range(120):
                 if any(process.poll() is not None for process in processes):
@@ -440,34 +522,7 @@ def main():
                 signum = getattr(signal, name)
                 previous_handlers.setdefault(signum, signal.getsignal(signum))
                 signal.signal(signum, signal.SIG_IGN)
-        for process in reversed(processes):
-            if process.poll() is None:
-                if os.name == "nt":
-                    try:
-                        subprocess.run(
-                            ["taskkill", "/PID", str(process.pid), "/T", "/F"],
-                            check=False,
-                            stdout=subprocess.DEVNULL,
-                            stderr=subprocess.DEVNULL,
-                            timeout=10,
-                        )
-                    except (OSError, subprocess.TimeoutExpired):
-                        if process.poll() is None:
-                            process.kill()
-                else:
-                    try:
-                        os.killpg(process.pid, signal.SIGTERM)
-                    except ProcessLookupError:
-                        pass
-        for process in processes:
-            try:
-                process.wait(timeout=15)
-            except subprocess.TimeoutExpired:
-                if os.name != "nt":
-                    os.killpg(process.pid, signal.SIGKILL)
-                else:
-                    process.kill()
-                process.wait(timeout=5)
+        stop_children(processes)
         for worker in threads:
             worker.join(timeout=5)
         log.close()
@@ -475,6 +530,10 @@ def main():
             STATE_FILE.unlink(missing_ok=True)
         for signum, handler in previous_handlers.items():
             signal.signal(signum, handler)
+        if console_handler:
+            import ctypes
+
+            ctypes.windll.kernel32.SetConsoleCtrlHandler(console_handler, False)
 
 
 if __name__ == "__main__":

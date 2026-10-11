@@ -143,6 +143,7 @@ def _case_outcome(case: dict[str, Any], failures: dict[str, str], env_status: st
         "title": case.get("title", ""),
         "level": case.get("level", ""),
         "file": file,
+        "confidence": case.get("confidence"),
         "generation": generation,
         "execution": status if file else "not_executed",
         "final_status": final,

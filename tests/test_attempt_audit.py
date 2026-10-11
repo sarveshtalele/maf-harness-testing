@@ -9,7 +9,7 @@ from maf_test_harness.workflow import Harness
 from maf_test_harness.workflow_steps import generation as generation_steps
 
 
-def test_failed_generation_preserves_all_attempt_artifacts(tmp_path):
+def test_failed_generation_preserves_all_attempt_artifacts(tmp_path, monkeypatch):
     class ImportsOnly:
         async def run_stage(self, **kwargs):
             if review := review_response(kwargs):
@@ -24,6 +24,8 @@ def test_failed_generation_preserves_all_attempt_artifacts(tmp_path):
                 },
             }
 
+    # Accuracy rounds (default 2) would add attempts; this test covers the attempts of a single batch.
+    monkeypatch.setattr(generation_steps, "ACCURACY_ROUNDS", 0)
     host = Harness(tmp_path, skills_root=Path("skills"), requirements_mode="model", runtime=ImportsOnly())
     state = {
         "artifacts": {

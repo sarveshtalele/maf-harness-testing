@@ -90,6 +90,13 @@ def test_reviewer_prompt_has_full_target_method_for_large_file(tmp_path):
             prompts.append(json.loads(kw["prompt"]))
             review = {
                 "case_id": "c1",
+                "scores": {
+                    "source_and_api_match": 25,
+                    "assertion_checks_real_behavior": 30,
+                    "fixture_validity": 20,
+                    "isolation_and_determinism": 15,
+                    "traceability": 10,
+                },
                 "confidence": 90,
                 "verdict": "supported",
                 "reason": "Source supports the setter assertion.",
@@ -105,7 +112,16 @@ def test_reviewer_prompt_has_full_target_method_for_large_file(tmp_path):
 
     state = {"artifacts": {"requirements": {}, "repo_analysis": {"source_files": ["Item.java"]}}}
     cases = [{"id": "c1", "target": "Item.java setPrice"}]
-    asyncio.run(review_generated_tests(Host(), state, {"files": []}, cases, 1))
+    candidate = {
+        "files": [
+            {
+                "path": "tests/test_item.py",
+                "case_ids": ["c1"],
+                "content": "item.setPrice(2)\nassertEquals(2, item.price)\n",
+            }
+        ]
+    }
+    asyncio.run(review_generated_tests(Host(), state, candidate, cases, 1))
     assert "MARK_END" in prompts[0]["target_source"]
     assert "authoritative complete implementation" in prompts[0]["assignment"]
 

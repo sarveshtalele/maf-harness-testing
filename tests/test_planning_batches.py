@@ -107,3 +107,18 @@ def test_eta_planning_units(tmp_path):
     assert out["batch"] == {"done": 2, "total": 4}
     small = {**state, "artifacts": {"requirements": _reqs(5)}}
     assert run_eta(tmp_path / "x", {"state": small}, True, now=1767225600)["stages"][0]["batch"] is None
+
+
+def test_real_validate_accepts_merged_batch_plans_with_host_fields_and_renumbers_areas():
+    # Regression (live run d9cb36095900): each batch plan is validated (which stamps area_id), merge_plans keeps
+    # those areas, and the final validate rejected the merged draft (TestPlan forbids extra fields).
+    from maf_test_harness.qa.controls import add_plan_controls
+    from maf_test_harness.workflow_steps.planning import PlanningSteps
+
+    reqs = _reqs(3)
+    stamped = [add_plan_controls(PlanModel.model_validate(_plan(t)).model_dump(), reqs) for t in "ab"]
+    assert stamped[0]["areas"][0]["area_id"] == stamped[1]["areas"][0]["area_id"] == "PLN-01"
+    state = {"draft": merge_plans(stamped), "artifacts": {"requirements": reqs}}
+    plan = asyncio.run(PlanningSteps.validate(object(), "test_planning", state))
+    assert [a["area_id"] for a in plan["areas"]] == ["PLN-01", "PLN-02"]
+    assert len(plan["controls"]) == 3

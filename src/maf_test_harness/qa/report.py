@@ -89,6 +89,9 @@ def build_qa_report(
                 "priority": case.get("priority"),
                 "confidence": reviews.get(case["id"], {}).get("confidence"),
                 "reviewer_reason": reviews.get(case["id"], {}).get("reason"),
+                "model_score": reviews.get(case["id"], {}).get("model_score"),
+                "scores": reviews.get(case["id"], {}).get("scores"),
+                "caps": reviews.get(case["id"], {}).get("caps", []),
                 "file": file_for_case.get(case["id"]),
                 "status": (
                     result["status"]
@@ -246,6 +249,7 @@ def build_qa_report(
         },
         "verdict": verdict,
         "generated_verdict": generated_verdict,
+        "verification": generation.get("verification_summary"),
         "baseline_regression": baseline,
         "source_intake": {
             **requirements.get("intake", {}),
@@ -361,6 +365,19 @@ def _traceability_markdown(report: dict[str, Any]) -> list[str]:
     return [*out, ""]
 
 
+def _verification_markdown(report: dict[str, Any]) -> list[str]:
+    summary = report.get("verification") or {}
+    if not summary:
+        return []
+    lowest = "n/a" if summary.get("min_confidence") is None else summary["min_confidence"]
+    basis = "full-accuracy gate" if summary.get("enforced") else "fail-soft (HARNESS_REQUIRE_FULL_ACCURACY=0)"
+    return [
+        f"Verification: verified {summary.get('verified', 0)}/{summary.get('total', 0)} cases "
+        f"(threshold {summary.get('threshold')}, lowest verified confidence {lowest}; {basis}).",
+        "",
+    ]
+
+
 def render_markdown(report: dict[str, Any]) -> str:
     repo = report["repository"]
     lines = [
@@ -371,8 +388,8 @@ def render_markdown(report: dict[str, Any]) -> str:
         "",
         "## Case results",
         "",
-        "| ID | Control | Case | Level | Actor | Pri | Status | File |",
-        "|---|---|---|---|---|---|---|---|",
+        "| ID | Control | Case | Level | Actor | Pri | Confidence | Status | File |",
+        "|---|---|---|---|---|---|---|---|---|",
     ]
     lines[4:4] = [
         "## Evidence scope",
@@ -382,6 +399,7 @@ def render_markdown(report: dict[str, Any]) -> str:
         "",
         "Line, branch and mutation coverage: **not measured**.",
         "",
+        *_verification_markdown(report),
         "| Existing regression scope | Verdict | Tests | Reason |",
         "|---|---|---|---|",
         *[
@@ -395,7 +413,8 @@ def render_markdown(report: dict[str, Any]) -> str:
         lines.append(
             f"| {md_cell(c['id'])} | {md_cell(', '.join(c.get('control_ids') or []))} | {md_cell(c['title'], 70)} "
             f"| {md_cell(c['level'])} | {md_cell(c['actor'])} "
-            f"| {md_cell(c['priority'])} | {c['status']} | {md_cell(c['file'])} |"
+            f"| {md_cell(c['priority'])} | {'' if c.get('confidence') is None else c['confidence']} "
+            f"| {c['status']} | {md_cell(c['file'])} |"
         )
     lines += [
         "",

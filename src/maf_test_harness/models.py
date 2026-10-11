@@ -5,10 +5,27 @@ from typing import Annotated, Literal
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
+class ReviewScores(BaseModel):
+    """Rubric points the reviewer assigns from evidence; the host sums them and applies evidence caps."""
+
+    model_config = ConfigDict(extra="forbid")
+    source_and_api_match: int = Field(ge=0, le=25)
+    assertion_checks_real_behavior: int = Field(ge=0, le=30)
+    fixture_validity: int = Field(ge=0, le=20)
+    isolation_and_determinism: int = Field(ge=0, le=15)
+    traceability: int = Field(ge=0, le=10)
+
+
 class TestCaseReview(BaseModel):
     model_config = ConfigDict(extra="forbid")
     case_id: str = Field(min_length=1)
-    confidence: int = Field(ge=0, le=100)
+    scores: ReviewScores
+    confidence: int = Field(
+        default=0,
+        ge=0,
+        le=100,
+        description="Optional and ignored: the host overwrites it with the rubric sum capped by evidence.",
+    )
     verdict: Literal["supported", "needs_revision", "insufficient_evidence"]
     reason: str = Field(min_length=1, max_length=1500)
     source_files: list[str] = Field(

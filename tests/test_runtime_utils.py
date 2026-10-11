@@ -202,3 +202,25 @@ def test_gateway_retry_deadline_stops_before_the_next_wait(monkeypatch):
         asyncio.run(_adapter()._run_agent(agent, "p"))
     assert agent.calls == 1  # the 1 s wait would already pass the 0.5 s deadline
     assert time.monotonic() - started < 0.5
+
+
+def test_exhausted_quota_429_is_not_retried_but_a_rate_limit_is():
+    # Live run d9cb36095900: "daily token limit exceeded" 429s were retried for ~6 minutes before failing.
+    import httpx
+    import openai
+
+    from maf_test_harness.agent.runtime import _is_transient_gateway_error
+
+    request = httpx.Request("POST", "http://gateway.test")
+    quota = openai.RateLimitError(
+        "Error code: 429 - Token quota exceeded — daily token limit exceeded (25,081,210/25,000,000)",
+        response=httpx.Response(429, request=request),
+        body=None,
+    )
+    assert not _is_transient_gateway_error(RuntimeError(quota))
+    rate = openai.RateLimitError(
+        "Error code: 429 - Too many requests, retry after 2s",
+        response=httpx.Response(429, request=request),
+        body=None,
+    )
+    assert _is_transient_gateway_error(rate)
