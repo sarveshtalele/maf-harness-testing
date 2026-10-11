@@ -81,7 +81,7 @@ Use an existing Microsoft Entra workforce tenant. Register a single-tenant web a
 
 Implement the table above before building a deployment image. There is intentionally no pretend working Dockerfile: the current local proxy would reject Azure requests, and current OS-user storage would mix all web users. A Terraform-valid web app does not prove application readiness.
 
-For a future image built with the approved Dockerfile:
+For a future image built with the approved Dockerfile (proposed, not implemented: `HARNESS_DEPLOYMENT_MODE`, `HARNESS_EXECUTION_MODE` and `HARNESS_PUBLIC_ORIGIN` do not exist in the code yet):
 
 ```sh
 docker build --platform linux/amd64 -f azure-plan/Dockerfile -t ghcr.io/YOUR_OWNER/maf-harness-testing:YOUR_COMMIT .

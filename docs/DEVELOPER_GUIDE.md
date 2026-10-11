@@ -195,6 +195,18 @@ Recipes for adding skills are in section 4.
 Branch and commit rules are in [CONTRIBUTING.md](../CONTRIBUTING.md).
 
 
+### Internal environment variables
+
+These are set by the launcher, the desktop app or the code itself. They are not user settings and are not in `.env.example`. `HARNESS_TOOL_NAMES` is a Python constant, listed here so the names are not mistaken for settings.
+
+| Variable | Set by | Purpose |
+|---|---|---|
+| `HARNESS_API_TOKEN` | `scripts/start_ui.py`, `desktop/src/main.ts` | Per-launch bearer token for the loopback API (at least 32 characters) |
+| `HARNESS_API_PORT` | `scripts/start_ui.py`, `desktop/src/main.ts` | Loopback port of the Python API |
+| `HARNESS_BUILD_ID` | `scripts/start_ui.py` | Build fingerprint; the launcher never reuses a UI started from a stale build |
+| `HARNESS_RESOURCE_ROOT` | `desktop/src/main.ts` | Bundled read-only resources (`<resources>/backend` when packaged) |
+| `HARNESS_TOOL_NAMES` | `agent/runtime.py` | Python constant (not an env var) listing the harness tools for tool-trace accounting |
+
 ## 2. Repository layout
 
 ```text

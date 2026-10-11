@@ -213,7 +213,7 @@ organisation's own review. No claim of any certification is made by this plan.
 | Model | Option "Use workspace gateway": store the gateway token like the model key; resolution order gains `workspace` below runtime override | `ui/settings_api.py`, `docs/DESKTOP.md` resolution order |
 | Dashboard | Team dashboard tab (read-only, shows "offline" when not connected) | `frontend/app`, `frontend/components/reports.tsx` |
 | Telemetry | When connected and opted in, set `HARNESS_OTEL=otlp` + endpoint | `monitoring/telemetry.py` (config only) |
-| Feature flags | `HARNESS_WORKSPACE=off` default; build-time `DESKTOP_WORKSPACE_ENABLED`; whole UI hidden when off. Dev/prod channels map to dev/prod workspace URLs | `desktop/package.json`, CI workflows |
+| Feature flags | Proposed, not implemented: `HARNESS_WORKSPACE=off` default; build-time `DESKTOP_WORKSPACE_ENABLED`; whole UI hidden when off. Dev/prod channels map to dev/prod workspace URLs | `desktop/package.json`, CI workflows |
 | CSP / nav guard | Allow the workspace origin for the main-process HTTP client only; the renderer CSP is not widened | `desktop/src/main.ts`, `util.ts` |
 
 ## 7. Infrastructure as code
