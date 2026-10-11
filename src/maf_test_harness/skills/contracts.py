@@ -774,6 +774,8 @@ def _case_marker_comment(path: str, case_id: str, meta: dict[str, str] | None = 
         line += f" | RUN: {meta['run']}"
     if meta.get("req"):
         line += f" | REQ: {meta['req']}"
+    if meta.get("ctl"):
+        line += f" | CTL: {meta['ctl']}"
     if meta.get("title"):
         line += f" | TITLE: {meta['title']}"
     return line
@@ -788,7 +790,27 @@ def case_marker_meta(case: dict[str, Any], run_id: str = "", run_name: str = "")
     return {
         "run": run,
         "req": ", ".join(dict.fromkeys(r for r in reqs if r))[:200],
+        "ctl": ", ".join(str(c) for c in case.get("control_ids") or [])[:200],
         "title": _one_line(case.get("title"), 120),
+    }
+
+
+_MARKER = re.compile(r"CASE_ID:\s*(?P<case>[^\s|]+)(?P<rest>.*)$")
+_MARKER_FIELD = re.compile(r"\|\s*(RUN|REQ|CTL|TITLE):\s*(.*?)\s*(?=\|\s*(?:RUN|REQ|CTL|TITLE):|$)")
+
+
+def parse_case_marker(line: str) -> dict[str, Any] | None:
+    """Fields of a host CASE_ID header line. CTL is optional: headers written before control IDs still parse."""
+    match = _MARKER.search(str(line))
+    if not match:
+        return None
+    fields = dict(_MARKER_FIELD.findall(match["rest"]))
+    return {
+        "case_id": match["case"],
+        "run": fields.get("RUN", ""),
+        "req": [r.strip() for r in fields.get("REQ", "").split(",") if r.strip()],
+        "ctl": [c.strip() for c in fields.get("CTL", "").split(",") if c.strip()],
+        "title": fields.get("TITLE", ""),
     }
 
 

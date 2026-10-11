@@ -8,6 +8,7 @@ from __future__ import annotations
 from typing import Any
 
 from ..envs.runners import map_results_to_cases
+from .controls import case_controls, plan_controls, summarize_trace, trace_rows
 from .triage import build_updates
 
 SECTIONS = ("positive", "negative", "boundary", "validation", "contract")
@@ -41,8 +42,10 @@ def build_qa_report(
     stack: dict[str, Any] | None = None,
     environment: dict[str, Any] | None = None,
     generated_at: str | None = None,
+    plan: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     files = generation.get("files", [])
+    controls = plan_controls(requirements, plan)
     reviews = {r["case_id"]: r for r in generation.get("case_reviews", [])}
     file_for_case = {cid: f["path"] for f in files for cid in f.get("case_ids", [])}
     failure_for_case = {
@@ -102,6 +105,7 @@ def build_qa_report(
                 "requirements": [
                     link["id"] for link in case.get("traceability_links", []) if link["type"] == "requirement"
                 ],
+                "control_ids": case_controls(case, controls),
             }
         )
     cases.sort(key=lambda c: (-(c.get("confidence") or 0), c["id"]))
@@ -232,6 +236,7 @@ def build_qa_report(
         verdict = "INCONCLUSIVE"
     source_files = set(repo.get("source_files", []))
     represented_files = {p for sources in req_sources.values() for p in sources}
+    traceability = trace_rows(controls, cases, generation, environment, design)
     return {
         "generated_at": generated_at,
         "repository": {
@@ -259,6 +264,8 @@ def build_qa_report(
             for k in ("new", "pre_existing_witness", "excluded", "unexplained")
         },
         "coverage_scope": "Requirement-to-test traceability; not measured line, branch or behavior coverage.",
+        "traceability": traceability,
+        "traceability_summary": summarize_trace(traceability),
         "requirement_status_counts": dict(sorted(status_counts.items())),
         "failures": [
             c
@@ -327,6 +334,34 @@ def _updates_markdown(updates: dict[str, Any]) -> list[str]:
     return out
 
 
+def _traceability_markdown(report: dict[str, Any]) -> list[str]:
+    rows = report.get("traceability") or []
+    if not rows:
+        return []
+    summary = report.get("traceability_summary") or {}
+    out = [
+        "## End-to-end traceability",
+        "",
+        "Each control follows one requirement from planning (PLN) through design, generation, environment setup "
+        "and execution. Failed at names the first step that did not pass.",
+        "",
+        f"Controls: **{summary.get('controls', len(rows))}** · "
+        + ", ".join(f"{k}={v}" for k, v in (summary.get("failed_at") or {}).items()),
+        "",
+        "| Control | Requirement | Plan area | Test case(s) | Test file(s) | Generation | Execution | Status | Failed at | Reason |",
+        "|---|---|---|---|---|---|---|---|---|---|",
+    ]
+    out += [
+        f"| {md_cell(r['control_id'])} | {md_cell(r['requirement_id'])} "
+        f"| {md_cell(r['plan_area_id'])} {md_cell(r['plan_area_name'], 40)} "
+        f"| {md_cell(', '.join(r['case_ids']), 120)} | {md_cell(', '.join(r['test_files']), 120)} "
+        f"| {r['generation']} | {r['execution']} | {r['final_status']} | {r['failed_at'] or 'none'} "
+        f"| {md_cell(r['reason'], 300)} |"
+        for r in rows
+    ]
+    return [*out, ""]
+
+
 def render_markdown(report: dict[str, Any]) -> str:
     repo = report["repository"]
     lines = [
@@ -337,8 +372,8 @@ def render_markdown(report: dict[str, Any]) -> str:
         "",
         "## Case results",
         "",
-        "| ID | Case | Level | Actor | Pri | Status | File |",
-        "|---|---|---|---|---|---|---|",
+        "| ID | Control | Case | Level | Actor | Pri | Status | File |",
+        "|---|---|---|---|---|---|---|---|",
     ]
     lines[4:4] = [
         "## Evidence scope",
@@ -355,10 +390,12 @@ def render_markdown(report: dict[str, Any]) -> str:
             for r in report.get("baseline_regression", [])
         ],
         "",
+        *_traceability_markdown(report),
     ]
     for c in report["cases"]:
         lines.append(
-            f"| {md_cell(c['id'])} | {md_cell(c['title'], 70)} | {md_cell(c['level'])} | {md_cell(c['actor'])} "
+            f"| {md_cell(c['id'])} | {md_cell(', '.join(c.get('control_ids') or []))} | {md_cell(c['title'], 70)} "
+            f"| {md_cell(c['level'])} | {md_cell(c['actor'])} "
             f"| {md_cell(c['priority'])} | {c['status']} | {md_cell(c['file'])} |"
         )
     lines += [

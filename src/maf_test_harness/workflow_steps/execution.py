@@ -55,7 +55,9 @@ class ExecutionSteps:
             environment={
                 **(state.get("environment", {}).get("plan") or {}),
                 "missing_packages": state.get("environment", {}).get("missing_packages") or [],
+                "status": state.get("environment", {}).get("status"),
             },
+            plan=arts.get("test_planning"),
             provenance={
                 "runtime": state.get("runtime_provenance"),
                 "skills": state.get("skill_provenance"),
