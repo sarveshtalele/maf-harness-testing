@@ -16,11 +16,28 @@ from maf_test_harness.ui.errors import categorize, run_errors
         ("needs exactly one concrete test declaration", "one_test_per_file"),
         ("generated file references unknown case IDs: ['A']", "unknown_case_ids"),
         ("Structured output failed schema validation", "schema"),
+        ("Connection error.", "gateway"),
+        (
+            "The model gateway was unreachable for about 5 minutes (APIConnectionError: Connection error.).",
+            "gateway",
+        ),
+        ("RemoteProtocolError: Server disconnected without sending a response", "gateway"),
+        ("Error code: 503 - upstream overloaded", "gateway"),
+        ("HTTP 502 Bad Gateway from the model endpoint", "gateway"),
+        ("Rate limit reached for requests", "gateway"),
         ("boom", "other"),
+        ("generated 503 cases for the module", "other"),
     ],
 )
 def test_categories(text, cat):
     assert categorize(text) == cat
+
+
+def test_gateway_outage_has_a_remedy_and_import_errors_do_not():
+    from maf_test_harness.qa.triage import remedy_for
+
+    assert "unreachable or overloaded" in remedy_for("The model gateway was unreachable for about 5 minutes")
+    assert "unreachable or overloaded" not in remedy_for("No module named 'foo'")
 
 
 def write_audit(d, events):

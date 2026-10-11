@@ -8,6 +8,7 @@ from typing import Any
 from uuid import uuid4
 
 from ..agent.personas import persona_instructions
+from ..agent.runtime import GatewayUnavailableError
 from ..envs import Provisioned
 from ..envs.platform_compat import raise_if_cancelled
 from ..llm.prompts import generation_prompt
@@ -364,6 +365,8 @@ class GenerationSteps:
                     break
                 except Exception as exc:
                     self._settle_response_cache("test_generation", False)
+                    if isinstance(exc, GatewayUnavailableError):
+                        raise  # gateway down, not a bad batch: stop now; Retry resumes from the cached batches
                     repair_feedback = (
                         f"Attempt {attempt} failed generation or static validation: {exc}. "
                         + (f"HOW TO FIX: {remedy_for(str(exc))} " if remedy_for(str(exc)) else "")

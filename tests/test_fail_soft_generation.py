@@ -161,3 +161,38 @@ def test_repair_that_drops_sibling_cases_keeps_their_earlier_files(tmp_path, mon
     assert provider.generations == 2 and not result["generation_failures"]
     assert sorted(i for f in result["files"] for i in f["case_ids"]) == ["TC-1", "TC-2", "TC-3"]
     assert "generation_case_carried_over" in (tmp_path / "audit.jsonl").read_text(encoding="utf-8")
+
+
+def test_gateway_outage_aborts_the_batch_loop_without_recording_failures(tmp_path, monkeypatch):
+    from maf_test_harness.agent.runtime import GatewayUnavailableError
+
+    class GatewayDown(Provider):
+        def __init__(self):
+            super().__init__(())
+            self.calls = []
+
+        async def run_stage(self, **kwargs):
+            if review := review_response(kwargs):
+                return review
+            case = json.loads(kwargs["prompt"])["approved_inputs"]["approved_cases"][0]["id"]
+            self.calls.append(case)
+            if case == "TC-2":
+                raise GatewayUnavailableError("The model gateway was unreachable for about 5 minutes.")
+            return await super().run_stage(**kwargs)
+
+    monkeypatch.setattr(generation_steps, "TEST_GENERATION_BATCH_SIZE", 1)
+    (tmp_path / "repo").mkdir(exist_ok=True)
+    (tmp_path / "repo" / "service.py").write_text("def value(): return 2", encoding="utf-8")
+    provider = GatewayDown()
+    host = Harness(tmp_path, skills_root=Path("skills"), requirements_mode="model", runtime=provider)
+    state = {
+        "artifacts": {
+            "repo_analysis": {"languages": {"Python": 1}},
+            "test_design": {"positive_tests": [{"id": i} for i in ["TC-1", "TC-2", "TC-3"]]},
+        }
+    }
+    with pytest.raises(GatewayUnavailableError):
+        asyncio.run(host._generate_tests_batched(state))
+    assert provider.calls == ["TC-1", "TC-2"]  # TC-3 is never attempted
+    audit = (tmp_path / "audit.jsonl").read_text(encoding="utf-8")
+    assert "test_generation_batch_failed" not in audit

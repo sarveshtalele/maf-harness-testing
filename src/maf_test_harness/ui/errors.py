@@ -15,6 +15,11 @@ CATEGORIES = (
     ("unknown_case_ids", r"unknown case id|unknown_case_ids|unapproved case"),
     ("schema", r"schema validation"),
     ("build_gate", r"build gate"),
+    (
+        "gateway",
+        r"Connection error|gateway was unreachable|APIConnectionError|Server disconnected|Rate limit|"
+        r"(?:HTTP|status(?: code)?|error)\D{0,12}\b(?:502|503|504)\b",
+    ),
     ("quarantined", r"quarantined"),
 )
 
