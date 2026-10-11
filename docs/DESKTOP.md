@@ -40,6 +40,18 @@ CI builds installers in `.github/workflows/desktop-prerelease.yml` (manual run, 
 
 The desktop unit tests (`npm ci && npm test` in `desktop/`) run in `ui.yml` on macOS, Windows and Ubuntu.
 
+## Packaged-app smoke test
+
+`uv run python scripts/desktop_smoke.py` installs or mounts the installer in `desktop/release/` (or `--installer PATH`) and
+launches the packaged app with `AGENTIC_QE_SMOKE=1` in a fresh temp profile. The app boots the backend and UI, checks
+`/api/harness/config` through the UI port, prints `AGENTIC_QE_SMOKE OK backend=<port> ui=<port>` and quits (exit 0). Failures
+print `AGENTIC_QE_SMOKE FAIL <reason>`, the last 40 lines of each service log, and exit 1. Smoke mode also has a 150 s hard
+timeout and shows no error dialogs. Windows installs silently into a temp dir (or the per-user folder if `/D` is ignored),
+macOS mounts the DMG and runs the copied app, and Linux runs the AppImage with `--appimage-extract-and-run` (needs a display;
+CI uses `xvfb-run -a`). The script refuses to run on Windows if a per-user Agentic QE install already exists. The
+`desktop-prerelease` and `desktop-release` workflows run it after the backend self-check and upload `smoke-output.txt` as
+`smoke-desktop-<os>` when it fails.
+
 Targets: Windows NSIS x64, macOS dmg x64+arm64, Linux AppImage x64. No auto-update: Help > "Check for updates" opens the
 GitHub Releases page (`homepage` in `desktop/package.json`).
 
