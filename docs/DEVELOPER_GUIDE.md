@@ -427,6 +427,8 @@ Notes:
 - **Skills:** hash-locked; after editing a locked file refresh its hash and run `lint-skills --strict`.
 - **Style:** ruff check and format (`pyproject.toml`), type hints on new public functions, small modules with a module docstring (the architecture map reads it), comments explain why.
 - **Git:** Conventional Commits (`feat`, `fix`, `docs`, `chore`, `test`, `refactor`, `ci`), one logical change per commit, PRs into `develop`; never push to `main`/`develop` directly (the orchestrator merge described in CLAUDE.md is the only exception). Agents work in worktrees and never stash or push.
+- **TypeScript versions differ on purpose:** `frontend/` pins TypeScript 7.0.2 (exact, in `package-lock.json`) with Next.js 16; `desktop/` uses TypeScript `^5.9.0` (locked to 5.x in its `package-lock.json`). The two packages are separate npm toolchains with separate lockfiles, so each keeps the compiler it was tested with. Do not align them without testing both.
+- **Request logging is silenced on purpose:** `ui/api.py` `Handler.log_message` is a no-op because URLs and feedback can contain sensitive repository information. There is no supported switch to turn request logs on. For a local debugging session, temporarily call `super().log_message` in that method and do not commit it. Service and launcher logs are unaffected (see section 5).
 - **Docs travel with code:** update the directory `CLAUDE.md`, this guide or the relevant `docs/*.md`, and regenerate the architecture map in the same commit. Dated reports and `docs/audit/` are historical: do not edit.
 
 ## 8. Glossary
