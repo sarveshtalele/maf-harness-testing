@@ -499,3 +499,7 @@ Format: `YYYY-MM-DD HH:MM | BEFORE|AFTER | actor | action | scope/risk or result
   - .env.example sync, fallback logging, rerun archive retry and rollback (Windows sharing violations), utf-8 and BOM/CR handling, the typed body forwarded to settings/model/test.
   - New Playwright journeys: mobile, keyboard, greenfield limits, model test, prefs, MCP delete.
   - Dead code listed and awaiting owner approval (nothing deleted).
+- 2026-10-11 | AFTER | Opus | cross-OS CI fixes after the review wave:
+  - Windows launcher killed a live app's children: clean_orphans treated an unreadable launcher command line (the PowerShell CIM lookup timed out) as "not a launcher"; unverifiable now means skip. This was also the cause of the earlier intermittent failure at a95006d.
+  - The rerun test used errno 13, which Windows retries as a sharing lock; it now uses EPERM.
+  - The keyboard Playwright spec waited only 15 s for the first gate on the macOS runner; it now waits 60 s like the other specs.

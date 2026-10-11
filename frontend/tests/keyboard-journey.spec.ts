@@ -24,7 +24,7 @@ test('keyboard-only journey: skip link, New run with Enter, dialogs close on Esc
   await url.focus();
   await page.keyboard.type('https://github.com/acme/keyboard');
   await page.keyboard.press('Enter');
-  await expect(page.getByRole('button', { name: 'Approve repository inspection' })).toBeEnabled();
+  await expect(page.getByRole('button', { name: 'Approve repository inspection' })).toBeEnabled({ timeout: 60000 }); // CI runners reach the first gate slower
   const id = new URL(page.url()).searchParams.get('run')!;
 
   // Rename dialog: Escape closes it and focus returns to the trigger.
@@ -52,7 +52,7 @@ test('keyboard-only journey: skip link, New run with Enter, dialogs close on Esc
   await page.getByRole('textbox', { name: 'Public GitHub repository URL' }).fill('https://github.com/acme/slow');
   await page.getByRole('button', { name: 'Start repository review →' }).click();
   await page.getByRole('button', { name: 'Approve repository inspection', exact: true }).click();
-  await expect(page.getByRole('button', { name: 'Approve and proceed', exact: true })).toBeEnabled();
+  await expect(page.getByRole('button', { name: 'Approve and proceed', exact: true })).toBeEnabled({ timeout: 60000 });
   await page.getByRole('button', { name: 'Approve and proceed', exact: true }).click();
   const stop = page.getByRole('button', { name: 'Stop run', exact: true });
   await expect(stop).toBeEnabled();

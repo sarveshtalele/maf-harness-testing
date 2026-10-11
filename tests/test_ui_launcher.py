@@ -280,7 +280,10 @@ def test_orphaned_child_of_dead_launcher_is_terminated(tmp_path, monkeypatch, ca
     assert "orphaned frontend" in capsys.readouterr().out
 
 
-@pytest.mark.parametrize("case", ["foreign command", "port free", "unverifiable", "launcher alive"])
+@pytest.mark.parametrize(
+    "case",
+    ["foreign command", "port free", "unverifiable", "launcher alive", "launcher alive, command unreadable"],
+)
 def test_unverified_processes_are_never_killed(tmp_path, monkeypatch, case):
     module = _launcher()
     killed = _state(module, tmp_path, monkeypatch, cmd="vim notes.txt" if case == "foreign command" else None)
@@ -291,6 +294,11 @@ def test_unverified_processes_are_never_killed(tmp_path, monkeypatch, case):
     if case == "launcher alive":
         monkeypatch.setattr(module, "pid_alive", lambda pid: True)
         monkeypatch.setattr(module, "command_line", lambda pid: "python scripts/start_ui.py")
+    if case == "launcher alive, command unreadable":  # Windows CI: the PowerShell lookup timed out (None)
+        monkeypatch.setattr(module, "pid_alive", lambda pid: True)
+        monkeypatch.setattr(
+            module, "command_line", lambda pid: None if pid == 111 else "node /x/next/dist/bin/next"
+        )
     module.clean_orphans()
     assert killed == []
 

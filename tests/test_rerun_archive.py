@@ -35,7 +35,8 @@ def folders(tmp_path, monkeypatch):
     monkeypatch.setattr(Path, "rename", rename)
 
     def fail(key, times, winerror=32):
-        error = PermissionError(13, SHARING)
+        # EACCES (13) is retried on Windows as a sharing lock; a non-sharing error uses EPERM (1) on every OS.
+        error = PermissionError(13 if winerror is not None else 1, SHARING)
         if winerror is not None:
             error.winerror = winerror
         failures[key] = (times, error)

@@ -217,8 +217,12 @@ def clean_orphans():
         children = list(state["children"])
     except (OSError, ValueError, KeyError, TypeError):
         return
-    if launcher != os.getpid() and pid_alive(launcher) and "start_ui" in (command_line(launcher) or ""):
-        return  # a live launcher owns these
+    if launcher != os.getpid() and pid_alive(launcher):
+        owner = command_line(launcher)
+        if owner is None or "start_ui" in owner:
+            # A live launcher owns these. An unreadable command line (a transient lookup failure on Windows) is
+            # unverifiable, so its children are never treated as orphans.
+            return
     for child in children:
         try:
             pid, port, markers = int(child["pid"]), int(child["port"]), child["marker"]
