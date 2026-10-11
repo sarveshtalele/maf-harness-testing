@@ -92,7 +92,10 @@ def test_failed_cases_are_reported_and_block_a_pass_verdict():
 
 
 def stage_models(value):
-    code = "from maf_test_harness import settings; print(settings.model_for('requirements'), settings.model_for('test_design'))"
+    code = (
+        "from maf_test_harness import settings; cur = settings.current(); "
+        "print(*(cur['stage_models'].get(s) or cur['model'] for s in ('requirements', 'test_design')))"
+    )
     env = {**os.environ, "HARNESS_STAGE_MODELS": value, "OPENAI_MODEL": "base-model"}
     return subprocess.run(
         [sys.executable, "-c", code], capture_output=True, text=True, env=env, cwd=Path.cwd()

@@ -10,7 +10,7 @@ Builds MAF agents and runs one stage call at a time with budget, trace, hook and
 
 ## Contracts
 - A stage call is `run_stage(stage, skill_name, persona, prompt, state, persist, response_format=<models.py schema>, companions=(), temperature=0.0)`, keyword-only; tests replace it with `ScriptedStageRuntime` (`tests/fakes.py`).
-- Per-stage model: `settings.model_for` / `HARNESS_STAGE_MODELS`; key/base URL from `settings.current()` (override > env > `.env`).
+- Per-stage model: `settings.current()["stage_models"].get(stage) or model` (runtime reads the same way) / `HARNESS_STAGE_MODELS`; key/base URL from `settings.current()` (override > env > `.env`).
 - Prompt text is assembled in `llm/prompts.py` (stable sections first for prefix caching).
 
 ## Gotchas

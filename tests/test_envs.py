@@ -14,7 +14,7 @@ from pathlib import Path
 import pytest
 
 from maf_test_harness import envs
-from maf_test_harness.envs import python_env, spec, toolchains
+from maf_test_harness.envs import spec, toolchains
 from maf_test_harness.envs.runners import Step
 
 
@@ -47,16 +47,6 @@ def test_python_requirement_sources(tmp_path, files, want, reason):
     req = spec.python_requirement(write(tmp_path, files))
     assert req.version == want and req.reason.startswith(reason)
     assert spec.python_requirement(tmp_path / "nothing") is None
-
-
-def test_python_env_knows_whether_the_running_interpreter_is_enough(tmp_path):
-    assert python_env.current_interpreter_satisfies(python_env.spec(tmp_path))  # no requirement
-    old = write(tmp_path / "old", {".python-version": "3.0"})
-    new = write(tmp_path / "new", {".python-version": "99.0"})
-    assert python_env.current_interpreter_satisfies(python_env.spec(old))
-    assert not python_env.current_interpreter_satisfies(python_env.spec(new))
-    banned = write(tmp_path / "banned", {"pyproject.toml": '[project]\nrequires-python = ">=3.0,<3.1"\n'})
-    assert not python_env.current_interpreter_satisfies(python_env.spec(banned))
 
 
 @pytest.mark.parametrize(

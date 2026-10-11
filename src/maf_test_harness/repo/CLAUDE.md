@@ -6,7 +6,7 @@ Read-only, bounded, deterministic. Repository code is never executed here.
 - `analyzer.py`: `validate_github_url`, `clone_repository`, `analyze_repository`, `build_repository_evidence`, `extract_target_sources` (brace-aware `_brace_body_end`), `collaborator_signatures`, `declared_dependencies`.
 - `git_transport.py`: `run_git`, `read_operation` (file-backed git output, cancellable, process-tree lifetime).
 - `reverse_engineering.py` `reverse_engineer`; `requirements.py` `requirements_from_facts`: inputs/outputs of the two locked host skills.
-- `stack.py`: `StackProfile`, `detect_stack`. `routes.py`: `extract_routes`, `route_prefixes`.
+- `stack.py`: `StackProfile`, `detect_stack`. `routes.py`: `extract_routes`.
 - `testability.py`: `analyze_testability`, `testability_for_targets`, `non_public_targets`, `retarget_cases`.
 - `import_recipes.py`: `python_import_recipes`, `recipes_for_files` (literal bootstrap code for Python targets plain imports cannot reach).
 - `preview.py` `preview_repository` (GitHub REST only); `specs.py` greenfield: `parse_markdown`, `parse_docx`, `parse_pdf` (needs pypdf), `fetch_jira`, `ingest_specs`.

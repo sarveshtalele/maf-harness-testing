@@ -76,7 +76,6 @@ def test_key_configured_without_restart_and_never_echoed(api):
     assert api.config()["key_configured"] is True
     for payload in (out, api.model_settings(), api.config()):
         assert KEY not in json.dumps(payload)
-    assert settings.model_for("test_design") == "m2" and settings.model_for("other") == "m1"
     # empty api_key keeps the stored key
     api.save_model_settings({"api_key": "", "model": "m3"})
     assert settings.current()["api_key"] == KEY

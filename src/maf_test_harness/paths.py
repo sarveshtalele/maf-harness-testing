@@ -56,10 +56,6 @@ def runs_dir() -> Path:
     return _env_path("HARNESS_RUNS_DIR") or user_data_root() / "runs"
 
 
-def logs_dir() -> Path:
-    return _env_path("HARNESS_LOG_DIR") or user_data_root() / "logs"
-
-
 def cache_dir() -> Path:
     return user_data_root() / "cache"
 

@@ -281,12 +281,6 @@ def _quote(value: str) -> str:
     return f"'{value}'" if re.search(r"""[\s#"]""", value) else value
 
 
-def model_for(stage: str) -> str:
-    """The model for a stage: its HARNESS_STAGE_MODELS entry, else the default MODEL."""
-    cur = current()
-    return cur["stage_models"].get(stage) or cur["model"]
-
-
 # Wall-clock limit for each host-run setup/test command.
 EXECUTION_TIMEOUT_SECONDS = float(os.getenv("HARNESS_EXECUTION_TIMEOUT", "900"))
 MODEL_TIMEOUT_SECONDS = max(1, float(os.getenv("HARNESS_MODEL_TIMEOUT_SECONDS", "300")))

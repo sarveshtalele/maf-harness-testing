@@ -36,7 +36,6 @@ def test_env_overrides(monkeypatch, tmp_path):
         ("HARNESS_RESOURCE_ROOT", paths.resource_root),
         ("HARNESS_DATA_DIR", paths.user_data_root),
         ("HARNESS_RUNS_DIR", paths.runs_dir),
-        ("HARNESS_LOG_DIR", paths.logs_dir),
         ("HARNESS_PLUGIN_DIR", paths.plugin_dir),
     ):
         monkeypatch.setenv(name, str(tmp_path / name))
