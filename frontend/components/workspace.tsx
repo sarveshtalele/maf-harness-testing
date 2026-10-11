@@ -1,7 +1,7 @@
 'use client';
 import { useCallback, useEffect, useRef, useState, type CSSProperties, type FormEvent, type ReactNode } from 'react';
 import { api, artifacts, download, isConnectionError, label, minutes, record, rows, runTitle, text, type Config, type Row, type Run, type RunSummary } from '@/lib/harness';
-import { Badge, DataTable, DataView, ExportButtons, Metrics, Panel, ResizeHandle, usePreference } from './data';
+import { Badge, DataTable, DataView, ExportButtons, Metrics, Panel, ResizeHandle, usePreference, useReturnFocus } from './data';
 import Skills from './skills';
 import Reports from './reports';
 import StepReports, { QaDocument } from './step-reports';
@@ -80,13 +80,16 @@ export default function Workspace() {
   const [search, setSearch] = useState('');
   const [deleting, setDeleting] = useState<RunSummary | null>(null);
   const deleteDialog = useRef<HTMLDialogElement>(null);
+  useReturnFocus(!!deleting);
   useEffect(() => { if (deleting) deleteDialog.current?.showModal(); }, [deleting]);
   const [renaming, setRenaming] = useState(false);
   const [renameValue, setRenameValue] = useState('');
   const renameDialog = useRef<HTMLDialogElement>(null);
+  useReturnFocus(renaming);
   useEffect(() => { if (renaming) renameDialog.current?.showModal(); }, [renaming]);
   const [confirmStop, setConfirmStop] = useState(false);
   const stopDialog = useRef<HTMLDialogElement>(null);
+  useReturnFocus(confirmStop);
   useEffect(() => { if (confirmStop) stopDialog.current?.showModal(); }, [confirmStop]);
   const [sidebar, setSidebar] = usePreference<number>('maf:sidebar', 236);
   const [split, setSplit] = usePreference<number>('maf:split', 68);

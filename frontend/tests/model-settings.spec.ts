@@ -36,3 +36,37 @@ test('model & API key panel saves, tests and never shows the key again', async (
   await expect(page.getByRole('status').filter({ hasText: 'Connection works.' })).toBeVisible();
   expect(await page.content()).not.toContain(KEY);
 });
+
+test('model test uses typed values and shows friendly errors', async ({ page }) => {
+  const tests: Record<string, unknown>[] = [];
+  const view = { base_url: 'https://saved.example.com/v1', model: 'saved-model', stage_models: {}, key_configured: true, key_hint: 'saved', source: 'runtime' };
+  await page.route('**/api/harness/settings/model', route => route.fulfill({ json: view }));
+  await page.route('**/api/harness/settings/model/test', route => {
+    tests.push(route.request().postDataJSON());
+    return route.fulfill({ json: { ok: false, message: 'The API key was rejected by the gateway.', detail: "AuthenticationError: Error code: 401 - {'error': {'message': 'invalid key'}}" } });
+  });
+  await page.goto('/?page=configuration');
+  await page.getByLabel('Base URL').fill('https://typed.example.com/v1');
+  await page.getByLabel('Model', { exact: true }).fill('typed-model');
+  await page.getByRole('button', { name: 'Test connection' }).click();
+  await expect(page.getByRole('status').filter({ hasText: 'The API key was rejected by the gateway.' })).toBeVisible();
+  // no key typed: the request carries the typed URL and model only, so the saved key is used
+  expect(tests[0]).toEqual({ base_url: 'https://typed.example.com/v1', model: 'typed-model' });
+  await page.getByLabel('API key', { exact: true }).fill(KEY);
+  await page.getByRole('button', { name: 'Test connection' }).click();
+  await expect.poll(() => tests.length).toBe(2);
+  expect(tests[1]).toEqual({ base_url: 'https://typed.example.com/v1', model: 'typed-model', api_key: KEY });
+  await page.getByRole('status').getByText('Details', { exact: true }).click();
+  await expect(page.getByRole('status').getByText(/AuthenticationError: Error code: 401/)).toBeVisible();
+  // an invalid URL is reported inline and never sent
+  await page.getByLabel('Base URL').fill('http://typed.example.com/v1');
+  await page.getByLabel('Base URL').press('Tab');
+  await expect(page.locator('#base-url-error')).toContainText('Plain http:// is allowed only for localhost');
+  await page.getByRole('button', { name: 'Test connection' }).click();
+  await page.waitForTimeout(300);
+  expect(tests).toHaveLength(2);
+  await expect(page.getByRole('button', { name: 'Save', exact: true })).toBeEnabled();
+  await page.getByRole('button', { name: 'Save', exact: true }).click();
+  await page.waitForTimeout(300);
+  expect(tests).toHaveLength(2);
+});

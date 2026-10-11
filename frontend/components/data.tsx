@@ -33,6 +33,15 @@ export function usePreference<T>(key: string, initial: T): [T, (value: T) => voi
   return [value, save];
 }
 
+/** Returns focus to the element that had it when a modal opened (Escape or Cancel close it). */
+export function useReturnFocus(open: boolean) {
+  const trigger = useRef<HTMLElement | null>(null);
+  useEffect(() => {
+    if (open) trigger.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    else if (trigger.current) { trigger.current.focus(); trigger.current = null; }
+  }, [open]);
+}
+
 export function Panel({ title, children, storageKey, actions, defaultOpen = true, revealKey }: { title: string; children: ReactNode; storageKey: string; actions?: ReactNode; defaultOpen?: boolean; revealKey?: string }) {
   const [height, setHeight] = usePreference<number>(`panel-height:${storageKey}`, 0);
   const [width, setWidth] = usePreference<number>(`panel-width:${storageKey}`, 100);
