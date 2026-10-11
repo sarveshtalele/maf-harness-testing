@@ -480,3 +480,10 @@ Format: `YYYY-MM-DD HH:MM | BEFORE|AFTER | actor | action | scope/risk or result
 - 2026-10-11 | AFTER | Opus | azure-litellm-proxy rerun from environment_setup on the fixed runner: 193 tests ran, 152 passed (was 36), 37 failed, 4 errors (was 106). jest results now kept; backend/ treated as a self-rooted import root.
 - 2026-10-11 | AFTER | Opus | JS/TS import gate check_js_imports (Haiku, Sonnet-reviewed, hardened to fail open on unmodelled config): rejects undeclared packages (repo-wide package.json union), missing relative files, unresolvable aliases, and DOM use under a single node testEnvironment. On the azure workspace it rejects the 42 tests that import undeclared @testing-library/react. Gate: pytest 1214/1 skipped, Playwright 19/19, desktop 14/14
 - 2026-10-11 | BEFORE | Opus | release v1.0.2 (traceability control IDs, report theme, jest report dir, self-rooted import roots, JS import gate): bump versions, merge develop into main keeping the user README, tag, publish
+- 2026-10-11 | AFTER | Opus | v1.0.2 published (traceability, report theme, runner accuracy fixes)
+- 2026-10-11 | AFTER | Opus | user request "improve the confidence agent; no execution until all cases are accurate":
+  - The reviewer returns 5 rubric scores. The host computes confidence = min(rubric sum, deterministic caps: target not invoked / mocked / source missing / no assertion / verdict). Target caps apply only to confidently resolved symbols or routes.
+  - Accept = supported AND confidence >= 80. Rejected cases get feedback on their weakest dimension. A batch keeps its accepted cases.
+  - Full-accuracy gate (default on): 2 targeted regeneration rounds, then "Accuracy gate: X of N ... execution is blocked" before environment_setup. Cache policy v3 includes the threshold.
+  - Process: Haiku implemented, Sonnet review found 2 blockers (unpassable route/CLI/descriptive targets) and 4 majors, Haiku fixed them, Opus merged. Playwright spec updated to the host confidence (100 for full marks).
+  - Gate: pytest 1275/1 skipped, Playwright 19/19, tsc/build, ruff/map/skills ok

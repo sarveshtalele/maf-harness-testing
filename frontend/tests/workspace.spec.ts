@@ -103,7 +103,8 @@ test('complete browser workflow, layouts, evidence, downloads and stale gates', 
   await expect(page.locator('.source-code')).toContainText('def test_');
   const review = page.locator('.panel').filter({ has: page.getByRole('button', { name: 'Independent test review', exact: true }) });
   await expect(review.getByRole('columnheader', { name: 'Confidence', exact: false })).toBeVisible();
-  await expect(review.getByRole('cell', { name: '90', exact: true })).toBeVisible();
+  // host-computed confidence = rubric sum (the scripted reviewer gives full marks), not the model's self-reported 90
+  await expect(review.getByRole('cell', { name: '100', exact: true })).toBeVisible();
   await expect(review.getByRole('cell', { name: 'Supported', exact: true })).toBeVisible();
   await page.getByRole('button', { name: 'Dark appearance' }).click();
   const expandReview = page.getByRole('button', { name: 'Expand Independent test review', exact: true });
