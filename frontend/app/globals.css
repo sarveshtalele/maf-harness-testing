@@ -103,18 +103,18 @@ dialog::backdrop { background: #00000066; backdrop-filter: blur(3px); }
 
 /* Report documents (QA and step reports): verdict banner, contents, tables, headings and print. */
 .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
-.markdown-document [id] { scroll-margin-top: 16px; }
-.markdown-document code { font-size: .9em; background: var(--surface-alt); border-radius: 4px; padding: 2px 5px; overflow-wrap: anywhere; }
-.markdown-table { position: relative; overflow: auto; max-height: 620px; margin: 16px 0 22px; border: 1px solid var(--border); border-radius: 10px; background: var(--surface); }
-.markdown-table:focus-visible { outline: 3px solid var(--primary); outline-offset: 3px; }
-.markdown-table table { width: 100%; min-width: max-content; border-collapse: separate; border-spacing: 0; font-size: 12px; }
-.markdown-table caption { caption-side: top; }
-.markdown-table th { position: sticky; top: 0; z-index: 1; background: var(--surface-alt); color: var(--text); font-size: 11px; font-weight: 650; text-transform: none; letter-spacing: .02em; text-align: left; white-space: nowrap; padding: 8px 10px; box-shadow: inset 0 -1px var(--border); }
-.markdown-table td { min-width: 0; max-width: 42ch; padding: 7px 10px; border-bottom: 1px solid var(--border); overflow-wrap: anywhere; vertical-align: top; }
-.markdown-table tbody tr:nth-child(even) { background: color-mix(in srgb, var(--surface-alt) 65%, var(--surface)); }
-.markdown-table tbody tr:hover { background: color-mix(in srgb, var(--primary) 5%, var(--surface)); }
-.markdown-table .cell-id { display: inline-block; font: 11px/1.5 ui-monospace, SFMono-Regular, Consolas, monospace; white-space: nowrap; color: var(--text); }
-.markdown-table .badge { font-size: 10px; padding: 2px 8px; }
+.markdown-report [id] { scroll-margin-top: 16px; }
+.markdown-report code { font-size: .9em; background: var(--surface-alt); border-radius: 4px; padding: 2px 5px; overflow-wrap: anywhere; }
+.markdown-report .markdown-table { position: relative; overflow: auto; max-height: 620px; margin: 16px 0 22px; border: 1px solid var(--border); border-radius: 10px; background: var(--surface); }
+.markdown-report .markdown-table:focus-visible { outline: 3px solid var(--primary); outline-offset: 3px; }
+.markdown-report .markdown-table table { width: 100%; min-width: max-content; border-collapse: separate; border-spacing: 0; font-size: 12px; }
+.markdown-report .markdown-table caption { caption-side: top; }
+.markdown-report .markdown-table th { position: sticky; top: 0; z-index: 1; background: var(--surface-alt); color: var(--text); font-size: 11px; font-weight: 650; text-transform: none; letter-spacing: .02em; text-align: left; white-space: nowrap; padding: 8px 10px; box-shadow: inset 0 -1px var(--border); }
+.markdown-report .markdown-table td { min-width: 0; max-width: 42ch; padding: 7px 10px; border-bottom: 1px solid var(--border); overflow-wrap: anywhere; vertical-align: top; }
+.markdown-report .markdown-table tbody tr:nth-child(even) { background: color-mix(in srgb, var(--surface-alt) 65%, var(--surface)); }
+.markdown-report .markdown-table tbody tr:hover { background: color-mix(in srgb, var(--primary) 5%, var(--surface)); }
+.markdown-report .markdown-table .cell-id { display: inline-block; font: 11px/1.5 ui-monospace, SFMono-Regular, Consolas, monospace; white-space: nowrap; color: var(--text); }
+.markdown-report .markdown-table .badge { font-size: 10px; padding: 2px 8px; }
 .report-verdict { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 14px; margin: 0 0 20px; padding: 14px 18px; border: 1px solid var(--border); border-left: 5px solid var(--verdict-neutral); border-radius: 10px; background: var(--verdict-neutral-bg); color: var(--verdict-neutral); }
 .report-verdict .eyebrow { color: inherit; }
 .report-verdict strong { font-size: 20px; line-height: 1.2; letter-spacing: .02em; }
@@ -133,7 +133,7 @@ dialog::backdrop { background: #00000066; backdrop-filter: blur(3px); }
 .markdown-report p { color: var(--text); margin: 8px 0 12px; }
 .markdown-report li { margin: 4px 0; }
 .markdown-report blockquote { margin: 14px 0; padding: 6px 16px; border-left: 3px solid var(--border); color: var(--muted); }
-@media (max-width: 700px) { .markdown-table { max-height: 480px; } .report-toc ol { columns: 1; } }
+@media (max-width: 700px) { .markdown-report .markdown-table { max-height: 480px; } .report-toc ol { columns: 1; } }
 @media print {
   :root { --bg: #fff; --surface: #fff; --surface-alt: #f4f4f4; --text: #000; --muted: #222; --border: #777; --primary: #000; --on-primary: #fff; }
   body { background: #fff; color: #000; }
@@ -143,14 +143,14 @@ dialog::backdrop { background: #00000066; backdrop-filter: blur(3px); }
   .panel { width: 100% !important; margin: 0 0 16px; border: 0; box-shadow: none; overflow: visible; break-inside: auto; }
   .panel-heading { background: none; min-height: 0; padding: 0 0 8px; border-bottom: 1px solid #777; }
   .panel-body { height: auto !important; max-height: none !important; overflow: visible; padding: 0; }
-  .markdown-table { max-height: none; overflow: visible; border: 0; border-radius: 0; }
-  .markdown-table table { min-width: 0; }
-  .markdown-table th, .markdown-table td { border: 1px solid #777; }
-  .markdown-table th { position: static; }
-  .markdown-table thead { display: table-header-group; }
-  .markdown-table tr { break-inside: avoid; }
-  .markdown-table tbody tr:nth-child(even) { background: none; }
-  .badge, .report-verdict, .markdown-table th { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  .markdown-report .markdown-table { max-height: none; overflow: visible; border: 0; border-radius: 0; }
+  .markdown-report .markdown-table table { min-width: 0; }
+  .markdown-report .markdown-table th, .markdown-report .markdown-table td { border: 1px solid #777; }
+  .markdown-report .markdown-table th { position: static; }
+  .markdown-report .markdown-table thead { display: table-header-group; }
+  .markdown-report .markdown-table tr { break-inside: avoid; }
+  .markdown-report .markdown-table tbody tr:nth-child(even) { background: none; }
+  .badge, .report-verdict, .markdown-report .markdown-table th { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
   .report-toc { border-color: #777; }
   a { color: #000; }
 }

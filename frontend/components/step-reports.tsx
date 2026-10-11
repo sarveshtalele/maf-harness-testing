@@ -10,14 +10,16 @@ type Step = { name: string; title: string; status: string };
 export function QaDocument({ run }: { run: Run }) {
   const [body, setBody] = useState('');
   const [error, setError] = useState('');
+  useEffect(() => { setBody(''); }, [run.id]);
   useEffect(() => {
     const controller = new AbortController();
+    setError('');
     void fetch(download(run.id, 'qa', 'md'), { cache: 'no-store', signal: controller.signal }).then(r => r.ok ? r.text() : Promise.reject(new Error('QA report document unavailable.'))).then(setBody).catch(e => { if (!controller.signal.aborted) setError(e.message); });
     return () => controller.abort();
   }, [run.id, run.busy]);
   return <Panel title="QA report document" storageKey={`${run.id}:qa:document`}>
     {error && <p className="notice bad" role="alert">{error}</p>}
-    {body ? <Markdown text={body} variant="report" /> : error ? null : <p className="empty-inline">Loading report…</p>}
+    {body ? <Markdown text={body} variant="report" idPrefix="qa-doc" /> : error ? null : <p className="empty-inline">Loading report…</p>}
   </Panel>;
 }
 
@@ -40,6 +42,6 @@ export default function StepReports({ run }: { run: Run }) {
   return <Panel title="Step reports" storageKey={`${run.id}:qa:steps`} actions={<ExportButtons id={run.id} kind="qa" />}>
     {error && <p className="notice bad" role="alert">{error}</p>}
     <div className="evidence-types" role="tablist" aria-label="Step reports">{steps.map(s => <button key={s.name} role="tab" aria-selected={name === s.name} aria-pressed={name === s.name} onClick={() => setName(s.name)}>{s.title.replace(/^Step \d+: /, '')}{s.status === 'Not run' ? ' (not run)' : ''}</button>)}</div>
-    {body ? <Markdown text={body} variant="report" /> :<p className="empty-inline">Loading report…</p>}
+    {body ? <Markdown text={body} variant="report" idPrefix={`step-${name}`} /> :<p className="empty-inline">Loading report…</p>}
   </Panel>;
 }
