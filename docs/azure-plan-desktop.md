@@ -1,6 +1,6 @@
 # Azure workspace for the desktop app (hybrid plan)
 
-> Note: the `azure-plan/` folder this plan refers to was removed 2026-10-11 (removed 2026-10-11; see git history). File paths below name the removed evidence.
+> Note: the `azure-plan/` folder this plan refers to was removed 2026-10-11 (see git history). File paths below name the removed evidence.
 
 Status: **proposal, nothing built or deployed** (checked against code 2026-10-11: the Electron shell, keychain storage and skill approvals it builds on exist; the Azure workspace is not implemented). Supersedes the web-hosting direction of
 [AZURE_DEPLOYMENT_PROPOSAL.md](AZURE_DEPLOYMENT_PROPOSAL.md) (which hosts the whole UI in App Service and needs per-user

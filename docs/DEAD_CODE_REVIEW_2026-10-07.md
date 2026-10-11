@@ -81,7 +81,7 @@ Owner-approved deletions were carried out on branch `task-dead-code`, one commit
 
 **Removed**
 
-* Unused code: `ui/artifact_presenter.py` `_display_value`; `frontend/app/globals.css` rules `.filter-label` and `.resize-both` (`.filters` kept).
+* Unused code: `ui/artifact_presenter.py` `_display_value`; `frontend/app/globals.css` rule `.filter-label` (`.filters` kept). `.resize-both` was kept: `components/data.tsx` builds it as `resize-${axis}` for the panel corner handle, so a static grep misses it.
 * Test-only code, with the tests that exercised only it: `envs/python_env.py` `current_interpreter_satisfies`; `repo/routes.py` `route_prefixes`; `settings.py` `model_for` (the per-stage runtime reads `settings.current()["stage_models"]` directly, and the fail-soft test now checks that path); `paths.py` `logs_dir`.
 * Modules: `envs/java_env.py`, `envs/dotnet_env.py`. References updated in `docs/ARCHITECTURE.md`, `docs/ARCHITECTURE_MAP.md` (regenerated), `docs/DEVELOPER_GUIDE.md`, `docs/WORKFLOW_SERVICE_MIGRATION_PLAN.md` and `src/maf_test_harness/envs/CLAUDE.md`.
 * Legacy root files: `agentic-testing-harness-v5-fixed.html`, `design/`, `patches/`, `azure-plan/`. Links in the README indexes, the Azure documents, `docs/ARCHITECTURE.md`, `docs/DEVELOPER_GUIDE.md` and `docs/audit/ERRORS.md` now read "(removed 2026-10-11; see git history)".

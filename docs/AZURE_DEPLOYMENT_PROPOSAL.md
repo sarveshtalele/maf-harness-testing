@@ -1,6 +1,6 @@
 # Azure deployment proposal — Agentic QE Platform
 
-> Note: the `azure-plan/` folder (Terraform, price script and evidence, Dockerfile reference) was removed 2026-10-11 (removed 2026-10-11; see git history). File paths below name the removed evidence.
+> Note: the `azure-plan/` folder (Terraform, price script and evidence, Dockerfile reference) was removed 2026-10-11 (see git history). File paths below name the removed evidence.
 
 Status (checked against code 2026-10-11): still a proposal. The app runs locally (Next.js UI with the Python API, or the Electron app). The repository has no Dockerfile, hosted-mode switch or per-user isolation, and the Terraform and price evidence once kept in `azure-plan/` (never applied) (removed 2026-10-11; see git history).
 
