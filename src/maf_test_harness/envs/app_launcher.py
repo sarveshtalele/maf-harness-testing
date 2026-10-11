@@ -269,7 +269,10 @@ def running(spec: dict[str, Any], workspace: Path, base_url: str, log_dir: Path)
         if path.is_absolute() and path.is_relative_to(workspace / ".harness-app-state"):
             (path.parent if path.suffix == ".db" else path).mkdir(parents=True, exist_ok=True)
     env = _child_env(log_dir, True, spec.get("env"))
-    with (log_dir / "app.stdout.log").open("w") as out, (log_dir / "app.stderr.log").open("w") as err:
+    with (
+        (log_dir / "app.stdout.log").open("w", encoding="utf-8") as out,
+        (log_dir / "app.stderr.log").open("w", encoding="utf-8") as err,
+    ):
         process = subprocess.Popen(
             spec["argv"],
             cwd=root,

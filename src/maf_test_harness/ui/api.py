@@ -28,7 +28,7 @@ from ..repo.git_transport import read_operation
 from ..repo.preview import preview_repository
 from ..run_options import parse_run_options
 from ..settings import current as current_settings
-from ..settings import validate_gateway_settings
+from ..settings import is_local_app_url, validate_gateway_settings
 from ..storage import read_json
 from ..workflow import Harness
 from ..workflow_support import atomic_json
@@ -188,12 +188,14 @@ class LocalAPI(EvidenceAPI, SettingsAPI, McpAPI):
             stale = view.get("status") == "running" and not live  # API restarted mid-run
             return run_eta(self.run_path(key), view, live, interrupted=stale)
         except Exception:  # progress hints must never break the run read
+            logging.getLogger(__name__).warning("ETA unavailable for run %s", key, exc_info=True)
             return {"stages": []}
 
     def _case_budget(self, key: str, view: dict) -> dict | None:
         try:
             return case_budget_view(self.run_path(key), view)
         except Exception:
+            logging.getLogger(__name__).warning("Case budget unavailable for run %s", key, exc_info=True)
             return None
 
     def set_case_budget(self, key: str, body: dict) -> dict:
@@ -373,9 +375,7 @@ class LocalAPI(EvidenceAPI, SettingsAPI, McpAPI):
             run_name = _run_name(body.get("run_name"), url)
             if url.strip().startswith("git clone "):
                 url = validate_github_url(url)[0]
-            if app_url and not re.fullmatch(
-                r"https?://(?:localhost|127\.0\.0\.1)(?::\d+)?(?:/\S*)?", app_url.strip()
-            ):
+            if app_url and not is_local_app_url(app_url):
                 raise ValueError("Application URL must be local to the execution host.")
             if not self.runtime_factory:
                 validate_gateway_settings()

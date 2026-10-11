@@ -178,6 +178,14 @@ def current() -> dict:
     return out
 
 
+_LOCAL_APP_URL = re.compile(r"https?://(?:localhost|127\.0\.0\.1)(?::\d+)?(?:/\S*)?")
+
+
+def is_local_app_url(value: str) -> bool:
+    """True for an http(s) URL on localhost or 127.0.0.1: the application under test runs on this host."""
+    return _LOCAL_APP_URL.fullmatch(value.strip()) is not None
+
+
 def validate_base_url(url: str) -> str:
     """https only; plain http solely for localhost / 127.0.0.1. Empty means the provider default."""
     url = url.strip()

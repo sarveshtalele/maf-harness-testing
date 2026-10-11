@@ -4,8 +4,18 @@ from uuid import uuid4
 
 from filelock import FileLock
 
-from ..storage import read_json
+from ..storage import _retry, read_json
 from ..workflow_support import atomic_json
+
+
+def _move_into_archive(source, target) -> None:
+    """Move a run folder into the attempt archive, retrying short Windows sharing locks."""
+    try:
+        _retry(lambda: source.rename(target))
+    except PermissionError as exc:
+        raise RuntimeError(
+            f"Could not move {source.name} into the attempt archive; close programs using files in the run folder and retry."
+        ) from exc
 
 
 class RerunSteps:
@@ -32,9 +42,9 @@ class RerunSteps:
             atomic_json(archive / "run.json", view)
             # Retain existing source and environments instead of deleting/replaying stale files.
             if index == 0 and (self.run_dir / "repo").exists():
-                (self.run_dir / "repo").rename(archive / "repo")
+                _move_into_archive(self.run_dir / "repo", archive / "repo")
             if index <= environment_index and self.workspace.exists():
-                self.workspace.rename(archive / "workspace")
+                _move_into_archive(self.workspace, archive / "workspace")
             for name in self.stages[index:]:
                 for key in (
                     "artifacts",

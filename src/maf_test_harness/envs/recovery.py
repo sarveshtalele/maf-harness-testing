@@ -159,7 +159,7 @@ def testclient_http_package(python: str | Path) -> str | None:
     code = "import importlib.util as u;s=u.find_spec('starlette.testclient');print(s.origin if s else '')"
     try:
         out = subprocess.run(
-            [str(python), "-c", code], capture_output=True, text=True, timeout=60
+            [str(python), "-c", code], capture_output=True, text=True, timeout=60, check=False
         ).stdout.strip()
         source = Path(out).read_text(encoding="utf-8", errors="replace") if out else ""
     except (OSError, subprocess.SubprocessError):

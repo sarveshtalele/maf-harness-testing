@@ -200,7 +200,10 @@ def run_command(
         "exit_code": None,
         "isolation": "local-process-not-security-sandbox",
     }
-    with (output_dir / "stdout.log").open("w") as stdout, (output_dir / "stderr.log").open("w") as stderr:
+    with (
+        (output_dir / "stdout.log").open("w", encoding="utf-8") as stdout,
+        (output_dir / "stderr.log").open("w", encoding="utf-8") as stderr,
+    ):
         try:
             process = subprocess.Popen(
                 argv,

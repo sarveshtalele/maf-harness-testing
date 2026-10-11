@@ -58,7 +58,7 @@ NEXT_TITLE = "next-server"
 
 def _probe(argv):
     try:
-        done = subprocess.run(argv, capture_output=True, text=True, timeout=10, errors="replace")
+        done = subprocess.run(argv, capture_output=True, text=True, timeout=10, errors="replace", check=False)
     except (OSError, subprocess.TimeoutExpired):
         return None
     return done.stdout if done.returncode == 0 else None
@@ -280,7 +280,7 @@ def node_runtime():
     node = shutil.which("node")
     if not node:
         raise RuntimeError("Install Node.js 24 LTS, open a new terminal, then retry. https://nodejs.org/")
-    result = subprocess.run([node, "--version"], capture_output=True, text=True, timeout=10)
+    result = subprocess.run([node, "--version"], capture_output=True, text=True, timeout=10, check=False)
     version = result.stdout.strip()
     if result.returncode or not re.fullmatch(r"v24\.\d+\.\d+", version):
         raise RuntimeError(
@@ -364,7 +364,7 @@ def main():
     except RuntimeError as exc:
         parser.error(str(exc))
     if args.check_only:
-        return
+        return None
     # Preflight runs before dependencies are installed; normal launch follows uv sync.
     # Load .env before choosing storage so launcher and API honor the same overrides.
     sys.path.insert(0, str(ROOT / "src"))
@@ -469,7 +469,7 @@ def main():
             build = launch(frontend_command(node, "build"), ROOT / "frontend", "next-build")
             if build.wait() != 0:
                 raise RuntimeError(f"Next.js build failed. See {log_path}")
-            return
+            return None
         backend = launch(
             [sys.executable, "-m", API_MODULE, "--port", str(args.api_port)],
             ROOT,
@@ -504,7 +504,7 @@ def main():
                     if not {"model", "key_configured", "stages"}.issubset(config):
                         raise RuntimeError("The frontend could not verify the backend configuration.")
                     print("Startup verified: UI and authenticated backend proxy work.", flush=True)
-                    return
+                    return None
                 except (URLError, TimeoutError):
                     time.sleep(0.5)
             raise RuntimeError("The UI/backend connection did not become ready.")

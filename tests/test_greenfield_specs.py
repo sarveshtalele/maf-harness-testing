@@ -29,6 +29,15 @@ Duplicate title gets its own anchor.
 """
 
 
+def test_markdown_with_bom_and_crlf_parses_like_lf():
+    plain = ingest_specs([{"name": "req.md", "content": MD}])["sections"]
+    windows = ingest_specs([{"name": "req.md", "content": b"\xef\xbb\xbf" + MD.replace(b"\n", b"\r\n")}])
+    assert [(s["anchor"], s["text"]) for s in windows["sections"]] == [(s["anchor"], s["text"]) for s in plain]
+    assert windows["sections"][0]["anchor"] == "preamble" and windows["sections"][1]["anchor"] == "login"
+    first_heading = ingest_specs([{"name": "h.md", "content": b"\xef\xbb\xbf# Login\r\nBody\r\n"}])["sections"]
+    assert [s["anchor"] for s in first_heading] == ["login"]
+
+
 def docx_bytes(paragraphs):
     body = "".join(
         f'<w:p><w:pPr><w:pStyle w:val="{style}"/></w:pPr><w:r><w:t>{text}</w:t></w:r></w:p>'

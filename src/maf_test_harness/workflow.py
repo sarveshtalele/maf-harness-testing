@@ -3,7 +3,6 @@
 # NOTE: no `from __future__ import annotations` here; MAF inspects handler annotations at runtime.
 import asyncio
 import json
-import re
 import traceback
 from contextlib import contextmanager
 from pathlib import Path
@@ -49,6 +48,7 @@ from .settings import (
     HOOKS,
     SKILL_EVALUATORS,
     STRICT_ENV,
+    is_local_app_url,
 )
 from .skills.config import skills_for
 from .skills.host import execute_host_skill
@@ -342,9 +342,7 @@ class Harness(RerunSteps, ExecutionSteps, GenerationSteps, GreenfieldSteps, Plan
             canonical, _, _, ref = validate_github_url(repo_url, with_ref=True)
             if repo_url.startswith("git clone "):
                 repo_url = canonical
-        if app_url is not None and not re.fullmatch(
-            r"https?://(?:localhost|127\.0\.0\.1)(?::\d+)?(?:/\S*)?", app_url.strip()
-        ):
+        if app_url is not None and not is_local_app_url(app_url):
             raise ValueError(
                 "app_url must be a local http(s) URL such as http://localhost:8080 (tests run on this host)."
             )

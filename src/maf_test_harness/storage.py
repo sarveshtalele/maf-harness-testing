@@ -16,6 +16,7 @@ def _retry(operation):
             if not transient or attempt == 39:
                 raise
             time.sleep(0.05)
+    raise RuntimeError("Retry budget exhausted without a result.")  # unreachable: the last attempt returns or raises
 
 
 def read_json(path: Path):

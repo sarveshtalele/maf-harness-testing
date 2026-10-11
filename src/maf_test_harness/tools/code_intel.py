@@ -115,7 +115,7 @@ def installed_packages(ctx: RepoContext, limit: int = 150) -> dict[str, Any]:
         names: dict[str, list[str]] = {}
         for info in sorted(site[0].glob("*.dist-info")):
             top = info / "top_level.txt"
-            modules = top.read_text(errors="replace").split() if top.is_file() else []
+            modules = top.read_text(encoding="utf-8", errors="replace").split() if top.is_file() else []
             names[info.name.removesuffix(".dist-info").rsplit("-", 1)[0]] = modules
         return {
             "ecosystem": "python",

@@ -492,3 +492,11 @@ def test_a_flattened_test_passes_the_static_gate_that_rejected_the_original():
     assert (
         validate_generated_files(py_payload(flatten_nested_with(source)), {"TC-1"})["test_declarations"] == 1
     )
+
+
+def test_local_app_url_helper_accepts_only_localhost_http_urls():
+    from maf_test_harness.settings import is_local_app_url
+
+    assert is_local_app_url(" http://localhost:8080/app ") and is_local_app_url("https://127.0.0.1")
+    assert not is_local_app_url("http://evil.example.com") and not is_local_app_url("http://localhost.evil.com")
+    assert not is_local_app_url("") and not is_local_app_url("ftp://localhost")
