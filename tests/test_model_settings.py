@@ -247,3 +247,15 @@ def test_typed_base_url_with_saved_key_is_refused_without_probe(api):
 def test_non_text_fields_are_rejected_as_value_errors(api, bad):
     with pytest.raises(ValueError):
         api.test_model_settings(bad)
+
+
+def test_empty_typed_base_url_does_not_send_saved_gateway_key_to_provider_default(api):
+    # An empty URL means the provider's default host, which is a different host than the saved gateway.
+    settings.set_runtime(api_key=KEY, base_url="https://saved.example.com/v1")
+    calls = []
+    api.model_probe = lambda cur: calls.append(cur)
+    out = api.test_model_settings({"base_url": "", "model": "m"})
+    assert out == {"ok": False, "message": "Enter the API key to test a different base URL."}
+    assert calls == []
+    # omitting base_url keeps the saved one
+    assert api.test_model_settings({"model": "m"})["ok"] is True and len(calls) == 1

@@ -162,8 +162,8 @@ class SettingsAPI:
         if model is not None and (not model.strip() or len(model.strip()) > 100):
             raise ValueError("Model must be 1-100 characters.")
         cur = settings.current()
-        if not typed_key and base_url and base_url != cur["base_url"]:
-            # The saved key is never sent to a host the user did not save it for.
+        if not typed_key and "base_url" in body and (base_url or "") != (cur["base_url"] or ""):
+            # The saved key is never sent to a host the user did not save it for (an empty URL = provider default host).
             return {"ok": False, "message": "Enter the API key to test a different base URL."}
         cur = {
             **cur,
