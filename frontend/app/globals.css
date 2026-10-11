@@ -154,3 +154,8 @@ dialog::backdrop { background: #00000066; backdrop-filter: blur(3px); }
   .report-toc { border-color: #777; }
   a { color: #000; }
 }
+/* Keyboard and small-screen helpers */
+.skip-link{position:absolute;left:12px;top:-100px;z-index:100;background:var(--surface);color:var(--text);border:1px solid var(--border);border-radius:7px;padding:8px 13px;text-decoration:none}
+.skip-link:focus{top:12px}
+#main-content:focus{outline:none}
+.field-error{color:var(--bad);font-size:12px;margin:4px 0 10px}

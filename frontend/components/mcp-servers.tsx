@@ -1,6 +1,6 @@
 'use client';
 import { useCallback, useEffect, useState, useRef } from 'react';
-import { api, apiDelete, label } from '@/lib/harness';
+import { api, apiDelete, desktop, label } from '@/lib/harness';
 import { Panel } from './data';
 
 type Server = {
@@ -10,7 +10,6 @@ type Server = {
 type Preset = { label: string; note: string; server: Omit<Server, 'secrets' | 'ready'> };
 type Data = { servers: Server[]; presets: Record<string, Preset>; stages: string[]; max_tools_per_server: number };
 type Desktop = { saveMcpSecrets(server: string, values: Record<string, string>): Promise<unknown>; deleteMcpServer(server: string): Promise<unknown> };
-const desktop = (): Desktop | undefined => (typeof window === 'undefined' ? undefined : (window as unknown as { desktop?: Desktop }).desktop);
 type Notice = { ok: boolean; text: string } | null;
 const pick = (s: Server) => ({ name: s.name, transport: s.transport, command: s.command, args: s.args, env_keys: s.env_keys, url: s.url, enabled: s.enabled, stages: s.stages, allowed_tools: s.allowed_tools, approval_required_tools: s.approval_required_tools, preset: s.preset });
 
@@ -40,12 +39,12 @@ function ServerCard({ server, stages, onChange, onDeleted }: { server: Server; s
   const saveSecrets = () => run(async () => {
     const values = Object.fromEntries(Object.entries(secrets).filter(([, v]) => v));
     if (!Object.keys(values).length) throw new Error('Enter a value first.');
-    const d = desktop();
+    const d = desktop<Desktop>();
     if (d) await d.saveMcpSecrets(s.name, values); else await api(`mcp-servers/${s.name}/secrets`, values);
     setSecrets({}); const fresh = await api<Data>('mcp-servers'); const me = fresh.servers.find(x => x.name === s.name); if (me) setS(v => ({ ...v, secrets: me.secrets, ready: me.ready })); onChange();
     return 'Secrets stored (write-only).';
   });
-  const remove = () => run(async () => { const d = desktop(); if (d) await d.deleteMcpServer(s.name); else await apiDelete(`mcp-servers/${s.name}`); onDeleted(); });
+  const remove = () => run(async () => { const d = desktop<Desktop>(); if (d) await d.deleteMcpServer(s.name); else await apiDelete(`mcp-servers/${s.name}`); onDeleted(); });
 
   return <section aria-label={`MCP server ${s.name}`} className="notice" style={{ borderLeftColor: s.enabled ? 'var(--good)' : undefined }}>
     <h2>{s.name} <span className="badge">{s.transport}</span> {s.enabled && <span className={`badge ${s.ready ? 'good' : 'warn'}`}>{s.ready ? 'enabled' : 'needs secrets'}</span>}</h2>
@@ -56,7 +55,7 @@ function ServerCard({ server, stages, onChange, onDeleted }: { server: Server; s
     </fieldset>
     <p className="field-help">Tools: only tools set to <em>Auto-approve</em> (read-only) or <em>Needs approval</em> are visible to the agent. Run Test to list the server&apos;s tools.</p>
     {names.length > 0 && <table><thead><tr><th>Tool</th><th>Access</th></tr></thead><tbody>{names.map(t => <tr key={t}><td><code>{t}</code></td><td><select aria-label={`Access for ${t}`} value={mode(t)} onChange={e => setMode(t, e.target.value)}><option value="hidden">Hidden</option><option value="auto">Auto-approve (read-only)</option><option value="approval">Needs human approval</option></select></td></tr>)}</tbody></table>}
-    {Object.keys(s.secrets).length > 0 && <fieldset><legend>Secrets (write-only, kept in memory{desktop() ? ' and your OS keychain' : ''})</legend>
+    {Object.keys(s.secrets).length > 0 && <fieldset><legend>Secrets (write-only, kept in memory{desktop<Desktop>() ? ' and your OS keychain' : ''})</legend>
       {Object.entries(s.secrets).map(([k, set]) => <label key={k}>{k === 'BEARER_TOKEN' ? 'Token (Bearer, or "Basic …")' : k}<input type="password" autoComplete="new-password" spellCheck={false} value={secrets[k] || ''} onChange={e => setSecrets({ ...secrets, [k]: e.target.value })} placeholder={set ? 'Set — leave empty to keep' : 'Not set'} /></label>)}
       <button type="button" disabled={busy} onClick={saveSecrets}>Save secrets</button></fieldset>}
     <p className="field-help">The first Test of an npx server can time out while npx downloads the package; run it again.</p>

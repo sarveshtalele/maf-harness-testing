@@ -10,15 +10,29 @@ export const text = (value: unknown): string => value == null ? '—' : typeof v
 export const number = (value: unknown) => typeof value === 'number' ? value.toLocaleString() : text(value);
 export const artifacts = (run: Run) => record(run.state.artifacts);
 export const download = (id: string, kind: string, format = 'json', index?: number) => `/api/harness/runs/${encodeURIComponent(id)}/download?${new URLSearchParams({ kind, format, ...(index == null ? {} : { index: String(index) }) })}`;
+/** An HTTP error answer from the local API (validation 400, conflict 409, ...). */
+export class ApiError extends Error {
+  constructor(message: string, readonly status: number) { super(message); }
+}
+/** Connection failures: the request never reached the API (no ApiError) or the proxy reported it unavailable. */
+export const isConnectionError = (error: unknown) => !(error instanceof ApiError) || error.status === 503 || error.status === 504;
+/** The window bridge exposed by the desktop shell; undefined in the browser. */
+export function desktop<T>(): T | undefined { return typeof window === 'undefined' ? undefined : (window as unknown as { desktop?: T }).desktop; }
+
+async function failure(response: Response): Promise<never> {
+  const error = await response.json().catch(() => ({}));
+  throw new ApiError(error.error || `Request failed (${response.status})`, response.status);
+}
+
 export async function api<T>(path: string, body?: Row, signal?: AbortSignal): Promise<T> {
   const response = await fetch(`/api/harness/${path}`, { method: body ? 'POST' : 'GET', headers: body ? { 'Content-Type': 'application/json' } : {}, body: body ? JSON.stringify(body) : undefined, cache: 'no-store', signal });
-  if (!response.ok) { const error = await response.json().catch(() => ({})); throw new Error(error.error || `Request failed (${response.status})`); }
+  if (!response.ok) await failure(response);
   return response.json();
 }
 
 export async function apiDelete<T>(path: string): Promise<T> {
   const response = await fetch(`/api/harness/${path}`, { method: 'DELETE', cache: 'no-store' });
-  if (!response.ok) { const error = await response.json().catch(() => ({})); throw new Error(error.error || `Request failed (${response.status})`); }
+  if (!response.ok) await failure(response);
   return response.json();
 }
 

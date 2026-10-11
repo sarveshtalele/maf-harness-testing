@@ -52,11 +52,22 @@ def parse_run_options(body: dict) -> dict[str, Any]:
     if not isinstance(docs, list) or len(docs) > MAX_DOCS:
         raise ValueError(f"At most {MAX_DOCS} specification documents are allowed.")
     total, parsed, names = 0, [], set()
+    rejected = [
+        name
+        for doc in docs
+        if isinstance(doc, dict) and isinstance(doc.get("name"), str)
+        for name in [PurePosixPath(doc["name"].replace("\\", "/")).name]
+        if name and PurePosixPath(name).suffix.lower() not in DOC_EXTENSIONS
+    ]
+    if rejected:
+        raise ValueError(
+            f"Unsupported document type: {', '.join(rejected)}. Use .md, .txt, .docx or .pdf files."
+        )
     for doc in docs:
         if not isinstance(doc, dict) or not isinstance(doc.get("name"), str):
             raise ValueError("Each document needs a name and content_base64.")
         name = PurePosixPath(doc["name"].replace("\\", "/")).name
-        if not name or name.startswith(".") or PurePosixPath(name).suffix.lower() not in DOC_EXTENSIONS:
+        if not name or name.startswith("."):
             raise ValueError("Documents must be .md, .txt, .docx or .pdf files.")
         if name in names:
             raise ValueError(f"Duplicate document name: {name}")
