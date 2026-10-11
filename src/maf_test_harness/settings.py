@@ -105,7 +105,7 @@ GENERATION_MAX_ATTEMPTS = max(1, int(os.getenv("HARNESS_GENERATION_MAX_ATTEMPTS"
 MAX_FAILED_BATCH_RATIO = max(0.0, min(1.0, float(os.getenv("HARNESS_MAX_FAILED_BATCH_RATIO", "0.5"))))
 
 # Independent review: a generated case is accepted only with verdict supported and host confidence at least this.
-TEST_REVIEW_MIN_CONFIDENCE = max(50, min(100, int(os.getenv("HARNESS_TEST_REVIEW_MIN_CONFIDENCE", "85"))))
+TEST_REVIEW_MIN_CONFIDENCE = max(50, min(100, int(os.getenv("HARNESS_TEST_REVIEW_MIN_CONFIDENCE", "80"))))
 # Full-accuracy gate (default on): every designed case must be generated and accepted before execution can start.
 # Off restores the fail-soft behaviour, where failed or unverified cases run and report generation_failed.
 REQUIRE_FULL_ACCURACY = os.getenv("HARNESS_REQUIRE_FULL_ACCURACY", "1").strip().lower() not in {

@@ -77,7 +77,7 @@ ACTION = {
 REMEDIES: list[tuple[re.Pattern[str], str]] = [
     (
         re.compile(r"^Accuracy gate:"),
-        "Some cases are not verified at the required confidence. Retry generation (completed cases are kept), or revise "
+        "Some cases are not verified at the required confidence. Retry the generation stage (verified cases are kept; Rerun-from-step or Revise regenerate everything), or revise "
         "the design for the listed cases. HARNESS_REQUIRE_FULL_ACCURACY=0 allows partial execution instead.",
     ),
     (

@@ -2,10 +2,13 @@
 
 The reviewer model scores five rubric dimensions. The host sums them, then applies deterministic caps from the
 generated file and the target's source. A cap cannot be raised by the model. The checks are conservative regular
-expressions across Python, JavaScript/TypeScript and Java; they are best-effort, not parsers.
+expressions across Python, JavaScript/TypeScript and Java; they are best-effort, not parsers. A target that does not
+name a confident code symbol (CLI commands, pages, flows, free text) gets no target caps at all.
 """
 
 import re
+from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
 RUBRIC: dict[str, int] = {
@@ -17,62 +20,194 @@ RUBRIC: dict[str, int] = {
 }
 
 _ASSERTION = re.compile(
-    r"\bassert\b|\bassert[A-Z]\w*\s*\(|\bAssert\.|\b(?:and)?[Ee]xpect\s*\(|\.should\b|\bverify\s*\("
-    r"|\.to(?:Equal|Be|Throw|Contain|Match)\w*\s*\(|pytest\.raises\("
+    r"\bassert\b|\bassert[A-Z]\w*\s*\(|\bassert_\w+\s*\(|\bAssert\.|\b(?:and)?[Ee]xpect\s*\(|\.should\b|\bverify\s*\("
+    r"|\.to(?:Equal|Be|Throw|Contain|Match)\w*\s*\(|pytest\.raises\(|\brequire\.\w+\(|\bt\.(?:Errorf|Fatalf|Fatal|Error)\("
+    r"|@Test\([^)]*expected"
 )
-_PY_PATCH = re.compile(r"""\bpatch(?:\.object)?\(\s*(?:[^,()]+,\s*)?["']([\w.]+)["']""")
+# Comments and string/template literals are blanked before code-level matching (newlines kept).
+_MASK = re.compile(
+    r"""(#[^\n]*|//[^\n]*|/\*.*?\*/|\"\"\".*?\"\"\"|'''.*?'''|"(?:\\.|[^"\\\n])*"|'(?:\\.|[^'\\\n])*'|`(?:\\.|[^`\\])*`)""",
+    re.S,
+)
+_PY_PATCH = re.compile(r"""\bpatch\(\s*(?:[^,()]+,\s*)?["']([\w.]+)["']""")
+_PY_PATCH_OBJECT = re.compile(r"""\bpatch\.object\(\s*(\w+)\s*,\s*["'](\w+)["']""")
 _JS_SPY = re.compile(r"""\bjest\.spyOn\(\s*\w+\s*,\s*["'`](\w+)["'`]""")
 _JS_MODULE_MOCK = re.compile(r"""\bjest\.(?:mock|doMock)\(\s*["'`]([^"'`]+)["'`]""")
 _JAVA_MOCK = re.compile(r"\bmock\(\s*(\w+)\.class\s*\)|@Mock\s+(?:(?:private|final)\s+)*(\w+)\s+\w+")
+
+_ROUTE = re.compile(r"^(?:GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS)\s+(/\S*)")
+_DESCRIPTORS = {
+    "constructor",
+    "property",
+    "getter",
+    "setter",
+    "component",
+    "hook",
+    "page",
+    "flow",
+    "method",
+    "function",
+    "class",
+    "endpoint",
+    "route",
+    "command",
+    "screen",
+}
+_CONSTRUCTOR_NAMES = {"__init__", "constructor", "__construct"}
+_PATH_TOKEN = re.compile(r"[/\\]|\.(?:ts|tsx|js|jsx|mjs|cjs|py|java|cs|go|rb|kt|rs)$", re.I)
+_IDENT = re.compile(r"[A-Za-z_]\w*")
+_CODE_NAME = re.compile(r"^(?:[A-Z][a-z0-9]+[A-Z]\w*|[a-z]+[A-Z]\w*|[A-Za-z]+_\w+)$")
+
+
+@dataclass(frozen=True)
+class CodeTarget:
+    """A target that names one confident code symbol, or a route literal."""
+
+    kind: str  # "symbol" | "constructor" | "route"
+    symbol: str = ""
+    owner: str = ""  # enclosing class (or module) name, when given
+    module: str = ""  # dotted module path before the symbol, when given (Python)
+    file_stem: str = ""  # source file stem, when the target names a file
+    route: str = ""  # path literal; {param} and :param segments are wildcards
+
+
+def resolve_target(target: str) -> CodeTarget | None:
+    """Parse a case target. None means no confident symbol: target-based caps are skipped."""
+    text = re.sub(r"\([^)]*\)", " ", target or "").strip()
+    if not text:
+        return None
+    if route := _ROUTE.match(text):
+        return CodeTarget("route", route=route.group(1))
+    if text.startswith("CLI:") or re.search(r"(?<!\w)--\w", text):
+        return None
+    file_stem = ""
+    words = []
+    for word in text.split():
+        if _PATH_TOKEN.search(word):
+            file_stem = file_stem or Path(word.replace("\\", "/")).stem
+        else:
+            words.append(word)
+    while words and words[-1].lower() in _DESCRIPTORS:
+        descriptor = words.pop().lower()
+        if descriptor == "constructor":
+            owners = [w for w in words if _IDENT.fullmatch(w)]
+            return (
+                CodeTarget("constructor", symbol=owners[0], owner=owners[0], file_stem=file_stem)
+                if owners
+                else None
+            )
+    for word in words:
+        if any(sep in word for sep in (".", "#", "::")):
+            parts = _IDENT.findall(word.replace("::", ".").replace("#", "."))
+            if len(parts) < 2:
+                continue
+            symbol, owner = parts[-1], parts[-2]
+            module = ".".join(parts[:-1])
+            if symbol in _CONSTRUCTOR_NAMES:
+                return CodeTarget(
+                    "constructor", symbol=owner, owner=owner, module=module, file_stem=file_stem
+                )
+            return CodeTarget("symbol", symbol=symbol, owner=owner, module=module, file_stem=file_stem)
+    for word in words:
+        if _CODE_NAME.fullmatch(word):
+            return CodeTarget("symbol", symbol=word, file_stem=file_stem)
+    return None
+
+
+def target_symbol(target: str) -> str:
+    """The confident symbol of a target, or "" when it names none (see resolve_target)."""
+    resolved = resolve_target(target)
+    return resolved.symbol if resolved and resolved.kind != "route" else ""
+
+
+def mask_code(content: str) -> str:
+    """Comments and string/template contents blanked (newlines kept), so only code can match."""
+    return _MASK.sub(lambda m: re.sub(r"[^\n]", " ", m.group(0)), content)
 
 
 def model_score(scores: dict[str, int]) -> int:
     return sum(int(scores[dimension]) for dimension in RUBRIC)
 
 
-def target_symbol(target: str) -> str:
-    """The symbol a case must exercise: "Class.method" -> "method", "Component" -> "Component"."""
-    names = re.findall(r"[A-Za-z_]\w*", target or "")
-    return names[-1] if names else ""
+def _route_pattern(route: str) -> re.Pattern[str]:
+    parts = re.split(r"\{[^}]*\}|:\w+", route)
+    params = re.findall(r"\{[^}]*\}|:\w+", route)
+    pattern = ""
+    for index, part in enumerate(parts):
+        pattern += re.escape(part)
+        if index < len(params):
+            pattern += r"[^/\s'\"`?#]+"
+    return re.compile(pattern)
 
 
-def _owners(target: str) -> set[str]:
-    names = re.findall(r"[A-Za-z_]\w*", target or "")
-    return set(names[:-1])
+def _names(resolved: CodeTarget) -> set[str]:
+    return {name for name in (resolved.module, resolved.owner) if name}
 
 
-def mocks_target(target: str, content: str) -> bool:
-    """True when the test replaces the unit under test itself (its symbol or owning module/class)."""
-    symbol, owners = target_symbol(target), _owners(target)
-    if not symbol:
-        return False
-    if any(match.group(1).split(".")[-1] == symbol for match in _PY_PATCH.finditer(content)):
+def _modules_match(module: str, resolved: CodeTarget) -> bool:
+    candidates = _names(resolved)
+    if not module:
+        return not candidates
+    if not candidates:
         return True
+    return any(module == c or module.endswith("." + c) or c.endswith("." + module) for c in candidates)
+
+
+def mocks_target(target: str | CodeTarget, content: str) -> bool:
+    """True when the test replaces the unit under test itself: its symbol, through its own module or class."""
+    resolved = target if isinstance(target, CodeTarget) else resolve_target(target)
+    if resolved is None or resolved.kind == "route":
+        return False
+    symbol = resolved.symbol
+    for match in _PY_PATCH.finditer(content):
+        module, _, attr = match.group(1).rpartition(".")
+        if attr == symbol and _modules_match(module, resolved):
+            return True
+    for match in _PY_PATCH_OBJECT.finditer(content):
+        if match.group(2) == symbol and match.group(1) in _names(resolved):
+            return True
     if any(match.group(1) == symbol for match in _JS_SPY.finditer(content)):
         return True
-    lowered = {owner.lower() for owner in owners}
+    stems = (
+        {resolved.file_stem.lower()}
+        if resolved.file_stem
+        else {resolved.owner.lower()}
+        if resolved.owner
+        else set()
+    )
     for match in _JS_MODULE_MOCK.finditer(content):
-        if re.split(r"[/\\]", match.group(1))[-1].split(".")[0].lower() in lowered:
+        if Path(match.group(1).replace("\\", "/")).name.split(".")[0].lower() in stems - {""}:
             return True
+    owners = {resolved.owner} if resolved.owner else set()
     return any((match.group(1) or match.group(2)) in owners for match in _JAVA_MOCK.finditer(content))
 
 
 def evidence_caps(*, target: str, content: str, verdict: str, source_found: bool) -> list[dict[str, Any]]:
-    """Caps the host applies to one case. Target rules apply only when the case declares a target."""
+    """Caps the host applies to one case. Target rules apply only when the target names a confident symbol or route."""
     caps: list[dict[str, Any]] = []
 
     def add(rule: str, cap: int, reason: str) -> None:
         caps.append({"rule": rule, "cap": cap, "reason": reason})
 
-    symbol = target_symbol(target)
-    if symbol:
-        if not source_found:
-            add("target_source_missing", 50, f"No implementation source was found for target `{target}`.")
-        if not re.search(rf"\b{re.escape(symbol)}\b", content):
-            add("target_not_invoked", 40, f"Generated test never references the target symbol `{symbol}`.")
-        if mocks_target(target, content):
-            add("target_mocked", 40, f"Generated test replaces the unit under test `{symbol}` with a mock.")
-    if not _ASSERTION.search(content):
+    resolved = resolve_target(target)
+    code = mask_code(content)
+    if resolved is not None:
+        if resolved.kind == "route":
+            invoked = _route_pattern(resolved.route).search(content) is not None
+            subject = f"route `{resolved.route}`"
+        else:
+            name = resolved.symbol
+            invoked = re.search(rf"\b{re.escape(name)}\b", code) is not None
+            subject = f"symbol `{name}`"
+            if not source_found:
+                add("target_source_missing", 50, f"No implementation source was found for target `{target}`.")
+            if mocks_target(resolved, content):
+                add(
+                    "target_mocked", 40, f"Generated test replaces the unit under test {subject} with a mock."
+                )
+        if not invoked:
+            add("target_not_invoked", 40, f"Generated test never exercises the target {subject}.")
+    if not _ASSERTION.search(code):
         add("no_assertion", 30, "Generated test contains no assertion.")
     if verdict == "needs_revision":
         add("verdict_needs_revision", 49, "Reviewer verdict is needs_revision.")

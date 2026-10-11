@@ -86,7 +86,8 @@ class GenerationSteps:
                 "plan": state["artifacts"].get("test_planning"),
                 "evidence": state.get("evidence"),
                 "batch_size": TEST_GENERATION_BATCH_SIZE,
-                "quality_policy": "strict-source-invocation-reviewed-v2",
+                "review_threshold": TEST_REVIEW_MIN_CONFIDENCE,
+                "quality_policy": "strict-source-invocation-reviewed-v3",
                 "skills": {
                     name: (self.skills_root / name / "SKILL.md").read_text(encoding="utf-8")
                     for name in skills_for("test_generation", state).all
@@ -117,17 +118,19 @@ class GenerationSteps:
         # Greenfield runs without application code have no source to review against, so the gate cannot apply.
         gate_on = REQUIRE_FULL_ACCURACY and not has_no_code(state)
         verification_rounds: dict[str, int] = {}
+        # Reviews recorded before this run (an earlier attempt, a revise or a rerun) are not evidence for it.
+        review_scope = len(state.get("test_reviews", []))
 
         def unverified_cases() -> list[dict]:
             done = {r["case_id"] for r in case_reviews if review_accepted(r, TEST_REVIEW_MIN_CONFIDENCE)}
             return [case for case in cases if str(case["id"]) not in done]
 
         def verification_reason(case_id: str) -> str:
-            """The latest reviewer note, else the latest generation error, for a case that is not verified."""
+            """The latest reviewer note of this generation run, else its latest generation error, for an unverified case."""
             review = next(
                 (
                     r
-                    for batch in reversed(state.get("test_reviews", []))
+                    for batch in reversed(state.get("test_reviews", [])[review_scope:])
                     for r in batch["reviews"]
                     if r["case_id"] == case_id
                 ),
@@ -142,7 +145,12 @@ class GenerationSteps:
             """The approved cases in batches, then (full-accuracy gate) targeted rounds for cases still unverified."""
             size = TEST_GENERATION_BATCH_SIZE
             yield from ((i, cases[s : s + size]) for i, s in enumerate(range(0, len(cases), size), 1))
-            if failures and (len(failures) / total_batches > MAX_FAILED_BATCH_RATIO or not accepted_files):
+            # With the gate on, the failed-batch ratio does not stop the run: the rounds retry and the gate reports.
+            if (
+                not gate_on
+                and failures
+                and (len(failures) / total_batches > MAX_FAILED_BATCH_RATIO or not accepted_files)
+            ):
                 raise ValueError(
                     f"Test generation failed for {len(failures)}/{total_batches} batches "
                     f"(limit {MAX_FAILED_BATCH_RATIO:.0%}). Last error: {failures[-1]['last_error']}"
@@ -191,11 +199,12 @@ class GenerationSteps:
             work, kept_files, kept_reviews, failed_source = batch, [], [], []
             if accepted is not None:
                 cached_ids = {i for f in accepted["files"] for i in f["case_ids"]}
-                regenerate = batch_ids & failed_ids
-                if not cached_ids >= batch_ids:
+                # Heal targets and cases missing from a partly accepted batch go back to the model; the rest keep
+                # their files byte for byte. A cache entry naming cases outside this batch is never reused.
+                regenerate = (batch_ids & failed_ids) | (batch_ids - cached_ids)
+                if not cached_ids <= batch_ids:
                     accepted = None
                 elif regenerate:
-                    # Heal: only the failing cases go back to the model; passing files are kept byte for byte.
                     failed_source = [f for f in accepted["files"] if set(f["case_ids"]) & regenerate]
                     kept_files = [f for f in accepted["files"] if not set(f["case_ids"]) & regenerate]
                     kept_reviews = [
@@ -408,8 +417,51 @@ class GenerationSteps:
                     candidate["case_reviews"] = (
                         []
                         if has_no_code(state)
-                        else await review_generated_tests(self, state, candidate, work, batch_index)
+                        else await review_generated_tests(
+                            self,
+                            state,
+                            candidate,
+                            work,
+                            batch_index,
+                            partial_ok=attempt == TEST_GENERATION_MAX_ATTEMPTS,
+                        )
                     )
+                    rejected_ids = {
+                        r["case_id"]
+                        for r in candidate["case_reviews"]
+                        if not review_accepted(r, TEST_REVIEW_MIN_CONFIDENCE)
+                    }
+                    if rejected_ids:
+                        # Last attempt: verified cases keep their files and reviews; only the rejected IDs fail and
+                        # go to the accuracy rounds (or stay generation_failed when the gate is off).
+                        reasons = "; ".join(
+                            f"{r['case_id']}: {verification_note(r, TEST_REVIEW_MIN_CONFIDENCE)}"
+                            for r in candidate["case_reviews"]
+                            if r["case_id"] in rejected_ids
+                        )
+                        candidate["files"] = [
+                            f for f in candidate["files"] if not set(f["case_ids"]) & rejected_ids
+                        ]
+                        candidate["case_reviews"] = [
+                            r for r in candidate["case_reviews"] if r["case_id"] not in rejected_ids
+                        ]
+                        self._settle_response_cache("test_generation", False)
+                        failures.append(
+                            {
+                                "batch": batch_index,
+                                "case_ids": sorted(rejected_ids),
+                                "run_id": self.run_dir.name,
+                                "run_name": state.get("run_name", ""),
+                                "attempts": attempt,
+                                "last_error": f"Independent test review requires repair: {reasons}"[:1000],
+                            }
+                        )
+                        self.audit(
+                            "test_generation_partial_batch",
+                            batch=batch_index,
+                            accepted=sorted(i for f in candidate["files"] for i in f["case_ids"]),
+                            rejected=sorted(rejected_ids),
+                        )
                     accepted = {
                         **candidate,
                         "files": kept_files + candidate["files"],
@@ -487,7 +539,7 @@ class GenerationSteps:
                 raise ValueError(
                     f"Accuracy gate: {len(missing)} of {len(cases)} cases are not verified; execution is blocked.\n"
                     + "\n".join(lines[:30])
-                    + "\nRetry generation (completed cases are kept), revise the design for these cases, "
+                    + "\nRetry the generation stage (verified cases are kept; Rerun-from-step or Revise regenerate everything), revise the design for these cases, "
                     "or set HARNESS_REQUIRE_FULL_ACCURACY=0 to allow partial execution."
                 )
             failures.clear()  # every case is verified, so earlier failure records are superseded

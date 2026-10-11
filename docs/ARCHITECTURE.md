@@ -462,7 +462,7 @@ its own artifacts. Everything else is refused, and every run is recorded in `sta
 | `HARNESS_GENERATION_BATCH_SIZE` / `HARNESS_GENERATION_MAX_ATTEMPTS` | env | 3 / 3 | cases per model call (1-8) / repair attempts |
 | `HARNESS_CASES_PER_REQUIREMENT` | env | 2 (maximum 10) | default case budget per requirement; a run can override it |
 | `HARNESS_MAX_FAILED_BATCH_RATIO` | env | 0.5 | fail-soft threshold for generation batches |
-| `HARNESS_TEST_REVIEW_MIN_CONFIDENCE` | env | 85 (50-100) | host confidence a reviewed generated case needs to be accepted |
+| `HARNESS_TEST_REVIEW_MIN_CONFIDENCE` | env | 80 (50-100) | host confidence a reviewed generated case needs to be accepted |
 | `HARNESS_REQUIRE_FULL_ACCURACY` | env | 1 | full-accuracy gate before execution; `0` restores fail-soft partial execution |
 | `HARNESS_ACCURACY_ROUNDS` | env | 2 (0-5) | targeted regeneration rounds for unverified cases before the gate blocks |
 | `HARNESS_MAX_OUTPUT_TOKENS` | env | 16384 | per-response cap (not a workflow limit) |

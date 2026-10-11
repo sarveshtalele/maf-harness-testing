@@ -21,7 +21,10 @@ class TestCaseReview(BaseModel):
     case_id: str = Field(min_length=1)
     scores: ReviewScores
     confidence: int = Field(
-        ge=0, le=100, description="Ignored: the host overwrites it with the rubric sum capped by evidence."
+        default=0,
+        ge=0,
+        le=100,
+        description="Optional and ignored: the host overwrites it with the rubric sum capped by evidence.",
     )
     verdict: Literal["supported", "needs_revision", "insufficient_evidence"]
     reason: str = Field(min_length=1, max_length=1500)

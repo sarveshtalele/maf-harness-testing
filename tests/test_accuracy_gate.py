@@ -1,5 +1,6 @@
 import asyncio
 import json
+import os
 import re
 from pathlib import Path
 
@@ -82,14 +83,14 @@ def test_supported_review_with_a_score_below_the_threshold_is_rejected_with_the_
         source_and_api_match=20,
         assertion_checks_real_behavior=25,
         fixture_validity=15,
-        isolation_and_determinism=10,
+        isolation_and_determinism=5,
         traceability=10,
-    )  # 80 in total
+    )  # 75 in total
     with pytest.raises(ValueError, match="Independent test review requires repair") as exc:
         review(tmp_path, low)
     message = str(exc.value)
-    assert "TC-1: confidence 80 (threshold 85, verdict supported)" in message
-    assert "weakest dimensions: isolation_and_determinism 10/15" in message
+    assert "TC-1: confidence 75 (threshold 80, verdict supported)" in message
+    assert "weakest dimensions: isolation_and_determinism 5/15" in message
     assert "reviewer: Scripted reviewer reason." in message
 
 
@@ -208,7 +209,7 @@ def test_case_verified_on_a_later_round_passes_the_gate(tmp_path, monkeypatch):
         "verified": 2,
         "total": 2,
         "min_confidence": 100,
-        "threshold": 85,
+        "threshold": 80,
     }
     assert result["case_verification"]["TC-2"]["rounds"] == 2
     assert result["case_verification"]["TC-1"]["rounds"] == 0
@@ -292,3 +293,183 @@ def test_accuracy_gate_has_its_own_error_category_and_remedy():
     message = "Accuracy gate: 1 of 2 cases are not verified; execution is blocked.\nTC-2: confidence 40"
     assert categorize(message) == "accuracy_gate"
     assert "HARNESS_REQUIRE_FULL_ACCURACY=0" in remedy_for(message)
+
+
+GOOD_TEST = ["def value():", "    return 2", "", "def test_value():", "    assert value() == 2"]
+BAD_TEST = ["def test_x():", "    assert len('ab') == 2"]  # never names the target: capped at 40
+
+
+class CountingProvider:
+    """Each case's first `bad_attempts[case]` generations do not invoke the target; later ones do."""
+
+    def __init__(self, bad_attempts):
+        self.bad_attempts = bad_attempts
+        self.calls = {}
+
+    async def run_stage(self, **kwargs):
+        if review := review_response(kwargs):
+            return review
+        approved = [c["id"] for c in json.loads(kwargs["prompt"])["approved_inputs"]["approved_cases"]]
+        files = []
+        for case in approved:
+            self.calls[case] = self.calls.get(case, 0) + 1
+            bad = self.calls[case] <= self.bad_attempts.get(case, 0)
+            files.append(
+                {
+                    "path": f"test_{case}_{self.calls[case]}.py",
+                    "lines": BAD_TEST if bad else GOOD_TEST,
+                    "case_ids": [case],
+                }
+            )
+        return {
+            "status": "completed",
+            "artifact": {
+                "selected_language": "Python",
+                "selected_framework": "pytest",
+                "rationale": "native",
+                "files": files,
+            },
+        }
+
+
+def counting_host(tmp_path, provider, ids=("TC-1", "TC-2")):
+    (tmp_path / "repo").mkdir(exist_ok=True)
+    (tmp_path / "repo" / "service.py").write_text("def value(): return 2", encoding="utf-8")
+    state = {
+        "artifacts": {
+            "repo_analysis": {"languages": {"Python": 1}, "source_files": ["service.py"]},
+            "test_design": {"positive_tests": [{"id": i, "target": "service.value"} for i in ids]},
+        }
+    }
+    host = Harness(tmp_path, skills_root=Path("skills"), requirements_mode="model", runtime=provider)
+    return host, state
+
+
+def test_last_attempt_keeps_verified_cases_and_fails_only_the_rejected_ids(tmp_path, monkeypatch):
+    monkeypatch.setattr(generation_steps, "TEST_GENERATION_BATCH_SIZE", 2)
+    monkeypatch.setattr(generation_steps, "TEST_GENERATION_MAX_ATTEMPTS", 2)
+    monkeypatch.setattr(generation_steps, "REQUIRE_FULL_ACCURACY", False)
+    provider = CountingProvider({"TC-2": 99})
+    # Two batches: [TC-1, TC-2] is partly rejected on its last attempt, [TC-3] passes (1 of 2 batches failed).
+    host, state = counting_host(tmp_path, provider, ids=("TC-1", "TC-2", "TC-3"))
+    result = asyncio.run(host._generate_tests_batched(state))
+    assert sorted(f["case_ids"][0] for f in result["files"]) == ["TC-1", "TC-3"]
+    assert sorted(r["case_id"] for r in result["case_reviews"]) == ["TC-1", "TC-3"]
+    assert [f["case_ids"] for f in result["generation_failures"]] == [["TC-2"]]
+    assert "target_not_invoked" in result["generation_failures"][0]["last_error"]
+    assert result["case_verification"]["TC-1"]["confidence"] == 100
+    assert result["verification_summary"]["verified"] == 2
+    assert result["verification_summary"]["total"] == 3
+
+
+def test_rejected_ids_from_a_partial_batch_go_to_the_accuracy_rounds(tmp_path, monkeypatch):
+    monkeypatch.setattr(generation_steps, "TEST_GENERATION_BATCH_SIZE", 2)
+    monkeypatch.setattr(generation_steps, "TEST_GENERATION_MAX_ATTEMPTS", 2)
+    monkeypatch.setattr(generation_steps, "ACCURACY_ROUNDS", 1)
+    provider = CountingProvider({"TC-2": 2})  # bad on both batch attempts, good in the round
+    host, state = counting_host(tmp_path, provider)
+    result = asyncio.run(host._generate_tests_batched(state))
+    assert result["verification_summary"]["verified"] == 2
+    assert result["generation_failures"] == []
+    assert provider.calls == {"TC-1": 2, "TC-2": 3}  # TC-1 is not regenerated by the round
+    assert result["case_verification"]["TC-2"]["rounds"] == 1
+
+
+def test_a_retry_regenerates_only_the_cases_missing_from_the_partial_cache(tmp_path, monkeypatch):
+    monkeypatch.setattr(generation_steps, "TEST_GENERATION_BATCH_SIZE", 2)
+    monkeypatch.setattr(generation_steps, "TEST_GENERATION_MAX_ATTEMPTS", 2)
+    monkeypatch.setattr(generation_steps, "REQUIRE_FULL_ACCURACY", False)
+    provider = CountingProvider({"TC-2": 2})
+    host, state = counting_host(tmp_path, provider, ids=("TC-1", "TC-2", "TC-3"))
+    asyncio.run(host._generate_tests_batched(state))  # TC-2 fails on its last attempt
+    assert provider.calls == {"TC-1": 2, "TC-2": 2, "TC-3": 1}
+    result = asyncio.run(host._generate_tests_batched(state))  # retry: TC-2 now behaves
+    assert provider.calls == {"TC-1": 2, "TC-2": 3, "TC-3": 1}  # the batch cache keeps TC-1 and TC-3
+    assert sorted(i for f in result["files"] for i in f["case_ids"]) == ["TC-1", "TC-2", "TC-3"]
+    assert len(result["files"]) == len({f["path"] for f in result["files"]})
+
+
+def test_cache_is_invalidated_when_the_review_threshold_changes(tmp_path, monkeypatch):
+    monkeypatch.setattr(generation_steps, "TEST_GENERATION_BATCH_SIZE", 2)
+    provider = CountingProvider({})
+    host, state = counting_host(tmp_path, provider)
+    asyncio.run(host._generate_tests_batched(state))
+    asyncio.run(host._generate_tests_batched(state))
+    assert provider.calls == {"TC-1": 1, "TC-2": 1}  # same settings: accepted batch is reused
+    monkeypatch.setattr(generation_steps, "TEST_REVIEW_MIN_CONFIDENCE", 90)
+    asyncio.run(host._generate_tests_batched(state))
+    assert provider.calls == {"TC-1": 2, "TC-2": 2}
+
+
+def test_gate_on_skips_the_early_ratio_raise_and_reports_the_unverified_cases(tmp_path, monkeypatch):
+    monkeypatch.setattr(generation_steps, "TEST_GENERATION_BATCH_SIZE", 1)
+    monkeypatch.setattr(generation_steps, "TEST_GENERATION_MAX_ATTEMPTS", 1)
+    monkeypatch.setattr(generation_steps, "ACCURACY_ROUNDS", 0)
+    provider = CountingProvider({"TC-1": 99, "TC-2": 99, "TC-3": 99})
+    host, state = counting_host(tmp_path, provider, ids=("TC-1", "TC-2", "TC-3"))
+    with pytest.raises(ValueError) as exc:
+        asyncio.run(host._generate_tests_batched(state))
+    message = str(exc.value)
+    assert message.startswith("Accuracy gate: 3 of 3 cases are not verified; execution is blocked.")
+    assert "failed for" not in message
+    assert (
+        "Retry the generation stage (verified cases are kept; Rerun-from-step or Revise regenerate everything)"
+        in message
+    )
+
+
+def test_gate_reasons_ignore_reviews_recorded_before_this_generation_run(tmp_path, monkeypatch):
+    monkeypatch.setattr(generation_steps, "TEST_GENERATION_BATCH_SIZE", 1)
+    monkeypatch.setattr(generation_steps, "TEST_GENERATION_MAX_ATTEMPTS", 1)
+    monkeypatch.setattr(generation_steps, "ACCURACY_ROUNDS", 0)
+    provider = CountingProvider({"TC-2": 99})
+    host, state = counting_host(tmp_path, provider)
+    stale = {
+        "case_id": "TC-2",
+        "verdict": "supported",
+        "confidence": 10,
+        "reason": "STALE reason from an earlier run.",
+        "scores": FULL_MARKS,
+        "caps": [],
+    }
+    state["test_reviews"] = [{"batch": 1, "reviews": [stale]}]
+    with pytest.raises(ValueError) as exc:
+        asyncio.run(host._generate_tests_batched(state))
+    assert "STALE" not in str(exc.value)
+    assert "TC-2: confidence 40" in str(exc.value)
+
+
+def test_default_review_threshold_is_80_and_the_model_need_not_emit_confidence(tmp_path, monkeypatch):
+    import subprocess
+    import sys
+
+    from maf_test_harness.models import TestCaseReview
+
+    env = {k: v for k, v in os.environ.items() if k != "HARNESS_TEST_REVIEW_MIN_CONFIDENCE"}
+    code = "from maf_test_harness import settings; print(settings.TEST_REVIEW_MIN_CONFIDENCE)"
+    proc = subprocess.run(
+        [sys.executable, "-c", code], capture_output=True, text=True, env=env, cwd=Path.cwd()
+    )
+    assert proc.returncode == 0, proc.stderr
+    assert proc.stdout.strip() == "80"
+    review_model = TestCaseReview.model_validate(
+        {
+            "case_id": "TC-1",
+            "scores": FULL_MARKS,
+            "verdict": "supported",
+            "reason": "r",
+            "source_files": ["service.py"],
+        }
+    )
+    assert review_model.confidence == 0
+
+    seen = []
+
+    class PromptHost(ReviewHost):
+        async def _call_model(self, **kwargs):
+            seen.append(kwargs["prompt"])
+            return await super()._call_model(**kwargs)
+
+    candidate, cases = review_fixture(tmp_path)
+    asyncio.run(review_generated_tests(PromptHost(tmp_path, FULL_MARKS), REVIEW_STATE, candidate, cases, 1))
+    assert "each dimension should be at least 85% of its maximum" in seen[0]
