@@ -316,8 +316,15 @@ def _generation_policy(repo: dict[str, Any], state: dict[str, Any] | None = None
         "integration_rules": integration_rules(repo, state),
         **(
             {
-                "python_import_roots": python_import_roots(
-                    [*(repo.get("source_files") or []), *(repo.get("package_files") or [])]
+                "python_import_roots": list(
+                    dict.fromkeys(
+                        [
+                            *python_import_roots(
+                                [*(repo.get("source_files") or []), *(repo.get("package_files") or [])]
+                            ),
+                            *(repo.get("python_source_roots") or []),
+                        ]
+                    )
                 )
             }
             if "python" in families

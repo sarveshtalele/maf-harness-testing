@@ -8,10 +8,13 @@ import json
 import re
 import shutil
 import subprocess
+import sys
 import tempfile
 import uuid
+from collections import Counter
 from collections.abc import Callable
 from copy import deepcopy
+from functools import lru_cache
 from datetime import UTC, datetime
 from pathlib import Path, PurePosixPath
 from typing import Any
@@ -180,7 +183,11 @@ def finalize_discovered_requirements(document: dict[str, Any], repo_url: str) ->
                 "source_files": _clean_paths(item.get("source_files"), "inferred requirement"),
                 "category": item.get("category", "functional"),
                 "actor": actor,
-                **({"source_symbol": item["source_symbol"], "source_line": item.get("source_line", 0)} if item.get("source_symbol") else {}),
+                **(
+                    {"source_symbol": item["source_symbol"], "source_line": item.get("source_line", 0)}
+                    if item.get("source_symbol")
+                    else {}
+                ),
             }
         )
     criteria = []
@@ -317,7 +324,9 @@ def _case_id(section: str, case: dict[str, Any], repo_url: str) -> str:
 _PRIORITY_RANK = {"P0": 0, "P1": 1, "P2": 2}
 
 
-def _trim_to_budget(result: dict[str, Any], tests: list[dict[str, Any]], by_id: dict, budget: int) -> list[str]:
+def _trim_to_budget(
+    result: dict[str, Any], tests: list[dict[str, Any]], by_id: dict, budget: int
+) -> list[str]:
     """Drop the lowest-ranked cases of over-budget requirements (in place); return the dropped case IDs.
 
     Cases are ranked priority, then type order, then id. A case counts toward every requirement it links and is
@@ -794,7 +803,9 @@ def _fit_ids(ids: list[Any], limit: int = 200) -> str:
 
 def case_marker_meta(case: dict[str, Any], run_id: str = "", run_name: str = "") -> dict[str, str]:
     """Header fields for one approved case; every value is single-line text."""
-    reqs = [str(link.get("id", "")) for link in case.get("traceability_links") or [] if isinstance(link, dict)]
+    reqs = [
+        str(link.get("id", "")) for link in case.get("traceability_links") or [] if isinstance(link, dict)
+    ]
     run = _one_line(run_id, 40)
     if run and run_name:
         run += f" ({_one_line(run_name, 80)})"
@@ -1188,11 +1199,170 @@ def extra_import_roots(py_files: list[str], limit: int = 12) -> list[str]:
 PYTHON_PROJECT_FILES = frozenset({"pyproject.toml", "setup.py", "setup.cfg"})
 
 
-def python_import_roots(files: list[str], limit: int = 12) -> list[str]:
+SELF_ROOTED_MAX_FILES = 3000
+SELF_ROOTED_MAX_BYTES = 64 * 1024
+SELF_ROOTED_LIMIT = 4
+_ENTRY_POINTS = frozenset({"main.py", "app.py"})
+# Directories that hold tests, tooling, docs or vendored code: their modules are not the application's source tree.
+NON_SOURCE_SEGMENTS = frozenset(
+    {
+        "tests",
+        "test",
+        "testing",
+        "scripts",
+        "script",
+        "tools",
+        "third_party",
+        "vendor",
+        "vendored",
+        "site-packages",
+        "examples",
+        "example",
+        "docs",
+        "migrations",
+    }
+)
+
+
+def _is_entry_point(name: str) -> bool:
+    return name in _ENTRY_POINTS or (name.startswith("run") and name.endswith(".py"))
+
+
+def _is_source_path(rel: str) -> bool:
+    from ..envs.execution import EXPORT_SKIP_DIRS  # lazy: envs.execution -> repo.analyzer -> this module
+
+    return not any(
+        part in NON_SOURCE_SEGMENTS or part in EXPORT_SKIP_DIRS or part.startswith(".")
+        for part in PurePosixPath(rel).parts[:-1]
+    )
+
+
+def _normal_name(name: str) -> str:
+    return name.lower().replace("-", "_")
+
+
+def _absolute_import_names(path: Path) -> set[str]:
+    """Top-level package names of the absolute imports in one file (empty when unreadable or unparseable)."""
+    if path.is_symlink():
+        return set()
+    try:
+        with path.open("rb") as handle:
+            tree = ast.parse(handle.read(SELF_ROOTED_MAX_BYTES).decode("utf-8", errors="replace"))
+    except (OSError, SyntaxError, ValueError):
+        return set()
+    names: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            names.update(alias.name.split(".")[0] for alias in node.names)
+        elif isinstance(node, ast.ImportFrom) and node.level == 0 and node.module:
+            names.add(node.module.split(".")[0])
+    return names
+
+
+@lru_cache(maxsize=8)
+def _self_rooted_cached(
+    root: str, py_files: tuple[str, ...], limit: int, skip: frozenset[str]
+) -> tuple[str, ...]:
+    all_files = list(py_files)[:SELF_ROOTED_MAX_FILES]
+    stdlib = getattr(sys, "stdlib_module_names", frozenset())
+    skipped = {_normal_name(name) for name in skip}
+    # Names importable from the repository root (or its src/ and lib/), tests and tooling included: a name that is
+    # importable there never needs its directory on PYTHONPATH.
+    rooted: set[str] = set()
+    for f in all_files:
+        parts = PurePosixPath(f).parts
+        if parts[0] in {"src", "lib"} and len(parts) > 1:
+            rooted.add(parts[1].removesuffix(".py"))
+        rooted.add(parts[0].removesuffix(".py"))
+    source = [f for f in all_files if _is_source_path(f)]
+    children: dict[str, set[str]] = {}
+    for f in source:
+        parts = PurePosixPath(f).parts
+        for depth in range(1, len(parts)):
+            child = parts[depth].removesuffix(".py")
+            if child != "__init__":
+                children.setdefault("/".join(parts[:depth]), set()).add(child)
+    hits: Counter[str] = Counter()
+    own: Counter[str] = Counter()  # hits from files directly inside the directory
+    entries: set[str] = set()
+    for f in source:
+        parts = PurePosixPath(f).parts
+        if len(parts) > 1 and _is_entry_point(parts[-1]):
+            entries.add("/".join(parts[:-1]))
+        if not f.endswith(".py"):
+            continue
+        names = _absolute_import_names(Path(root) / f)
+        for depth in range(1, len(parts)):
+            directory = "/".join(parts[:depth])
+            if any(
+                n in children.get(directory, ())
+                and n not in rooted
+                and n not in stdlib
+                and _normal_name(n) not in skipped
+                for n in names
+            ):
+                hits[directory] += 1
+                if depth == len(parts) - 1:
+                    own[directory] += 1
+
+    def qualifies(count: int, directory: str) -> bool:
+        return count >= 2 or (count >= 1 and directory in entries)
+
+    chosen = [d for d in hits if qualifies(hits[d], d)]
+    dropped: set[str] = set()
+    # Nested roots: the outer one wins only when it has hits of its own; otherwise the inner one is kept.
+    for outer in chosen:
+        for inner in chosen:
+            if inner.startswith(outer + "/"):
+                dropped.add(inner if qualifies(own[outer], outer) else outer)
+    remaining = [d for d in chosen if d not in dropped]
+    # Sibling roots that both provide a child of the same name: the one with more hits wins, a tie drops both.
+    for i, a in enumerate(remaining):
+        for b in remaining[i + 1 :]:
+            if children.get(a, set()) & children.get(b, set()):
+                if hits[a] > hits[b]:
+                    dropped.add(b)
+                elif hits[b] > hits[a]:
+                    dropped.add(a)
+                else:
+                    dropped.update({a, b})
+    kept = [d for d in chosen if d not in dropped]
+    return tuple(sorted(kept, key=lambda d: (-hits[d], d))[:limit])
+
+
+def clear_self_rooted_cache() -> None:
+    """Forget cached results. The cache key is the file list, not the file contents, so a fresh analysis clears it."""
+    _self_rooted_cached.cache_clear()
+
+
+def self_rooted_dirs(
+    root: Path, py_files: list[str], limit: int = SELF_ROOTED_LIMIT, skip: frozenset[str] | set[str] = frozenset()
+) -> list[str]:
+    """Directories whose modules import their siblings by bare name (``backend/admin/dashboard.py``: ``from database
+    import get_db`` with ``backend/database/`` beside it). Such a project's entry point inserts that directory into
+    ``sys.path``, so the runner and validator must treat it as an import root too.
+
+    A directory qualifies when two source files below it (or one file plus an entry point such as ``main.py`` directly
+    in it) import a name that is a direct child of it and is not importable from the repository root. Full dotted
+    imports (``from backend.database import x``), root-importable names, stdlib names and ``skip`` names (declared or
+    installed distributions, compared case-insensitively with ``-``/``_`` equal) do not count. Tests, tooling, docs,
+    vendored and hidden directories are never roots.
+    """
+    py = tuple(f for f in py_files if f.endswith(".py"))
+    return list(_self_rooted_cached(str(Path(root)), py, limit, frozenset(skip)))
+
+
+def python_import_roots(
+    files: list[str],
+    limit: int = 12,
+    root: Path | None = None,
+    skip: frozenset[str] | set[str] = frozenset(),
+) -> list[str]:
     """``extra_import_roots`` plus nested Python projects (``backend/pyproject.toml``).
 
     A sub-project's own suite imports its modules from its own directory (``from core.seed import seed`` in
     ``backend/tests/conftest.py``), so the runner puts that directory on PYTHONPATH and the validator accepts it.
+    With ``root`` (the repository on disk) self-rooted source directories are appended (``self_rooted_dirs``).
     """
     py_files = [f for f in files if f.endswith(".py")]
     nested = {
@@ -1201,7 +1371,10 @@ def python_import_roots(files: list[str], limit: int = 12) -> list[str]:
         if PurePosixPath(f).name in PYTHON_PROJECT_FILES and PurePosixPath(f).parent.as_posix() != "."
     }
     nested = {d for d in nested if any(f.startswith(d + "/") for f in py_files)}
-    return [*extra_import_roots(py_files, limit), *sorted(nested)[:limit]]
+    roots = [*extra_import_roots(py_files, limit), *sorted(nested)[:limit]]
+    if root is not None:
+        roots += self_rooted_dirs(root, py_files, skip=skip)
+    return list(dict.fromkeys(roots))
 
 
 def _recipe_hint(files: list[str], read: Callable[[str], str | None] | None, targets: list[str]) -> str:
@@ -1219,6 +1392,7 @@ def check_python_imports(
     read_source: Callable[[str], str | None] | None = None,
     installed: frozenset[str] | None = None,
     preferred: list[str] | None = None,
+    root: Path | None = None,
 ) -> None:
     """Reject imports that cannot resolve: not stdlib, not a repository module, not declared or installed.
 
@@ -1236,7 +1410,17 @@ def check_python_imports(
     stdlib = getattr(__import__("sys"), "stdlib_module_names", frozenset())
     # The runner puts the workspace root and src/ (and lib/) on PYTHONPATH, so all three layouts resolve.
     py_files = [f for f in repo_files if f.endswith(".py")]
-    import_roots = ("", "src/", "lib/", *(f"{r}/" for r in python_import_roots(repo_files)))
+    # Declared and installed distributions are never self-rooted: `app/requests.py` must not shadow `import requests`.
+    declared = frozenset(re.findall(r"[a-z0-9][a-z0-9_.-]*", dependency_text.lower()))
+    import_roots = (
+        "",
+        "src/",
+        "lib/",
+        *(
+            f"{r}/"
+            for r in python_import_roots(repo_files, root=root, skip=declared | frozenset(installed or ()))
+        ),
+    )
     rooted = {f[len(root) :] for f in py_files for root in import_roots if f.startswith(root)}
     modules_in_repo = {PurePosixPath(f).with_suffix("").as_posix() for f in rooted}
     packages = {PurePosixPath(f).parent.as_posix() for f in rooted}
@@ -1289,7 +1473,9 @@ def check_python_imports(
                 # The case's own linked source files decide among several look-alikes (many skills/*/scripts/main.py).
                 real = [f for f in matches if f in (preferred or ())] or matches
                 if real:
-                    bad = next(c for c in PurePosixPath(real[0]).with_suffix("").parts if not c.isidentifier())
+                    bad = next(
+                        c for c in PurePosixPath(real[0]).with_suffix("").parts if not c.isidentifier()
+                    )
                     real = real[:3]
                     target = (
                         real[0]
@@ -1300,12 +1486,12 @@ def check_python_imports(
                         f"import '{name}' in {path or 'generated test'} cannot work: the apparent repository target is "
                         f"{target}, whose path component '{bad}' is not a valid Python identifier. Do not translate "
                         "'-' to '_'. Use the repository's public loader/executor API or an existing test fixture; load "
-                        "the file by path only if the application itself does so." + _recipe_hint(py_files, read_source, real)
+                        "the file by path only if the application itself does so."
+                        + _recipe_hint(py_files, read_source, real)
                     )
                 raise ValueError(
                     f"import '{name}' in {path or 'generated test'} does not match any repository path "
-                    f"(top-level '{top}' exists). "
-                    + _repository_import_hint(dotted, modules_in_repo)
+                    f"(top-level '{top}' exists). " + _repository_import_hint(dotted, modules_in_repo)
                 )
             if top.lower().replace("_", "-") in dependencies:
                 continue
@@ -1439,10 +1625,10 @@ def _bound_names(tree: ast.AST) -> set[str] | None:
     return bound
 
 
-def _repo_module_files(repo_files: list[str]) -> dict[str, str]:
+def _repo_module_files(repo_files: list[str], root: Path | None = None) -> dict[str, str]:
     """Dotted module name -> repository file, for every layout the runner puts on PYTHONPATH."""
     py_files = [f for f in repo_files if f.endswith(".py")]
-    roots = ("", "src/", "lib/", *(f"{r}/" for r in python_import_roots(repo_files)))
+    roots = ("", "src/", "lib/", *(f"{r}/" for r in python_import_roots(repo_files, root=root)))
     modules: dict[str, str] = {}
     for f in py_files:
         for root in roots:
@@ -1457,6 +1643,7 @@ def check_python_test_hygiene(
     path: str = "",
     repo_files: list[str] | None = None,
     read_source: Callable[[str], str | None] | None = None,
+    root: Path | None = None,
 ) -> None:
     """Static defects that always fail at run time, found before a run is spent on them.
 
@@ -1470,7 +1657,7 @@ def check_python_test_hygiene(
     except SyntaxError:
         return
     where = path or "generated test"
-    modules = _repo_module_files(repo_files or [])
+    modules = _repo_module_files(repo_files or [], root=root)
     for node in ast.walk(tree):
         if not isinstance(node, ast.Call):
             continue

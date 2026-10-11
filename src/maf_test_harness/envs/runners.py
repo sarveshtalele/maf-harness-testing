@@ -18,6 +18,7 @@ from itertools import takewhile
 from pathlib import Path, PurePosixPath
 
 from .. import errors
+from ..repo.analyzer import declared_dependencies
 from ..repo.stack import REQUIRED_TOOLS, StackProfile
 from ..skills.contracts import PYTHON_PROJECT_FILES, python_import_roots
 from . import platform_compat
@@ -112,9 +113,11 @@ def _python_import_roots(ws: Path) -> list[str]:
         found += [
             (Path(folder) / n).relative_to(ws).as_posix()
             for n in names
-            if n.endswith(".py") or n in PYTHON_PROJECT_FILES
+            if n.endswith(".py") or n in PYTHON_PROJECT_FILES or n == "requirements.txt"
         ]
-    return python_import_roots(found)
+    # Declared dependencies are never self-rooted (`app/requests.py` must not shadow `import requests`).
+    declared = declared_dependencies(ws, [f for f in found if not f.endswith(".py")])
+    return python_import_roots(found, root=ws, skip=frozenset(declared))
 
 
 def _pytest_config(ws: Path) -> str | None:
@@ -478,6 +481,10 @@ def build_plan(
         env_ready = (eco, ".") in ready_components
     cache = str(Path(cache_dir).resolve())
     reports = ws / REPORT_DIR
+    try:  # jest/vitest/playwright write their JSON/JUnit reports here; a blocked plan is still returned
+        reports.mkdir(parents=True, exist_ok=True)
+    except OSError:
+        pass
     missing = [
         t
         for t in REQUIRED_TOOLS.get(eco, ())
@@ -496,7 +503,6 @@ def build_plan(
         if nested:
             isolate = ["-c", nested[1], "--rootdir", nested[0]]
         elif not _repo_has_pytest_config(ws):
-            reports.mkdir(exist_ok=True)
             (reports / "pytest.ini").write_text("[pytest]\n", encoding="utf-8")
             isolate = ["-c", f"{REPORT_DIR}/pytest.ini", "--rootdir", "."]
         steps = setup_steps(
