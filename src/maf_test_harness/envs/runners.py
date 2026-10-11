@@ -114,7 +114,7 @@ def _python_import_roots(ws: Path) -> list[str]:
             for n in names
             if n.endswith(".py") or n in PYTHON_PROJECT_FILES
         ]
-    return python_import_roots(found)
+    return python_import_roots(found, root=ws)
 
 
 def _pytest_config(ws: Path) -> str | None:
@@ -478,6 +478,7 @@ def build_plan(
         env_ready = (eco, ".") in ready_components
     cache = str(Path(cache_dir).resolve())
     reports = ws / REPORT_DIR
+    reports.mkdir(parents=True, exist_ok=True)  # jest/vitest/playwright write their JSON/JUnit reports here
     missing = [
         t
         for t in REQUIRED_TOOLS.get(eco, ())
@@ -496,7 +497,6 @@ def build_plan(
         if nested:
             isolate = ["-c", nested[1], "--rootdir", nested[0]]
         elif not _repo_has_pytest_config(ws):
-            reports.mkdir(exist_ok=True)
             (reports / "pytest.ini").write_text("[pytest]\n", encoding="utf-8")
             isolate = ["-c", f"{REPORT_DIR}/pytest.ini", "--rootdir", "."]
         steps = setup_steps(

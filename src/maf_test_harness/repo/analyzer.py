@@ -15,6 +15,7 @@ from urllib.parse import urlparse
 from uuid import uuid4
 
 from ..models import RepoAnalysis
+from ..skills.contracts import self_rooted_dirs
 from .git_transport import run_git
 
 IGNORED_DIRS = {
@@ -470,6 +471,7 @@ def analyze_repository(root: Path, repo_url: str, repo_name: str | None = None) 
         test_frameworks=test_frameworks,
         likely_test_directories=test_dirs,
         has_tests=bool(test_files),
+        python_source_roots=self_rooted_dirs(root, [rel for rel in relative if rel.endswith(".py")]),
         notes=notes,
     )
 

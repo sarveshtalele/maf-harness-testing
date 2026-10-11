@@ -397,3 +397,14 @@ def test_testclient_adds_httpx_unless_repo_declares_it(tmp_path):
     (tmp_path / "requirements.txt").write_text("fastapi\nhttpx==0.27.0\n")
     plan = runners.build_plan(StackProfile(primary="python"), tmp_path, gen, cache_dir=tmp_path / "c")
     assert all(s.name != "install-test-tooling" for s in plan.steps)
+
+
+def test_node_report_folder_exists_in_component_before_jest_writes_json(tmp_path):
+    # Live run: jest --outputFile=.harness-reports/jest.json crashed with ENOENT in frontend-next/ and lost every result.
+    (tmp_path / "frontend-next").mkdir()
+    (tmp_path / "frontend-next" / "package.json").write_text('{"devDependencies": {"jest": "^29"}}')
+    generated = [{"path": "frontend-next/tests/a.test.ts", "content": "test('x', () => {})"}]
+    stack = StackProfile(primary="node", build_files=["frontend-next/package.json"])
+    plan = runners.build_plan(stack, tmp_path, generated, cache_dir=tmp_path / "c")
+    assert plan.steps[-1].name == "jest"
+    assert (tmp_path / "frontend-next" / ".harness-reports").is_dir()
