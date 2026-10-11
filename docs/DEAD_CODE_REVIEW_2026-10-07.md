@@ -74,3 +74,21 @@ Note: `docs/ARCHITECTURE.md:238` already records that the shims were removed, so
 * A) Safe to remove: 7 rows (1 function, 3 stale-doc edits, 3 groups of unreferenced audit evidence = 9 files).
 * B) Owner check: 12 rows (4 code rows, 1 settings doc gap, 6 root/docs artifact rows, 1 informational test note).
 * C) Keep: 15 rows.
+
+## Status 2026-10-11
+
+Owner-approved deletions were carried out on branch `task-dead-code`, one commit per group.
+
+**Removed**
+
+* Unused code: `ui/artifact_presenter.py` `_display_value`; `frontend/app/globals.css` rules `.filter-label` and `.resize-both` (`.filters` kept).
+* Test-only code, with the tests that exercised only it: `envs/python_env.py` `current_interpreter_satisfies`; `repo/routes.py` `route_prefixes`; `settings.py` `model_for` (the per-stage runtime reads `settings.current()["stage_models"]` directly, and the fail-soft test now checks that path); `paths.py` `logs_dir`.
+* Modules: `envs/java_env.py`, `envs/dotnet_env.py`. References updated in `docs/ARCHITECTURE.md`, `docs/ARCHITECTURE_MAP.md` (regenerated), `docs/DEVELOPER_GUIDE.md`, `docs/WORKFLOW_SERVICE_MIGRATION_PLAN.md` and `src/maf_test_harness/envs/CLAUDE.md`.
+* Legacy root files: `agentic-testing-harness-v5-fixed.html`, `design/`, `patches/`, `azure-plan/`. Links in the README indexes, the Azure documents, `docs/ARCHITECTURE.md`, `docs/DEVELOPER_GUIDE.md` and `docs/audit/ERRORS.md` now read "(removed 2026-10-11; see git history)".
+
+**Kept, with reason**
+
+* Section D (unlinked audit evidence). The review said no markdown file links these files. That was wrong for every file in the list. `docs/README.md` links all of them (`agentic-qe-platform-*.png`, `modular-workflow-new-run.png`, `petstore-patched-e2e.xml`, `reverse-patched-e2e.xml`, `UI_RESTART_VERIFICATION_2026-10-02.json`, `backend_repro.py`, `token_failure_repro.py`). The owner rule was to delete only files that no markdown links to, so nothing was deleted.
+* `settings.clear_runtime`, `qa/confidence.target_symbol`, `skills/contracts.parse_case_marker`, `skills/config` `HOST_SKILL_NAMES` and `COMPANION_PURPOSE`. Not approved for deletion, and still useful.
+* `HARNESS_LOG_DIR` stays. Its readers are `scripts/start_ui.py` and `ui/settings_api.py`; only the `paths.logs_dir` helper was removed.
+* Dated reviews, audit notes and plans are unchanged. Their references to removed paths are history. `memory.md` is the project log and is also unchanged.
