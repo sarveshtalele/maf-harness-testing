@@ -501,7 +501,9 @@ class PlanningSteps:
             plan = TestPlan.model_validate(draft)
             if not plan.areas or not plan.execution_order:
                 raise ValueError("Test plan must contain at least one area and execution step.")
-            return add_plan_controls(plan.model_dump(), requirements_source or state["artifacts"]["requirements"])
+            return add_plan_controls(
+                plan.model_dump(), requirements_source or state["artifacts"]["requirements"]
+            )
         if stage == "test_design":
             if state.get("test_types") and isinstance(draft, dict):
                 notes = restrict_levels(draft, state["test_types"])
@@ -529,7 +531,9 @@ class PlanningSteps:
             ):
                 self.audit("design_case_retargeted", stage=stage, note=note)
                 design.setdefault("host_notes", []).append(note)
-            controls = plan_controls(state["artifacts"]["requirements"], state["artifacts"].get("test_planning"))
+            controls = plan_controls(
+                state["artifacts"]["requirements"], state["artifacts"].get("test_planning")
+            )
             for case in design_cases(design):
                 case["control_ids"] = case_controls(case, controls)
             self._require_coverage_or_reason(design, state, requirements_source=requirements_source)
