@@ -78,7 +78,7 @@ def test_macos_commands_and_binary_path():
 def test_linux_launch_uses_extract_and_run_without_sandbox():
     argv = ds.launch_argv("Linux", Path("/x/Agentic-QE-1.0.3-linux-x64.AppImage"))
     assert argv[1:] == ["--appimage-extract-and-run", "--no-sandbox"]
-    assert ds.launch_argv("Darwin", Path("/a/bin")) == ["/a/bin"]
+    assert ds.launch_argv("Darwin", Path("/a/bin")) == [str(Path("/a/bin"))]  # native separators on Windows
 
 
 def test_smoke_env_sets_flag_without_touching_base():
