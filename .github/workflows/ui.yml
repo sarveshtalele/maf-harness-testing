@@ -60,7 +60,7 @@ jobs:
       - name: Desktop shell tests (tsc + node:test)
         run: npm ci && npm test
         working-directory: desktop
-      - uses: actions/upload-artifact@v5
+      - uses: actions/upload-artifact@v7
         if: always()
         with:
           name: ui-report-${{ matrix.os }}

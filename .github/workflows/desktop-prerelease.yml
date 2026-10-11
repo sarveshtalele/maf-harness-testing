@@ -61,14 +61,14 @@ jobs:
         if: steps.guard.outputs.present == 'true'
         # Launches the installer's app (AGENTIC_QE_SMOKE=1); Linux needs a virtual display.
         run: ${{ runner.os == 'Linux' && 'xvfb-run -a ' || '' }}uv run python scripts/desktop_smoke.py --output smoke-output.txt
-      - uses: actions/upload-artifact@v5
+      - uses: actions/upload-artifact@v7
         if: failure() && steps.guard.outputs.present == 'true'
         with:
           # not "desktop-*": the release job downloads that pattern into the release assets
           name: smoke-desktop-${{ matrix.os }}
           path: smoke-output.txt
           if-no-files-found: ignore
-      - uses: actions/upload-artifact@v5
+      - uses: actions/upload-artifact@v7
         if: steps.guard.outputs.present == 'true'
         with:
           name: desktop-${{ matrix.os }}
