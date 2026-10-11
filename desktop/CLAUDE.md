@@ -24,5 +24,7 @@ npm start                               # dev shell (needs frontend built, see D
 uv run python ../scripts/build_desktop.py --dry-run   # prints the packaging plan
 ```
 
+- Smoke mode: `AGENTIC_QE_SMOKE=1` (set by `scripts/desktop_smoke.py`) uses a temp userData dir, prints one `AGENTIC_QE_SMOKE OK|FAIL` line, skips error dialogs and quits after a 150 s hard timeout. Keep that line format stable.
+
 ## Recipe: pass a new setting to the backend
 Add it in `main.ts` env for the spawn (and in `keystore.ts` if secret), read it in `settings.py`, add a `node:test` for helpers in `util.test.ts`.

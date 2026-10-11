@@ -24,6 +24,12 @@ These three values must be identical for a release:
 
 Bump both files in the same commit on the release branch. Do not tag a commit where they differ. `python scripts/check_version.py` fails when the two files differ. It does not read `desktop/package.json`, so bump that file by hand.
 
+## Packaged-app smoke test
+
+Both desktop workflows launch each installer after the build (`scripts/desktop_smoke.py`, see [DESKTOP.md](DESKTOP.md#packaged-app-smoke-test)).
+A release is not built unless the packaged app starts, reaches its UI and quits cleanly. On failure, download the
+`smoke-desktop-<os>` artifact for the log output. Run it locally with `uv run python scripts/desktop_smoke.py` after building.
+
 ## macOS unsigned builds
 
 Current macOS builds are not signed or notarised. Gatekeeper will block the app with a "damaged" or "unidentified developer" message. After copying the app to Applications, run:

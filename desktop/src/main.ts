@@ -1,6 +1,7 @@
 import type { ChildProcess } from 'node:child_process';
 import { app, BrowserWindow, dialog, ipcMain, Menu, safeStorage, session, shell } from 'electron';
 import * as fs from 'node:fs';
+import * as os from 'node:os';
 import * as path from 'node:path';
 import { KeyStore, ModelSettingsInput } from './keystore';
 import { ProcessManager, ServiceSpec, waitForHttp } from './process-manager';
@@ -16,6 +17,14 @@ let win: BrowserWindow | null = null;
 let quitting = false;
 let store: KeyStore;
 let live: { backend: ServiceSpec; apiPort: number; token: string } | null = null;
+
+// Packaged-app smoke mode (scripts/desktop_smoke.py): run the real boot, check the UI, print one verdict line, quit.
+// The profile is a fresh temp dir, set before the single-instance lock and ready so a user or CI profile is untouched.
+const SMOKE = process.env.AGENTIC_QE_SMOKE === '1';
+const SMOKE_TIMEOUT_MS = 150_000;
+const SMOKE_LOG_LINES = 40;
+if (SMOKE) app.setPath('userData', fs.mkdtempSync(path.join(os.tmpdir(), 'agentic-qe-smoke-')));
+let smokeDone = false;
 
 function specs(apiPort: number, uiPort: number, token: string): { backend: ServiceSpec; ui: ServiceSpec } {
   const packaged = app.isPackaged;
@@ -101,7 +110,7 @@ function buildMenu(dataDir: string) {
   Menu.setApplicationMenu(Menu.buildFromTemplate(template));
 }
 
-async function boot() {
+async function boot(): Promise<{ apiPort: number; uiPort: number }> {
   const dataDir = app.getPath('userData');
   pm = new ProcessManager(path.join(dataDir, 'logs'));
   store = new KeyStore(path.join(dataDir, 'secrets.bin'), safeStorage);
@@ -146,6 +155,54 @@ async function boot() {
   });
   win.on('closed', () => { win = null; });
   await win.loadURL(origin);
+  return { apiPort, uiPort };
+}
+
+function writeStdout(text: string): Promise<void> {
+  return new Promise((resolve) => process.stdout.write(text, () => resolve()));
+}
+
+/** Smoke verdict: the UI must serve the harness config as a JSON object through the UI port. */
+async function smokeCheckConfig(uiPort: number): Promise<void> {
+  const r = await fetch(`http://127.0.0.1:${uiPort}/api/harness/config`, { signal: AbortSignal.timeout(10_000) });
+  if (!r.ok) throw new Error(`/api/harness/config returned HTTP ${r.status}`);
+  const body: unknown = await r.json().catch(() => undefined);
+  if (!body || typeof body !== 'object' || Array.isArray(body)) throw new Error('/api/harness/config did not return a JSON object');
+}
+
+/** Prints the last lines of every service log (tokens are already redacted in the logs). */
+async function dumpServiceLogs(): Promise<void> {
+  const logDir = path.join(app.getPath('userData'), 'logs');
+  let names: string[] = [];
+  try { names = fs.readdirSync(logDir).filter((n) => n.startsWith('desktop-') && n.endsWith('.log')).sort(); } catch { /* no logs */ }
+  for (const name of names) {
+    let lines: string[] = [];
+    try { lines = fs.readFileSync(path.join(logDir, name), 'utf8').split(/\r?\n/); } catch { /* unreadable */ }
+    await writeStdout(`--- ${name} (last ${SMOKE_LOG_LINES} lines) ---\n${lines.slice(-SMOKE_LOG_LINES).join('\n')}\n`);
+  }
+}
+
+/** Smoke failure: stop the services, show their logs, print the single FAIL line, exit 1. Runs once. */
+async function smokeFail(reason: string): Promise<void> {
+  if (smokeDone) return;
+  smokeDone = true;
+  if (pm) {
+    await pm.stopAll().catch(() => undefined);
+    await new Promise((r) => setTimeout(r, 300)); // let the log write streams flush before reading them
+    await dumpServiceLogs();
+  }
+  await writeStdout(`AGENTIC_QE_SMOKE FAIL ${reason.replace(/\s+/g, ' ').trim()}\n`);
+  app.exit(1);
+}
+
+/** Smoke success: print the verdict, then quit through the normal path (stop both trees, exit 0). */
+async function smokeSucceed(apiPort: number, uiPort: number): Promise<void> {
+  if (smokeDone) return;
+  smokeDone = true;
+  await writeStdout(`AGENTIC_QE_SMOKE OK backend=${apiPort} ui=${uiPort}\n`);
+  quitting = true;
+  await pm.stopAll().catch(() => undefined);
+  app.exit(0);
 }
 
 ipcMain.handle('desktop:appVersion', () => app.getVersion());
@@ -198,10 +255,20 @@ if (!app.requestSingleInstanceLock()) {
   });
   app.whenReady().then(async () => {
     buildMenu(app.getPath('userData'));
+    if (SMOKE) setTimeout(() => void smokeFail(`timed out after ${SMOKE_TIMEOUT_MS / 1000} s`), SMOKE_TIMEOUT_MS);
     try {
-      await boot();
+      const { apiPort, uiPort } = await boot();
+      if (SMOKE) {
+        await smokeCheckConfig(uiPort);
+        await smokeSucceed(apiPort, uiPort);
+      }
     } catch (err) {
-      dialog.showErrorBox('Agentic QE failed to start', `${err instanceof Error ? err.message : err}\n\nLogs: ${path.join(app.getPath('userData'), 'logs')}`);
+      const message = err instanceof Error ? err.message : String(err);
+      if (SMOKE) {
+        await smokeFail(message);
+        return;
+      }
+      dialog.showErrorBox('Agentic QE failed to start', `${message}\n\nLogs: ${path.join(app.getPath('userData'), 'logs')}`);
       app.quit();
     }
   });
