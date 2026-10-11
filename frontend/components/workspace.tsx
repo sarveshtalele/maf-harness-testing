@@ -4,7 +4,7 @@ import { api, artifacts, download, label, minutes, record, rows, runTitle, text,
 import { Badge, DataTable, DataView, ExportButtons, Metrics, Panel, ResizeHandle, usePreference } from './data';
 import Skills from './skills';
 import Reports from './reports';
-import StepReports from './step-reports';
+import StepReports, { QaDocument } from './step-reports';
 import Prompts from './prompts';
 import ModelSettings from './model-settings';
 import McpServers from './mcp-servers';
@@ -272,7 +272,7 @@ function QA({ run }: { run: Run }) {
   const updates = record(qa.updates);
   const failures = rows(qa.cases).filter(c => ['failed', 'error', 'not_executed'].includes(text(c.status)));
   const actions = [...rows(updates.generated_test_files_to_update), ...rows(updates.repository_files_to_review)];
-  return <><div className="qa-summary"><div><span className="eyebrow">Saved execution verdict</span><h2><Badge value={qa.verdict} /></h2><p>Execution: {text(qa.execution_status)} · Runner: {text(qa.adapter)}</p></div><ExportButtons id={run.id} kind="qa" /></div>{qa.verdict === 'INCONCLUSIVE' && <p className="notice bad">Tests did not produce sufficient execution evidence. Inconclusive is never a pass.</p>}<Metrics values={record(qa.case_status_counts)} />
+  return <><div className="qa-summary"><div><span className="eyebrow">Saved execution verdict</span><h2><Badge value={qa.verdict} /></h2><p>Execution: {text(qa.execution_status)} · Runner: {text(qa.adapter)}</p></div><ExportButtons id={run.id} kind="qa" /></div><QaDocument run={run} />{qa.verdict === 'INCONCLUSIVE' && <p className="notice bad">Tests did not produce sufficient execution evidence. Inconclusive is never a pass.</p>}<Metrics values={record(qa.case_status_counts)} />
     <StepReports run={run} />
     <Panel title="Why tests failed & what to improve" storageKey={`${run.id}:qa:failures`}>
       <p className="field-help">Observed output and recommendations from the saved QA report. A failing assertion needs review of both application behavior and the test expectation.</p>
