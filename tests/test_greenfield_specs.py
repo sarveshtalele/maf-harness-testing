@@ -34,6 +34,8 @@ def test_markdown_with_bom_and_crlf_parses_like_lf():
     windows = ingest_specs([{"name": "req.md", "content": b"\xef\xbb\xbf" + MD.replace(b"\n", b"\r\n")}])
     fields = [(s["anchor"], s["text"]) for s in windows["sections"]]
     assert fields == [(s["anchor"], s["text"]) for s in plain]
+    classic_mac = ingest_specs([{"name": "req.md", "content": b"\xef\xbb\xbf" + MD.replace(b"\n", b"\r")}])
+    assert [(s["anchor"], s["text"]) for s in classic_mac["sections"]] == fields
     assert windows["sections"][0]["anchor"] == "preamble" and windows["sections"][1]["anchor"] == "login"
     heading_doc = {"name": "h.md", "content": b"\xef\xbb\xbf# Login\r\nBody\r\n"}
     first_heading = ingest_specs([heading_doc])["sections"]

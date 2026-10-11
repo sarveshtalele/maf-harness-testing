@@ -20,6 +20,9 @@ def _retry(operation):
     raise RuntimeError("Retry budget exhausted without a result.")
 
 
+retry = _retry  # public name for modules outside storage; _retry stays for existing callers
+
+
 def read_json(path: Path):
     return json.loads(_retry(lambda: path.read_text(encoding="utf-8")))
 
