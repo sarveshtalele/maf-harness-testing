@@ -235,6 +235,7 @@ LANGUAGE_RULES: dict[str, dict[str, Any]] = {
         "rules": [
             'Make the test title string `"<case_id>: <title>"` and any helper names descriptive camelCase.',
             "Use the runner declared in package.json (jest, vitest or mocha) and match the module system (ESM `import` vs CommonJS `require`) of the nearest package.json and the source under test.",
+            "Import only packages declared in the component's package.json and use its existing test runner, environment and aliases; with testEnvironment 'node' do not render components.",
         ],
     },
     "typescript": {
@@ -248,6 +249,7 @@ LANGUAGE_RULES: dict[str, dict[str, Any]] = {
         "rules": [
             'Make the test title string `"<case_id>: <title>"` and any helper names descriptive camelCase.',
             "Use the runner declared in package.json (jest, vitest or mocha) and the repository tsconfig/ESM settings; import only exports that exist in the source.",
+            "Import only packages declared in the component's package.json and use its existing test runner, environment and aliases; with testEnvironment 'node' do not render components.",
         ],
     },
     "csharp": {

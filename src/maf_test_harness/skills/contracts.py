@@ -5,6 +5,7 @@ from __future__ import annotations
 import ast
 import difflib
 import json
+import posixpath
 import re
 import shutil
 import subprocess
@@ -14,8 +15,8 @@ import uuid
 from collections import Counter
 from collections.abc import Callable
 from copy import deepcopy
-from functools import lru_cache
 from datetime import UTC, datetime
+from functools import lru_cache
 from pathlib import Path, PurePosixPath
 from typing import Any
 from urllib.parse import urlsplit
@@ -1829,4 +1830,310 @@ def check_java_imports(content: str, repo_files: list[str], dependency_text: str
             "repository classes and the dependencies already declared; do not assume RestAssured, AssertJ or Mockito "
             "unless the build file declares them. For HTTP calls use java.net.http.HttpClient (JDK 11+) or "
             'java.net.HttpURLConnection, reading the base URL from System.getenv("BASE_URL").'
+        )
+
+
+# ------------------------------------------------------------------------------ JavaScript / TypeScript imports
+
+JS_SUFFIXES = (".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs", ".mts", ".cts")
+_JS_EXTENSIONS = (".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs", ".json")
+_JS_TS_TWINS = {".js": (".ts", ".tsx"), ".jsx": (".tsx",), ".mjs": (".mts",), ".cjs": (".cts",)}
+_NODE_BUILTINS = frozenset(
+    {
+        "assert",
+        "async_hooks",
+        "buffer",
+        "child_process",
+        "cluster",
+        "console",
+        "constants",
+        "crypto",
+        "dgram",
+        "diagnostics_channel",
+        "dns",
+        "domain",
+        "events",
+        "fs",
+        "http",
+        "http2",
+        "https",
+        "inspector",
+        "module",
+        "net",
+        "os",
+        "path",
+        "perf_hooks",
+        "process",
+        "punycode",
+        "querystring",
+        "readline",
+        "repl",
+        "stream",
+        "string_decoder",
+        "sys",
+        "timers",
+        "tls",
+        "trace_events",
+        "tty",
+        "url",
+        "util",
+        "v8",
+        "vm",
+        "wasi",
+        "worker_threads",
+        "zlib",
+    }
+)
+# runners.py installs Playwright whenever a generated spec imports @playwright/test, so that import is always provisioned.
+_HARNESS_PROVISIONED = frozenset({"@playwright/test"})
+_NPM_NAME = re.compile(r"^(?:@[A-Za-z0-9][\w.~-]*/)?[A-Za-z0-9][\w.~-]*(?:/.*)?$")
+_TEST_LIBRARY = re.compile(
+    r"^(?:@types/(?:jest|mocha)|@testing-library/|@jest/|@vitest/|@playwright/|@cypress/|jest|jest-|ts-jest|vitest|"
+    r"playwright|mocha|chai|cypress|supertest|msw|nock)"
+)
+_DEP_GROUPS = ("dependencies", "devDependencies", "peerDependencies", "optionalDependencies")
+_JEST_CONFIGS = (
+    "jest.config.ts",
+    "jest.config.js",
+    "jest.config.mjs",
+    "jest.config.cjs",
+    "jest.config.mts",
+    "jest.config.cts",
+    "jest.config.json",
+)
+_JS_IMPORT_FROM = re.compile(r"\b(?:import|export)\s+(type\s+)?[^'\"`;]*?\bfrom\s*(['\"`])([^'\"`\n]+)\2")
+_JS_SIDE_EFFECT = re.compile(r"\bimport\s*(['\"`])([^'\"`\n]+)\1")
+_JS_REQUIRE = re.compile(r"\b(?:require|import)\s*\(\s*(['\"`])([^'\"`\n$]+)\1\s*\)")
+_JS_MOCK = re.compile(
+    r"\b(?:jest|vi)\.(?:mock|doMock|unmock|requireActual|importActual)\s*\(\s*(['\"`])([^'\"`\n$]+)\1"
+)
+_JEST_MAPPER = re.compile(r"['\"](\^[^'\"\n]+)['\"]\s*:\s*['\"`]([^'\"`\n]+)['\"`]")
+_JEST_ENV = re.compile(r"testEnvironment['\"]?\s*:\s*['\"`]([\w-]+)")
+_JS_DOCBLOCK_ENV = re.compile(r"@jest-environment\s+([\w-]+)")
+_DOM_USE = re.compile(r"\bdocument\.|\bwindow\.")
+_RENDER_CALL = re.compile(r"\brender\(")
+
+
+def _norm(rel: str) -> str:
+    return posixpath.normpath(rel.replace("\\", "/") or ".")
+
+
+def _join(directory: str, name: str) -> str:
+    return name if directory in ("", ".") else f"{directory}/{name}"
+
+
+def _strip_js_comments(source: str) -> str:
+    """Drop // and /* */ comments but keep string literals, so a glob such as 'src/**/*.ts' is not read as a comment."""
+    out: list[str] = []
+    i = 0
+    while i < len(source):
+        char = source[i]
+        if char in "'\"`":
+            end = i + 1
+            while end < len(source) and source[end] != char:
+                end += 2 if source[end] == "\\" else 1
+            out.append(source[i : end + 1])
+            i = end + 1
+        elif source.startswith("//", i):
+            end = source.find("\n", i)
+            i = len(source) if end < 0 else end
+        elif source.startswith("/*", i):
+            end = source.find("*/", i + 2)
+            i = len(source) if end < 0 else end + 2
+            out.append(" ")
+        else:
+            out.append(char)
+            i += 1
+    return "".join(out)
+
+
+def _js_specifiers(code: str) -> list[tuple[str, bool]]:
+    """(specifier, type_only) for every import, export-from, require, dynamic import and jest/vi mock, in source order."""
+    found: list[tuple[int, str, bool]] = []
+    found += [(m.start(), m.group(3), bool(m.group(1))) for m in _JS_IMPORT_FROM.finditer(code)]
+    found += [(m.start(), m.group(2), False) for m in _JS_SIDE_EFFECT.finditer(code)]
+    found += [(m.start(), m.group(2), False) for m in _JS_REQUIRE.finditer(code)]
+    found += [(m.start(), m.group(2), False) for m in _JS_MOCK.finditer(code)]
+    return [(spec, type_only) for _pos, spec, type_only in sorted(found)]
+
+
+def _nearest_config(
+    start: str, names: tuple[str, ...], read: Callable[[str], str | None]
+) -> tuple[str, str] | None:
+    """(directory, text) of the nearest file named in ``names``, walking up from ``start`` to the repository root."""
+    directory = start
+    while True:
+        for name in names:
+            text = read(_join(directory, name))
+            if text is not None:
+                return directory, text
+        if directory in ("", "."):
+            return None
+        directory = posixpath.dirname(directory) or "."
+
+
+def _json_loose(text: str) -> dict[str, Any] | None:
+    """tsconfig/jsconfig tolerate line comments and trailing commas; anything else unparseable is None (unknown)."""
+    stripped = re.sub(r"(?m)^\s*//.*$", "", text)
+    try:
+        data = json.loads(re.sub(r",(\s*[}\]])", r"\1", stripped))
+    except ValueError:
+        return None
+    return data if isinstance(data, dict) else None
+
+
+def _declared_map(package: dict[str, Any] | None) -> dict[str, str] | None:
+    if package is None:
+        return None
+    declared: dict[str, str] = {}
+    for group in _DEP_GROUPS:
+        block = package.get(group)
+        if isinstance(block, dict):
+            declared.update({str(name): str(version) for name, version in block.items()})
+    return declared
+
+
+def _js_package_name(spec: str) -> str:
+    parts = spec.split("/")
+    return "/".join(parts[:2]) if spec.startswith("@") else parts[0]
+
+
+def check_js_imports(
+    content: str,
+    path: str,
+    repo_files: list[str],
+    read_source: Callable[[str], str | None] | None = None,
+) -> None:
+    """Reject JS/TS imports that cannot resolve: missing repo files, undeclared packages, unknown aliases, DOM in node.
+
+    Declarations come from the nearest package.json (dependencies and friends). Aliases come from the nearest
+    tsconfig/jsconfig ``paths`` and the nearest jest config ``moduleNameMapper``. Whenever a config cannot be parsed
+    the alias is accepted rather than guessed; a missing package.json skips the declaration check.
+    """
+    read = read_source or (lambda _rel: None)
+    repo = {_norm(f) for f in repo_files}
+    here = posixpath.dirname(_norm(path)) or "."
+
+    def exists(rel: str) -> bool:
+        return rel in repo or read(rel) is not None
+
+    def resolves(base: str) -> bool:
+        stem, ext = posixpath.splitext(base)
+        candidates = [base, *(stem + twin for twin in _JS_TS_TWINS.get(ext, ()))]
+        candidates += [base + e for e in _JS_EXTENSIONS] + [_join(base, "index" + e) for e in _JS_EXTENSIONS]
+        return any(exists(_norm(c)) for c in candidates)
+
+    package_dir, package = None, None
+    if found := _nearest_config(here, ("package.json",), read):
+        package_dir = found[0]
+        try:
+            loaded = json.loads(found[1])
+            package = loaded if isinstance(loaded, dict) else None
+        except ValueError:
+            package = None
+    declared = _declared_map(package)
+    manifest = f"{package_dir or '.'}/package.json"
+
+    unknown = False
+    mappings: list[tuple[re.Pattern[str], str, str]] = []
+    if found := _nearest_config(here, ("tsconfig.json", "jsconfig.json"), read):
+        config_dir, text = found
+        data = _json_loose(text)
+        options = (
+            data.get("compilerOptions") if data and isinstance(data.get("compilerOptions"), dict) else {}
+        )
+        paths = options.get("paths")
+        if data is None:
+            unknown = True
+        elif isinstance(paths, dict):
+            base = _norm(_join(config_dir, str(options.get("baseUrl", "."))))
+            for key, targets in paths.items():
+                pattern = re.compile("^" + re.escape(str(key)).replace(r"\*", "(.*)") + "$")
+                for target in targets if isinstance(targets, list) else [targets]:
+                    if isinstance(target, str):
+                        mappings.append((pattern, target, base))
+        elif "extends" in data:
+            unknown = True
+    jest_text = None
+    if package_dir is not None:
+        if package and isinstance(package.get("jest"), dict):
+            jest_text = json.dumps(package["jest"])
+        else:
+            jest_text = next(
+                (t for name in _JEST_CONFIGS if (t := read(_join(package_dir, name))) is not None), None
+            )
+    if jest_text:
+        block = jest_text
+        if "moduleNameMapper" in jest_text:
+            start = jest_text.index("moduleNameMapper")
+            end = jest_text.find("}", start)
+            block = jest_text[start : end if end > 0 else len(jest_text)]
+        pairs = _JEST_MAPPER.findall(block)
+        if "moduleNameMapper" in jest_text and not pairs:
+            unknown = True
+        mappings += [
+            (re.compile(pattern), target.replace("<rootDir>/", ""), package_dir or ".")
+            for pattern, target in pairs
+        ]
+
+    code = _strip_js_comments(content)
+    specifiers = _js_specifiers(code)
+    uses_playwright = any(spec in _HARNESS_PROVISIONED for spec, _ in specifiers)
+    for spec, type_only in specifiers:
+        if spec.startswith(("./", "../")) or spec in (".", ".."):
+            if not resolves(_norm(_join(here, spec))):
+                raise ValueError(f"relative import '{spec}' in {path} does not match any repository file")
+            continue
+        if spec.startswith("/"):
+            if not resolves(_norm(spec)):
+                raise ValueError(f"relative import '{spec}' in {path} does not match any repository file")
+            continue
+        if ":" in spec or spec.startswith("#") or spec.split("/", 1)[0] in _NODE_BUILTINS:
+            continue  # node: / data: / package "imports" subpaths and built-ins are never repository files
+        if not _NPM_NAME.match(spec):  # '@/lib/x', '~/x': an alias, not a package
+            targets = []
+            for pattern, template, base in mappings:
+                if match := pattern.match(spec):
+                    group = match.group(1) if match.groups() else ""
+                    targets.append(_norm(_join(base, template.replace("$1", group).replace("*", group))))
+            if any(resolves(t) for t in targets) or unknown:
+                continue
+            if targets:
+                raise ValueError(f"alias '{spec}' in {path} does not match any repository file")
+            raise ValueError(
+                f"import '{spec}' in {path} is neither a repository file nor a configured alias (tsconfig paths / jest moduleNameMapper)"
+            )
+        name = _js_package_name(spec)
+        if declared is None or name in _HARNESS_PROVISIONED or name in declared:
+            continue
+        types_name = "@types/" + (name[1:].replace("/", "__") if name.startswith("@") else name)
+        if type_only and types_name in declared:
+            continue
+        listing = ", ".join(sorted(n for n in declared if _TEST_LIBRARY.match(n))) or "none"
+        raise ValueError(
+            f"import '{name}' in {path} is not declared in {manifest} (dependencies/devDependencies). Use only the "
+            f"repository's declared test libraries (declared here: {listing}); do not add packages."
+        )
+
+    docblock = _JS_DOCBLOCK_ENV.search(content)
+    if (
+        docblock
+        and docblock.group(1) == "jsdom"
+        and declared is not None
+        and "jest-environment-jsdom" not in declared
+    ):
+        raise ValueError(
+            f"{path} sets @jest-environment jsdom but jest-environment-jsdom is not declared in {manifest}"
+        )
+    env = docblock.group(1) if docblock else None
+    if env is None and jest_text and (match := _JEST_ENV.search(jest_text)):
+        env = match.group(1)
+    jest_version = (declared or {}).get("jest", "")
+    if env is None and (major := re.search(r"\d+", jest_version)):
+        env = "node" if int(major.group()) >= 27 else "jsdom"
+    dom = _DOM_USE.search(code) or ("@testing-library/" in code and _RENDER_CALL.search(code))
+    if env == "node" and dom and not uses_playwright:
+        raise ValueError(
+            f"{path} touches the DOM, and the repository's jest testEnvironment is 'node' (no DOM); test pure "
+            "functions/hooks without rendering, or record a gap"
         )

@@ -25,11 +25,13 @@ from ..repo.analyzer import declared_dependencies, java_signatures
 from ..skills.contracts import (
     _PLACEHOLDER,
     _SKIP_MARKERS,
+    JS_SUFFIXES,
     _bound_names,
     _module_symbols,
     _native_syntax_check,
     _repo_module_files,
     check_java_imports,
+    check_js_imports,
     check_python_imports,
     check_python_test_hygiene,
     check_route_literals,
@@ -437,6 +439,10 @@ def static_gate(ctx: RepoContext, path: str, content: str, preferred: list[str] 
             check_java_imports(content, [*ctx.source_files, *ctx.test_files], ctx.dependency_text, path)
     elif problem := _native_syntax_check(path, content):
         raise ValueError(f"{path}: {problem}")
+    elif path.endswith(JS_SUFFIXES):
+        check_js_imports(
+            content, path, [*ctx.source_files, *ctx.test_files, *ctx.package_files], read_source=ctx.read
+        )
     if marker := _SKIP_MARKERS.search(content) or _PLACEHOLDER.search(content):
         raise ValueError(f"{path} contains a skip/placeholder marker ('{marker.group(0)}'); tests must run")
     check_route_literals(content, path, ctx.routes, ctx.app_url)
