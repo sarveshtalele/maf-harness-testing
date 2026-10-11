@@ -235,6 +235,16 @@ REMEDIES: list[tuple[re.Pattern[str], str]] = [
         "document/window; test pure functions or hooks, or record a testability gap.",
     ),
     (
+        re.compile(r"neither a repository file nor a configured alias"),
+        "Use a relative path from the test file to an existing source file, or an alias already configured in "
+        "tsconfig/jest; do not invent an alias.",
+    ),
+    (
+        re.compile(r"does not match any repository file"),
+        "Use a relative path from the test file to an existing source file, or an alias already configured in "
+        "tsconfig/jest; do not invent an alias.",
+    ),
+    (
         re.compile(r"Cannot find module|ERR_MODULE_NOT_FOUND"),
         'Use the repository\'s module system (ESM vs CJS from package.json "type"), relative paths from the test file, '
         "and existing path aliases from tsconfig.",
