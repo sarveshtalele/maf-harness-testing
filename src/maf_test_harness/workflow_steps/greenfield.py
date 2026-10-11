@@ -234,3 +234,5 @@ class GreenfieldSteps:
             counters.update(local)
             self._settle_response_cache(stage, True)
             return built, draft
+        # Unreachable: the last attempt returns or raises. Explicit so control flow never falls through.
+        raise RuntimeError("Spec authoring ended without a result.")

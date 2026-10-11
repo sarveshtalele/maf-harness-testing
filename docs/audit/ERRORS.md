@@ -123,8 +123,8 @@ Severity: **H** breaks the stated purpose or gives false confidence · **M** wro
 
 | Target | Finding | Evidence |
 |---|---|---|
-| reverse-engineering-skill | Generated dashboard raises `Unexpected token 'export'` (ESM `@hpcc-js/wasm` loaded as a classic script) | `reverse-e2e.xml`, `patches/reverse-dashboard-unused-esm.patch` |
-| agoncal-application-petstore-ee7 | `AccountBean.doLogin()` selects the customer by login and **never verifies the password** | `petstore-baseline-e2e.xml`, `patches/petstore-verify-password.patch` |
+| reverse-engineering-skill | Generated dashboard raises `Unexpected token 'export'` (ESM `@hpcc-js/wasm` loaded as a classic script) | `reverse-e2e.xml`, patch (removed 2026-10-11; see git history) |
+| agoncal-application-petstore-ee7 | `AccountBean.doLogin()` selects the customer by login and **never verifies the password** | `petstore-baseline-e2e.xml`, patch (removed 2026-10-11; see git history) |
 
 ## H. Windows/macOS, environment and automation work (live runs on Windows, CI, review)
 

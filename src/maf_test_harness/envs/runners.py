@@ -664,7 +664,7 @@ def build_plan(
             for file in files
         )
         manifests = "\n".join(
-            (ws / name).read_text(errors="replace")
+            (ws / name).read_text(encoding="utf-8", errors="replace")
             for name in ("pom.xml", "build.gradle", "build.gradle.kts")
             if (ws / name).is_file()
         )

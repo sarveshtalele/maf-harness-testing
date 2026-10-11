@@ -278,7 +278,7 @@ this is a private repo with no external consumers of the old paths, so there was
 | `tools/mock_pitfalls.py` | Run-time pitfalls, found statically | `check_mock_pitfalls` (called by `static_gate`) | Narrow heuristics with the fix in the message; false positive = one repair round |
 | `tools/registry.py` + `env_tools.py`, `file_tools.py`, `skill_tools.py`, `typed.py` | Typed tools | `ToolRegistry.call` (validate → hooks → handler → hooks), `ToolResult` envelope, scoped file tools, diagnosis tools | Used by the diagnosis agent and opt-in evaluators; see [HOOKS.md](HOOKS.md) |
 | `tools/agent_tools.py` | The central tools as MAF `FunctionTool`s | `HarnessToolbox`, `STAGE_TOOLS`, `tool_instructions` | Small per-stage selection; calls appear in `skill_tool_trace[stage].harness_tool_calls` |
-| `repo/routes.py` | Route inventory | `extract_routes` (JAX-RS, Spring, Flask/FastAPI, Express), `route_prefixes` | Shown to generation and used by `check_route_literals`; best effort, empty inventory disables the URL gate |
+| `repo/routes.py` | Route inventory | `extract_routes` (JAX-RS, Spring, Flask/FastAPI, Express) | Shown to generation and used by `check_route_literals`; best effort, empty inventory disables the URL gate |
 | `repo/stack.py` | Deterministic stack profile | `detect_stack` → ecosystems, primary, test runner, web UI/service hints, OpenAPI/CI/container files, missing tools | Drives runner and environment plan |
 | `envs/environment.py` | Environment plan | `build_environment_plan` (prerequisites with versions and install hints, isolation strategy, exact install steps incl. nested `requirements*.txt` and evidence-backed documented packages), `nested_requirements`, `documented_packages`, `steps_from_plan` | System tools are reported, never installed |
 | `envs/runners.py` | Per-ecosystem adapters and execution | `setup_steps`, `build_plan`, `execute_setup`, `execute_plan` (fresh evidence only, compile-error quarantine), result parsers (JUnit/Jest/Go/TRX), `map_results_to_cases`, allow-listed pytest helpers | Python, Node (jest/vitest/Playwright), Maven, Gradle, Go, .NET |
@@ -288,7 +288,7 @@ this is a private repo with no external consumers of the old paths, so there was
 | `envs/app_launcher.py` | Start the application under test | `detect_launch` (for target apps: Streamlit, FastAPI, Flask, npm `start`/`dev`), `free_port`, `running` (context manager that starts the app and waits until it answers) | For UI/E2E (Playwright) cases with `--start-app`; shown in the run approval |
 | `envs/spec.py` | What a repository needs | `detect_spec` (Python from `requires-python`/`.python-version`; JDK from pom/Gradle/`.sdkmanrc`; .NET from `global.json`/`TargetFramework`; Maven/Gradle wrapper) | No network |
 | `envs/toolchains.py` | Find or provision a toolchain | `find`, `ensure`, `resolve_download`, `provision`, `apply_toolchains` (Temurin JDK, Maven, Gradle, .NET SDK, Python via `uv`) | Checksum before extraction, path-escape refusal, file lock, private cache `~/.maf-harness/toolchains`; downloads only after the environment approval |
-| `envs/python_env.py`, `java_env.py`, `dotnet_env.py` | Per-language adapters | environment variables (`JAVA_HOME`, `DOTNET_ROOT`, isolated `NUGET_PACKAGES`, ...) for a provisioned toolchain | |
+| `envs/python_env.py` | Python adapter | `spec` (interpreter requirement). Java and .NET requirement detection is in `envs/spec.py`; JDK variables such as `JAVA_HOME` are set in `envs/execution.py` | |
 | `errors/` | Error taxonomy and playbook | `taxonomy.CODES` (38 codes), `classifiers/{python,java,dotnet,common}.py`, `engine.classify`, `playbook.RECIPES` | Category (environment / infra / test defect / app defect), autonomy (auto / auto_once / ask / manual), recipes; generates [ERROR_PLAYBOOK.md](ERROR_PLAYBOOK.md) |
 | `skills/contracts.py` | Deterministic adapters around skill contracts (incl. `resolve_id`, `flatten_nested_with`, import gates, `check_python_test_hygiene`, `check_route_literals`) | ID assignment, `finalize_discovered_requirements`, `finalize_design` (traceability matrix, coverage, gaps, schema check), `validate_generated_files`, syntax/import gates | The "trust boundary" between model text and accepted artifacts |
 | `skills/registry.py` | Agent Skills spec lint + supply-chain lock | `lint_skill`, `lint_all`, `load_lock`, `verify_lock`, `reviewed_scripts`, `require_valid`, `tree_sha256` | Package hash goes into provenance; tampering with a vendored skill is refused |
@@ -339,7 +339,7 @@ this is a private repo with no external consumers of the old paths, so there was
 | `scripts/start_ui.py`, `start-*.{command,cmd,sh}` | Launcher: checks, build, both servers (the platform scripts are thin wrappers) |
 | `scripts/gen_architecture.py`, `scripts/check_version.py`, `scripts/build_desktop.py` | Regenerate and check [ARCHITECTURE_MAP](ARCHITECTURE_MAP.md); pyproject and frontend version check; PyInstaller backend plus desktop build (`--dry-run` prints the plan) |
 | `desktop/`, `packaging/backend.spec` | Electron shell (main, preload, process manager, keystore) and the PyInstaller spec for `maf-backend` |
-| `azure-plan/` | Proposal-only Terraform and price evidence; not applied |
+| `azure-plan/` | (removed 2026-10-11; see git history) |
 | `.github/workflows/ci.yml`, `ui.yml`, `desktop-*.yml`, `nightly.yml` | Lint, format, skills lint, tests, offline generation-benchmark calibration and secrets scan (`ci.yml`); launcher, browser, platform and desktop `npm test` checks on macOS, Windows and Ubuntu (`ui.yml`); desktop builds on tags and manual runs, one runner per arch (`desktop-*.yml`); nightly runs |
 
 ### 6.3 Agent Skills `skills/`
@@ -421,7 +421,7 @@ its own artifacts. Everything else is refused, and every run is recorded in `sta
 | `docs/audit/ERRORS.md` | Defect register with fixes |
 | `docs/audit/E2E_RESULTS.md` | Live end-to-end results and analysis of the original failing runs |
 | `docs/audit/*-e2e.xml`, `screenshots/` | Test evidence for defects found in the target applications |
-| `patches/*.patch` | Upstream fixes for those target defects |
+| `patches/*.patch` | (removed 2026-10-11; see git history) |
 
 ## 7. MAF integration in detail (`agent/runtime.py`, `skills/config.py`, `skills/scripts.py`)
 

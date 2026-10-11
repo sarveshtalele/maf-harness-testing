@@ -53,3 +53,21 @@ test('MCP servers panel: add Playwright preset, test, set tool access and stage,
   await expect(field).toHaveValue('');
   expect(await page.content()).not.toContain(TOKEN);
 });
+
+test('MCP server delete removes its card and calls the delete route', async ({ page }) => {
+  let servers: Record<string, unknown>[] = [{ name: 'playwright', transport: 'stdio', command: 'npx', args: ['@playwright/mcp@latest'], env_keys: [], url: '', enabled: false, stages: [], allowed_tools: [], approval_required_tools: [], preset: 'playwright', secrets: {}, ready: true }];
+  const deleted: string[] = [];
+  await page.route('**/api/harness/mcp-servers', route => route.fulfill({ json: { servers, stages: ['requirements'], max_tools_per_server: 8, presets: {} } }));
+  await page.route('**/api/harness/mcp-servers/playwright', route => {
+    if (route.request().method() !== 'DELETE') return route.fallback();
+    deleted.push('playwright');
+    servers = [];
+    return route.fulfill({ json: { servers: [] } });
+  });
+  await page.goto('/?page=configuration');
+  const card = page.getByRole('region', { name: 'MCP server playwright' });
+  await expect(card).toBeVisible();
+  await card.getByRole('button', { name: 'Delete', exact: true }).click();
+  await expect(card).toHaveCount(0);
+  expect(deleted).toEqual(['playwright']);
+});

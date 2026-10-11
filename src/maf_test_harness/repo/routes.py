@@ -67,8 +67,3 @@ def extract_routes(root: Path, source_files: list[str], limit: int = 80) -> list
             for m in _EXPRESS.finditer(text):
                 routes[f"{m.group(1).upper()} {_join(m.group(2))}"] = None
     return sorted(routes)[:limit]
-
-
-def route_prefixes(routes: list[str]) -> list[str]:
-    """Static path prefixes (before the first {param} or :param) of every route."""
-    return sorted({re.split(r"[{:]", r.split(" ", 1)[1])[0].rstrip("/") or "/" for r in routes})

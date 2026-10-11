@@ -253,9 +253,13 @@ def main(argv: list[str] | None = None) -> int:
     runp.add_argument(
         "--skip-execution",
         action="store_true",
-        help="Approve everything but install nothing and run no tests",
+        help="Approve the gates, but do not install dependencies or run tests (environment and execution tool gates are skipped)",
     )
-    runp.add_argument("--no-execution", action="store_true", help="Workflow without the execution stage")
+    runp.add_argument(
+        "--no-execution",
+        action="store_true",
+        help="Stop after test generation: no environment setup and no execution stage",
+    )
     verify = sub.add_parser("verify-run", help="Check a saved run's MAF harness and Agent Skills evidence")
     verify.add_argument("run_dir", type=Path)
     verify.add_argument("--skills-dir", type=Path, default=paths.skills_dir())

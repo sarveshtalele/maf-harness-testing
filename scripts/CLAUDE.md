@@ -8,6 +8,7 @@ Run from the repo root with `uv run python scripts/<name>.py`. Keep them cross-O
 - `vendor_skills.py`: vendors upstream skills and writes `skills/SKILLS.lock.json` (`--source <clone>`), or `--lock-project` to lock unlocked project-owned skills. Holds `SELECTED` and `REVIEWED_SCRIPTS`.
 - `build_desktop.py`: `plan()` lists PyInstaller (`packaging/backend.spec`) -> `npm ci` -> `DESKTOP_BUILD=1 npm run build` -> `copy_static` -> electron-builder; `--dry-run` prints it. Build each OS on its own runner.
 - `check_version.py`: `check(root)` fails if `pyproject.toml` and `frontend/package.json` versions differ or a tag mismatches (used by the desktop release workflow).
+- `desktop_smoke.py`: installs or mounts the packaged desktop installer in `desktop/release/` and runs the app with `AGENTIC_QE_SMOKE=1`; passes only on the `AGENTIC_QE_SMOKE OK` line and exit 0 (Windows NSIS silent install, macOS DMG, Linux AppImage under `xvfb-run`). Tests: `tests/test_desktop_smoke.py` (pure parts only, never launches).
 - `json_to_markdown.py`: convert a saved harness JSON artifact to Markdown (uses `ui/artifact_presenter.py`).
 - `benchmark_generation.py`: offline scorer for generated pytest suites against `benchmarks/generation/` (baseline validity and seeded-defect kill score); no args runs reference calibration (CI), `--candidate-dir` scores submitted suites. See `docs/GENERATION_BENCHMARK.md`.
 

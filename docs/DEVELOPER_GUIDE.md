@@ -195,6 +195,18 @@ Recipes for adding skills are in section 4.
 Branch and commit rules are in [CONTRIBUTING.md](../CONTRIBUTING.md).
 
 
+### Internal environment variables
+
+These are set by the launcher, the desktop app or the code itself. They are not user settings and are not in `.env.example`. `HARNESS_TOOL_NAMES` is a Python constant, listed here so the names are not mistaken for settings.
+
+| Variable | Set by | Purpose |
+|---|---|---|
+| `HARNESS_API_TOKEN` | `scripts/start_ui.py`, `desktop/src/main.ts` | Per-launch bearer token for the loopback API (at least 32 characters) |
+| `HARNESS_API_PORT` | `scripts/start_ui.py`, `desktop/src/main.ts` | Loopback port of the Python API |
+| `HARNESS_BUILD_ID` | `scripts/start_ui.py` | Build fingerprint; the launcher never reuses a UI started from a stale build |
+| `HARNESS_RESOURCE_ROOT` | `desktop/src/main.ts` | Bundled read-only resources (`<resources>/backend` when packaged) |
+| `HARNESS_TOOL_NAMES` | `agent/runtime.py` | Python constant (not an env var) listing the harness tools for tool-trace accounting |
+
 ## 2. Repository layout
 
 ```text
@@ -229,7 +241,7 @@ Branch and commit rules are in [CONTRIBUTING.md](../CONTRIBUTING.md).
 ├── prompts/                   persona and reviewer prompt text shipped with the app
 ├── docs/                      documentation index in docs/README.md
 ├── .github/workflows/         ci, ui, nightly, desktop-prerelease, desktop-release
-├── azure-plan/, design/, patches/, agentic-testing-harness-v5-fixed.html
+├── (azure-plan/, design/, patches/, agentic-testing-harness-v5-fixed.html (removed 2026-10-11; see git history))
 │                              historical/design material, not part of the runtime
 └── memory.md                  project log (orchestrator-owned)
 ```
@@ -305,7 +317,7 @@ User-editable prompt templates are separate (`agent/prompt_settings.py`, UI Prom
 ### Add a language
 1. `workflow_support.py`: add a family to `LANGUAGE_RULES` (`declaration`, `parametrize`, `stdlib`, `retry`, `integration`, `rules`) and map the language name in `_FAMILY_BY_LANGUAGE`.
 2. `skills/generic-test-generator/references/<lang>.md` (language conventions; the rest of the skill stays neutral). Refresh its hash in `skills/SKILLS.lock.json`, run `uv run maf-harness lint-skills --strict`.
-3. Tooling map: detection in `repo/analyzer.py` (`_detect_frameworks`) and `repo/stack.py` (`detect_stack`, `StackProfile`); environment spec in `envs/spec.py` plus a `envs/<lang>_env.py` `spec`; toolchain detect/provision in `envs/toolchains.py`.
+3. Tooling map: detection in `repo/analyzer.py` (`_detect_frameworks`) and `repo/stack.py` (`detect_stack`, `StackProfile`); environment spec in `envs/spec.py` (follow the `spec` pattern in `envs/python_env.py`); toolchain detect/provision in `envs/toolchains.py`.
 4. Runners: add the ecosystem to `resolve_ecosystem` and the plan builder in `envs/runners.py` (setup steps, test command, JUnit/report parsing via `execution.read_junit`).
 5. Errors: classifier table in `errors/classifiers/<lang>.py`, registered in `BY_ECOSYSTEM` / `ALL_LANGUAGES` / `EXECUTION`; codes in `errors/taxonomy.py`.
 6. Static gates for generated code (imports, mock pitfalls) in `tools/` and `workflow_steps/generation.py` as needed.
@@ -415,6 +427,8 @@ Notes:
 - **Skills:** hash-locked; after editing a locked file refresh its hash and run `lint-skills --strict`.
 - **Style:** ruff check and format (`pyproject.toml`), type hints on new public functions, small modules with a module docstring (the architecture map reads it), comments explain why.
 - **Git:** Conventional Commits (`feat`, `fix`, `docs`, `chore`, `test`, `refactor`, `ci`), one logical change per commit, PRs into `develop`; never push to `main`/`develop` directly (the orchestrator merge described in CLAUDE.md is the only exception). Agents work in worktrees and never stash or push.
+- **TypeScript versions differ on purpose:** `frontend/` pins TypeScript 7.0.2 (exact, in `package-lock.json`) with Next.js 16; `desktop/` uses TypeScript `^5.9.0` (locked to 5.x in its `package-lock.json`). The two packages are separate npm toolchains with separate lockfiles, so each keeps the compiler it was tested with. Do not align them without testing both.
+- **Request logging is silenced on purpose:** `ui/api.py` `Handler.log_message` is a no-op because URLs and feedback can contain sensitive repository information. There is no supported switch to turn request logs on. For a local debugging session, temporarily call `super().log_message` in that method and do not commit it. Service and launcher logs are unaffected (see section 5).
 - **Docs travel with code:** update the directory `CLAUDE.md`, this guide or the relevant `docs/*.md`, and regenerate the architecture map in the same commit. Dated reports and `docs/audit/` are historical: do not edit.
 
 ## 8. Glossary

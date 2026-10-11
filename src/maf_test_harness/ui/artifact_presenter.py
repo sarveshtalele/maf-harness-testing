@@ -148,11 +148,3 @@ def json_to_markdown(data: Any, title: str | None = None) -> str:
 
     emit(data, 1)
     return "\n".join(lines).strip() + "\n"
-
-
-def _display_value(value: Any, max_chars: int = 240) -> str:
-    if isinstance(value, (dict, list)):
-        text = json.dumps(value, ensure_ascii=False, default=str)
-    else:
-        text = _scalar(value)
-    return text if len(text) <= max_chars else text[: max_chars - 1] + "…"

@@ -8,7 +8,7 @@ import pytest
 
 from maf_test_harness.envs.environment import build_environment_plan, documented_packages, nested_requirements
 from maf_test_harness.repo.analyzer import collaborator_signatures
-from maf_test_harness.repo.routes import extract_routes, route_prefixes
+from maf_test_harness.repo.routes import extract_routes
 from maf_test_harness.repo.stack import detect_stack
 from maf_test_harness.skills.contracts import check_python_test_hygiene, check_route_literals
 
@@ -127,7 +127,6 @@ def test_routes_are_extracted_from_jaxrs_spring_flask_and_express(tmp_path):
     assert "GET /rest/items/{id}" in routes
     assert "GET /api/ping" in routes and "GET /health" in routes and "GET /x" in routes
     assert "POST /users" in routes and "GET /status" in routes
-    assert "/rest/items" in route_prefixes(routes) and "/api/ping" in route_prefixes(routes)
 
 
 def test_collaborator_signatures_expose_real_constructors(tmp_path):

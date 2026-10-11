@@ -16,6 +16,11 @@ def _retry(operation):
             if not transient or attempt == 39:
                 raise
             time.sleep(0.05)
+    # Unreachable: the last attempt returns or raises. Explicit so control flow never falls through.
+    raise RuntimeError("Retry budget exhausted without a result.")
+
+
+retry = _retry  # public name for modules outside storage; _retry stays for existing callers
 
 
 def read_json(path: Path):

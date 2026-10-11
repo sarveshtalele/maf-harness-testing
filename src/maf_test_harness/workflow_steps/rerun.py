@@ -1,11 +1,45 @@
 """Explicit stage replay with retained evidence and fresh workflow checkpoints."""
 
+import logging
+from functools import partial
 from uuid import uuid4
 
 from filelock import FileLock
 
-from ..storage import read_json
+from ..storage import read_json, retry
 from ..workflow_support import atomic_json
+
+_SHARING_VIOLATIONS = {5, 32, 33}  # ERROR_ACCESS_DENIED, ERROR_SHARING_VIOLATION, ERROR_LOCK_VIOLATION
+
+
+def _move_into_archive(source, target) -> None:
+    """Move a run folder into the attempt archive, retrying short Windows sharing locks."""
+    try:
+        retry(partial(source.rename, target))
+    except PermissionError as exc:
+        if getattr(exc, "winerror", None) not in _SHARING_VIOLATIONS:
+            raise
+        raise RuntimeError(
+            f"Could not move {source.name} into the attempt archive; close programs using files in the run folder and retry."
+        ) from exc
+
+
+def _archive_run_folders(moves: list[tuple]) -> None:
+    """Apply (source, target) moves in order. If one fails, move the completed ones back so the live run is unchanged."""
+    done: list[tuple] = []
+    try:
+        for source, target in moves:
+            _move_into_archive(source, target)
+            done.append((source, target))
+    except Exception:
+        for source, target in reversed(done):
+            try:
+                retry(partial(target.rename, source))
+            except OSError:
+                logging.getLogger(__name__).warning(
+                    "Could not restore %s after a failed rerun; move it back by hand", source, exc_info=True
+                )
+        raise
 
 
 class RerunSteps:
@@ -31,10 +65,12 @@ class RerunSteps:
             archive.mkdir(parents=True)
             atomic_json(archive / "run.json", view)
             # Retain existing source and environments instead of deleting/replaying stale files.
+            moves = []
             if index == 0 and (self.run_dir / "repo").exists():
-                (self.run_dir / "repo").rename(archive / "repo")
+                moves.append((self.run_dir / "repo", archive / "repo"))
             if index <= environment_index and self.workspace.exists():
-                self.workspace.rename(archive / "workspace")
+                moves.append((self.workspace, archive / "workspace"))
+            _archive_run_folders(moves)
             for name in self.stages[index:]:
                 for key in (
                     "artifacts",

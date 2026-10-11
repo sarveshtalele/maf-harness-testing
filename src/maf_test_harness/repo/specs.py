@@ -379,7 +379,9 @@ def ingest_specs(
             if len(data) > MAX_DOC_BYTES:
                 raise ValueError("file is larger than 10 MB")
             if extension in ("md", "markdown", "txt"):
-                found = parse_markdown(name, data.decode("utf-8", errors="replace"))
+                found = parse_markdown(
+                    name, data.decode("utf-8-sig", errors="replace").replace("\r\n", "\n").replace("\r", "\n")
+                )
             elif extension == "docx":
                 found = parse_docx(name, data)
             elif extension == "pdf":

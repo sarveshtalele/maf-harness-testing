@@ -1,6 +1,8 @@
 # Azure deployment proposal — Agentic QE Platform
 
-Status (checked against code 2026-10-11): still a proposal. The app runs locally (Next.js UI with the Python API, or the Electron app). The repository has no Dockerfile, hosted-mode switch or per-user isolation, and `azure-plan/` holds Terraform and price evidence that has not been applied.
+> Note: the `azure-plan/` folder (Terraform, price script and evidence, Dockerfile reference) was removed 2026-10-11 (see git history). File paths below name the removed evidence.
+
+Status (checked against code 2026-10-11): still a proposal. The app runs locally (Next.js UI with the Python API, or the Electron app). The repository has no Dockerfile, hosted-mode switch or per-user isolation, and the Terraform and price evidence once kept in `azure-plan/` (never applied) (removed 2026-10-11; see git history).
 
 Status: infrastructure and implementation plan, not a deployment. No Azure resources have been created. The current branch is a local application; the hosted-mode changes below are prerequisites. Terraform does not build an image or make those changes automatically.
 
@@ -81,7 +83,7 @@ Use an existing Microsoft Entra workforce tenant. Register a single-tenant web a
 
 Implement the table above before building a deployment image. There is intentionally no pretend working Dockerfile: the current local proxy would reject Azure requests, and current OS-user storage would mix all web users. A Terraform-valid web app does not prove application readiness.
 
-For a future image built with the approved Dockerfile:
+For a future image built with the approved Dockerfile (proposed, not implemented: `HARNESS_DEPLOYMENT_MODE`, `HARNESS_EXECUTION_MODE` and `HARNESS_PUBLIC_ORIGIN` do not exist in the code yet):
 
 ```sh
 docker build --platform linux/amd64 -f azure-plan/Dockerfile -t ghcr.io/YOUR_OWNER/maf-harness-testing:YOUR_COMMIT .
