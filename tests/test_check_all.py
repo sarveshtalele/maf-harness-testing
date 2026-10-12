@@ -18,8 +18,8 @@ def test_gate_runs_in_the_documented_order():
         "version files agree",
         "skills lint (strict)",
         "pytest",
-        "frontend typecheck",
         "frontend build",
+        "frontend typecheck",
         "frontend playwright",
         "desktop shell tests",
     ]
