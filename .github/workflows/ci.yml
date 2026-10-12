@@ -5,9 +5,11 @@ on:
   pull_request:
   workflow_call:  # desktop-release and desktop-prerelease run this on the tag commit before they build
 
+# Literal prefix: inside workflow_call, github.workflow and github.event_name belong to the caller, so a shared
+# expression would make ci and ui cancel each other during a release.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: ${{ github.event_name != 'workflow_call' }}
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
   contents: read
@@ -61,10 +63,6 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - name: Fail on credential-shaped strings
-        # Provider keys (sk-, gh*_), AWS access key ids, Slack tokens and PEM private-key headers.
-        # Test fixtures must split such strings in source (see tests/test_hooks_builtin.py).
-        run: |
-          pattern='sk-[A-Za-z0-9_-]{16,}|gh[pousr]_[A-Za-z0-9]{20,}|AKIA[0-9A-Z]{16}|xox[baprs]-[A-Za-z0-9-]{10,}|-----BEGIN ((RSA|EC|DSA|OPENSSH|PGP) )?PRIVATE KEY-----'
-          if grep -rIEn "$pattern" --exclude-dir=.git --exclude=uv.lock . ; then
-            echo "credential-shaped string found"; exit 1
-          fi
+        # scripts/secrets_scan.py holds the pattern (provider keys, AWS key ids, Slack tokens, PEM headers) and
+        # tests/test_secrets_scan.py checks it against samples. Stdlib only, so no setup step is needed.
+        run: python3 scripts/secrets_scan.py
