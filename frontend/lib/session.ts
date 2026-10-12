@@ -1,55 +1,140 @@
 // Server-only: browser sessions for the local UI. Import from route handlers and proxy.ts only.
-import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
+//
+// State lives in <HARNESS_UI_STATE_DIR>/ui-session-state.json (0600): a signing key and the digest of the launch secret
+// already spent. Both survive a Next restart, so a restart neither replays a used link nor logs the user out.
+// A session cookie is "<expiry>.<id>.<mac>" with mac = HMAC(key, port|expiry|id): nothing per session is stored.
+import { createHash, createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
+import fs from 'node:fs';
+import path from 'node:path';
 
-/** HttpOnly session cookie set by /api/session after the one-time launch secret is exchanged. */
-export const SESSION_COOKIE = 'aqe_session';
-/** Env var holding the launch secret; the launcher or desktop shell generates it per launch. */
+/** Session cookie lifetime: a week, so a reopened browser still works. */
+export const SESSION_TTL_SECONDS = 7 * 24 * 3600;
+/** Env var holding the launch secret; the launcher, the desktop shell and Playwright set it per run. */
 export const LAUNCH_SECRET_ENV = 'HARNESS_LAUNCH_SECRET';
+/** Env var naming the 0600 state directory. Unset means a memory-only fallback: sessions end with the process. */
+export const STATE_DIR_ENV = 'HARNESS_UI_STATE_DIR';
 
-interface SessionState {
-  launchDigest: Buffer | null; // sha256 of the launch secret; null when the process was started without one
-  launchUsed: boolean;
-  sessionDigests: Set<string>; // sha256 of each session id: the ids themselves are never stored
+interface State {
+  key: Buffer;
+  launchUsed: string | null; // sha256 hex of the launch secret spent by /api/session
+  persistent: boolean;
+  file: string | null;
 }
 
-const STATE_KEY = '__agenticQeSession';
+const STATE_KEY = '__agenticQeSessionState';
+const holder = globalThis as unknown as Record<string, State | undefined>;
 
-function state(): SessionState {
-  const holder = globalThis as unknown as Record<string, SessionState | undefined>;
-  if (!holder[STATE_KEY]) {
-    const secret = process.env[LAUNCH_SECRET_ENV] ?? '';
-    holder[STATE_KEY] = {
-      launchDigest: secret ? digest(secret) : null,
-      launchUsed: false,
-      sessionDigests: new Set(),
-    };
+function persist(state: State): void {
+  if (!state.file) return;
+  fs.mkdirSync(path.dirname(state.file), { recursive: true, mode: 0o700 });
+  const tmp = `${state.file}.${process.pid}.tmp`;
+  fs.writeFileSync(tmp, JSON.stringify({ key: state.key.toString('base64'), launchUsed: state.launchUsed }), { mode: 0o600 });
+  fs.renameSync(tmp, state.file);
+  try { fs.chmodSync(state.file, 0o600); } catch { /* Windows */ }
+}
+
+function state(): State {
+  if (holder[STATE_KEY]) return holder[STATE_KEY];
+  const dir = process.env[STATE_DIR_ENV] ?? '';
+  const file = dir ? path.join(dir, 'ui-session-state.json') : null;
+  let stored: { key?: unknown; launchUsed?: unknown } = {};
+  if (file && fs.existsSync(file)) {
+    try { stored = JSON.parse(fs.readFileSync(file, 'utf8')); } catch { /* unreadable: start a new key */ }
   }
-  return holder[STATE_KEY];
+  const restored = typeof stored.key === 'string' ? Buffer.from(stored.key, 'base64') : null;
+  const next: State = {
+    key: restored && restored.length === 32 ? restored : randomBytes(32),
+    launchUsed: typeof stored.launchUsed === 'string' ? stored.launchUsed : null,
+    persistent: !!file,
+    file,
+  };
+  holder[STATE_KEY] = next;
+  if (file) persist(next);
+  return next;
 }
 
-function digest(value: string): Buffer {
-  return createHash('sha256').update(value).digest();
+/** Tests only: forget the in-process copy, as a restart would, so the next call reads the file again. */
+export function resetSessionStateForTests(): void {
+  delete holder[STATE_KEY];
+}
+
+/** The per-install signing key (also used for report tokens). */
+export function signingKey(): Buffer {
+  return state().key;
+}
+
+/** True when the state is kept in a file, so sessions and the spent launch secret survive a restart. */
+export function sessionsSurviveRestart(): boolean {
+  return state().persistent;
+}
+
+function digest(value: string): string {
+  return createHash('sha256').update(value).digest('hex');
+}
+
+export function mac(key: Buffer, parts: Array<string | number>): string {
+  return createHmac('sha256', key).update(parts.join('|')).digest('base64url');
+}
+
+/** Constant-time string comparison that tolerates different lengths. */
+export function safeEqual(a: string, b: string): boolean {
+  const x = Buffer.from(a);
+  const y = Buffer.from(b);
+  return x.length === y.length && timingSafeEqual(x, y);
+}
+
+/** Cookie name per UI port, so another local app on another port cannot clobber it. */
+export function sessionCookieName(port: string): string {
+  return `aqe_session_${port}`;
+}
+
+/** The port of the Host header (the UI's own port), or '' when absent. */
+export function portOf(request: Request): string {
+  return (request.headers.get('host') ?? '').match(/:(\d{1,5})$/)?.[1] ?? '';
 }
 
 /**
- * Exchanges the launch secret for a session id. The secret works once: a second exchange, or a wrong secret, returns null.
- * The caller sets the returned id as the HttpOnly session cookie.
+ * Exchanges the one-time launch secret for a session cookie value. Single use and persisted: a second exchange, a restart,
+ * or a wrong secret returns null. `now` is injectable for tests.
  */
-export function exchangeLaunchSecret(secret: string): string | null {
+export function exchangeLaunchSecret(secret: string, port: string, now = Date.now()): string | null {
+  const envSecret = process.env[LAUNCH_SECRET_ENV] ?? '';
+  if (!envSecret || !secret || !port) return null;
   const s = state();
-  if (!s.launchDigest || s.launchUsed || !secret) return null;
-  if (!timingSafeEqual(digest(secret), s.launchDigest)) return null;
-  s.launchUsed = true;
-  const id = randomBytes(32).toString('base64url');
-  s.sessionDigests.add(digest(id).toString('hex'));
-  return id;
+  const presented = digest(secret);
+  if (!safeEqual(presented, digest(envSecret))) return null;
+  if (s.launchUsed === presented) return null;
+  s.launchUsed = presented;
+  persist(s); // written before the cookie is returned, so a crash cannot replay the link
+  return issueSession(port, now);
 }
 
-/** True when the request carries a session cookie issued by this process. */
+/** A signed session cookie value valid for SESSION_TTL_SECONDS. */
+export function issueSession(port: string, now = Date.now()): string {
+  const expiry = Math.floor(now / 1000) + SESSION_TTL_SECONDS;
+  const id = randomBytes(24).toString('base64url');
+  return `${expiry}.${id}.${mac(state().key, ['session', port, expiry, id])}`;
+}
+
+/** True when `value` is a session issued for this port that has not expired. */
+export function validSession(value: string, port: string, now = Date.now()): boolean {
+  const m = /^(\d{10,})\.([A-Za-z0-9_-]{32})\.([A-Za-z0-9_-]{43})$/.exec(value);
+  if (!m || !port) return false;
+  const expiry = Number(m[1]);
+  if (expiry <= Math.floor(now / 1000)) return false;
+  return safeEqual(m[3], mac(state().key, ['session', port, expiry, m[2]]));
+}
+
+/** True when the request carries a valid session cookie for its own port. */
 export function hasSession(request: Request): boolean {
+  const port = portOf(request);
+  const name = sessionCookieName(port);
   const cookie = request.headers.get('cookie') ?? '';
-  const match = new RegExp(`(?:^|;\\s*)${SESSION_COOKIE}=([A-Za-z0-9_-]{20,128})(?:;|$)`).exec(cookie);
-  return !!match && state().sessionDigests.has(digest(match[1]).toString('hex'));
+  for (const part of cookie.split(';')) {
+    const eq = part.indexOf('=');
+    if (eq > 0 && part.slice(0, eq).trim() === name) return validSession(part.slice(eq + 1).trim(), port);
+  }
+  return false;
 }
 
 /** Host header allowlist (DNS rebinding): only loopback names on any port. */
@@ -62,6 +147,11 @@ export function isCrossSite(request: Request): boolean {
   return request.headers.get('sec-fetch-site') === 'cross-site';
 }
 
+/** Set-Cookie value for a session. HttpOnly and SameSite=Strict; persistent for SESSION_TTL_SECONDS. */
+export function sessionSetCookie(port: string, value: string): string {
+  return `${sessionCookieName(port)}=${value}; Path=/; Max-Age=${SESSION_TTL_SECONDS}; HttpOnly; SameSite=Strict`;
+}
+
 /** The 401 page: what to do when the UI is opened by hand instead of from the launcher or the desktop app. */
 export function unauthorizedPage(): string {
   const build = (process.env.HARNESS_BUILD_ID ?? '').replace(/[^A-Za-z0-9._-]/g, '');
@@ -72,5 +162,5 @@ export function unauthorizedPage(): string {
     + `<body><main><h1>401: Open the app from the launcher</h1>`
     + `<p>The Agentic QE Platform only opens for the window that its launcher starts. This address was opened directly, so no session exists.</p>`
     + `<p>Open the app from the launcher (<code>start-windows.cmd</code> / <code>start-macos.command</code> / <code>start-linux.sh</code>), `
-    + `or use the link it printed. Each link works once; start the launcher again for a new one.</p></main></body></html>`;
+    + `or use the link it printed. The link works once. Your browser keeps the session for 7 days; to get a new link, stop the running launcher (Ctrl+C in its terminal) and start it again.</p></main></body></html>`;
 }

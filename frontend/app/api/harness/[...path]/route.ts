@@ -1,53 +1,21 @@
 import { NextRequest } from 'next/server';
-import { hasSession, isCrossSite } from '../../../../lib/session';
+import { relayToBackend, validSegments } from '../../../../lib/backend';
+import { hasSession, hostAllowed, isCrossSite } from '../../../../lib/session';
 
 export const dynamic = 'force-dynamic';
-const segments = /^[A-Za-z0-9_.-]+$/;
 
 async function proxy(request: NextRequest, context: { params: Promise<{ path: string[] }> }) {
   const { path } = await context.params;
   const origin = request.headers.get('origin');
   const host = request.headers.get('host') || '';
-  const reportAsset = request.method === 'GET' && path[0] === 'runs' && path[2] === 'evidence' && path.length >= 5;
-  // A sandboxed report frame has an opaque origin: its browser sends no cookie and no Referer for the files it fetches
-  // (Origin null, cross-site, cors/empty). Those GETs of a run's report files are accepted without the cookie, as before
-  // F1; the run id (48 random bits) is the only key. Residual risk: report files stay readable with the run id alone.
-  const fromReport = reportAsset && origin === 'null'
-    && request.headers.get('sec-fetch-mode') === 'cors' && request.headers.get('sec-fetch-dest') === 'empty';
-  if (!/^(localhost|127\.0\.0\.1):\d+$/.test(host) || (origin && origin !== `http://${host}` && !fromReport))
+  // No Origin exception: a report frame reads its files through /api/harness/report/<token>/ (report/[token]/).
+  if (!hostAllowed(request) || (origin && origin !== `http://${host}`))
     return Response.json({ error: 'Only the local UI can access the harness.' }, { status: 403 });
-  if (isCrossSite(request) && !fromReport) return Response.json({ error: 'Cross-site requests are not allowed.' }, { status: 403 });
-  // Every other request needs the session cookie: a local process without it gets nothing.
-  if (!fromReport && !hasSession(request)) {
+  if (isCrossSite(request)) return Response.json({ error: 'Cross-site requests are not allowed.' }, { status: 403 });
+  if (!hasSession(request)) {
     return Response.json({ error: 'Open the app from the launcher (start-windows.cmd / start-macos.command / start-linux.sh), or use the link it printed.' }, { status: 401 });
   }
-  if (!path.every(part => segments.test(part) && part !== '.' && part !== '..'))
-    return Response.json({ error: 'Invalid path.' }, { status: 400 });
-  const token = process.env.HARNESS_API_TOKEN;
-  if (!token) return Response.json({ error: 'Start the UI using scripts/start_ui.py so the local API is connected.' }, { status: 503 });
-  const port = process.env.HARNESS_API_PORT || '8765';
-  if (!/^\d{1,5}$/.test(port)) return Response.json({ error: 'Invalid local API port.' }, { status: 503 });
-  const limit = ['skills/import', 'runs'].includes(path.join('/')) ? 28000000 : 2097152;
-  const declared = Number(request.headers.get('content-length') || 0);
-  if (declared > limit) return Response.json({ error: 'Request is too large.' }, { status: 413 });
-  try {
-    const body = request.method === 'POST' ? await request.text() : undefined;
-    if (body && Buffer.byteLength(body) > limit) return Response.json({ error: 'Request is too large.' }, { status: 413 });
-    const response = await fetch(`http://127.0.0.1:${port}/${path.join('/')}${request.nextUrl.search}`, {
-      method: request.method, headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-      body, cache: 'no-store', signal: AbortSignal.timeout(30000),
-    });
-    const headers = new Headers({ 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff' });
-    for (const name of ['content-type', 'content-disposition', 'content-security-policy', 'access-control-allow-origin']) {
-      const value = response.headers.get(name);
-      if (value) headers.set(name, value);
-    }
-    // Buffer the reply: streaming an HTTP/1.0 close-delimited body crashed undici (assert(!this.paused)) on Node 24.
-    const payload = await response.arrayBuffer();
-    return new Response(payload, { status: response.status, headers });
-  } catch (error) {
-    if (error instanceof Error && error.name === 'TimeoutError') return Response.json({ error: 'Local backend did not answer in time' }, { status: 504 });
-    return Response.json({ error: 'Local backend is unavailable. Check the launcher terminal and reconnect.' }, { status: 503 });
-  }
+  if (!validSegments(path)) return Response.json({ error: 'Invalid path.' }, { status: 400 });
+  return relayToBackend(request, path);
 }
 export { proxy as GET, proxy as POST, proxy as DELETE };

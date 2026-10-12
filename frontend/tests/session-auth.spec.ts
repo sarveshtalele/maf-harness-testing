@@ -1,3 +1,4 @@
+import fs from 'node:fs';
 import { test, expect, request } from '@playwright/test';
 import { BASE_URL, LAUNCH_SECRET, SESSION_FILE } from '../playwright.launch';
 
@@ -63,17 +64,45 @@ test('a session cookie reaches the proxy, and cross-site requests are refused', 
   }
 });
 
-test('report files: only a sandboxed report frame (opaque origin, cors/empty fetch) reads them without a session', async () => {
+test('proxy header matrix: an opaque Origin never gets in, and fetch metadata cannot open the API', async () => {
   const api = await request.newContext({ baseURL: BASE_URL, storageState: ANONYMOUS });
-  const file = '/api/harness/runs/unknown-run/evidence/0123456789abcdef01234567/data.json';
+  const evidence = '/api/harness/runs/unknown-run/evidence/0123456789abcdef01234567/data.json';
+  const other = '/api/harness/runs/unknown-run';
   try {
-    // Opaque origin without the frame's fetch metadata, and an ordinary request, both need the session.
-    expect((await api.get(file, { headers: { Origin: 'null' } })).status()).toBe(403);
-    expect((await api.get(file)).status()).toBe(401);
-    // What a sandboxed report frame sends: Origin null, cors, empty destination. It passes the session check; the
-    // unknown run answers 404 from the backend.
-    const frame = await api.get(file, { headers: { Origin: 'null', 'Sec-Fetch-Mode': 'cors', 'Sec-Fetch-Dest': 'empty', 'Sec-Fetch-Site': 'cross-site' } });
-    expect([401, 403]).not.toContain(frame.status());
+    // Origin null is refused on every path now: the report exception is gone (report files use a token prefix).
+    const matrix: Record<string, string>[] = [
+      { Origin: 'null' },
+      { Origin: 'null', 'Sec-Fetch-Mode': 'cors', 'Sec-Fetch-Dest': 'empty', 'Sec-Fetch-Site': 'cross-site' },
+      { Origin: 'null', 'Sec-Fetch-Mode': 'navigate', 'Sec-Fetch-Dest': 'iframe', 'Sec-Fetch-Site': 'same-origin' },
+    ];
+    for (const headers of matrix) {
+      expect((await api.get(evidence, { headers })).status(), JSON.stringify(headers)).toBe(403);
+      expect((await api.get(other, { headers })).status(), JSON.stringify(headers)).toBe(403);
+    }
+    // No Origin and no cookie: 401 on evidence and on other paths alike.
+    expect((await api.get(evidence)).status()).toBe(401);
+    expect((await api.get(other)).status()).toBe(401);
+    // A foreign origin with a session is refused too.
+    expect((await api.get(other, { headers: { Origin: 'https://evil.example' } })).status()).toBe(403);
+    // Cross-site fetch metadata is refused before the session is even looked at.
+    expect((await api.get(other, { headers: { 'Sec-Fetch-Site': 'cross-site' } })).status()).toBe(403);
+  } finally {
+    await api.dispose();
+  }
+});
+
+test('the session cookie is named per port, persists a week, and stays HttpOnly and SameSite=Strict', async () => {
+  const api = await request.newContext({ baseURL: BASE_URL, storageState: ANONYMOUS });
+  try {
+    const port = new URL(BASE_URL).port;
+    const reply = await api.get(`/api/session?launch=${LAUNCH_SECRET}`, { maxRedirects: 0 });
+    expect(reply.status()).toBe(401); // the global setup spent it: this is the replay check, not a new session
+    const state = JSON.parse(fs.readFileSync(SESSION_FILE, 'utf8')) as { cookies: { name: string; httpOnly: boolean; sameSite: string; expires: number }[] };
+    const cookie = state.cookies.find(c => c.name === `aqe_session_${port}`);
+    expect(cookie, 'cookie named for this UI port').toBeTruthy();
+    expect(cookie?.httpOnly).toBe(true);
+    expect(cookie?.sameSite).toBe('Strict');
+    expect(cookie!.expires - Date.now() / 1000).toBeGreaterThan(6 * 24 * 3600);
   } finally {
     await api.dispose();
   }
