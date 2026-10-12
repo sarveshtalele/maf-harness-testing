@@ -150,14 +150,19 @@ def test_frozen_skill_script_runs_through_the_backend(monkeypatch):
         files={"request.json": "{}"},
     )
     script = (REPO / "skills/reverse-engineering/scripts/analyze.py").resolve()
-    assert seen["argv"][:6] == [
+    assert seen["argv"][:8] == [
         sys.executable,
         "--run-python",
         "-B",
         "--check-hash-based-pycs",
         "always",
+        "-X",
+        seen["argv"][6],
         str(script),
     ]
+    assert seen["argv"][6].startswith(
+        "pycache_prefix="
+    )  # a per-run prefix: no bytecode beside the reviewed script
 
 
 def _homes(found):
@@ -473,3 +478,121 @@ def test_retry_after_a_missing_python_finds_the_install_the_project_requires(mon
     step = runners.setup_steps("python", tmp_path, str(tmp_path / "c"), 60)[0]  # the retry
     assert step.name == "create-venv"
     assert step.argv[0] == str(Path("/opt/python3.11/bin/python3.11"))
+
+
+# --- user python hooks in the frozen app (a hook script is refused unless it sits in a hook folder) -------------------
+
+
+def _frozen_hooks(monkeypatch, tmp_path):
+    """Frozen app: the backend runs as ``[sys.executable, -c, SHIM, --run-python]``. Returns the user hooks folder."""
+    from maf_test_harness.hooks import config as hook_config
+
+    _freeze(monkeypatch)
+    data = tmp_path / "data"
+    folder = data / ".harness"
+    folder.mkdir(parents=True)
+    monkeypatch.setattr(paths, "user_data_root", lambda: data)
+    monkeypatch.setattr(paths, "python_argv", lambda: [sys.executable, "-c", SHIM, "--run-python"])
+    hook_env = hook_config._hook_env
+    # The child needs the package on its path; everything else it gets is the harness's own hook environment.
+    monkeypatch.setattr(
+        hook_config, "_hook_env", lambda entry: {**hook_env(entry), "PYTHONPATH": str(REPO / "src")}
+    )
+    return folder
+
+
+def _engine(config_file: Path, audit=None):
+    from maf_test_harness.hooks.config import compile_entry, load_config
+    from maf_test_harness.hooks.engine import HookEngine
+
+    return HookEngine([compile_entry(e) for e in load_config([config_file]).hooks], "enforce", audit)
+
+
+def test_frozen_python_hook_beside_hooks_json_runs_and_can_deny(tmp_path, monkeypatch):
+    folder = _frozen_hooks(monkeypatch, tmp_path)
+    (folder / "check_path.py").write_text(
+        "import json, sys\n"
+        "event = json.load(sys.stdin)\n"
+        "if event['arguments'].get('path', '').endswith('.sh'):\n"
+        "    sys.stderr.write('shell scripts are not allowed')\n"
+        "    sys.exit(2)\n",
+        encoding="utf-8",
+    )
+    config_file = folder / "hooks.json"
+    config_file.write_text(
+        json.dumps(
+            {
+                "hooks": [
+                    {
+                        "event": "PreToolUse",
+                        "matcher": "^write_test_file$",
+                        "command": ["python", "check_path.py"],
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    engine = _engine(config_file)
+    denied, _ = engine.before_tool("write_test_file", {"path": "tests/run.sh"})
+    assert denied.verdict == "deny" and "shell scripts are not allowed" in denied.reason
+    allowed, _ = engine.before_tool("write_test_file", {"path": "tests/test_run.py"})
+    assert allowed.verdict == "allow"
+
+
+def test_frozen_python_hook_outside_the_hook_folders_is_refused_with_a_clear_message(tmp_path, monkeypatch):
+    folder = _frozen_hooks(monkeypatch, tmp_path)
+    elsewhere = tmp_path / "elsewhere" / "check.py"
+    elsewhere.parent.mkdir()
+    elsewhere.write_text("print('never runs')\n", encoding="utf-8")
+    config_file = folder / "hooks.json"
+    config_file.write_text(
+        json.dumps({"hooks": [{"event": "PreToolUse", "command": ["python", str(elsewhere)]}]}),
+        encoding="utf-8",
+    )
+    decision, _ = _engine(config_file).before_tool("read_file", {"path": "a.py"})
+    # Fail closed: the refusal is a deny on an enforcing event, and the reason says where the script must live.
+    assert decision.verdict == "deny"
+    assert "outside the application, plugin and hook folders" in decision.reason
+    assert "hooks.json" in decision.reason
+
+
+def test_frozen_hook_folder_from_the_home_config_is_allowed_only_when_passed_by_the_harness(
+    tmp_path, monkeypatch
+):
+    home_folder = tmp_path / "home" / ".maf-harness"
+    home_folder.mkdir(parents=True)
+    script = home_folder / "tool.py"
+    script.write_text("print('ok')\n", encoding="utf-8")
+    monkeypatch.delenv("HARNESS_HOOK_FOLDERS", raising=False)
+    monkeypatch.setattr(paths, "resource_root", lambda: tmp_path / "resources")
+    monkeypatch.setattr(paths, "plugin_dir", lambda: tmp_path / "plugins")
+    assert not desktop_backend._allowed_script(str(script))
+    monkeypatch.setenv("HARNESS_HOOK_FOLDERS", os.pathsep.join([str(tmp_path / "x"), str(home_folder)]))
+    assert desktop_backend._allowed_script(str(script))
+    assert not desktop_backend._allowed_script(str(home_folder.parent / "outside.py"))
+
+
+def test_a_crashing_hook_fails_closed_on_enforcing_events_and_only_records_on_observers(
+    tmp_path, monkeypatch
+):
+    folder = _frozen_hooks(monkeypatch, tmp_path)
+    (folder / "broken.py").write_text("import sys\nsys.stderr.write('boom')\nsys.exit(1)\n", encoding="utf-8")
+    config_file = folder / "hooks.json"
+    config_file.write_text(
+        json.dumps(
+            {
+                "hooks": [
+                    {"event": "PreToolUse", "command": ["python", "broken.py"]},
+                    {"event": "PostToolUse", "command": ["python", "broken.py"]},
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    audited = []
+    engine = _engine(config_file, audit=lambda event, **data: audited.append((event, data)))
+    decision, _ = engine.before_tool("read_file", {"path": "a.py"})
+    assert decision.verdict == "deny" and "failed" in decision.reason and "exited 1" in decision.reason
+    assert engine.after_tool("read_file", {"path": "a.py"}, "result") == "result"  # an observer cannot block
+    assert [event for event, _ in audited].count("hook_error") == 2

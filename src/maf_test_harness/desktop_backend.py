@@ -12,6 +12,7 @@ import ast
 import importlib.util
 import json
 import multiprocessing
+import os
 import re
 import runpy
 import sys
@@ -32,10 +33,18 @@ PYTHON_FLAGS = {"-B", "-E", "-I", "-O", "-OO", "-S", "-s", "-u"}
 _LITERAL_EXIT = re.compile(r"""raise SystemExit\((?P<q>['"])(?:(?!(?P=q))[^\\\n]|\\.)*(?P=q)\)""")
 
 
+def _hook_folders() -> list[Path]:
+    """The user's hook folders, passed by the harness that started this process (see hooks.config._hook_env)."""
+    from maf_test_harness.hooks.config import HOOK_FOLDERS_ENV
+
+    return [Path(item) for item in os.environ.get(HOOK_FOLDERS_ENV, "").split(os.pathsep) if item.strip()]
+
+
 def _allowed_script(path: str) -> bool:
-    """Only scripts inside the bundled resources or the plugin folder may run through this executable."""
+    """Only scripts inside the bundled resources, the plugin folder or a user hook folder may run through this
+    executable (the folder of <user data>/.harness/hooks.json and of the hooks.json that configured the hook)."""
     script = Path(path).resolve()
-    for root in (paths.resource_root(), paths.plugin_dir()):
+    for root in (paths.resource_root(), paths.plugin_dir(), *_hook_folders()):
         try:
             if script.is_relative_to(root.resolve()):
                 return True
@@ -79,7 +88,8 @@ def run_python(argv: list[str]) -> int:
         return 2
     if head != "-c" and not _allowed_script(head):
         print(
-            f"maf-backend --run-python: {head!r} is outside the application and plugin folders",
+            f"maf-backend --run-python: {head!r} is outside the application, plugin and hook folders. A user hook script "
+            "must sit beside its hooks.json (in <user data>/.harness/); reference it by a relative name.",
             file=sys.stderr,
         )
         return 2

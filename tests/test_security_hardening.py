@@ -243,7 +243,7 @@ def test_run_python_only_runs_scripts_under_the_app_or_plugin_folders(tmp_path, 
     monkeypatch.setattr(sys, "argv", list(sys.argv))
     monkeypatch.setattr(sys, "path", list(sys.path))
     assert desktop_backend.main(["--run-python", str(outside_script)]) == 2
-    assert "outside the application and plugin folders" in capsys.readouterr().err
+    assert "outside the application, plugin and hook folders" in capsys.readouterr().err
     assert desktop_backend.main(["--run-python", str(inside_script)]) == 0
     assert "ran" in capsys.readouterr().out
 

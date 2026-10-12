@@ -142,14 +142,28 @@ def load_config(paths: list[Path] | None = None) -> HookConfig:
     return merged
 
 
+HOOK_FOLDERS_ENV = "HARNESS_HOOK_FOLDERS"  # read by the frozen backend's --run-python (desktop_backend)
+
+
 def _resolve_argv(argv: list[str], entry: dict[str, Any]) -> list[str]:
-    """Absolute program path (a relative argv[0] is resolved against the config file, never the caller's cwd, which
-    Windows would otherwise use); ``python`` / ``python3`` mean the interpreter running the harness."""
+    """Absolute program path. A relative argv[0] or script is resolved against the config file that declared the hook,
+    never the caller's cwd (which Windows would otherwise use). ``python`` / ``python3`` mean the interpreter running
+    the harness."""
     program = argv[0]
+    base = Path(entry["_source"]).parent
     if program in {"python", "python3"}:
-        return [*paths.python_argv(), *argv[1:]]
+        rest = list(argv[1:])
+        if (
+            rest
+            and not rest[0].startswith("-")
+            and not Path(rest[0]).is_absolute()
+            and (base / rest[0]).is_file()
+        ):
+            rest[0] = str(
+                (base / rest[0]).resolve()
+            )  # the script beside hooks.json, not beside the harness's cwd
+        return [*paths.python_argv(), *rest]
     if os.sep in program or "/" in program:
-        base = Path(entry["_source"]).parent
         path = Path(program) if Path(program).is_absolute() else (base / program)
         found = str(path.resolve()) if path.exists() else None
     else:
@@ -159,16 +173,21 @@ def _resolve_argv(argv: list[str], entry: dict[str, Any]) -> list[str]:
     return [found, *argv[1:]]
 
 
-def _hook_env() -> dict[str, str]:
+def _hook_env(entry: dict[str, Any]) -> dict[str, str]:
+    """The basic environment, plus the folders a python hook script may come from. The frozen backend runs python hooks
+    as a child process whose own user-data settings are not forwarded, so the folders are passed explicitly."""
     from ..envs.execution import BASIC_ENV  # lazy: keeps the hooks package importable on its own
 
-    return {key: os.environ[key] for key in BASIC_ENV if key in os.environ}
+    env = {key: os.environ[key] for key in BASIC_ENV if key in os.environ}
+    folders = [paths.user_data_root() / ".harness", Path(entry["_source"]).resolve().parent]
+    env[HOOK_FOLDERS_ENV] = os.pathsep.join(dict.fromkeys(str(folder) for folder in folders))
+    return env
 
 
 def compile_entry(entry: dict[str, Any]) -> HookSpec:
     if "command" in entry:
         argv = _resolve_argv(entry["command"], entry)
-        handler = command_handler(argv, timeout=entry["timeout"], env=_hook_env())
+        handler = command_handler(argv, timeout=entry["timeout"], env=_hook_env(entry))
         label = (
             Path(entry["command"][1]).name
             if len(entry["command"]) > 1 and Path(entry["command"][0]).stem.startswith("python")

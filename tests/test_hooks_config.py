@@ -1,6 +1,7 @@
 """``.harness/hooks.json``: validation, merging, compilation and the engine it produces."""
 
 import json
+import os
 import sys
 import textwrap
 
@@ -227,3 +228,23 @@ def test_the_shipped_example_configuration_is_valid():
     example = Path(".harness/hooks.json.example")
     config = parse_config(json.loads(example.read_text(encoding="utf-8")), str(example))
     assert config.mode == "enforce" and len(config.hooks) == 3
+
+
+def test_a_python_hook_script_is_resolved_beside_its_hooks_json_not_the_cwd(tmp_path, monkeypatch):
+    from maf_test_harness import paths
+    from maf_test_harness.hooks.config import HOOK_FOLDERS_ENV, _hook_env, _resolve_argv
+
+    folder = tmp_path / "cfg"
+    folder.mkdir()
+    (folder / "check.py").write_text("", encoding="utf-8")
+    monkeypatch.chdir(tmp_path)  # the harness's working directory must not decide which script runs
+    monkeypatch.setattr(paths, "user_data_root", lambda: tmp_path / "data")
+    entry = {"_source": str(folder / "hooks.json")}
+    assert _resolve_argv(["python", "check.py", "--flag"], entry) == [
+        sys.executable,
+        str((folder / "check.py").resolve()),
+        "--flag",
+    ]
+    assert _resolve_argv(["python", "-c", "pass"], entry) == [sys.executable, "-c", "pass"]
+    folders = _hook_env(entry)[HOOK_FOLDERS_ENV].split(os.pathsep)
+    assert folders == [str(tmp_path / "data" / ".harness"), str(folder.resolve())]
