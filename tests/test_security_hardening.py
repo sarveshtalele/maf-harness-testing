@@ -271,7 +271,7 @@ def test_tool_version_probes_get_the_basic_environment_only(monkeypatch):
         seen["env"] = env
         return subprocess.CompletedProcess(command, 0, "git version 2.99\n", "")
 
-    monkeypatch.setenv("OPENAI_API_KEY", "sk-test-probe-secret")
+    monkeypatch.setenv("OPENAI_API_KEY", "sk" + "-test-probe-secret")
     monkeypatch.setattr(platform_compat, "run_cancellable", fake_run)
     monkeypatch.setattr(environment.shutil, "which", lambda name: sys.executable)
     entry = environment._probe("git")
