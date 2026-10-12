@@ -216,16 +216,31 @@ def evidence_caps(*, target: str, content: str, verdict: str, source_found: bool
     return caps
 
 
-def score_review(review: dict[str, Any], *, target: str, content: str, source_found: bool) -> dict[str, Any]:
-    """The reviewed case with host-computed confidence; the reviewer's own confidence is kept as model_confidence."""
+def score_review(
+    review: dict[str, Any],
+    *,
+    target: str,
+    content: str,
+    source_found: bool,
+    findings: list[dict[str, Any]] | tuple[()] = (),
+) -> dict[str, Any]:
+    """The reviewed case with host-computed confidence; the reviewer's own confidence is kept as model_confidence.
+
+    `findings` are the deterministic derivation checks (qa/derivation.py): a finding with a numeric cap joins the caps,
+    a finding with cap None is a note (derivation_required) that caps nothing.
+    """
     scores = {dimension: int(review["scores"][dimension]) for dimension in RUBRIC}
     base = model_score(scores)
     caps = evidence_caps(target=target, content=content, verdict=review["verdict"], source_found=source_found)
-    verdict = (
-        "insufficient_evidence"
-        if any(cap["rule"] == "target_source_missing" for cap in caps)
-        else review["verdict"]
-    )
+    caps += [dict(f) for f in findings if f.get("cap") is not None]
+    notes = [dict(f) for f in findings if f.get("cap") is None]
+    rules = {cap["rule"] for cap in caps}
+    if "target_source_missing" in rules:
+        verdict = "insufficient_evidence"
+    elif "expectation_contradicts_source" in rules:
+        verdict = "needs_revision"
+    else:
+        verdict = review["verdict"]
     return {
         **review,
         "verdict": verdict,
@@ -233,6 +248,7 @@ def score_review(review: dict[str, Any], *, target: str, content: str, source_fo
         "model_score": base,
         "scores": scores,
         "caps": caps,
+        "notes": notes,
         "confidence": min([base, *(cap["cap"] for cap in caps)]),
     }
 

@@ -551,7 +551,7 @@ def ctl_review(tmp_path, *, source_name, source, test_text, target, case_id="TC-
     return result
 
 
-def test_ctl003_wrong_expectation_is_accepted_today_demonstrating_the_bug(tmp_path):
+def test_ctl003_wrong_expectation_is_rejected_before_execution(tmp_path):
     result = ctl_review(
         tmp_path,
         source_name="location.py",
@@ -559,11 +559,12 @@ def test_ctl003_wrong_expectation_is_accepted_today_demonstrating_the_bug(tmp_pa
         test_text=CTL003_WRONG,
         target="LocationResolver.resolve",
     )
-    assert review_accepted(result, 80) and result["confidence"] == 100
-    assert result["caps"] == []
+    assert not review_accepted(result, 80)
+    assert result["confidence"] <= 60
+    assert "count_assumes_no_filter" in {cap["rule"] for cap in result["caps"]}
 
 
-def test_ctl001_wrong_expectation_is_accepted_today_demonstrating_the_bug(tmp_path):
+def test_ctl001_wrong_expectation_is_rejected_before_execution(tmp_path):
     result = ctl_review(
         tmp_path,
         source_name="indexer.py",
@@ -571,8 +572,9 @@ def test_ctl001_wrong_expectation_is_accepted_today_demonstrating_the_bug(tmp_pa
         test_text=CTL001_WRONG,
         target="CodebaseIndexer.build",
     )
-    assert review_accepted(result, 80) and result["confidence"] == 100
-    assert result["caps"] == []
+    assert not review_accepted(result, 80)
+    assert result["confidence"] == 0 and result["verdict"] == "needs_revision"
+    assert "expectation_contradicts_source" in {cap["rule"] for cap in result["caps"]}
 
 
 @pytest.mark.parametrize(
@@ -588,49 +590,3 @@ def test_correct_expectations_are_accepted_before_and_after_the_fix(
 ):
     result = ctl_review(tmp_path, source_name=source_name, source=source, test_text=test_text, target=target)
     assert review_accepted(result, 80), result["caps"]
-
-
-@pytest.mark.xfail(strict=True, reason="Regression target: rejected before execution once the fix lands")
-def test_ctl003_wrong_expectation_is_rejected_before_execution(tmp_path):
-    result = ctl_review(
-        tmp_path,
-        source_name="location.py",
-        source=CTL003_SOURCE,
-        test_text=CTL003_WRONG,
-        target="LocationResolver.resolve",
-        derivations=[
-            {
-                "slot": "E1",
-                "value": "2",
-                "steps": "Every candidate is returned.",
-                "source_quote": "return [place for points, place in scored if points > 0]",
-                "fixture_quote": '["Berlin", "Paris"]',
-            }
-        ],
-    )
-    assert not review_accepted(result, 80)
-    assert result["confidence"] < 80
-    assert "count_assumes_no_filter" in {cap["rule"] for cap in result["caps"]}
-
-
-@pytest.mark.xfail(strict=True, reason="Regression target: rejected before execution once the fix lands")
-def test_ctl001_wrong_expectation_is_rejected_before_execution(tmp_path):
-    result = ctl_review(
-        tmp_path,
-        source_name="indexer.py",
-        source=CTL001_SOURCE,
-        test_text=CTL001_WRONG,
-        target="CodebaseIndexer.build",
-        derivations=[
-            {
-                "slot": "E1",
-                "value": "2",
-                "steps": "Two lines in the fixture.",
-                "source_quote": 'index[path.name] = {"line_count": content.count("\\n") + 1}',
-                "fixture_quote": 'write_text("x = 1\\ny = 2\\n"',
-            }
-        ],
-    )
-    assert not review_accepted(result, 80)
-    assert result["confidence"] < 80
-    assert "expectation_contradicts_source" in {cap["rule"] for cap in result["caps"]}

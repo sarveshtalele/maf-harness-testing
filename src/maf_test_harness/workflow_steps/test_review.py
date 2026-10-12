@@ -4,6 +4,7 @@ from ..agent.personas import chief_architect_persona
 from ..llm.prompts import generation_prompt
 from ..models import TestReviewDraft
 from ..qa.confidence import RUBRIC, resolve_target, review_accepted, score_review, verification_note
+from ..qa.derivation import deterministic_findings
 from ..repo.analyzer import build_repository_evidence, extract_target_sources
 from ..settings import TEST_REVIEW_MIN_CONFIDENCE
 from ..workflow_support import MODEL_REPAIR_ATTEMPTS
@@ -116,13 +117,18 @@ async def review_generated_tests(host, state, candidate, cases, batch, partial_o
     for review in reviews:
         case = by_case[review["case_id"]]
         target = str(case.get("target") or "")
-        content = "\n".join(f["content"] for f in candidate["files"] if review["case_id"] in f["case_ids"])
+        files = [f["content"] for f in candidate["files"] if review["case_id"] in f["case_ids"]]
+        case_source = extract_target_sources(root, [target], source_files) if target else ""
+        findings = [
+            finding for text in files for finding in deterministic_findings(text, case_source, target)
+        ]
         scored.append(
             score_review(
                 review,
                 target=target,
-                content=content,
+                content="\n".join(files),
                 source_found=_source_found(root, target, source_files),
+                findings=findings,
             )
         )
     reviews = scored
