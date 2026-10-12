@@ -24,6 +24,8 @@ extraResources:
       - ".next/**/*"
       - "deps/**/*"
 win:
+  # Required by the MSI target: its shortcuts reference the product icon (WiX LGHT0094 without it).
+  icon: assets/icon.ico
   target:
     - target: msi
       arch: [x64]
