@@ -182,7 +182,7 @@ def load_config(paths: list[Path] | None = None) -> HookConfig:
     return merged
 
 
-HOOK_FOLDERS_ENV = "HARNESS_HOOK_FOLDERS"  # read by the frozen backend's --run-python (desktop_backend)
+HOOK_FOLDERS_ENV = paths.HOOK_FOLDERS_ENV  # read by the frozen backend's --run-python (desktop_backend)
 
 
 def _resolve_argv(argv: list[str], entry: dict[str, Any]) -> list[str]:

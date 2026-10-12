@@ -35,9 +35,9 @@ _LITERAL_EXIT = re.compile(r"""raise SystemExit\((?P<q>['"])(?:(?!(?P=q))[^\\\n]
 
 def _hook_folders() -> list[Path]:
     """The user's hook folders, passed by the harness that started this process (see hooks.config._hook_env)."""
-    from maf_test_harness.hooks.config import HOOK_FOLDERS_ENV
-
-    return [Path(item) for item in os.environ.get(HOOK_FOLDERS_ENV, "").split(os.pathsep) if item.strip()]
+    return [
+        Path(item) for item in os.environ.get(paths.HOOK_FOLDERS_ENV, "").split(os.pathsep) if item.strip()
+    ]
 
 
 def _allowed_script(path: str) -> bool:
