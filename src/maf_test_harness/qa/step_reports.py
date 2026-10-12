@@ -12,7 +12,7 @@ from pathlib import Path
 from string import Template
 from typing import Any
 
-from .report import SECTIONS, design_cases, md_cell
+from .report import SECTIONS, case_table_rows, design_cases, md_cell, render_case_table
 
 TEMPLATES = Path(__file__).with_name("templates")
 NOT_RUN = "_Not run: this step produced no artifact in this run._"
@@ -224,6 +224,7 @@ def _design(a: dict, ctx: dict) -> tuple[dict, list[Check]]:
     confidences = [r["confidence"] for r in reviews.values() if isinstance(r.get("confidence"), int)]
     sections = {
         "inputs": _kv([("Requirements", ctx["requirements"]), ("Test plan areas", ctx["areas"])]),
+        "test_cases": render_case_table(case_table_rows(a)),
         "results": _kv(
             [(s, len(a.get(f"{s}_tests") or [])) for s in SECTIONS] + [("Total cases", len(cases))]
         )

@@ -10,6 +10,10 @@ Concrete test cases traced to requirements, validated by an independent design r
 
 $inputs
 
+## Test cases
+
+$test_cases
+
 ## Results
 
 $results

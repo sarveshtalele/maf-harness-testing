@@ -24,6 +24,65 @@ def design_cases(design: dict[str, Any]) -> list[dict[str, Any]]:
     return [case for section in SECTIONS for case in design.get(f"{section}_tests", []) or []]
 
 
+CASE_COLUMNS = ("Sno", "Requirement ID", "Test Case ID", "Test Case Description", "Steps", "Expected Result")
+
+
+def case_table_rows(design: dict[str, Any]) -> list[dict[str, Any]]:
+    """The QA test-case table: one row per case, grouped by category; Sno restarts at 1 in each group.
+
+    Older runs without ``steps`` yield an empty list (rendered as a dash).
+    """
+    rows: list[dict[str, Any]] = []
+    for group in SECTIONS:
+        for sno, case in enumerate(design.get(f"{group}_tests") or [], 1):
+            rows.append(
+                {
+                    "group": group,
+                    "sno": sno,
+                    "requirement_id": ", ".join(
+                        dict.fromkeys(
+                            link["id"]
+                            for link in case.get("traceability_links") or []
+                            if link.get("type") == "requirement"
+                        )
+                    ),
+                    "id": case.get("id", ""),
+                    "title": case.get("title", ""),
+                    "description": case.get("description", ""),
+                    "steps": [str(step) for step in case.get("steps") or []],
+                    "expected_result": case.get("expected_result", ""),
+                }
+            )
+    return rows
+
+
+def render_case_table(rows: list[dict[str, Any]]) -> str:
+    """Markdown for the six-column table, one table per non-empty category, steps numbered inside the cell."""
+    out: list[str] = []
+    for group in SECTIONS:
+        cases = [row for row in rows if row["group"] == group]
+        if not cases:
+            continue
+        out += [
+            "",
+            f"### {group.title()} cases",
+            "",
+            "| " + " | ".join(CASE_COLUMNS) + " |",
+            "|" + "---|" * 6,
+        ]
+        for row in cases:
+            title = md_cell(row["title"])
+            description = row["description"]
+            if description and description != row["title"]:
+                title = f"{title} — {md_cell(description)}"
+            steps = " ".join(f"{i}) {step}" for i, step in enumerate(row["steps"], 1))
+            out.append(
+                f"| {row['sno']} | {md_cell(row['requirement_id']) or '—'} | {md_cell(row['id'])} | {title} "
+                f"| {md_cell(steps) or '—'} | {md_cell(row['expected_result'])} |"
+            )
+    return "\n".join(out).lstrip("\n") or "_None._"
+
+
 def verdict_for(execution: dict[str, Any] | None) -> str:
     status = (execution or {}).get("status", "not_run")
     return {"passed": "PASS", "passed_with_skips": "PASS_WITH_SKIPS", "failed": "FAIL"}.get(
@@ -112,6 +171,7 @@ def build_qa_report(
             }
         )
     cases.sort(key=lambda c: (-(c.get("confidence") or 0), c["id"]))
+    test_cases = case_table_rows(design)
     by_id = {c["id"]: c for c in cases}
     coverage = []
     for req in requirements.get("requirement_model", {}).get("requirements", []):
@@ -262,6 +322,7 @@ def build_qa_report(
         "adapter": (execution or {}).get("adapter"),
         "case_status_counts": counts,
         "cases": cases,
+        "test_cases": test_cases,
         "requirement_coverage": coverage,
         "requirement_state_counts": {
             k: sum(c["requirement_state"] == k for c in coverage)
@@ -416,6 +477,7 @@ def render_markdown(report: dict[str, Any]) -> str:
             f"| {md_cell(c['priority'])} | {'' if c.get('confidence') is None else c['confidence']} "
             f"| {c['status']} | {md_cell(c['file'])} |"
         )
+    lines += ["", "## Test cases", "", render_case_table(report.get("test_cases") or []), ""]
     lines += [
         "",
         "## Requirement traceability",

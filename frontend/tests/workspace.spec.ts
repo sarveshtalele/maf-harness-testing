@@ -1,4 +1,10 @@
-import { test, expect } from '@playwright/test';
+import { test, expect, type Page } from '@playwright/test';
+
+const CASE_HEADERS = ['Sno', 'Requirement ID', 'Test Case ID', 'Test Case Description', 'Steps', 'Expected Result'];
+async function expectCaseTableHeaders(page: Page) {
+  const headers = page.getByRole('table').filter({ has: page.getByRole('columnheader', { name: 'Test Case Description', exact: true }) }).first().getByRole('columnheader');
+  await expect(headers).toHaveText(CASE_HEADERS);
+}
 
 test('complete browser workflow, layouts, evidence, downloads and stale gates', async ({ page, request }, testInfo) => {
   const errors: string[] = []; page.on('pageerror', error => errors.push(error.message));
@@ -54,10 +60,17 @@ test('complete browser workflow, layouts, evidence, downloads and stale gates', 
       await expect(page.getByRole('heading', { name: 'Step-by-step repository setup' })).toBeVisible();
       await expect(page.getByRole('region', { name: 'Repository setup guide' })).toBeVisible();
     }
+    if (before.pending.stage === 'test_design' && before.pending.kind === 'review') await expectCaseTableHeaders(page);
     await approve.click();
     await expect.poll(async () => { const next = await (await request.get(`/api/harness/runs/${key}`)).json(); return !next.busy && (next.status === 'complete' || next.pending?.id !== before.pending?.id); }, { timeout: 60000 }).toBeTruthy();
   }
   await expect.poll(async () => (await (await request.get(`/api/harness/runs/${key}`)).json()).status).toBe('complete');
+  // Completed test design artifact: the six QA columns, no page overflow at phone width.
+  await page.goto(`/?run=${key}&tab=Artifacts&stage=test_design`);
+  await expectCaseTableHeaders(page);
+  await page.setViewportSize({ width: 390, height: 844 });
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBeTruthy();
+  await page.setViewportSize({ width: 1280, height: 720 });
   await page.reload();
   await expect(page.getByRole('progressbar', { name: 'Workflow completion', exact: true })).toHaveAttribute('value', '100');
   await page.getByRole('button', { name: 'Prompts', exact: true }).click();
