@@ -15,10 +15,25 @@ const THREE = [
 type Srv = Record<string, unknown>;
 type Import = { imported: { source_key: string; name: string; secret_keys: string[] }[]; added: Srv[] };
 
+/** Stage budget as the backend computes it: enabled servers in name order, at most 8 MCP tools per stage. */
+function budgetOf(servers: Srv[]) {
+  return Object.fromEntries(STAGES.flatMap(stage => {
+    let used = 0; let demand = 0; const skipped: string[] = [];
+    for (const s of [...servers].sort((a, b) => String(a.name).localeCompare(String(b.name)))) {
+      if (!(s.enabled && (s.stages as string[]).includes(stage))) continue;
+      const n = new Set([...(s.allowed_tools as string[]), ...(s.approval_required_tools as string[])]).size;
+      demand += n;
+      if (used + n > 8) skipped.push(String(s.name)); else used += n;
+    }
+    return skipped.length ? [[stage, { tools: demand, max: 8, skipped }]] : [];
+  }));
+}
+
 /** In-memory stand-in for the MCP routes: list, save, import, test, secrets and delete. */
-async function mockMcp(page: Page, options: { servers?: Srv[]; tools?: { name: string; description: string }[]; importReply?: (text: string) => Import } = {}) {
+async function mockMcp(page: Page, options: { servers?: Srv[]; tools?: { name: string; description: string }[]; importReply?: (text: string) => Import; failSecrets?: boolean } = {}) {
   const state = { servers: [...(options.servers ?? [])], saved: [] as Srv[], secretBodies: [] as Record<string, unknown>[], deleted: [] as string[], tools: options.tools ?? THREE };
   const view = (s: Srv) => ({ ...s, discovered_tools: s.discovered_tools ?? [], secrets: s.transport === 'http' ? { BEARER_TOKEN: false } : {}, ready: s.transport !== 'http' });
+  const list = () => ({ servers: state.servers.map(view), stages: STAGES, max_tools_per_server: 200, max_tools_per_stage: 8, stage_budget: budgetOf(state.servers), presets: PRESETS });
   await page.route('**/api/harness/mcp-servers', async route => {
     if (route.request().method() === 'POST') {
       const body = route.request().postDataJSON() as Srv;
@@ -28,7 +43,7 @@ async function mockMcp(page: Page, options: { servers?: Srv[]; tools?: { name: s
       state.servers = [...state.servers.filter(s => s.name !== body.name), saved];
       return route.fulfill({ json: view(saved) });
     }
-    return route.fulfill({ json: { servers: state.servers.map(view), stages: STAGES, max_tools_per_server: 200, max_tools_per_stage: 8, presets: PRESETS } });
+    return route.fulfill({ json: list() });
   });
   await page.route('**/api/harness/mcp-servers/**', async route => {
     const request = route.request();
@@ -45,6 +60,7 @@ async function mockMcp(page: Page, options: { servers?: Srv[]; tools?: { name: s
     }
     if (action === 'secrets') {
       state.secretBodies.push(request.postDataJSON() as Record<string, unknown>);
+      if (options.failSecrets) return route.fulfill({ status: 500, json: { error: 'keychain unavailable' } });
       return route.fulfill({ json: view(state.servers.find(s => s.name === name) ?? {}) });
     }
     if (request.method() === 'DELETE') {
@@ -59,10 +75,11 @@ async function mockMcp(page: Page, options: { servers?: Srv[]; tools?: { name: s
 
 const card = (page: Page, name: string) => page.getByRole('region', { name: `MCP server ${name}` });
 const manage = (page: Page, name: string) => page.getByRole('dialog', { name: `${name} · tools and settings` });
+const addDialog = (page: Page) => page.getByRole('dialog', { name: 'Add MCP server' });
 
 async function addPreset(page: Page, label: string) {
   await page.getByRole('button', { name: 'Add MCP server' }).click();
-  const dialog = page.getByRole('dialog', { name: 'Add MCP server' });
+  const dialog = addDialog(page);
   await dialog.getByRole('tab', { name: 'Preset', exact: true }).click();
   await dialog.getByRole('combobox').selectOption({ label });
   await dialog.getByRole('button', { name: 'Add preset' }).click();
@@ -131,7 +148,7 @@ test('pasting a JSON config adds a stdio and an http server, both disabled, and 
   });
   await page.goto('/?page=marketplace&tab=mcp');
   await page.getByRole('button', { name: 'Add MCP server' }).click();
-  const dialog = page.getByRole('dialog', { name: 'Add MCP server' });
+  const dialog = addDialog(page);
   await dialog.getByLabel(/Paste an npx/).fill(config);
   await dialog.getByRole('button', { name: 'Add from paste' }).click();
   await expect(dialog).toBeHidden();
@@ -150,19 +167,80 @@ test('pasting an npx command names the card after the package and stores an inli
   });
   await page.goto('/?page=marketplace&tab=mcp');
   await page.getByRole('button', { name: 'Add MCP server' }).click();
-  const dialog = page.getByRole('dialog', { name: 'Add MCP server' });
-  const textarea = dialog.getByLabel(/Paste an npx/);
-  await textarea.fill(`API_TOKEN=${PASTED} npx -y @playwright/mcp@latest`);
+  const dialog = addDialog(page);
+  await dialog.getByLabel(/Paste an npx/).fill(`API_TOKEN=${PASTED} npx -y @playwright/mcp@latest`);
   await dialog.getByRole('button', { name: 'Add from paste' }).click();
   await expect(dialog).toBeHidden();
   await expect(card(page, 'mcp')).toBeVisible();
   await expect(card(page, 'mcp').locator('code').first()).toHaveText('npx -y @playwright/mcp@latest');
   expect(state.secretBodies).toEqual([{ API_TOKEN: PASTED }]);
   await page.getByRole('button', { name: 'Add MCP server' }).click();
-  await expect(page.getByRole('dialog', { name: 'Add MCP server' }).getByLabel(/Paste an npx/)).toHaveValue('');
+  await expect(addDialog(page).getByLabel(/Paste an npx/)).toHaveValue('');
 });
 
-test('approve all, deselect all, save: counts update and the over-budget warning appears', async ({ page }) => {
+test('Escape closes the Add dialog and clears the pasted text', async ({ page }) => {
+  await mockMcp(page);
+  await page.goto('/?page=marketplace&tab=mcp');
+  await page.getByRole('button', { name: 'Add MCP server' }).click();
+  await addDialog(page).getByLabel(/Paste an npx/).fill(`API_TOKEN=${PASTED} npx -y x`);
+  await page.keyboard.press('Escape');
+  await expect(addDialog(page)).toBeHidden();
+  await page.getByRole('button', { name: 'Add MCP server' }).click();
+  await expect(addDialog(page).getByLabel(/Paste an npx/)).toHaveValue('');
+  await addDialog(page).getByRole('button', { name: 'Cancel' }).first().click();
+  await expect(addDialog(page)).toBeHidden();
+  await expect(page.getByRole('button', { name: 'Add MCP server' })).toBeFocused();
+});
+
+test('a failed secret save after import keeps the server, reloads the list and names the keys not stored', async ({ page }) => {
+  await mockMcp(page, {
+    failSecrets: true,
+    importReply: () => ({
+      imported: [{ source_key: 'files', name: 'files', secret_keys: ['API_TOKEN'] }],
+      added: [{ name: 'files', transport: 'stdio', command: 'npx', args: ['x'], env_keys: ['API_TOKEN'], url: '', enabled: false, stages: [], allowed_tools: [], approval_required_tools: [], preset: '' }],
+    }),
+  });
+  await page.goto('/?page=marketplace&tab=mcp');
+  await page.getByRole('button', { name: 'Add MCP server' }).click();
+  const dialog = addDialog(page);
+  await dialog.getByLabel(/Paste an npx/).fill(JSON.stringify({ mcpServers: { files: { command: 'npx', args: ['x'], env: { API_TOKEN: PASTED } } } }));
+  await dialog.getByRole('button', { name: 'Add from paste' }).click();
+  await expect(dialog.getByRole('status').filter({ hasText: 'NOT stored' })).toContainText('files: API_TOKEN');
+  await expect(dialog).toBeVisible(); // stays open so the error is seen
+  await expect(card(page, 'files')).toBeVisible(); // the server exists: the list was reloaded
+  expect(await page.content()).not.toContain(PASTED);
+});
+
+test('real backend: paste a docker -e secret and an env secret; the stored secrets never come back', async ({ page, request }) => {
+  // No MCP routes are mocked here: the import goes through the real parse_import and the real secrets route.
+  const names = ['e2e-real', 'e2e-docker'];
+  try {
+    await page.goto('/?page=marketplace&tab=mcp');
+    await page.getByRole('button', { name: 'Add MCP server' }).click();
+    const dialog = addDialog(page);
+    await dialog.getByLabel(/Paste an npx/).fill(JSON.stringify({ mcpServers: { 'e2e-real': { command: 'npx', args: ['-y', '@playwright/mcp@latest'], env: { E2E_TOKEN: PASTED } } } }));
+    await dialog.getByRole('button', { name: 'Add from paste' }).click();
+    await expect(dialog).toBeHidden();
+    await expect(card(page, 'e2e-real').getByText('Disabled', { exact: true })).toBeVisible();
+    await page.getByRole('button', { name: 'Add MCP server' }).click();
+    await addDialog(page).getByLabel(/Paste an npx/).fill(`docker run -i --rm -e E2E_DOCKER=${PASTED} mcp/fetch`);
+    await addDialog(page).getByRole('button', { name: 'Add from paste' }).click();
+    await expect(addDialog(page)).toBeHidden();
+    const docker = card(page, 'e2e-docker');
+    await expect(docker.locator('code').first()).toHaveText('docker run -i --rm -e E2E_DOCKER mcp/fetch');
+    await docker.getByRole('button', { name: 'Manage tools' }).click();
+    await expect(manage(page, 'e2e-docker').getByLabel('E2E_DOCKER', { exact: true })).toHaveAttribute('placeholder', /Set/);
+    await page.keyboard.press('Escape');
+    expect(await page.content()).not.toContain(PASTED);
+    const list = await (await request.get('/api/harness/mcp-servers')).text();
+    expect(list).toContain('E2E_DOCKER');
+    expect(list).not.toContain(PASTED);
+  } finally {
+    for (const name of names) await request.delete(`/api/harness/mcp-servers/${name}`);
+  }
+});
+
+test('approve all, deselect all, save: counts update and the stage over-budget warning appears', async ({ page }) => {
   const nine = Array.from({ length: 9 }, (_, i) => ({ name: `tool_${i + 1}`, description: `Tool number ${i + 1}` }));
   const state = await mockMcp(page, {
     tools: nine,
@@ -178,23 +256,22 @@ test('approve all, deselect all, save: counts update and the over-budget warning
   await expect(dialog.getByRole('table')).toContainText('Tool number 9');
   await dialog.getByRole('button', { name: 'Approve all', exact: true }).click();
   await expect(dialog.getByText('9 tools · 9 approved · 0 need approval · 0 blocked')).toBeVisible();
-  await expect(dialog.getByText('This server would be skipped in a stage: at most 8 MCP tools per stage.')).toBeVisible();
+  await expect(dialog.getByText('Approved tools run without asking, including any that change data')).toBeVisible();
   await dialog.getByRole('button', { name: 'Save', exact: true }).click();
   await expect(dialog.getByRole('status').filter({ hasText: 'Saved.' })).toBeVisible();
   expect(state.saved.at(-1)?.allowed_tools).toHaveLength(9);
   await expect(pw.getByText('9 tools · 9 approved · 0 need approval · 0 blocked')).toBeVisible();
-  await expect(pw.getByText('Over budget')).toBeVisible();
-  await expect(pw.getByText('This server would be skipped in a stage: at most 8 MCP tools per stage.')).toBeVisible();
+  await expect(pw.getByText('Stage Requirements: 9 MCP tools, max 8; servers beyond the budget are skipped.')).toBeVisible();
+  await expect(page.getByRole('status').filter({ hasText: 'Stage Requirements: 9 MCP tools, max 8' })).toBeVisible(); // page header
   await dialog.getByRole('button', { name: 'Deselect all', exact: true }).click();
   await expect(dialog.getByText('9 tools · 0 approved · 0 need approval · 9 blocked')).toBeVisible();
-  await expect(dialog.getByText('This server would be skipped in a stage')).toHaveCount(0);
   await dialog.getByRole('button', { name: 'Save', exact: true }).click();
   await expect(pw.getByText('9 tools · 0 approved · 0 need approval · 9 blocked')).toBeVisible();
   await expect(pw.getByText('Over budget')).toHaveCount(0);
   await page.keyboard.press('Escape');
 });
 
-test('delete asks for confirmation, removes the card and calls the delete route', async ({ page }) => {
+test('delete asks for confirmation, removes the card, and focus moves to Add MCP server', async ({ page }) => {
   const state = await mockMcp(page, { servers: [{ name: 'playwright', transport: 'stdio', command: 'npx', args: ['@playwright/mcp@latest'], env_keys: [], url: '', enabled: false, stages: [], allowed_tools: [], approval_required_tools: [], preset: 'playwright' }] });
   await page.goto('/?page=marketplace&tab=mcp');
   const pw = card(page, 'playwright');
@@ -206,6 +283,7 @@ test('delete asks for confirmation, removes the card and calls the delete route'
   await confirm.getByRole('button', { name: 'Delete server' }).click();
   await expect(pw).toHaveCount(0);
   expect(state.deleted).toEqual(['playwright']);
+  await expect(page.getByRole('button', { name: 'Add MCP server' })).toBeFocused();
 });
 
 test('Configuration links to Marketplace MCP servers', async ({ page }) => {
