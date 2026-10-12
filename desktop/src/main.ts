@@ -6,7 +6,8 @@ import { randomBytes } from 'node:crypto';
 import * as path from 'node:path';
 import { KeyStore, ModelSettingsInput } from './keystore';
 import { ProcessManager, reapOrphans, ServiceSpec, waitForHttp } from './process-manager';
-import { canOpenExternally, exchangeLaunchSecret, isAppOrigin, isEvidenceUrl, makeToken, mergePath, nonceMatches, pickTwoPorts, readLoginShellPath, SESSION_COOKIE } from './util';
+import { canOpenExternally, exchangeLaunchSecret, isAppOrigin, makeToken, mergePath, nonceMatches, pickTwoPorts, readLoginShellPath, SESSION_TTL_SECONDS, sessionCookieName } from './util';
+import { denyPermissionCheck, denyPermissionRequest, isFrameNavigationAllowed, isTrustedSender } from './guards';
 
 const pkg = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'package.json'), 'utf8')) as {
   homepage: string;
@@ -73,6 +74,8 @@ function specs(apiPort: number, uiPortNum: number, token: string, launchSecret =
     ELECTRON_RUN_AS_NODE: '1', // process.execPath acts as plain Node
     // Only the UI gets the launch secret: the window exchanges it once for the session cookie (F1).
     ...(launchSecret ? { HARNESS_LAUNCH_SECRET: launchSecret } : {}),
+    // Keeps the signing key and the spent launch secret across a restart of the UI server (0600 file).
+    HARNESS_UI_STATE_DIR: app.getPath('userData'),
   };
   if (packaged) {
     const res = process.resourcesPath;
@@ -162,7 +165,7 @@ async function provisionMcp(apiPort: number, token: string): Promise<void> {
 
 /** The UI must reach this launch's API through the session, so a squatter on the UI port cannot pass (F13). */
 async function verifyUi(origin: string, sessionId: string, nonce: string): Promise<void> {
-  const r = await fetch(`${origin}/api/harness/health`, { headers: { Cookie: `${SESSION_COOKIE}=${sessionId}` }, signal: AbortSignal.timeout(30_000) });
+  const r = await fetch(`${origin}/api/harness/health`, { headers: { Cookie: `${sessionCookieName(new URL(origin).port)}=${sessionId}` }, signal: AbortSignal.timeout(30_000) });
   const body: unknown = r.ok ? await r.json().catch(() => undefined) : undefined;
   if (!nonceMatches(typeof body === 'object' && body !== null ? (body as { nonce?: unknown }).nonce : undefined, nonce)) {
     throw new Error('The UI is not connected to this launch\'s local API.');
@@ -211,7 +214,7 @@ function createWindow(): BrowserWindow {
     }
   });
   w.webContents.on('will-frame-navigate', (details) => {
-    if (uiPort === null || !isAppOrigin(details.url, uiPort)) details.preventDefault();
+    if (!isFrameNavigationAllowed(details.url, uiPort)) details.preventDefault();
   });
   w.webContents.setWindowOpenHandler(({ url }) => {
     if (canOpenExternally(url)) void shell.openExternal(url);
@@ -257,11 +260,15 @@ async function boot(): Promise<{ apiPort: number; uiPort: number }> {
   const sessionId = await exchangeLaunchSecret(origin, launchSecret);
   await verifyUi(origin, sessionId, nonce);
   uiSessionId = sessionId;
-  await session.defaultSession.cookies.set({ url: origin, name: SESSION_COOKIE, value: sessionId, httpOnly: true, sameSite: 'strict', path: '/' });
+  // Persistent for a week, so a reopened browser works; per port, so another local app cannot clobber it.
+  await session.defaultSession.cookies.set({
+    url: origin, name: sessionCookieName(uiPortNum), value: sessionId, httpOnly: true, sameSite: 'strict', path: '/',
+    expirationDate: Math.floor(Date.now() / 1000) + SESSION_TTL_SECONDS,
+  });
   uiPort = uiPortNum;
 
-  session.defaultSession.setPermissionRequestHandler((_wc, _perm, cb) => cb(false));
-  session.defaultSession.setPermissionCheckHandler(() => false);
+  session.defaultSession.setPermissionRequestHandler(denyPermissionRequest);
+  session.defaultSession.setPermissionCheckHandler(denyPermissionCheck);
 
   const w = win ?? createWindow();
   await w.loadURL(origin);
@@ -275,7 +282,7 @@ function writeStdout(text: string): Promise<void> {
 /** Smoke verdict: the UI must serve the harness config as a JSON object through the UI port. */
 async function smokeCheckConfig(uiPortNum: number): Promise<void> {
   const r = await fetch(`http://127.0.0.1:${uiPortNum}/api/harness/config`, {
-    headers: { Cookie: `${SESSION_COOKIE}=${uiSessionId}` }, signal: AbortSignal.timeout(10_000),
+    headers: { Cookie: `${sessionCookieName(uiPortNum)}=${uiSessionId}` }, signal: AbortSignal.timeout(10_000),
   });
   if (!r.ok) throw new Error(`/api/harness/config returned HTTP ${r.status}`);
   const body: unknown = await r.json().catch(() => undefined);
@@ -324,15 +331,10 @@ async function smokeSucceed(apiPort: number, uiPortNum: number): Promise<void> {
   app.exit(0);
 }
 
-/** Only the app's own page may call the desktop bridge: not an evidence report frame, not another origin, not before boot. */
-function trustedSender(e: IpcMainInvokeEvent): boolean {
-  const url = e.senderFrame?.url ?? '';
-  return uiPort !== null && isAppOrigin(url, uiPort) && !isEvidenceUrl(url);
-}
 
 function handle<A extends unknown[], R>(channel: string, listener: (...args: A) => R): void {
   ipcMain.handle(channel, (e: IpcMainInvokeEvent, ...args: unknown[]) => {
-    if (!trustedSender(e)) throw new Error('This page may not use the desktop bridge.');
+    if (!isTrustedSender(e, uiPort)) throw new Error('This page may not use the desktop bridge.');
     return listener(...(args as A));
   });
 }

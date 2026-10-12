@@ -67,13 +67,19 @@ export function nonceMatches(got: unknown, expected: string): boolean {
   return a.length === b.length && timingSafeEqual(a, b);
 }
 
-/** Name of the UI session cookie; frontend/lib/session.ts is the source of truth. */
-export const SESSION_COOKIE = 'aqe_session';
+/** Session cookie lifetime, seconds: matches frontend/lib/session.ts (SESSION_TTL_SECONDS). */
+export const SESSION_TTL_SECONDS = 7 * 24 * 3600;
 
-/** Session id from Set-Cookie lines of /api/session, or null. */
-export function sessionCookieValue(setCookies: string[]): string | null {
+/** Per-port cookie name: frontend/lib/session.ts sessionCookieName. */
+export function sessionCookieName(port: number | string): string {
+  return `aqe_session_${port}`;
+}
+
+/** Session id from the Set-Cookie lines of /api/session for one port, or null. */
+export function sessionCookieValue(setCookies: string[], port: number | string): string | null {
+  const name = sessionCookieName(port);
   for (const line of setCookies) {
-    const m = new RegExp(`(?:^|\\s)${SESSION_COOKIE}=([A-Za-z0-9_-]+)`).exec(line);
+    const m = new RegExp(`(?:^|\\s)${name}=([A-Za-z0-9_.-]+)`).exec(line);
     if (m) return m[1] ?? null;
   }
   return null;
@@ -81,10 +87,11 @@ export function sessionCookieValue(setCookies: string[]): string | null {
 
 /** Exchanges the one-time launch secret for a session id. The secret is spent; the caller stores the cookie. */
 export async function exchangeLaunchSecret(origin: string, secret: string): Promise<string> {
+  const port = new URL(origin).port;
   const r = await fetch(`${origin}/api/session?launch=${encodeURIComponent(secret)}`, {
     redirect: 'manual', signal: AbortSignal.timeout(10_000),
   });
-  const value = sessionCookieValue(r.headers.getSetCookie());
+  const value = sessionCookieValue(r.headers.getSetCookie(), port);
   if (r.status !== 303 || !value) throw new Error('The UI did not accept the launch secret.');
   return value;
 }

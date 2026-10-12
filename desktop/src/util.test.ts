@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { canOpenExternally, isAppOrigin, isEvidenceUrl, makeToken, mergePath, nonceMatches, pickFreePort, pickTwoPorts, readLoginShellPath, sessionCookieValue } from './util';
+import { canOpenExternally, isAppOrigin, isEvidenceUrl, makeToken, mergePath, nonceMatches, pickFreePort, pickTwoPorts, readLoginShellPath, SESSION_TTL_SECONDS, sessionCookieName, sessionCookieValue } from './util';
 
 test('free ports are loopback-bindable and distinct', async () => {
   const [a, b] = await pickTwoPorts();
@@ -40,10 +40,13 @@ test('F13: only this launch nonce matches', () => {
   assert.ok(!nonceMatches('', ''));
 });
 
-test('session cookie value is read from Set-Cookie lines only', () => {
-  assert.equal(sessionCookieValue(['aqe_session=abc_DEF-123; Path=/; HttpOnly; SameSite=Strict']), 'abc_DEF-123');
-  assert.equal(sessionCookieValue(['other=1', 'x=aqe_session=bad value']), null);
-  assert.equal(sessionCookieValue([]), null);
+test('session cookie value is read per port from Set-Cookie lines only', () => {
+  assert.equal(sessionCookieValue(['aqe_session_4000=abc.DEF-123; Path=/; HttpOnly; SameSite=Strict'], 4000), 'abc.DEF-123');
+  assert.equal(sessionCookieValue(['aqe_session_9999=abc.DEF-123'], 4000), null); // another app's port: not ours
+  assert.equal(sessionCookieValue(['other=1', 'x=aqe_session_4000=bad value'], 4000), null);
+  assert.equal(sessionCookieValue([], 4000), null);
+  assert.equal(sessionCookieName(4000), 'aqe_session_4000');
+  assert.ok(SESSION_TTL_SECONDS === 604800);
 });
 
 test('evidence report URLs are recognised', () => {
