@@ -3,10 +3,15 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from concurrent.futures import Future
 from threading import Event, Thread
 
 from ..envs.platform_compat import RUN_CANCEL
+
+STOP_WAIT_SECONDS = (
+    30  # docs/USER_GUIDE.md: a stop that a cleanup never finishes must not hold the run forever
+)
 
 
 class RuntimeService:
@@ -62,9 +67,14 @@ class RuntimeService:
             try:
                 if task and not task.done():
                     task.cancel()
-                    # "stopped" only once the operation really ended. Until then this future stays pending, so
-                    # `submit` refuses new work and the UI keeps the run in "stopping".
-                    await asyncio.wait({task})
+                    # "stopped" once the operation ended, or after STOP_WAIT_SECONDS at most. Until then this future
+                    # stays pending, so `submit` refuses new work and the UI keeps the run in "stopping".
+                    await asyncio.wait({task}, timeout=STOP_WAIT_SECONDS)
+                    if not task.done():
+                        logging.getLogger(__name__).warning(
+                            "Operation ignored cancellation for %s s; reporting the run as stopped",
+                            STOP_WAIT_SECONDS,
+                        )
                 if task and task.done() and not task.cancelled():
                     task.exception()  # mark retrieved; a failure caused by the stop is not an error
             finally:

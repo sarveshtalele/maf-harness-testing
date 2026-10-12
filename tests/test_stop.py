@@ -342,3 +342,29 @@ def test_stop_request_sets_cancel_then_writes_status_on_the_runtime_thread(api):
     release.set()
     wait(api)
     assert api.read(key)["status"] == "stopped" and not api.errors
+
+
+def test_stop_reports_stopped_after_a_bounded_wait_when_work_ignores_cancel(monkeypatch):
+    import maf_test_harness.ui.runtime_service as runtime_service
+
+    monkeypatch.setattr(runtime_service, "STOP_WAIT_SECONDS", 0.3)
+    service = RuntimeService()
+    stopped = []
+
+    async def stubborn():
+        deadline = time.monotonic() + 3.0
+        while time.monotonic() < deadline:
+            try:
+                await asyncio.sleep(0.05)
+            except asyncio.CancelledError:
+                pass
+
+    try:
+        service.submit(stubborn())
+        time.sleep(0.1)
+        started = time.monotonic()
+        stop = service.stop_active(lambda: stopped.append(1))
+        stop.result(10)
+        assert stopped == [1] and time.monotonic() - started < 2.0
+    finally:
+        service.close()
