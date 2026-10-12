@@ -11,6 +11,9 @@ Turns a detected stack into a reviewable install + run plan, provisions toolchai
 - `recovery.py`: bounded, allow-listed recovery (`choose`, `Action`, `test_client_packages`, `wipe_venv`). `app_launcher.py`: start the app under test (`detect_launch`, `running`).
 - `regression.py`, `setup_guide.py`: Maven regression scopes; manual setup text (never executed).
 
+## Measured coverage (Python)
+`setup_steps` installs `COVERAGE_PACKAGES` (exact pins, optional `install-coverage`, `continue_on_failure`). The pytest step carries `optional_argv` (`--cov=.`, branch config, json report); `execute_plan` adds them only when a probe finds coverage and pytest-cov in the venv, keeps `coverage.json` under the step's evidence folder and reports `coverage` (measured or the reason). Tests and the venv are omitted (`COVERAGE_INI_TEXT`). Other ecosystems are not measured.
+
 ## Flow
 `workflow_steps/execution.py` (`plan_environment`, `plan_execution`) -> `build_environment_plan` / `runners.build_plan` -> human approves -> `run_command` -> `errors.classify_result` -> `recovery.choose` (one allow-listed action) or `qa/triage.py`.
 
