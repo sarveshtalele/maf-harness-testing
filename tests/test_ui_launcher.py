@@ -392,7 +392,7 @@ def test_signal_to_launcher_stops_both_child_trees(tmp_path, signum):
             stderr=subprocess.STDOUT,
         )
         try:
-            deadline = time.monotonic() + 60
+            deadline = time.monotonic() + 180  # slow macOS CI runners need well over 60 s to start both fakes
             while len(list((tmp_path / "pids").glob("*.pid"))) < 2 or "Ctrl+C stops" not in (
                 tmp_path / "console.log"
             ).read_text(encoding="utf-8"):
