@@ -32,13 +32,18 @@ class Step:
     env: dict[str, str] = field(default_factory=dict)
 
 
+def _pythonpath() -> str:
+    """The repository's src first, then any PYTHONPATH already set; empty entries are dropped."""
+    parts = [str(ROOT / "src"), os.environ.get("PYTHONPATH", "")]
+    return os.pathsep.join(part for part in parts if part)
+
+
 def steps() -> list[Step]:
-    src = str(ROOT / "src")
-    py_env = {"PYTHONPATH": src + os.pathsep + os.environ.get("PYTHONPATH", "")}
+    py_env = {"PYTHONPATH": _pythonpath()}
     ui_env = {
         "OPENAI_API_KEY": os.environ.get("OPENAI_API_KEY", "dummy-key-for-ui-tests"),
         "HARNESS_TEST_PYTHON": PY,
-        "PYTHONPATH": src + os.pathsep + os.environ.get("PYTHONPATH", ""),
+        "PYTHONPATH": _pythonpath(),
     }
     return [
         Step("ruff check", [PY, "-m", "ruff", "check", "src", "tests", "scripts"], env=py_env),

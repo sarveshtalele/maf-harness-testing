@@ -148,17 +148,15 @@ function groupAlive(pid: number): boolean {
 
 /** Stops a service tree. POSIX: SIGTERM to the whole group, poll until it is empty, SIGKILL any survivor.
  *  The group is signalled even when the leader already exited, so a grandchild that ignores SIGTERM is still reaped.
- *  Windows: `taskkill /T` (graceful), wait, then `/T /F`. Grandchildren orphaned by a dead parent are not in the
- *  tree any more, so only the parent-exit preload and the stdin watcher cover that case. */
+ *  Windows: `taskkill /T /F` at once. Services have no console to receive a graceful signal, so a graceful stage
+ *  would only add a stall. Grandchildren orphaned by a dead parent are not in the tree any more, so only the
+ *  stdin watchers cover that case. */
 export async function killTree(child: ChildProcess, graceMs = 5000): Promise<void> {
   if (child.pid) await killProcessTree(child.pid, graceMs);
 }
 
 export async function killProcessTree(pid: number, graceMs = 5000): Promise<void> {
   if (process.platform === 'win32') {
-    spawnSync('taskkill', ['/PID', String(pid), '/T'], { windowsHide: true });
-    const deadline = Date.now() + graceMs;
-    while (Date.now() < deadline && isPidAlive(pid)) await sleep(100);
     spawnSync('taskkill', ['/PID', String(pid), '/T', '/F'], { windowsHide: true });
     return;
   }
@@ -169,15 +167,6 @@ export async function killProcessTree(pid: number, graceMs = 5000): Promise<void
   const deadline = Date.now() + graceMs;
   while (Date.now() < deadline && groupAlive(pid)) await sleep(100);
   if (groupAlive(pid)) signal('SIGKILL');
-}
-
-function isPidAlive(pid: number): boolean {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch (e) {
-    return (e as NodeJS.ErrnoException).code === 'EPERM';
-  }
 }
 
 /** Full command line of a pid, or null when it cannot be read (the process is gone or the lookup failed). */

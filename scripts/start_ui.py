@@ -119,9 +119,9 @@ def state_file():
     return STATE_DIR / f"launcher-{os.getpid()}.json"
 
 
-def _taskkill(pid, force):
-    args = ["taskkill", "/PID", str(pid), "/T"] + (["/F"] if force else [])
-    subprocess.run(args, check=False, capture_output=True, timeout=10)
+def _taskkill(pid):
+    # Forced at once: a console-less service cannot act on a graceful /T request, so that stage would only stall.
+    subprocess.run(["taskkill", "/PID", str(pid), "/T", "/F"], check=False, capture_output=True, timeout=10)
 
 
 def terminate_tree(pid):
@@ -146,20 +146,26 @@ def terminate_tree(pid):
 
 
 def stop_children(processes, grace=5):
-    """Stop every child tree: SIGTERM each process group (POSIX) or `taskkill /T` (Windows, graceful), then force-kill
-    what is left after `grace` seconds (SIGKILL the group, or `taskkill /T /F`). Groups are killed even when their
-    leader already exited, so a grandchild such as next-server cannot outlive the launcher."""
+    """Stop every child tree. Windows: `taskkill /T /F` at once. POSIX: SIGTERM each process group, then SIGKILL what is
+    left after `grace` seconds. Groups are killed even when their leader already exited, so a grandchild such as
+    next-server cannot outlive the launcher."""
     from maf_test_harness.envs.platform_compat import kill_process_tree
 
-    for process in reversed(processes):
-        if os.name == "nt":
+    if os.name == "nt":
+        for process in reversed(processes):
             if process.poll() is None:
-                _taskkill(process.pid, force=False)
-        else:
+                _taskkill(process.pid)
+        for process in processes:
             try:
-                os.killpg(process.pid, signal.SIGTERM)
-            except OSError:
+                process.wait(timeout=5)
+            except subprocess.TimeoutExpired:
                 pass
+        return
+    for process in reversed(processes):
+        try:
+            os.killpg(process.pid, signal.SIGTERM)
+        except OSError:
+            pass
     deadline = time.monotonic() + grace
     for process in processes:
         try:
@@ -167,14 +173,10 @@ def stop_children(processes, grace=5):
         except subprocess.TimeoutExpired:
             pass
     for process in processes:
-        if os.name == "nt":
-            if process.poll() is None:
-                _taskkill(process.pid, force=True)
-        else:
-            try:
-                kill_process_tree(process)
-            except OSError:
-                pass
+        try:
+            kill_process_tree(process)
+        except OSError:
+            pass
         try:
             process.wait(timeout=5)
         except subprocess.TimeoutExpired:
@@ -229,6 +231,14 @@ def _orphan_state_files():
     return files + ([legacy] if legacy.is_file() else [])
 
 
+def _drop_unreadable_state(path):
+    """A state file that cannot be parsed has no children we can verify. Remove it only when its launcher is gone:
+    the pid in `launcher-<pid>.json`, or the legacy file (no pid), so a live launcher's file is never touched."""
+    match = re.fullmatch(r"launcher-(\d+)\.json", path.name)
+    if match is None or not pid_alive(int(match.group(1))):
+        path.unlink(missing_ok=True)
+
+
 def clean_orphans():
     """Stop children a hard-killed launcher left behind. Only a process that is alive, still holds its
     recorded port and whose command line carries our marker is touched; unverifiable ones are skipped.
@@ -241,6 +251,7 @@ def clean_orphans():
             launcher = int(state["launcher_pid"])
             children = list(state["children"])
         except (OSError, ValueError, KeyError, TypeError):
+            _drop_unreadable_state(path)
             continue
         if launcher != os.getpid() and pid_alive(launcher):
             owner = command_line(launcher)

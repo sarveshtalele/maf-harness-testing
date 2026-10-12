@@ -521,8 +521,17 @@ def _exit_when_stdin_closes() -> None:
     threading.Thread(target=watch, name="parent-stdin-watch", daemon=True).start()
 
 
+def _strip_instance(argv: list[str]) -> list[str]:
+    """Drop `--instance <id>`: the desktop shell passes a per-launch id only so orphan cleanup can recognise this
+    process by its command line. The API's own argument parser does not know it."""
+    if "--instance" not in argv:
+        return argv
+    i = argv.index("--instance")
+    return argv[:i] + argv[i + 2 :]
+
+
 def main(argv: list[str] | None = None) -> int:
-    argv = sys.argv[1:] if argv is None else argv
+    argv = _strip_instance(sys.argv[1:] if argv is None else argv)
     if argv[:1] == ["--run-python"]:
         return run_python(argv[1:])
     if "--self-check" in argv:

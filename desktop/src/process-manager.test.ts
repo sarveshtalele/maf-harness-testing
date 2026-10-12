@@ -67,3 +67,23 @@ test('reapOrphans leaves a record alone when its command line lacks the marker',
   assert.ok(groupOrPidAlive(process.pid));
   assert.ok(!fs.existsSync(file), 'the stale record file is removed');
 });
+
+test('reapOrphans kills a recorded process only while its marker is on its command line', { skip: posixOnly }, async () => {
+  // Stand-ins for a recorded service (its marker is on the command line) and a reused pid (a different command line).
+  const marker = `aqe-test-marker-${process.pid}-${Date.now()}`;
+  const recorded = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)', marker], { detached: true, stdio: 'ignore' });
+  const reused = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)', 'unrelated-process'], { detached: true, stdio: 'ignore' });
+  try {
+    const file = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'pm-test-')), 'children.json');
+    fs.writeFileSync(file, JSON.stringify([
+      { name: 'backend', pid: recorded.pid, port: 1, marker },
+      { name: 'frontend', pid: reused.pid, port: 2, marker },
+    ]));
+    assert.deepEqual(await reapOrphans(file), ['backend']);
+    assert.ok(await eventuallyGone(recorded.pid!), 'recorded service survived');
+    assert.ok(groupOrPidAlive(reused.pid!), 'a process whose command line lacks the marker was killed');
+  } finally {
+    reused.kill('SIGKILL');
+    recorded.kill('SIGKILL');
+  }
+});

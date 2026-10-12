@@ -2,6 +2,7 @@ import type { ChildProcess } from 'node:child_process';
 import { app, BrowserWindow, dialog, ipcMain, Menu, safeStorage, session, shell } from 'electron';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
+import { randomBytes } from 'node:crypto';
 import * as path from 'node:path';
 import { KeyStore, ModelSettingsInput } from './keystore';
 import { ProcessManager, reapOrphans, ServiceSpec, waitForHttp } from './process-manager';
@@ -22,6 +23,8 @@ let live: { backend: ServiceSpec; apiPort: number; token: string } | null = null
 let settingsBusy = false;
 /** macOS only: PATH for the services, merged from the login shell (a Finder launch gets launchd's minimal PATH). */
 let servicePath: string | undefined;
+/** Per-launch id on the backend command line (not the API token, which must stay out of argv). Recognises orphans. */
+let instanceId = '';
 
 // Packaged-app smoke mode (scripts/desktop_smoke.py): run the real boot, check the UI, print one verdict line, quit.
 // The profile is a fresh temp dir, set before the single-instance lock and ready so a user or CI profile is untouched.
@@ -34,8 +37,6 @@ let smokeDone = false;
 
 /** The backend prints this line only after its own socket bound the port (ui/api.py), so a foreign listener cannot satisfy it. */
 const BACKEND_READY = /Local harness API: http:\/\/127\.0\.0\.1:(\d+)/;
-/** Next.js standalone and `next start` both carry these in their command line; used to recognise orphans. */
-const UI_MARKERS = { standalone: 'server.js', fallback: 'next' };
 /** Exits the UI when the shell closes its stdin pipe (shell crashed or was killed). Written into userData at boot. */
 const PARENT_EXIT_SOURCE = `// Written by the Agentic QE desktop shell: stop when the shell's stdin pipe closes.
 process.stdin.on('end', () => process.exit(0));
@@ -49,6 +50,7 @@ const LOADING_HTML = '<!doctype html><meta charset="utf-8"><title>Agentic QE</ti
 function specs(apiPort: number, uiPortNum: number, token: string): { backend: ServiceSpec; ui: ServiceSpec } {
   const packaged = app.isPackaged;
   const repo = path.resolve(__dirname, '..', '..'); // dev: desktop/dist -> repo root
+  // The preload path is in the Next command line and unique to this user-data folder: it is the UI's orphan marker.
   const preload = path.join(app.getPath('userData'), 'parent-exit.cjs');
   const base: NodeJS.ProcessEnv = {
     ...process.env,
@@ -73,15 +75,15 @@ function specs(apiPort: number, uiPortNum: number, token: string): { backend: Se
     const exe = path.join(res, 'backend', process.platform === 'win32' ? 'maf-backend.exe' : 'maf-backend');
     return {
       backend: {
-        name: 'backend', command: exe, args: ['--port', String(apiPort)], cwd: path.join(res, 'backend'),
+        name: 'backend', command: exe, args: ['--port', String(apiPort), '--instance', instanceId], cwd: path.join(res, 'backend'),
         env: { ...base, ...store.env(), HARNESS_RESOURCE_ROOT: path.join(res, 'backend') },
-        port: apiPort, marker: 'maf-backend',
+        port: apiPort, marker: instanceId,
       },
       ui: {
         name: 'frontend', command: process.execPath, args: ['--require', preload, path.join(res, 'frontend', 'server.js')],
         // build_desktop.py ships the traced dependencies as deps/ (electron-builder drops node_modules).
         cwd: path.join(res, 'frontend'), env: { ...uiEnv, NODE_PATH: path.join(res, 'frontend', 'deps') },
-        port: uiPortNum, marker: UI_MARKERS.standalone,
+        port: uiPortNum, marker: preload,
       },
     };
   }
@@ -93,19 +95,19 @@ function specs(apiPort: number, uiPortNum: number, token: string): { backend: Se
   const ui: ServiceSpec = fs.existsSync(standalone)
     ? {
         name: 'frontend', command: process.execPath, args: ['--require', preload, standalone],
-        cwd: path.dirname(standalone), env: uiEnv, port: uiPortNum, marker: UI_MARKERS.standalone,
+        cwd: path.dirname(standalone), env: uiEnv, port: uiPortNum, marker: preload,
       }
     : {
         // Fallback: `next start` (run `npm run build` in frontend/ first).
         name: 'frontend', command: process.execPath,
         args: ['--require', preload, path.join(fe, 'node_modules', 'next', 'dist', 'bin', 'next'), 'start', '--hostname', '127.0.0.1', '--port', String(uiPortNum)],
-        cwd: fe, env: uiEnv, port: uiPortNum, marker: UI_MARKERS.fallback,
+        cwd: fe, env: uiEnv, port: uiPortNum, marker: preload,
       };
   return {
     backend: {
-      name: 'backend', command: py, args: ['-m', 'maf_test_harness.desktop_backend', '--port', String(apiPort)],
+      name: 'backend', command: py, args: ['-m', 'maf_test_harness.desktop_backend', '--port', String(apiPort), '--instance', instanceId],
       cwd: repo, env: { ...base, ...store.env(), PYTHONPATH: path.join(repo, 'src') },
-      port: apiPort, marker: 'maf_test_harness',
+      port: apiPort, marker: instanceId,
     },
     ui,
   };
@@ -182,6 +184,7 @@ async function boot(): Promise<{ apiPort: number; uiPort: number }> {
   store = new KeyStore(path.join(dataDir, 'secrets.bin'), safeStorage);
   const [apiPort, uiPortNum] = await pickTwoPorts();
   const token = makeToken();
+  instanceId = randomBytes(12).toString('hex');
   const { backend, ui } = specs(apiPort, uiPortNum, token);
 
   live = { backend, apiPort, token };

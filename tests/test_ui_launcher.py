@@ -283,6 +283,20 @@ def test_orphaned_child_of_dead_launcher_is_terminated(tmp_path, monkeypatch, ca
     assert "orphaned frontend" in capsys.readouterr().out
 
 
+def test_unreadable_state_file_is_removed_only_when_its_launcher_is_gone(tmp_path, monkeypatch):
+    module = _launcher()
+    monkeypatch.setattr(module, "STATE_DIR", tmp_path)
+    dead = tmp_path / "launcher-424242.json"
+    live = tmp_path / f"launcher-{os.getpid() + 1}.json"
+    legacy = tmp_path / "launcher.json"
+    for path in (dead, live, legacy):
+        path.write_text("{not json", encoding="utf-8")
+    monkeypatch.setattr(module, "pid_alive", lambda pid: pid == os.getpid() + 1)
+    module.clean_orphans()
+    assert not dead.exists() and not legacy.exists()
+    assert live.exists()  # a live launcher's file is never touched, even when unreadable
+
+
 @pytest.mark.parametrize(
     "case",
     ["foreign command", "port free", "unverifiable", "launcher alive", "launcher alive, command unreadable"],

@@ -4,7 +4,7 @@ Spawns the packaged Python backend and the standalone Next server on loopback, s
 
 ## Key files
 - `src/main.ts`: picks 2 free loopback ports, generates a 48-byte per-launch token, starts API + UI, creates the `BrowserWindow` (sandbox, contextIsolation, CSP, navigation guard).
-- `src/process-manager.ts`: spawn/kill of both process trees (POSIX: SIGTERM to the group, poll until empty, SIGKILL; Windows: `taskkill /T`, wait, `/T /F`). Stdin of each service is a pipe (exit on EOF). Records live pids in `<userData>/children.json`; `reapOrphans` stops only those whose command line still has the marker. Readiness: the backend's own `Local harness API: http://127.0.0.1:<port>` line.
+- `src/process-manager.ts`: spawn/kill of both process trees (POSIX: SIGTERM to the group, poll until empty, SIGKILL; Windows: `taskkill /T /F` at once). Stdin of each service is a pipe (exit on EOF). Records live pids in `<userData>/children.json`; `reapOrphans` stops only those whose command line still has the record's marker (UI: the preload path; backend: the per-launch `--instance` id). Readiness: the backend's own `Local harness API: http://127.0.0.1:<port>` line.
 - `src/keystore.ts`: model/API key storage via Electron `safeStorage` into `<userData>/secrets.bin` (0600); in-memory fallback.
 - `src/preload.ts`, `src/util.ts`: minimal bridge and port/token/URL-guard helpers. Tests: `src/util.test.ts`, `src/keystore.test.ts` (`node:test`).
 - `electron-builder.yml`, `package.json`: targets (Windows MSI x64 per-machine with WiX, dmg x64+arm64, AppImage x64), scripts `build`, `start`, `test`, `dist`. The MSI `upgradeCode` is fixed and must never change.
