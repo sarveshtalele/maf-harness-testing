@@ -107,7 +107,7 @@ from .workflow_support import (
 
 RUN_LOCK_TIMEOUT = 5  # seconds; another process holding the run must not block this one forever
 # Run-level settings edited from the UI (ui/api.py set_case_budget / rename_run) that must survive gate resumes.
-RUN_OVERRIDE_KEYS = ("case_budget", "run_name")
+RUN_OVERRIDE_KEYS = ("case_budget", "run_name", "confidence_thresholds")
 
 
 @contextmanager
@@ -306,6 +306,7 @@ class Harness(RerunSteps, ExecutionSteps, GenerationSteps, GreenfieldSteps, Plan
         repo_knowledge: str = "",
         case_budget: int | None = None,
         run_name: str | None = None,
+        confidence_thresholds: dict | None = None,
         run_mode: str = "brownfield",
         test_types: list[str] | None = None,
         spec_sources: dict | None = None,
@@ -385,6 +386,7 @@ class Harness(RerunSteps, ExecutionSteps, GenerationSteps, GreenfieldSteps, Plan
             "launch_app": bool(start_app and not app_url),
             "app_component": app_component,
             **({"case_budget": {"per_requirement": case_budget}} if case_budget else {}),
+            **({"confidence_thresholds": dict(confidence_thresholds)} if confidence_thresholds else {}),
             "stages": self.stages,
             "artifacts": {},
             "revisions": {},

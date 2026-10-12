@@ -106,33 +106,45 @@ GENERATION_MAX_ATTEMPTS = max(1, int(os.getenv("HARNESS_GENERATION_MAX_ATTEMPTS"
 # Default 0.5 allows up to half the batches to fail; clamp to [0, 1].
 MAX_FAILED_BATCH_RATIO = max(0.0, min(1.0, float(os.getenv("HARNESS_MAX_FAILED_BATCH_RATIO", "0.5"))))
 
-# Review confidence gates (plan, design, test). Resolution: run override > env > REVIEW_DEFAULT_MIN_CONFIDENCE.
+# Review confidence gates (plan, design, test) are HARD gates: the resolved value is always within 95-100, so neither a
+# run override nor an env value can weaken them. Resolution: run override > env > REVIEW_DEFAULT_MIN_CONFIDENCE.
 REVIEW_KINDS = ("plan", "design", "test")
-REVIEW_DEFAULT_MIN_CONFIDENCE = 95
+REVIEW_GATE_FLOOR = 95
+REVIEW_GATE_CEILING = 100
+REVIEW_DEFAULT_MIN_CONFIDENCE = REVIEW_GATE_FLOOR
 
 
-def _threshold(raw, default: int | None) -> int | None:
-    """An integer confidence clamped to 50-100; anything else is not a threshold and yields ``default``."""
+def _threshold(raw) -> int | None:
+    """An integer confidence clamped into the hard gate range; anything that is not an integer yields None."""
+    if isinstance(raw, bool):
+        return None
     try:
         value = int(str(raw).strip())
     except (TypeError, ValueError):
-        return default
-    return max(50, min(100, value))
+        return None
+    return max(REVIEW_GATE_FLOOR, min(REVIEW_GATE_CEILING, value))
 
 
 def review_threshold(kind: str, state: dict | None = None) -> int:
-    """Minimum confidence (50-100) a reviewed ``kind`` artifact needs. Reads, in order: the run's override in
-    ``state["confidence_thresholds"][kind]``, the env ``HARNESS_{KIND}_REVIEW_MIN_CONFIDENCE``, then the default 95."""
+    """Minimum confidence (95-100) a reviewed ``kind`` artifact needs. Reads, in order: the run's override in
+    ``state["confidence_thresholds"][kind]``, the env ``HARNESS_{KIND}_REVIEW_MIN_CONFIDENCE``, then the default 95.
+    Values below 95 are raised to 95 and values above 100 are lowered to 100; malformed values fall back to the next
+    source, so a bad value can never silently remove the gate."""
     if kind not in REVIEW_KINDS:
         raise ValueError(f"Unknown review kind {kind!r}; expected one of {', '.join(REVIEW_KINDS)}.")
     overrides = (state or {}).get("confidence_thresholds") or {}
-    value = _threshold(overrides.get(kind), None) if isinstance(overrides, dict) else None
+    value = _threshold(overrides.get(kind)) if isinstance(overrides, dict) else None
     if value is None:
-        value = _threshold(os.getenv(f"HARNESS_{kind.upper()}_REVIEW_MIN_CONFIDENCE", ""), None)
+        value = _threshold(os.getenv(f"HARNESS_{kind.upper()}_REVIEW_MIN_CONFIDENCE", ""))
     return REVIEW_DEFAULT_MIN_CONFIDENCE if value is None else value
 
 
-# Import-time alias kept for modules that still read the test gate as a constant.
+def test_review_threshold(state: dict | None = None) -> int:
+    """The test-review gate of a run. Generation and test review call this at run time, never a constant."""
+    return review_threshold("test", state)
+
+
+# Import-time alias kept for modules that still read the test gate as a constant (new code uses the resolver).
 TEST_REVIEW_MIN_CONFIDENCE = review_threshold("test")
 # Full-accuracy gate (default on): every designed case must be generated and accepted before execution can start.
 # Off restores the fail-soft behaviour, where failed or unverified cases run and report generation_failed.

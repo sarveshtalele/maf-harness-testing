@@ -21,7 +21,7 @@ from uuid import uuid4
 
 from filelock import FileLock, Timeout
 
-from .. import paths
+from .. import paths, settings
 from ..agent import prompt_settings
 from ..agent.runtime import MAFHarnessRuntime
 from ..hooks.builtin import register_secret
@@ -65,6 +65,7 @@ PUBLIC_STATE = (
     "revisions",
     "budget",
     "case_budget",
+    "confidence_thresholds",
     "environment",
     "completed_reason",
     "runtime_provenance",
@@ -75,6 +76,25 @@ PUBLIC_STATE = (
     "heal_rounds",
     "test_reviews",
 )
+
+
+def _confidence_thresholds(value) -> dict[str, int]:
+    """Per-run review gates (plan, design, test). Each must be a whole number from the hard gate range 95 to 100."""
+    if value is None:
+        return {}
+    if not isinstance(value, dict) or set(value) - set(settings.REVIEW_KINDS):
+        raise ValueError(f"confidence_thresholds maps {', '.join(settings.REVIEW_KINDS)} to whole numbers.")
+    out = {}
+    for kind, number in value.items():
+        if isinstance(number, bool) or not isinstance(number, int):
+            raise ValueError(f"confidence_thresholds.{kind} must be a whole number.")
+        if not settings.REVIEW_GATE_FLOOR <= number <= settings.REVIEW_GATE_CEILING:
+            raise ValueError(
+                f"confidence_thresholds.{kind} must be from {settings.REVIEW_GATE_FLOOR} to "
+                f"{settings.REVIEW_GATE_CEILING}: review gates are hard gates."
+            )
+        out[kind] = number
+    return out
 
 
 def _apply_run_name(state: dict, body: dict) -> tuple:
@@ -376,6 +396,7 @@ class LocalAPI(EvidenceAPI, SettingsAPI, McpAPI):
                 or not isinstance(launch, bool)
             ):
                 raise ValueError("Repository and application URLs must be text; start_app must be boolean.")
+            thresholds = _confidence_thresholds(body.get("confidence_thresholds"))
             budget = body.get("case_budget")
             if budget is not None:
                 budget = _budget_value(
@@ -407,6 +428,7 @@ class LocalAPI(EvidenceAPI, SettingsAPI, McpAPI):
                             "run_name": run_name,
                             "run_mode": opts["run_mode"],
                             "test_types": opts["test_types"],
+                            **({"confidence_thresholds": thresholds} if thresholds else {}),
                         },
                         "consumed": [],
                     },
@@ -423,6 +445,7 @@ class LocalAPI(EvidenceAPI, SettingsAPI, McpAPI):
                         budget,
                         run_name,
                         run_mode=opts["run_mode"],
+                        confidence_thresholds=thresholds or None,
                         test_types=opts["test_types"],
                         spec_sources=opts["spec_sources"],
                         documents=opts["documents"],
