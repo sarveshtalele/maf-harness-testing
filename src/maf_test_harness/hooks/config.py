@@ -1,7 +1,7 @@
 """``.harness/hooks.json``: load, validate and compile user hooks (plus the built-ins) into a ``HookEngine``.
 
-Two files are read, user first, then project: ``~/.maf-harness/hooks.json`` and ``<working directory>/.harness/hooks.json``.
-The working directory is where the harness is started, never the repository under test: a cloned repository cannot
+Two files are read, user first, then project: ``~/.maf-harness/hooks.json`` and ``<user-data dir>/.harness/hooks.json``.
+Neither is taken from the working directory: a checkout the harness is started from, or a cloned repository, cannot
 install hooks. A malformed file is an error, not a warning: silently ignoring a broken safety hook would be worse.
 
 .. code-block:: json
@@ -53,7 +53,7 @@ def config_paths(project_root: Path | None = None) -> list[Path]:
     """Config files in load order (later files win for ``mode`` and ``builtins``; ``hooks`` are concatenated)."""
     return [
         Path.home() / ".maf-harness" / "hooks.json",
-        (project_root or Path.cwd()) / ".harness" / "hooks.json",
+        (project_root or paths.user_data_root()) / ".harness" / "hooks.json",
     ]
 
 

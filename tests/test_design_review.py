@@ -59,6 +59,7 @@ def run_design(tmp_path, monkeypatch, runtime):
 
 
 def test_approved_case_gets_confidence(tmp_path, monkeypatch):
+    monkeypatch.setenv("HARNESS_DESIGN_REVIEW_MIN_CONFIDENCE", "60")  # 88 is above this gate: no repair pass
     runtime = DesignReviewRuntime(88)
     design = run_design(tmp_path, monkeypatch, runtime)
     case = design["positive_tests"][0]

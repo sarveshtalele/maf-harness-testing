@@ -428,7 +428,7 @@ class PlanningSteps:
                 reviews = await design_review.review_design_cases(
                     self, state, design_cases(artifact), prompt_batch or 0
                 )
-                weak = design_review.flagged(reviews)
+                weak = design_review.flagged(reviews, state)
                 if weak and not review_repaired and attempt < MODEL_REPAIR_ATTEMPTS:
                     review_repaired = True  # one reviewer-driven repair per batch, then keep and mark
                     self.audit("design_review_repair", stage=stage, batch=prompt_batch, cases=len(weak))
