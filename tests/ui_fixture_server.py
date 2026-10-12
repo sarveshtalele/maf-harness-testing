@@ -23,6 +23,27 @@ _settings.set_runtime(api_key="fixture-configured-flag")
 module.preview_repository = lambda url: {"warnings": []}
 
 
+def _record_generated_tests() -> None:
+    """Same hook as tests/conftest.py: scripted reviewers derive literals from the generated tests they review."""
+    from fakes import record_generated
+
+    from maf_test_harness.models import GeneratedFilesDraft
+    from maf_test_harness.workflow_steps.planning import PlanningSteps
+
+    original = PlanningSteps._call_model
+
+    async def recording(self, **kwargs):
+        result = await original(self, **kwargs)
+        if kwargs.get("response_format") is GeneratedFilesDraft and result.get("status") == "completed":
+            record_generated(result.get("artifact", {}).get("files", []))
+        return result
+
+    PlanningSteps._call_model = recording
+
+
+_record_generated_tests()
+
+
 class BrowserRuntime(ScriptedStageRuntime):
     async def run_stage(self, *, stage, state, **kwargs):
         if state["repo_url"].endswith("/slow"):
