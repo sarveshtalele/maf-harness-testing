@@ -48,21 +48,14 @@ def venv_site_packages_glob(venv_dir: Path) -> list[Path]:
     return sorted(venv_dir.glob("lib/python*/site-packages"))
 
 
-def python_launcher() -> str:
-    """Executable name to probe/display for Python. Prefers 'python3' when present, else 'python'.
-
-    Display/probe use only (environment.py's prerequisite table, stack.py's tool-presence check) -- never
-    use this to create a venv: on Windows, a bare 'python3'/'python' can be a Python Install Manager /
-    App Execution Alias stub that silently downloads a whole interpreter over the network instead of
-    running your command. venv creation always uses sys.executable instead (see runners.py).
-    """
-    return "python3" if shutil.which("python3") else "python"
-
-
 def tool_present(name: str) -> bool:
-    """True if the named tool resolves on PATH, accounting for the python3-vs-python naming difference."""
-    exe = python_launcher() if name == "python3" else name
-    return shutil.which(exe) is not None
+    """True if the named tool is available. Python means a real detected interpreter (the same detection that runs
+    it), never a bare ``python``/``python3`` on PATH, which on Windows can be the Store alias."""
+    if name == "python3":
+        from . import toolchains  # late import: toolchains imports this module
+
+        return bool(toolchains.detect_pythons())
+    return shutil.which(name) is not None
 
 
 def resolve_tool(name: str) -> list[str]:

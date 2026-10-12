@@ -163,3 +163,13 @@ dialog::backdrop { background: #00000066; backdrop-filter: blur(3px); }
 code,.data-text,.data-fields dd,.cell-text{overflow-wrap:break-word}
 @media (max-width:1100px){.workspace-grid>*,.stage-progress>div{min-width:0}}
 @media (max-width:700px){code,.data-text,.data-fields dd,.cell-text{overflow-wrap:anywhere}}
+/* case-table + form layout */
+.case-table{display:grid;gap:18px;min-width:0}.case-table h3{margin:0 0 8px;font-size:14px}.case-table h3 small{font-weight:400}.case-table .table-scroll{overflow:auto;max-width:100%}.case-table table{width:100%;min-width:820px;border-collapse:collapse}.case-table td{min-width:0;overflow-wrap:anywhere}.case-table td:first-child,.case-table th:first-child{width:56px}.case-table td small{display:block;margin-top:4px}.case-steps{margin:0;padding-left:20px}.case-steps li{margin:3px 0}.case-table .case-meta{display:block;margin-top:4px;font-size:12px}.case-more{margin-top:6px;font-size:12px}.case-more summary{cursor:pointer;color:var(--primary)}.case-more div{margin:6px 0}.case-more ul{margin:4px 0 0;padding-left:18px}
+.jira-fields{border:0;padding:0;margin:0 0 12px;min-width:0}.jira-fields legend{font-weight:600;padding:0 0 4px}
+.fields{min-width:0}.fields label{display:block;font-size:12px;font-weight:600;margin:16px 0 7px}.fields input:not([type=checkbox]):not([type=radio]),.fields textarea,.fields select{display:block;width:100%;max-width:100%;margin-top:8px;min-width:0}.fields textarea{min-height:110px;resize:vertical}.fields select{min-height:40px}
+@media (max-width:700px){.case-table table{min-width:760px}}
+/* marketplace */.mp-command{display:block;font-size:12px;overflow-wrap:anywhere;color:var(--muted);margin:2px 0 8px}
+/* marketplace */.mp-tools{list-style:none;padding:0;margin:8px 0;display:grid;gap:6px}.mp-tools li{display:flex;gap:8px;align-items:center;flex-wrap:wrap;min-width:0;overflow-wrap:anywhere}
+/* marketplace */.mp-warn{display:flex;gap:8px;align-items:center;flex-wrap:wrap;font-size:12px;color:var(--warn);margin:8px 0}
+/* marketplace */dialog.detail-dialog{overflow:auto}
+/* dialogs */.detail-dialog{width:min(640px,calc(100vw - 32px));max-height:85dvh;background:var(--surface);color:var(--text);border:1px solid var(--border);border-radius:12px;padding:0;box-shadow:0 18px 50px #0003}.detail-dialog:focus,.detail-dialog:focus-visible{outline:none}.page-header>button,.page-header>.button,.page-header>label.button{white-space:nowrap;flex-shrink:0}.detail-dialog fieldset{border:1px solid var(--border);border-radius:8px;padding:10px 14px;margin:12px 0}

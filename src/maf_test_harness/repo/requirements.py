@@ -5,12 +5,15 @@ from pathlib import PurePosixPath
 
 from ..models import RequirementsDraft, RequirementsInventoryDraft
 
+# Stable first token of the refusal raised when there is nothing to derive requirements from (callers match on it).
+NO_DECLARATIONS_MARKER = "NO_SUPPORTED_DECLARATIONS"
+
 
 def requirements_from_facts(analysis: dict, app_name: str, knowledge: str = "") -> dict:
     facts = analysis.get("facts", [])
     if not facts:
         raise ValueError(
-            "No supported callable declarations were found. Requirements cannot be invented. Review source coverage and provide documented behavior or support for this language before retrying."
+            f"{NO_DECLARATIONS_MARKER}: No supported callable declarations were found. Requirements cannot be invented. Review source coverage and provide documented behavior or support for this language before retrying."
         )
     requirements = []
     gaps = list(analysis.get("gaps", []))

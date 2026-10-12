@@ -1,4 +1,17 @@
-import { test, expect } from '@playwright/test';
+import { test, expect, type Page } from '@playwright/test';
+
+const CASE_HEADERS = ['Sno', 'Requirement ID', 'Test Case ID', 'Test Case Description', 'Steps', 'Expected Result'];
+async function expectCaseTableHeaders(page: Page) {
+  const headers = page.getByRole('table').filter({ has: page.getByRole('columnheader', { name: 'Test Case Description', exact: true }) }).first().getByRole('columnheader');
+  await expect(headers).toHaveText(CASE_HEADERS);
+  // Real data: Sno restarts at 1 in the second category, steps are an ordered list, and the case linked only through
+  // an acceptance criterion shows its parent requirement (not a dash).
+  await expect(page.locator('.case-table section').nth(1).locator('tbody tr').first().locator('td').first()).toHaveText('1');
+  await expect(page.locator('.case-table ol.case-steps li').first()).toHaveText('Call add(1, 2)');
+  const criterionRow = page.locator('.case-table tbody tr').filter({ hasText: 'add returns sum for the criterion' });
+  await expect(criterionRow.locator('td').nth(1)).toHaveText(/^REQ-/);
+  await expect(criterionRow.locator('.case-meta')).toHaveText('P2 · unit · Developer · service.add');
+}
 
 test('complete browser workflow, layouts, evidence, downloads and stale gates', async ({ page, request }, testInfo) => {
   const errors: string[] = []; page.on('pageerror', error => errors.push(error.message));
@@ -54,10 +67,17 @@ test('complete browser workflow, layouts, evidence, downloads and stale gates', 
       await expect(page.getByRole('heading', { name: 'Step-by-step repository setup' })).toBeVisible();
       await expect(page.getByRole('region', { name: 'Repository setup guide' })).toBeVisible();
     }
+    if (before.pending.stage === 'test_design' && before.pending.kind === 'review') await expectCaseTableHeaders(page);
     await approve.click();
     await expect.poll(async () => { const next = await (await request.get(`/api/harness/runs/${key}`)).json(); return !next.busy && (next.status === 'complete' || next.pending?.id !== before.pending?.id); }, { timeout: 60000 }).toBeTruthy();
   }
   await expect.poll(async () => (await (await request.get(`/api/harness/runs/${key}`)).json()).status).toBe('complete');
+  // Completed test design artifact: the six QA columns, no page overflow at phone width.
+  await page.goto(`/?run=${key}&tab=Artifacts&stage=test_design`);
+  await expectCaseTableHeaders(page);
+  await page.setViewportSize({ width: 390, height: 844 });
+  await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+  await page.setViewportSize({ width: 1280, height: 720 });
   await page.reload();
   await expect(page.getByRole('progressbar', { name: 'Workflow completion', exact: true })).toHaveAttribute('value', '100');
   await page.getByRole('button', { name: 'Prompts', exact: true }).click();
@@ -104,8 +124,8 @@ test('complete browser workflow, layouts, evidence, downloads and stale gates', 
   const review = page.locator('.panel').filter({ has: page.getByRole('button', { name: 'Independent test review', exact: true }) });
   await expect(review.getByRole('columnheader', { name: 'Confidence', exact: false })).toBeVisible();
   // host-computed confidence = rubric sum (the scripted reviewer gives full marks), not the model's self-reported 90
-  await expect(review.getByRole('cell', { name: '100', exact: true })).toBeVisible();
-  await expect(review.getByRole('cell', { name: 'Supported', exact: true })).toBeVisible();
+  await expect(review.getByRole('cell', { name: '100', exact: true }).first()).toBeVisible();
+  await expect(review.getByRole('cell', { name: 'Supported', exact: true }).first()).toBeVisible();
   await page.getByRole('button', { name: 'Dark appearance' }).click();
   const expandReview = page.getByRole('button', { name: 'Expand Independent test review', exact: true });
   await expect.poll(() => expandReview.evaluate(el => getComputedStyle(el).backgroundColor)).toBe('rgb(31, 31, 34)');
@@ -240,7 +260,7 @@ test('mouse resizing persists and project skill cards show real package details'
   await page.getByRole('button', { name: 'New run', exact: true }).click();
   await expect.poll(async () => (await panel.boundingBox())!.width).toBeCloseTo(resized.width, 0);
   await expect.poll(async () => (await panel.boundingBox())!.height).toBeCloseTo(resized.height, 0);
-  await page.getByRole('button', { name: 'Agent skills', exact: true }).click();
+  await page.getByRole('navigation', { name: 'Main navigation' }).getByRole('button', { name: 'Marketplace', exact: true }).click();
   await expect(page.getByLabel('requirement-analysis workflow map')).toBeVisible();
   await expect(page.locator('.skill-card')).toHaveCount(13); // 12 repo skills + spec-authoring (greenfield)
   await page.getByRole('searchbox', { name: 'Search agent skills' }).fill('playwright');

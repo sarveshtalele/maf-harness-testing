@@ -1,6 +1,8 @@
 import sys
 from pathlib import Path
 
+from fakes import children_import_this_checkout
+
 from maf_test_harness import desktop_backend
 
 REPO = Path(__file__).resolve().parents[1]
@@ -38,6 +40,7 @@ def test_backend_delegates_port_to_api(monkeypatch):
 
 def test_self_check_on_source_tree(monkeypatch):
     monkeypatch.delenv("HARNESS_RESOURCE_ROOT", raising=False)
+    children_import_this_checkout(monkeypatch)
     assert desktop_backend.main(["--self-check"]) == 0
 
 

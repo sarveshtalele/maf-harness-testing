@@ -106,3 +106,30 @@ export function DataTable({ data, columns }: { data: Row[]; columns?: string[] }
   if (!data.length) return <p className="empty-inline">No records yet.</p>;
   return <div className="data-table"><div className="table-tools"><input aria-label="Search table records" type="search" placeholder="Search records…" value={search} onChange={e => { setSearch(e.target.value); setPage(0); }} /><small>{shown.length} of {data.length} records</small></div><div className="table-scroll"><table><thead><tr>{keys.map(key => <th key={key} aria-sort={sort?.key === key ? sort.ascending ? 'ascending' : 'descending' : 'none'}><button className="column-sort" onClick={() => setSort({ key, ascending: sort?.key === key ? !sort.ascending : true })}>{label(key)}<span aria-hidden="true">{sort?.key === key ? sort.ascending ? '↑' : '↓' : '↕'}</span></button></th>)}<th>Details</th></tr></thead><tbody>{shown.slice(current * 30, current * 30 + 30).map((item, i) => <tr key={i}>{keys.map(key => <td key={key}>{['status', 'result', 'verdict', 'state', 'ok'].includes(key) ? <Badge value={item[key]} /> : <span className="cell-text" title={key === 'confidence' && item.scores ? confidenceTitle(item) : text(item[key])}>{Array.isArray(item[key]) ? item[key].every(v => typeof v !== 'object') ? item[key].join(' · ') : `${item[key].length} entries` : item[key] && typeof item[key] === 'object' ? `${Object.keys(record(item[key])).length} fields` : text(item[key])}</span>}</td>)}<td><button className="small row-inspect" aria-label={`Inspect record ${current * 30 + i + 1}`} onClick={() => setSelected(item)}>Inspect ↗</button></td></tr>)}</tbody></table></div>{!shown.length && <p className="empty-inline">No matching records. Try a different search.</p>}{shown.length > 30 && <div className="table-tools"><button disabled={current === 0} onClick={() => setPage(current - 1)}>Previous</button><span>Page {current + 1} / {Math.ceil(shown.length / 30)}</span><button disabled={(current + 1) * 30 >= shown.length} onClick={() => setPage(current + 1)}>Next</button></div>}{selected && <dialog ref={dialog} className="record-dialog" aria-label="Record details" onClose={() => setSelected(null)} onCancel={() => setSelected(null)}><header className="panel-heading"><h2>Record details</h2><button autoFocus onClick={() => { dialog.current?.close(); setSelected(null); }}>Close details</button></header><div className="panel-body"><DataView value={selected} depth={1} /></div></dialog>}</div>;
 }
+
+export const CASE_COLUMNS = ['Sno', 'Requirement ID', 'Test Case ID', 'Test Case Description', 'Steps', 'Expected Result'];
+const CASE_GROUPS = ['positive', 'negative', 'boundary', 'validation', 'contract'];
+
+// Mirrors qa/report.py case_requirement_ids: direct requirement links, then the parent requirement of each linked
+// acceptance criterion, and only when neither exists the raw link IDs (validation, api_contract).
+export function caseRequirementIds(item: Row, requirements?: Row): string[] {
+  const links = rows(item.traceability_links);
+  const parents = new Map(rows(record(record(requirements).requirement_model).acceptance_criteria).filter(c => c.requirement_id).map(c => [text(c.id), text(c.requirement_id)]));
+  let ids = links.filter(link => link.type === 'requirement').map(link => text(link.id));
+  ids = ids.concat(links.filter(link => link.type === 'acceptance_criterion' && parents.has(text(link.id))).map(link => parents.get(text(link.id)) as string));
+  if (!ids.length) ids = links.map(link => text(link.id));
+  return [...new Set(ids.filter(id => id && id !== '—' && id !== 'None'))];
+}
+
+// QA test-case table: the six columns in fixed order, one table per non-empty category, Sno restarts in each.
+// Priority, level, actor and target sit under the description; "More" holds preconditions, data notes and every link.
+export function TestCaseTable({ design, requirements }: { design: Row; requirements?: Row }) {
+  const groups = CASE_GROUPS.map(group => ({ group, cases: rows(design[`${group}_tests`]) })).filter(item => item.cases.length);
+  if (!groups.length) return <p className="empty-inline">No test cases recorded.</p>;
+  return <div className="case-table">{groups.map(({ group, cases }) => <section key={group}><h3 id={`case-table-${group}`}>{label(group)} cases <small className="muted">{cases.length}</small></h3><div className="table-scroll" tabIndex={0} role="region" aria-labelledby={`case-table-${group}`}><table aria-labelledby={`case-table-${group}`}><thead><tr>{CASE_COLUMNS.map(column => <th key={column} scope="col">{column}</th>)}</tr></thead><tbody>{cases.map((item, index) => {
+    const title = text(item.title); const description = text(item.description); const steps = Array.isArray(item.steps) ? item.steps.map(step => text(step)) : [];
+    const preconditions = Array.isArray(item.preconditions) ? item.preconditions.map(value => text(value)) : [];
+    const links = rows(item.traceability_links).map(link => `${text(link.type)}:${text(link.id)}`);
+    return <tr key={`${group}:${index}`}><td>{index + 1}</td><td>{caseRequirementIds(item, requirements).join(', ') || '—'}</td><td className="cell-id">{text(item.id)}</td><td><strong>{title}</strong>{description !== '—' && description !== title && <small className="muted">{description}</small>}<small className="muted case-meta">{[item.priority, item.level, item.actor, item.target].map(value => text(value)).join(' · ')}</small><details className="case-more"><summary>More</summary><div><strong>Preconditions</strong>{preconditions.length ? <ul>{preconditions.map((value, i) => <li key={i}>{value}</li>)}</ul> : <span className="muted"> none</span>}</div><div><strong>Data notes</strong> <span>{text(item.data_notes === '' ? 'none' : item.data_notes)}</span></div><div><strong>Traceability links</strong> <span>{links.length ? links.join(', ') : 'none'}</span></div></details></td><td>{steps.length ? <ol className="case-steps">{steps.map((step, i) => <li key={i}>{step}</li>)}</ol> : '—'}</td><td>{text(item.expected_result)}</td></tr>;
+  })}</tbody></table></div></section>)}</div>;
+}

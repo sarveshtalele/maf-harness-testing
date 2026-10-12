@@ -65,17 +65,26 @@ def test_resolve_wrapper_prefers_repo_wrapper(tmp_path, monkeypatch):
     assert platform_compat.resolve_wrapper(empty, "mvnw", "mvnw.cmd", "mvn") == ["mvn"]
 
 
-def test_tool_present_resolves_python3_naming(monkeypatch):
-    seen = []
+def test_tool_present_python3_is_the_runners_python_detection(monkeypatch):
+    """Presence and execution agree: a PATH hit alone (possibly the Store alias) is never a Python."""
+    from pathlib import Path
 
-    def fake_which(name):
-        seen.append(name)
-        return "/usr/bin/python" if name == "python" else None
+    from maf_test_harness.envs import toolchains
+    from maf_test_harness.envs.toolchains import Toolchain
 
-    monkeypatch.setattr(platform_compat.shutil, "which", fake_which)
-    monkeypatch.setattr(platform_compat, "python_launcher", lambda: "python")
+    which_calls = []
+    monkeypatch.setattr(
+        platform_compat.shutil, "which", lambda name, path=None: which_calls.append(name) or "/usr/bin/python"
+    )
+    monkeypatch.setattr(toolchains, "detect_pythons", list)
+    assert platform_compat.tool_present("python3") is False
+    assert which_calls == []
+    monkeypatch.setattr(
+        toolchains,
+        "detect_pythons",
+        lambda: [Toolchain("python", "3.12.4", Path("/opt/py/bin/python3"), "system")],
+    )
     assert platform_compat.tool_present("python3") is True
-    assert seen == ["python"]
 
 
 def test_fake_home_env_posix_sets_home_only(monkeypatch, tmp_path):

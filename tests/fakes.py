@@ -2,6 +2,7 @@
 
 import json
 import sys
+from pathlib import Path
 
 
 def clone_fixture(url, destination):
@@ -167,7 +168,12 @@ class ScriptedStageRuntime:
         files = []
         for case in prompt["approved_inputs"]["approved_cases"]:
             slug = "".join(ch if ch.isalnum() else "_" for ch in case["title"]).strip("_").lower()
-            body = self.test_body if case["title"] == "add returns sum" else "assert add(2, 2) == 5"
+            if case["title"] == "add returns sum":
+                body = self.test_body
+            elif case["title"].startswith("add returns sum"):
+                body = "assert add(1, 2) == 3"  # extra case from the browser fixture: always passes
+            else:
+                body = "assert add(2, 2) == 5"
             files.append(
                 {
                     "path": f"tests/test_{slug}.py",
@@ -206,3 +212,17 @@ def local_env_plan(stack, root, cache_dir, timeout=900, needs=None, **kwargs):
             }
         ],
     }
+
+
+def children_import_this_checkout(monkeypatch) -> None:
+    """Skill-script children get only BASIC_ENV, so without this they import whatever maf_test_harness is installed."""
+    from maf_test_harness.skills import scripts
+
+    src = str(Path(__file__).resolve().parents[1] / "src")
+    real_run_command = scripts.run_command
+
+    def run(argv, cwd, output_dir, **kwargs):
+        kwargs["env"] = {**(kwargs.get("env") or {}), "PYTHONPATH": src}
+        return real_run_command(argv, cwd, output_dir, **kwargs)
+
+    monkeypatch.setattr(scripts, "run_command", run)

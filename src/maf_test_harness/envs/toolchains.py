@@ -30,6 +30,7 @@ from urllib.parse import urlsplit, urlunsplit
 
 from filelock import FileLock
 
+from .. import paths
 from . import platform_compat
 from .spec import at_least, specifier_allows, version_tuple
 
@@ -180,32 +181,105 @@ def detect_dotnet() -> list[Toolchain]:
     return found
 
 
-def detect_pythons() -> list[Toolchain]:
-    found = {
-        sys.executable: Toolchain(
-            "python", ".".join(map(str, sys.version_info[:3])), Path(sys.executable), "system"
+_PYTHON_PROBE = "import sys;print('.'.join(map(str, sys.version_info[:3])));print(sys.executable)"
+_PROBE_TIMEOUT = 5  # seconds: an interpreter that does not answer in time is not registered
+
+
+def _store_alias(path: str) -> bool:
+    """A Windows ``WindowsApps`` alias (Store / Install Manager): never run, it may install Python over the network."""
+    return any("\\windowsapps\\" in p.lower().replace("/", "\\") for p in (path, str(Path(path).resolve())))
+
+
+def _search_path() -> str | None:
+    """PATH with the WindowsApps folders removed on Windows, so a bare python/python3 finds a real python.exe
+    (even when the alias comes first on PATH) and never the Store alias. None elsewhere: the normal PATH."""
+    if not platform_compat.IS_WINDOWS:
+        return None
+    return os.pathsep.join(
+        p for p in os.environ.get("PATH", "").split(os.pathsep) if p and "windowsapps" not in p.lower()
+    )
+
+
+def _probe_python(argv: list[str]) -> tuple[str, str] | None:
+    """(version, executable) of the interpreter ``argv`` starts; None when it does not run as Python 3."""
+    if _store_alias(argv[0]):
+        return None
+    try:
+        proc = subprocess.run(
+            [*argv, "-c", _PYTHON_PROBE], capture_output=True, text=True, timeout=_PROBE_TIMEOUT, check=False
         )
-    }
-    for minor in range(8, 15):
-        name = f"python3.{minor}"
-        if path := shutil.which(name):
-            out = (
-                _run([path, "-c", "import sys;print('.'.join(map(str,sys.version_info[:3])))"])
-                .strip()
-                .splitlines()
-            )
-            if out and re.fullmatch(r"\d+\.\d+\.\d+", out[0]):
-                found.setdefault(path, Toolchain("python", out[0], Path(path), "system"))
-    if platform_compat.IS_WINDOWS and (py := shutil.which("py")):
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    lines = proc.stdout.strip().splitlines() if proc.returncode == 0 else []
+    if len(lines) == 2 and re.fullmatch(r"\d+\.\d+\.\d+", lines[0]) and lines[1].strip():
+        return lines[0], lines[1].strip()
+    return None
+
+
+_SCAN_CACHE: dict[
+    bool, tuple[Toolchain, ...]
+] = {}  # only non-empty scans: a missing Python is never remembered
+
+
+def clear_python_scan() -> None:
+    """Forget the cached scan so the next detect_pythons() looks again (after a Python was installed)."""
+    _SCAN_CACHE.clear()
+
+
+def _scan_pythons(frozen: bool) -> tuple[Toolchain, ...]:
+    if frozen in _SCAN_CACHE:
+        return _SCAN_CACHE[frozen]
+    found = _scan_interpreters(frozen)
+    if found:
+        _SCAN_CACHE[frozen] = found
+    return found
+
+
+def _scan_interpreters(frozen: bool) -> tuple[Toolchain, ...]:
+    own = os.path.normcase(str(Path(sys.executable).resolve())) if frozen else ""
+    found: dict[str, Toolchain] = {}
+
+    def add(home: str, version: str) -> None:
+        key = os.path.normcase(str(Path(home).resolve()))
+        if key != own and not _store_alias(home):
+            found.setdefault(key, Toolchain("python", version, Path(home), "system"))
+
+    if not frozen:
+        add(sys.executable, ".".join(map(str, sys.version_info[:3])))
+    names = [f"python3.{minor}" for minor in range(8, 15)]
+    if (
+        frozen
+    ):  # the frozen app's own name is no Python, so the bare names are searched too (WindowsApps excluded)
+        names = ["python3", "python", *names]
+    search = _search_path()
+    for name in names:
+        if (
+            (path := shutil.which(name, path=search))
+            and not _store_alias(path)
+            and (probe := _probe_python([path]))
+        ):
+            add(path, probe[0])
+    if platform_compat.IS_WINDOWS and (py := shutil.which("py", path=search)) and not _store_alias(py):
+        if probe := _probe_python([py, "-3"]):
+            add(probe[1], probe[0])
         for line in _run([py, "-0p"]).splitlines():
             match = re.search(r"-V:?(\d+\.\d+)\S*\s+\*?\s*(\S.*python\S*)$", line.strip(), re.I) or re.search(
                 r"-(\d+\.\d+)\S*\s+\*?\s*(\S.*)$", line.strip()
             )
-            if match and Path(match.group(2)).is_file():
-                found.setdefault(
-                    match.group(2), Toolchain("python", match.group(1), Path(match.group(2)), "system")
-                )
-    return list(found.values())
+            if (
+                match
+                and not _store_alias(match.group(2))
+                and Path(match.group(2)).is_file()
+                and (probe := _probe_python([match.group(2)]))
+            ):
+                add(match.group(2), probe[0])
+    return tuple(found.values())
+
+
+def detect_pythons() -> list[Toolchain]:
+    """Real interpreters on this machine (a non-empty scan is cached per process). A frozen app's own executable is the backend, never a
+    Python, and Windows ``WindowsApps`` aliases are never executed."""
+    return list(_scan_pythons(paths.is_frozen()))
 
 
 DETECTORS: dict[str, Callable[[], list[Toolchain]]] = {

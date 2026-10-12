@@ -11,12 +11,30 @@ import yaml
 
 from .. import paths
 from ..monitoring.report import build_report, render_markdown
+from ..qa.report import case_table_rows, render_case_table
 from ..skills import trust as skill_trust
 from ..skills.registry import FRONTMATTER_RE, discover_skills, lint_skill, load_lock, verify_lock
 from ..storage import read_json
 from .artifact_presenter import json_to_markdown
 from .evidence import MIMES, file_path, inventory
 from .presentation import public
+
+
+def render_test_design_markdown(design: dict, requirements: dict | None = None) -> str:
+    """Test design export: the QA case table with its details first, then the complete design record (no field dropped)."""
+    return "\n".join(
+        [
+            "# test_design",
+            "",
+            "## Test cases",
+            "",
+            render_case_table(case_table_rows(design, requirements)),
+            "",
+            "## Full design record",
+            "",
+            json_to_markdown(design),
+        ]
+    )
 
 
 class EvidenceAPI:
@@ -188,7 +206,11 @@ class EvidenceAPI:
                 data, md = execution.get("qa_report"), execution.get("markdown", "")
             else:
                 data = artifacts.get(kind)
-                md = json_to_markdown(data, title=kind)
+                md = (
+                    render_test_design_markdown(data, artifacts.get("requirements"))
+                    if kind == "test_design" and isinstance(data, dict)
+                    else json_to_markdown(data, title=kind)
+                )
             if data is None:
                 raise FileNotFoundError("Artifact not available.")
         if fmt not in {"json", "md"}:

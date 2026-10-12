@@ -22,11 +22,11 @@ import json
 import os
 import re
 import shutil
-import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from .. import paths
 from .builtin import DEFAULT_BUILTINS, build_builtins
 from .engine import Approver, HookEngine, HookSpec, command_handler, python_handler
 from .events import EVENTS
@@ -147,7 +147,7 @@ def _resolve_argv(argv: list[str], entry: dict[str, Any]) -> list[str]:
     Windows would otherwise use); ``python`` / ``python3`` mean the interpreter running the harness."""
     program = argv[0]
     if program in {"python", "python3"}:
-        return [sys.executable, *argv[1:]]
+        return [*paths.python_argv(), *argv[1:]]
     if os.sep in program or "/" in program:
         base = Path(entry["_source"]).parent
         path = Path(program) if Path(program).is_absolute() else (base / program)
@@ -170,8 +170,8 @@ def compile_entry(entry: dict[str, Any]) -> HookSpec:
         argv = _resolve_argv(entry["command"], entry)
         handler = command_handler(argv, timeout=entry["timeout"], env=_hook_env())
         label = (
-            Path(argv[1]).name
-            if len(argv) > 1 and Path(argv[0]).stem.startswith("python")
+            Path(entry["command"][1]).name
+            if len(entry["command"]) > 1 and Path(entry["command"][0]).stem.startswith("python")
             else Path(argv[0]).name
         )
     else:

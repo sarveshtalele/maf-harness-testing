@@ -6,7 +6,7 @@ Single-page workspace over the local API. Node `>=24 <25` is enforced (`engines`
 - `app/page.tsx`, `app/layout.tsx`, `app/globals.css`: shell and styles.
 - `app/api/harness/[...path]/route.ts`: same-origin proxy to the Python API; adds the bearer token, checks Host/Origin, validates path segments, 2 MiB body limit (28 MB for `runs`, `skills/import`). The token never reaches the browser.
 - `lib/harness.ts`: types (`Run`, `Pending`, `Config`), `api(path, body?)`, `label`, `download` URL builder.
-- `components/workspace.tsx`: pages and the run `tabs` array (Review, Errors, Artifacts, Generated tests, QA report, Test reports, Logs, Observability, Audit, Prompts); `data.tsx` shared widgets (`Panel`, `DataTable`, `ResizeHandle`); `run-errors.tsx`, `observability.tsx`, `reports.tsx`, `skills.tsx`, `prompts.tsx`, `model-settings.tsx`, `mcp-servers.tsx` (MCP settings), `step-reports.tsx`, `markdown.tsx`.
+- `components/workspace.tsx`: pages and the run `tabs` array (Review, Errors, Artifacts, Generated tests, QA report, Test reports, Logs, Observability, Audit, Prompts); `data.tsx` shared widgets (`Panel`, `DataTable`, `ResizeHandle`); `run-errors.tsx`, `observability.tsx`, `reports.tsx`, `skills.tsx`, `prompts.tsx`, `model-settings.tsx`, `marketplace.tsx` (Marketplace tabs: Agent Skills, MCP servers), `mcp-servers.tsx` (MCP servers tab: cards, add and manage dialogs), `step-reports.tsx`, `markdown.tsx`.
 - `next.config.ts`: `DESKTOP_BUILD=1` switches to standalone output for Electron.
 - `playwright.config.ts` + `tests/*.spec.ts`: browser journeys against `../tests/ui_fixture_server.py` (real workflow, scripted model) on port 8876, UI on 3100.
 
