@@ -11,7 +11,6 @@ mirror that serves the same paths (corporate proxies, offline machines).
 
 from __future__ import annotations
 
-import functools
 import hashlib
 import json
 import os
@@ -207,8 +206,26 @@ def _probe_python(argv: list[str]) -> tuple[str, str] | None:
     return None
 
 
-@functools.cache  # one scan per process: several callers ask in one run
+_SCAN_CACHE: dict[
+    bool, tuple[Toolchain, ...]
+] = {}  # only non-empty scans: a missing Python is never remembered
+
+
+def clear_python_scan() -> None:
+    """Forget the cached scan so the next detect_pythons() looks again (after a Python was installed)."""
+    _SCAN_CACHE.clear()
+
+
 def _scan_pythons(frozen: bool) -> tuple[Toolchain, ...]:
+    if frozen in _SCAN_CACHE:
+        return _SCAN_CACHE[frozen]
+    found = _scan_interpreters(frozen)
+    if found:
+        _SCAN_CACHE[frozen] = found
+    return found
+
+
+def _scan_interpreters(frozen: bool) -> tuple[Toolchain, ...]:
     own = os.path.normcase(str(Path(sys.executable).resolve())) if frozen else ""
     found: dict[str, Toolchain] = {}
 
@@ -244,7 +261,7 @@ def _scan_pythons(frozen: bool) -> tuple[Toolchain, ...]:
 
 
 def detect_pythons() -> list[Toolchain]:
-    """Real interpreters on this machine (cached per process). A frozen app's own executable is the backend, never a
+    """Real interpreters on this machine (a non-empty scan is cached per process). A frozen app's own executable is the backend, never a
     Python, and Windows ``WindowsApps`` aliases are never executed."""
     return list(_scan_pythons(paths.is_frozen()))
 

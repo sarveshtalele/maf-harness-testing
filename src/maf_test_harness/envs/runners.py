@@ -270,6 +270,7 @@ def _create_venv_step(ws: Path, timeout: float, python_override: str | None = No
     if usable:
         newest = max(usable, key=lambda t: version_tuple(t.version))
         return Step("create-venv", [str(newest.home), "-m", "venv", VENV_DIR], "setup", timeout=timeout)
+    toolchains.clear_python_scan()  # the retry after an install must see it, not a cached "none"
     message = NO_PYTHON_MESSAGE.format(req.specifier if req and req.specifier else "3.x")
     return Step(
         "python-missing",

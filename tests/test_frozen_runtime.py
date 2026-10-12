@@ -30,9 +30,9 @@ SHIM = "import sys; from maf_test_harness import desktop_backend as d; sys.exit(
 
 @pytest.fixture(autouse=True)
 def _fresh_python_scan():
-    toolchains._scan_pythons.cache_clear()
+    toolchains.clear_python_scan()
     yield
-    toolchains._scan_pythons.cache_clear()
+    toolchains.clear_python_scan()
 
 
 @pytest.fixture
@@ -234,7 +234,12 @@ def test_frozen_create_venv_names_the_required_version_when_none_satisfies(monke
 
 def test_python_scan_is_cached_per_process(monkeypatch):
     calls = []
-    monkeypatch.setattr(toolchains, "_probe_python", lambda argv: calls.append(argv))
+
+    def probe(argv):
+        calls.append(argv)
+        return ("3.12.4", argv[0])
+
+    monkeypatch.setattr(toolchains, "_probe_python", probe)
     monkeypatch.setattr(toolchains.shutil, "which", lambda name: f"/opt/{name}")
     toolchains.detect_pythons()
     first = len(calls)
@@ -276,7 +281,7 @@ def test_frozen_bare_names_are_probed_only_off_windows(monkeypatch):
     toolchains.detect_pythons()
     assert "python3" in asked and "python" in asked
     asked.clear()
-    toolchains._scan_pythons.cache_clear()
+    toolchains.clear_python_scan()
     monkeypatch.setattr(toolchains.platform_compat, "IS_WINDOWS", True)
     toolchains.detect_pythons()
     assert "python3" not in asked and "python" not in asked
@@ -382,3 +387,39 @@ def test_self_check_flags_a_skill_import_that_cannot_be_resolved(monkeypatch, tm
     assert desktop_backend._unresolved_skill_imports() == [
         "demo/scripts/tool.py: import no_such_module_for_harness_tests"
     ]
+
+
+def _fake_interpreters(monkeypatch, available: dict[str, str]):
+    """Interpreters that exist only while the test puts them in ``available`` (name -> version)."""
+    monkeypatch.setattr(toolchains.platform_compat, "IS_WINDOWS", False)
+    monkeypatch.setattr(
+        toolchains.shutil, "which", lambda name: f"/opt/{name}/bin/{name}" if name in available else None
+    )
+
+    def probe(argv):
+        name = Path(argv[0]).name
+        return (available[name], argv[0]) if name in available else None
+
+    monkeypatch.setattr(toolchains, "_probe_python", probe)
+
+
+def test_a_missing_python_is_not_cached_so_a_retry_finds_a_new_install(monkeypatch):
+    _freeze(monkeypatch)
+    available: dict[str, str] = {}
+    _fake_interpreters(monkeypatch, available)
+    assert toolchains.detect_pythons() == []  # the first scan finds none
+    available["python3.11"] = "3.11.9"  # the user installs Python 3.11 ...
+    found = toolchains.detect_pythons()  # ... and the next call finds it, with no restart
+    assert [(t.version, t.home) for t in found] == [("3.11.9", Path("/opt/python3.11/bin/python3.11"))]
+
+
+def test_retry_after_a_missing_python_finds_the_install_the_project_requires(monkeypatch, tmp_path):
+    _freeze(monkeypatch)
+    available = {"python3.12": "3.12.4"}  # a suitable-looking interpreter, but not the one the project pins
+    _fake_interpreters(monkeypatch, available)
+    (tmp_path / ".python-version").write_text("3.11\n", encoding="utf-8")
+    assert runners.setup_steps("python", tmp_path, str(tmp_path / "c"), 60)[0].name == "python-missing"
+    available["python3.11"] = "3.11.9"  # installed after the failed attempt
+    step = runners.setup_steps("python", tmp_path, str(tmp_path / "c"), 60)[0]  # the retry
+    assert step.name == "create-venv"
+    assert step.argv[0] == "/opt/python3.11/bin/python3.11"
