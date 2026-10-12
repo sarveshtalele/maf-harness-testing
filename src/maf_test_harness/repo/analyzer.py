@@ -276,11 +276,21 @@ def _safe_source(root: Path, path: Path) -> bool:
         return False
 
 
+def _git_env() -> dict[str, str]:
+    """Read-only git calls on a cloned, untrusted repository never see model keys or other harness secrets."""
+    from ..envs.execution import BASIC_ENV
+
+    env = {key: os.environ[key] for key in BASIC_ENV if key in os.environ}
+    env["GIT_TERMINAL_PROMPT"] = "0"
+    return env
+
+
 def _tracked_files(root: Path) -> list[Path]:
     try:
         proc = subprocess.run(
             ["git", "-C", str(root), "ls-files", "-z"],
             capture_output=True,
+            env=_git_env(),
             timeout=15,
             check=False,
         )
@@ -403,6 +413,9 @@ def _commit_sha(root: Path) -> str | None:
             ["git", "-C", str(root), "rev-parse", "HEAD"],
             capture_output=True,
             text=True,
+            encoding="utf-8",
+            errors="replace",
+            env=_git_env(),
             timeout=10,
             check=False,
         )

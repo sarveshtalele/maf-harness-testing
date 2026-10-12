@@ -37,7 +37,7 @@ from ..settings import (
     BUILD_GATE,
     MAX_FAILED_BATCH_RATIO,
     REQUIRE_FULL_ACCURACY,
-    TEST_REVIEW_MIN_CONFIDENCE,
+    test_review_threshold,
 )
 from ..skills.config import skills_for
 from ..skills.contracts import (
@@ -97,7 +97,7 @@ class GenerationSteps:
                 "plan": state["artifacts"].get("test_planning"),
                 "evidence": state.get("evidence"),
                 "batch_size": TEST_GENERATION_BATCH_SIZE,
-                "review_threshold": TEST_REVIEW_MIN_CONFIDENCE,
+                "review_threshold": test_review_threshold(state),
                 "quality_policy": "strict-source-invocation-reviewed-v4",
                 "skills": {
                     name: (self.skills_root / name / "SKILL.md").read_text(encoding="utf-8")
@@ -140,7 +140,7 @@ class GenerationSteps:
         review_scope = len(state.get("test_reviews", []))
 
         def unverified_cases() -> list[dict]:
-            done = {r["case_id"] for r in case_reviews if review_accepted(r, TEST_REVIEW_MIN_CONFIDENCE)}
+            done = {r["case_id"] for r in case_reviews if review_accepted(r, test_review_threshold(state))}
             return [case for case in cases if str(case["id"]) not in done]
 
         def verification_reason(case_id: str) -> str:
@@ -155,7 +155,7 @@ class GenerationSteps:
                 None,
             )
             if review:
-                return verification_note(review, TEST_REVIEW_MIN_CONFIDENCE)
+                return verification_note(review, test_review_threshold(state))
             error = next((f["last_error"] for f in reversed(failures) if case_id in f["case_ids"]), "")
             return f"generation failed: {error}" if error else "no generated test for this case"
 
@@ -449,7 +449,7 @@ class GenerationSteps:
                     rejected_ids = {
                         r["case_id"]
                         for r in candidate["case_reviews"]
-                        if not review_accepted(r, TEST_REVIEW_MIN_CONFIDENCE)
+                        if not review_accepted(r, test_review_threshold(state))
                     }
                     # The model answer is cached only once the review accepts it (a rejected answer must not replay).
                     self._settle_response_cache("test_generation", not rejected_ids)
@@ -457,7 +457,7 @@ class GenerationSteps:
                         # Last attempt: verified cases keep their files and reviews; only the rejected IDs fail and
                         # go to the accuracy rounds (or stay generation_failed when the gate is off).
                         reasons = "; ".join(
-                            f"{r['case_id']}: {verification_note(r, TEST_REVIEW_MIN_CONFIDENCE)}"
+                            f"{r['case_id']}: {verification_note(r, test_review_threshold(state))}"
                             for r in candidate["case_reviews"]
                             if r["case_id"] in rejected_ids
                         )
@@ -615,14 +615,14 @@ class GenerationSteps:
         verified = [
             reviews_by_id[cid]["confidence"]
             for cid in all_ids
-            if review_accepted(reviews_by_id.get(cid), TEST_REVIEW_MIN_CONFIDENCE)
+            if review_accepted(reviews_by_id.get(cid), test_review_threshold(state))
         ]
         final_payload["verification_summary"] = {
             "enforced": gate_on,
             "verified": len(verified),
             "total": len(all_ids),
             "min_confidence": min(verified, default=None),
-            "threshold": TEST_REVIEW_MIN_CONFIDENCE,
+            "threshold": test_review_threshold(state),
         }
         validation = validate_generated_files(final_payload, all_ids - failed_case_ids)
         validation["generation_failed_case_ids"] = sorted(failed_case_ids)

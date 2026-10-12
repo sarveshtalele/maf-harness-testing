@@ -23,7 +23,7 @@ from ..qa.confidence import (
 )
 from ..qa.derivation import deterministic_findings, mask_expected_literals
 from ..repo.analyzer import build_repository_evidence, extract_target_sources
-from ..settings import TEST_REVIEW_MIN_CONFIDENCE
+from ..settings import test_review_threshold
 from ..workflow_support import MODEL_REPAIR_ATTEMPTS
 
 TARGET_BUDGET = 28_000  # the old 24k shared budget plus a modest margin; method bodies are always sent
@@ -388,7 +388,7 @@ async def review_generated_tests(host, state, candidate, cases, batch, partial_o
             )
         )
     reviews = scored
-    rejected = [r for r in reviews if not review_accepted(r, TEST_REVIEW_MIN_CONFIDENCE)]
+    rejected = [r for r in reviews if not review_accepted(r, test_review_threshold(state))]
     host.audit("test_reviewer_result", stage="test_generation", batch=batch, reviews=reviews)
     state.setdefault("test_reviews", []).append({"batch": batch, "reviews": reviews})
     host.save()
@@ -396,7 +396,7 @@ async def review_generated_tests(host, state, candidate, cases, batch, partial_o
         raise ValueError(
             "Independent test review requires repair: "
             + "; ".join(
-                f"{r['case_id']}: {verification_note(r, TEST_REVIEW_MIN_CONFIDENCE)}" for r in rejected
+                f"{r['case_id']}: {verification_note(r, test_review_threshold(state))}" for r in rejected
             )
         )
     return sorted(reviews, key=lambda r: (-r["confidence"], r["case_id"]))

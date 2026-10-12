@@ -414,7 +414,7 @@ def test_cache_is_invalidated_when_the_review_threshold_changes(tmp_path, monkey
     asyncio.run(host._generate_tests_batched(state))
     asyncio.run(host._generate_tests_batched(state))
     assert provider.calls == {"TC-1": 1, "TC-2": 1}  # same settings: accepted batch is reused
-    monkeypatch.setattr(generation_steps, "TEST_REVIEW_MIN_CONFIDENCE", 90)
+    state["confidence_thresholds"] = {"test": 99}  # per-run override (gate range is 95-100)
     asyncio.run(host._generate_tests_batched(state))
     assert provider.calls == {"TC-1": 2, "TC-2": 2}
 

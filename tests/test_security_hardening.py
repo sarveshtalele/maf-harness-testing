@@ -278,3 +278,13 @@ def test_tool_version_probes_get_the_basic_environment_only(monkeypatch):
     assert entry["present"] and entry["version"] == "git version 2.99"
     assert "OPENAI_API_KEY" not in seen["env"]
     assert set(seen["env"]) <= set(BASIC_ENV)
+
+
+def test_analyzer_git_calls_never_inherit_model_keys(monkeypatch):
+    from maf_test_harness.repo import analyzer
+
+    monkeypatch.setenv("OPENAI_API_KEY", "sk" + "-should-not-leak-0000")
+    monkeypatch.setenv("GITHUB_TOKEN", "ghp-should-not-leak")
+    env = analyzer._git_env()
+    assert "OPENAI_API_KEY" not in env and "GITHUB_TOKEN" not in env
+    assert env["GIT_TERMINAL_PROMPT"] == "0"
