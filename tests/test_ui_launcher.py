@@ -217,26 +217,11 @@ def test_repeated_start_reuses_healthy_app_and_signal_shutdown_frees_ports(tmp_p
 
 
 def test_a_running_ui_from_other_code_is_not_reused(monkeypatch, capsys):
-    import io
-    import json as _json
-
+    """The reuse probe reads the build id from the UI's 401 page (no session is needed for it)."""
     launcher = launcher_module()
-    pages = {
-        "/": b"<title>Agentic QE Platform</title>",
-        "/api/harness/config": _json.dumps(
-            {"model": "m", "key_configured": True, "stages": [], "build_id": "old"}
-        ).encode(),
-    }
-
-    class Reply(io.BytesIO):
-        def __enter__(self):
-            return self
-
-        def __exit__(self, *exc):
-            return False
-
+    page = b'<title>Agentic QE Platform</title><meta name="agentic-qe-build" content="old">'
     monkeypatch.setattr(launcher, "port_available", lambda port: False)
-    monkeypatch.setattr(launcher, "urlopen", lambda url, timeout: Reply(pages[url.split(":3000", 1)[1]]))
+    monkeypatch.setattr(launcher, "http_get", lambda url, headers=None, timeout=5: (401, {}, page))
     assert launcher.running_application(3000, "old") is True
     assert launcher.running_application(3000, "new") is False
     assert "older Agentic QE Platform build" in capsys.readouterr().out
@@ -330,9 +315,31 @@ grandchild = subprocess.Popen(
     [sys.executable, "-c", "import signal, time; signal.signal(signal.SIGTERM, signal.SIG_IGN); time.sleep(600)"]
 )
 Path(os.environ["FAKE_PIDS"], f"{port}.pid").write_text(f"{os.getpid()} {grandchild.pid}")
-server = socket.socket()
-server.bind(("127.0.0.1", port))
-server.listen()
+import http.server, json, threading
+
+TOKEN = os.environ.get("HARNESS_API_TOKEN", "")
+NONCE = os.environ.get("HARNESS_LAUNCH_NONCE", "")
+
+
+class Handler(http.server.BaseHTTPRequestHandler):
+    def do_GET(self):
+        if self.path == "/health" and self.headers.get("Authorization") == f"Bearer {TOKEN}":
+            body, status = json.dumps({"ok": True, "nonce": NONCE}).encode(), 200
+        else:
+            body, status = b"<title>Agentic QE Platform</title>", 401
+        self.send_response(status)
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def log_message(self, *args):
+        pass
+
+
+server = http.server.ThreadingHTTPServer(("127.0.0.1", port), Handler)
+threading.Thread(target=server.serve_forever, daemon=True).start()
+# The backend's ready line, printed only after the port is bound (the launcher waits for it and checks the nonce).
+print(f"Local harness API: http://127.0.0.1:{port}" + (f" nonce={NONCE}" if NONCE else ""), flush=True)
 time.sleep(600)
 """
 
@@ -374,6 +381,7 @@ def test_signal_to_launcher_stops_both_child_trees(tmp_path, signum):
         "PYTHONPATH": str(tmp_path),
         "FAKE_PIDS": str(tmp_path / "pids"),
         "HARNESS_RUNS_DIR": str(tmp_path / "runs"),
+        "AGENTIC_QE_OPEN_BROWSER": "0",  # the launcher would open a real browser window otherwise
     }
     with (tmp_path / "console.log").open("w", encoding="utf-8") as console:
         process = subprocess.Popen(

@@ -14,11 +14,12 @@ import socket
 import subprocess
 import sys
 import time
+import webbrowser
 from datetime import datetime
 from pathlib import Path
-from threading import Lock, Thread
-from urllib.error import URLError
-from urllib.request import urlopen
+from threading import Event, Lock, Thread
+from urllib.error import HTTPError, URLError
+from urllib.request import HTTPRedirectHandler, Request, build_opener
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -276,19 +277,55 @@ def clean_orphans():
         path.unlink(missing_ok=True)
 
 
+class _NoRedirect(HTTPRedirectHandler):
+    """Return 3xx replies as HTTPError so the session cookie of /api/session can be read."""
+
+    def redirect_request(self, *args, **kwargs):
+        return None
+
+
+def http_get(url, headers=None, timeout=5):
+    """(status, headers, body) for any HTTP reply, including 3xx and 4xx. Connection errors still raise OSError."""
+    try:
+        with build_opener(_NoRedirect).open(Request(url, headers=headers or {}), timeout=timeout) as response:
+            return response.status, response.headers, response.read()
+    except HTTPError as error:
+        return error.code, error.headers, error.read()
+
+
+def open_session(port, launch_secret):
+    """Exchanges the one-time launch secret for the session cookie, as the browser does. This spends the secret."""
+    status, headers, _ = http_get(f"http://127.0.0.1:{port}/api/session?launch={launch_secret}")
+    match = re.search(r"aqe_session=([A-Za-z0-9_-]+)", headers.get("Set-Cookie", ""))
+    if status != 303 or not match:
+        raise RuntimeError("The UI did not accept the launch link.")
+    return f"aqe_session={match.group(1)}"
+
+
+def nonce_matches(body, nonce):
+    try:
+        return secrets.compare_digest(str(json.loads(body).get("nonce", "")).encode(), nonce.encode())
+    except (ValueError, AttributeError):
+        return False
+
+
+def verify_backend(port, token, nonce):
+    """Authenticated readiness: the API answers with this launch's nonce, so the token goes to no other process."""
+    status, _, body = http_get(f"http://127.0.0.1:{port}/health", {"Authorization": f"Bearer {token}"})
+    if status != 200 or not nonce_matches(body, nonce):
+        raise RuntimeError("Another process answered on the API port. The launch was stopped.")
+
+
 def running_application(port, expected_build=None):
-    """Reuse only a responding platform UI, with a working authenticated API proxy, built from this checkout."""
+    """Reuse only a responding platform UI built from this checkout. Its 401 page carries the build id."""
     if port_available(port):
         return False
     try:
-        with urlopen(f"http://127.0.0.1:{port}/", timeout=2) as response:
-            if b"Agentic QE Platform" not in response.read():
-                return False
-        with urlopen(f"http://127.0.0.1:{port}/api/harness/config", timeout=2) as response:
-            config = json.load(response)
-        if not (isinstance(config, dict) and {"model", "key_configured", "stages"}.issubset(config)):
+        _, _, body = http_get(f"http://127.0.0.1:{port}/", timeout=2)
+        if b"Agentic QE Platform" not in body:
             return False
-        if expected_build and config.get("build_id") != expected_build:
+        build = re.search(rb'name="agentic-qe-build" content="([^"]*)"', body)
+        if expected_build and (build is None or build.group(1).decode() != expected_build):
             print(
                 f"An older Agentic QE Platform build is running on port {port}; it is left running and a new "
                 "instance starts on another port. Stop the old one with Ctrl+C in its terminal.",
@@ -393,7 +430,7 @@ def main():
     for candidate in range(args.port, args.port + (1 if explicit_port else 10)):
         if running_application(candidate, current_build):
             print(
-                f"Agentic QE Platform is already running. Open http://127.0.0.1:{candidate}\nNo rebuild or duplicate servers started. Stop it with Ctrl+C in its original terminal before updating.",
+                f"Agentic QE Platform is already running on port {candidate}. Open it from the link printed in the terminal that started it (each link works once).\nNo rebuild or duplicate servers started. Stop it with Ctrl+C in its original terminal before updating.",
                 flush=True,
             )
             # Platform wrappers distinguish reuse from preflight success and skip installation/build.
@@ -433,6 +470,11 @@ def main():
     log_dir = (log_dir if log_dir.is_absolute() else ROOT / log_dir).resolve()
     log_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
     env["HARNESS_LOG_DIR"] = str(log_dir)
+    # Per launch. The UI's secret is single use (exchanged at /api/session); the API's nonce proves the port is ours.
+    launch_secret = secrets.token_urlsafe(32)
+    backend_nonce = secrets.token_urlsafe(24)
+    backend_env = {**env, "HARNESS_LAUNCH_NONCE": backend_nonce}
+    frontend_env = {**env, "HARNESS_LAUNCH_SECRET": launch_secret}
     log_path = log_dir / ("launch-" + datetime.now().strftime("%Y%m%d-%H%M%S-%f") + ".log")
     log = log_path.open("w", encoding="utf-8")
     print(
@@ -445,7 +487,7 @@ def main():
         v
         for k, v in env.items()
         if any(t in k.upper() for t in ("KEY", "TOKEN", "SECRET", "PASSWORD")) and len(v) > 8
-    ]
+    ] + [launch_secret, backend_nonce]
     if (ROOT / ".env").is_file():
         for line in (ROOT / ".env").read_text(encoding="utf-8").splitlines():
             key, sep, value = line.partition("=")
@@ -457,11 +499,11 @@ def main():
                 secret_values.append(value.strip().strip("\"'"))
     threads = []
 
-    def launch(argv, cwd, name, port=None, marker=None):
+    def launch(argv, cwd, name, port=None, marker=None, child_env=None, ready=None, ready_line=None):
         child = subprocess.Popen(
             argv,
             cwd=cwd,
-            env=env,
+            env=child_env or env,
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
             text=True,
@@ -476,6 +518,8 @@ def main():
 
         def pump():
             for line in child.stdout:
+                if ready is not None and ready_line and ready_line in line:
+                    ready.set()  # printed only after the service bound its port, so that port is ours
                 for secret in secret_values:
                     line = line.replace(secret, "[REDACTED]")
                 with lock:
@@ -510,45 +554,79 @@ def main():
             if build.wait() != 0:
                 raise RuntimeError(f"Next.js build failed. See {log_path}")
             return None
+        api_ready = Event()
         backend = launch(
             [sys.executable, "-m", API_MODULE, "--port", str(args.api_port)],
             ROOT,
             "backend",
             args.api_port,
             [API_MODULE],
+            child_env=backend_env,
+            ready=api_ready,
+            ready_line=f"Local harness API: http://127.0.0.1:{args.api_port} nonce={backend_nonce}",
         )
         # Cold MAF imports on hosted runners can exceed the old ten-second startup budget.
         deadline = time.monotonic() + 90
-        while time.monotonic() < deadline:
+        while not api_ready.wait(0.1):
             if backend.poll() is not None:
                 raise RuntimeError("The local API failed to start. See its error above.")
-            try:
-                with socket.create_connection(("127.0.0.1", args.api_port), timeout=0.2):
-                    break
-            except OSError:
-                time.sleep(0.1)
-        else:
-            raise RuntimeError("The local API did not become ready.")
+            if time.monotonic() > deadline:
+                raise RuntimeError("The local API did not become ready.")
+        verify_backend(args.api_port, env["HARNESS_API_TOKEN"], backend_nonce)
         command = frontend_command(node, "start" if args.production else "dev", args.port)
-        launch(command, ROOT / "frontend", "frontend", args.port, [command[1], NEXT_TITLE])
+        frontend = launch(
+            command,
+            ROOT / "frontend",
+            "frontend",
+            args.port,
+            [command[1], NEXT_TITLE],
+            child_env=frontend_env,
+        )
         if args.smoke_test:
             for _ in range(120):
                 if any(process.poll() is not None for process in processes):
                     raise RuntimeError("A local service exited before startup verification.")
                 try:
-                    with urlopen(f"http://127.0.0.1:{args.port}/", timeout=2) as response:
-                        if b"Agentic QE Platform" not in response.read():
-                            raise RuntimeError("The frontend returned an unexpected page.")
-                    with urlopen(f"http://127.0.0.1:{args.port}/api/harness/config", timeout=2) as response:
-                        config = json.load(response)
+                    status, _, body = http_get(f"http://127.0.0.1:{args.port}/")
+                    if status != 401 or b"Agentic QE Platform" not in body:
+                        raise RuntimeError("The frontend returned an unexpected page.")
+                    session = open_session(args.port, launch_secret)
+                    status, _, body = http_get(
+                        f"http://127.0.0.1:{args.port}/api/harness/config", {"Cookie": session}
+                    )
+                    config = json.loads(body) if status == 200 else {}
                     if not {"model", "key_configured", "stages"}.issubset(config):
                         raise RuntimeError("The frontend could not verify the backend configuration.")
+                    status, _, body = http_get(
+                        f"http://127.0.0.1:{args.port}/api/harness/health", {"Cookie": session}
+                    )
+                    if status != 200 or not nonce_matches(body, backend_nonce):
+                        raise RuntimeError("The UI is not connected to this launch's API.")
                     print("Startup verified: UI and authenticated backend proxy work.", flush=True)
                     return None
                 except (URLError, TimeoutError):
                     time.sleep(0.5)
             raise RuntimeError("The UI/backend connection did not become ready.")
-        print(f"Open http://127.0.0.1:{args.port} — Ctrl+C stops both services.", flush=True)
+        # The browser opens the link. Its launch secret works once; a manual visit to the bare address gets a 401 page.
+        launch_url = f"http://127.0.0.1:{args.port}/api/session?launch={launch_secret}"
+        for _ in range(180):
+            if frontend.poll() is not None:
+                raise RuntimeError("The UI server exited before it was ready. See its error above.")
+            try:
+                http_get(f"http://127.0.0.1:{args.port}/", timeout=2)
+                break
+            except OSError:
+                time.sleep(0.5)
+        if os.environ.get("AGENTIC_QE_OPEN_BROWSER", "1") != "0":
+            try:
+                webbrowser.open(launch_url)
+            except webbrowser.Error:
+                pass
+        print(
+            f"Open the app: {launch_url}\n(The browser opens this link automatically. It works once; if it is lost, "
+            "stop and start the launcher again.) Ctrl+C stops both services.",
+            flush=True,
+        )
         while all(process.poll() is None for process in processes):
             time.sleep(0.3)
         if any(process.poll() not in (None, 0) for process in processes):
