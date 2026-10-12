@@ -102,3 +102,85 @@ def test_every_locked_python_script_ignores_disk_bytecode_and_plugins_are_isolat
     assert host == ["-B", "--check-hash-based-pycs", "always"]  # host scripts keep their sibling imports
     plugin = _script_flags(isolated=True, work=tmp_path)
     assert plugin[:3] == host and "-I" in plugin and f"pycache_prefix={tmp_path / 'pycache'}" in plugin
+
+
+@pytest.mark.parametrize(
+    "name",
+    [
+        "PERL5OPT",
+        "RUBYLIB",
+        "_JAVA_OPTIONS",
+        "JDK_JAVA_OPTIONS",
+        "CLASSPATH",
+        "GIT_SSH_COMMAND",
+        "DOCKER_HOST",
+    ],
+)
+def test_mcp_servers_cannot_set_code_loading_or_command_variables(name):
+    from maf_test_harness.mcp_servers import forbidden_env
+
+    assert forbidden_env(name)
+
+
+def test_mcp_servers_can_still_set_ordinary_variables():
+    from maf_test_harness.mcp_servers import forbidden_env
+
+    assert not forbidden_env("JIRA_BASE_URL") and not forbidden_env("ATLASSIAN_SITE")
+
+
+def test_github_preview_never_follows_a_redirect_with_the_token(tmp_path, monkeypatch):
+    import http.server
+    import threading
+    import urllib.error
+
+    from maf_test_harness.repo import preview
+
+    seen = []
+
+    class Handler(http.server.BaseHTTPRequestHandler):
+        def do_GET(self):
+            seen.append((self.path, self.headers.get("Authorization")))
+            if self.path.startswith("/repos/"):
+                self.send_response(302)
+                self.send_header("Location", f"http://127.0.0.1:{server.server_port}/elsewhere")
+                self.end_headers()
+            else:
+                self.send_response(200)
+                self.end_headers()
+                self.wfile.write(b"{}")
+
+        def log_message(self, *_):
+            pass
+
+    server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    try:
+        monkeypatch.setattr(preview, "API", f"http://127.0.0.1:{server.server_port}")
+        monkeypatch.setenv("GITHUB_TOKEN", "ghp_" + "a" * 36)
+        with pytest.raises(urllib.error.HTTPError):
+            preview.github_fetch("info", "owner", "repo", None)
+        assert [path for path, _ in seen] == ["/repos/owner/repo"]  # the redirect target was never requested
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def test_generated_source_download_is_redacted_like_other_exports(tmp_path):
+    import json
+
+    from maf_test_harness.ui.api import LocalAPI
+
+    api = LocalAPI(tmp_path / "runs", requirements_mode="deterministic")
+    run = api.runs / "run-1"
+    run.mkdir(parents=True)
+    secret = "ghp_" + "b" * 36
+    state = {
+        "repo_url": "https://github.com/acme/demo",
+        "artifacts": {
+            "test_generation": {"files": [{"path": "tests/test_a.py", "content": f"TOKEN = '{secret}'\n"}]}
+        },
+    }
+    (run / "run.json").write_text(json.dumps({"status": "complete", "state": state}), encoding="utf-8")
+    data, mime, name = api.download("run-1", {"kind": ["source"], "index": ["0"]})
+    assert secret.encode() not in data and b"TOKEN" in data
+    assert name == "test_a.py" and mime == "text/plain"

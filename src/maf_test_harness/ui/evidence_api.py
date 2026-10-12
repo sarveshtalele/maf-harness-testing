@@ -178,7 +178,8 @@ class EvidenceAPI:
             if index < 0 or index >= len(files):
                 raise FileNotFoundError("Generated file not found.")
             item = files[index]
-            return item.get("content", "").encode(), "text/plain", re.split(r"[/\\]", item["path"])[-1]
+            content = public(item.get("content", ""))  # the same redaction as every other export
+            return content.encode(), "text/plain", re.split(r"[/\\]", item["path"])[-1]
         if kind == "step":  # deterministic per-step reports; no name lists them
             from ..qa.step_reports import build_step_reports
 
