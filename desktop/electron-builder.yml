@@ -52,6 +52,9 @@ linux:
 # process.execPath with ELECTRON_RUN_AS_NODE=1 (main.ts specs), so turning it off would stop the UI. NODE_OPTIONS and
 # the inspector flags are off; the app code loads only from app.asar.
 electronFuses:
+  # identity null skips electron-builder's signing, and the fuse flip invalidates Electron's ad-hoc signature on
+  # arm64 macOS. This re-signs ad hoc after the flip (the fuses package only does it for .app bundles).
+  resetAdHocDarwinSignature: true
   runAsNode: true
   enableNodeOptionsEnvironmentVariable: false
   enableNodeCliInspectArguments: false

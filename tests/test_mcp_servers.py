@@ -944,3 +944,28 @@ def test_fingerprint_follows_the_target_and_holds_no_secret(tmp_path):
     listed = LocalAPI(tmp_path / "runs", requirements_mode="deterministic").mcp_list()
     assert listed["servers"][0]["fingerprint"] == before
     assert SECRET not in json.dumps(listed)
+
+
+@pytest.mark.parametrize(
+    "changed",
+    [
+        {"args": ["changed"]},  # args only: the case that used to keep the secret
+        {"command": "uvx"},
+        {"env_keys": ["OTHER"]},
+    ],
+)
+def test_any_target_change_clears_the_secret(changed):
+    mcp_servers.upsert(srv(env_keys=["API_TOKEN"]))
+    mcp_servers.set_secrets("pw", {"API_TOKEN": SECRET})
+    assert mcp_servers.secret_status(mcp_servers.get("pw")) == {"API_TOKEN": True}
+    mcp_servers.upsert(srv(**{"env_keys": ["API_TOKEN"], **changed}))
+    assert (
+        mcp_servers.get_secret("pw", "API_TOKEN") == ""
+    )  # the value is gone, whatever the new key list says
+
+
+def test_unchanged_target_keeps_the_secret():
+    mcp_servers.upsert(srv(env_keys=["API_TOKEN"]))
+    mcp_servers.set_secrets("pw", {"API_TOKEN": SECRET})
+    mcp_servers.upsert(srv(env_keys=["API_TOKEN"], enabled=False))  # enabled is not part of the target
+    assert mcp_servers.secret_status(mcp_servers.get("pw")) == {"API_TOKEN": True}

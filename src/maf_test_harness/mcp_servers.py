@@ -320,9 +320,9 @@ def _save_servers(incoming: list[dict]) -> list[dict]:
         raise ValueError(f"At most {MAX_SERVERS} MCP servers.")
     for server in incoming:
         old = current.get(server["name"])
-        changed = old is not None and any(old[k] != server[k] for k in ("url", "transport", "command"))
-        if changed:
-            clear_secrets(server["name"])  # a secret never follows a server to a different target
+        # A secret never follows a server to a different target: any change to what fingerprint() covers clears it.
+        if old is not None and fingerprint(old) != fingerprint(server):
+            clear_secrets(server["name"])
         stale = old is not None and any(
             old[k] != server[k] for k in ("url", "transport", "command", "args", "env_keys")
         )
