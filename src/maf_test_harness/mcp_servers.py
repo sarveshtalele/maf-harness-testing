@@ -11,6 +11,7 @@ import asyncio
 import json
 import os
 import re
+import shlex
 import shutil
 import threading
 from typing import Any
@@ -30,10 +31,14 @@ STAGES = (
 SECRET_ENV_PREFIX = "HARNESS_MCP_SECRET_"
 BEARER_KEY = "BEARER_TOKEN"  # reserved secret name of an http server's Authorization value
 MAX_SERVERS = 20
-MAX_LISTED_TOOLS = (
-    8  # per server: every tool description is resent with every model call (stage budget is 20)
+# Governance cap: tools a server may list (approved + approval-required). Listing is not sending: only
+# MAX_MCP_TOOLS_PER_STAGE of them reach a stage, and a server over that budget is skipped in that stage.
+MAX_LISTED_TOOLS = 200
+MAX_MCP_TOOLS_PER_STAGE = (
+    8  # runtime budget (agent/runtime.py); keep the stage tool budget math in tests true
 )
-MAX_MCP_TOOLS_PER_STAGE = 8
+MAX_DISCOVERED_TOOLS = 200  # catalogue stored from the last Test (names and descriptions only)
+MAX_IMPORT_BYTES = 100_000
 CONNECT_TIMEOUT_SECONDS = 25  # below the UI proxy's 30 s limit
 _SLUG = re.compile(r"[a-z][a-z0-9-]{0,31}")
 _ENV_KEY = re.compile(r"[A-Z][A-Z0-9_]{0,63}")
@@ -164,9 +169,7 @@ def validate(data: dict) -> dict:
     if set(out["stages"]) - set(STAGES):
         raise ValueError("Unknown stage in stages.")
     if len(set(out["allowed_tools"]) | set(out["approval_required_tools"])) > MAX_LISTED_TOOLS:
-        raise ValueError(
-            f"At most {MAX_LISTED_TOOLS} tools per server (each tool is resent with every model call)."
-        )
+        raise ValueError(f"At most {MAX_LISTED_TOOLS} listed tools per server.")
     if set(out["allowed_tools"]) & set(out["approval_required_tools"]):
         raise ValueError("A tool cannot be both auto-approved and approval-required.")
     if any(forbidden_env(k) for k in out["env_keys"]):
@@ -194,6 +197,19 @@ def config_path():
     return paths.user_data_root() / "mcp_servers.json"
 
 
+def _tool_catalog(items: Any) -> list[dict]:
+    """Stored tool catalogue: names matching the tool-name pattern, descriptions at most 300 characters."""
+    out: list[dict] = []
+    for item in items if isinstance(items, list) else []:
+        name = item.get("name") if isinstance(item, dict) else None
+        if isinstance(name, str) and _TOOL_NAME.fullmatch(name):
+            desc = item.get("description")
+            out.append({"name": name, "description": desc[:300] if isinstance(desc, str) else ""})
+        if len(out) == MAX_DISCOVERED_TOOLS:
+            break
+    return out
+
+
 def load() -> list[dict]:
     try:
         raw = json.loads(config_path().read_text(encoding="utf-8"))
@@ -202,10 +218,15 @@ def load() -> list[dict]:
         return []
     out = []
     for item in servers if isinstance(servers, list) else []:
+        if not isinstance(item, dict):
+            continue
         try:
-            out.append(validate(item))
+            server = validate({k: v for k, v in item.items() if k != "discovered_tools"})
         except ValueError:
             continue  # a hand-edited bad entry is ignored, never trusted
+        out.append(
+            {**server, "discovered_tools": _tool_catalog(item.get("discovered_tools"))}
+        )  # absent in old files
     return out
 
 
@@ -222,18 +243,44 @@ def get(name: str) -> dict:
     raise FileNotFoundError("MCP server not found.")
 
 
+def _save_servers(incoming: list[dict]) -> list[dict]:
+    """Add or replace validated servers in one write. Stored tools survive unless the target changed. Caller holds _file_lock."""
+    current = {s["name"]: s for s in load()}
+    if len(current.keys() | {s["name"] for s in incoming}) > MAX_SERVERS:
+        raise ValueError(f"At most {MAX_SERVERS} MCP servers.")
+    for server in incoming:
+        old = current.get(server["name"])
+        changed = old is not None and any(old[k] != server[k] for k in ("url", "transport", "command"))
+        if changed:
+            clear_secrets(server["name"])  # a secret never follows a server to a different target
+        server["discovered_tools"] = old["discovered_tools"] if old and not changed else []
+        current[server["name"]] = server
+    _save(sorted(current.values(), key=lambda s: s["name"]))
+    return incoming
+
+
 def upsert(data: dict) -> dict:
+    if isinstance(data, dict):
+        data = {k: v for k, v in data.items() if k != "discovered_tools"}  # written only by Test
     server = validate(data)
     with _file_lock:
-        old = next((s for s in load() if s["name"] == server["name"]), None)
-        if old and any(old[k] != server[k] for k in ("url", "transport", "command")):
-            clear_secrets(server["name"])  # a secret never follows a server to a different target
-        servers = [s for s in load() if s["name"] != server["name"]]
-        if len(servers) >= MAX_SERVERS:
-            raise ValueError(f"At most {MAX_SERVERS} MCP servers.")
-        servers.append(server)
-        _save(sorted(servers, key=lambda s: s["name"]))
-    return server
+        return _save_servers([server])[0]
+
+
+def save_many(servers: list[dict]) -> list[dict]:
+    """Import: all or nothing, one file write."""
+    with _file_lock:
+        return _save_servers(servers)
+
+
+def set_discovered(name: str, catalog: list[dict]) -> None:
+    """Persist the tool catalogue of the last successful Test."""
+    with _file_lock:
+        servers = load()
+        for server in servers:
+            if server["name"] == name:
+                server["discovered_tools"] = _tool_catalog(catalog)
+        _save(servers)
 
 
 def remove(name: str) -> None:
@@ -397,15 +444,181 @@ async def connect(tool) -> None:
     await asyncio.wait_for(tool.connect(), CONNECT_TIMEOUT_SECONDS)
 
 
+def _catalog_entry(fn) -> dict:
+    from .ui.presentation import public  # local: ui.presentation -> hooks.builtin -> this module (circular)
+
+    remote = (fn.additional_properties or {}).get("_mcp_remote_name") or fn.name
+    return {
+        "name": remote,
+        "description": public(str(getattr(fn, "description", "") or ""))[:300],
+    }  # redact, then cap
+
+
 async def probe(server: dict) -> dict:
-    """Connect, list every tool the server offers (names only), disconnect. Never returns secrets."""
+    """Connect, list every tool the server offers (names and redacted descriptions), disconnect. Never returns secrets."""
     tool = build_tool(server, expose_all=True)
     try:
         await connect(tool)
-        names = sorted(f.additional_properties.get("_mcp_remote_name") or f.name for f in tool.functions)
+        catalog = sorted((_catalog_entry(f) for f in tool.functions), key=lambda t: t["name"])
     finally:
         try:
             await tool.close()
         except Exception:
             pass
-    return {"tools": names, "count": len(names)}
+    return {"tools": [t["name"] for t in catalog], "count": len(catalog), "catalog": catalog}
+
+
+# ---- import: a pasted command or MCP JSON config --------------------------------------------------------------------
+_ENV_ASSIGNMENT = re.compile(r"[A-Za-z_][A-Za-z0-9_]*=.*", re.S)
+_IMPORT_FIELDS = {"command", "args", "env", "type", "transport", "url", "headers", "disabled"}
+
+
+def _slug(raw: str) -> str:
+    slug = re.sub(r"[^a-z0-9-]+", "-", raw.lower()).strip("-")
+    if not slug or not slug[0].isalpha():
+        slug = f"mcp-{slug}"
+    return slug[:32].rstrip("-")
+
+
+def _unique(name: str, taken: set[str]) -> str:
+    candidate, n = name, 2
+    while candidate in taken:
+        suffix = f"-{n}"
+        candidate = f"{name[: 32 - len(suffix)].rstrip('-')}{suffix}"
+        n += 1
+    taken.add(candidate)
+    return candidate
+
+
+def _package_name(command: str, args: list[str]) -> str:
+    """The package a launcher runs (`@scope/server-x@latest` -> `server-x`, `mcp/fetch` -> `fetch`); else the program name."""
+    for token in args:
+        if token.startswith("-") or token.lower() in {"run", "x", "dlx", "exec", "tool"}:
+            continue
+        if "\\" in token or token.startswith((".", "/")):
+            break  # a path argument is not a package
+        return re.split(r"[@:]", re.split(r"/", token)[-1])[0]
+    return re.sub(r"\.(cmd|exe)$", "", re.split(r"[\\/]", command)[-1], flags=re.IGNORECASE)
+
+
+def _command_entry(text: str) -> dict:
+    # Windows paths keep their backslashes: without quotes the line is split on whitespace only.
+    if "\\" in text and '"' not in text and "'" not in text:
+        tokens = text.split()
+    else:
+        try:
+            tokens = shlex.split(text, posix=True)
+        except ValueError as exc:
+            raise ValueError("The command has unbalanced quotes.") from exc
+    env: dict[str, str] = {}
+    while tokens and _ENV_ASSIGNMENT.fullmatch(tokens[0]):
+        key, _, value = tokens.pop(0).partition("=")
+        env[key] = value  # a leading KEY=value is a secret: its value is never stored or returned
+    if not tokens:
+        raise ValueError("Paste a command such as npx, uvx or docker, or an MCP JSON config.")
+    return {"command": tokens[0], "args": tokens[1:], "env": env}
+
+
+def _is_server(data: Any) -> bool:
+    return isinstance(data, dict) and any(k in data for k in ("command", "url", "type"))
+
+
+def _json_entries(text: str) -> list[tuple[str, dict]]:
+    try:
+        data = json.loads(text)  # the error text names a position only, never the content
+    except ValueError:
+        raise ValueError("That is not valid JSON. Paste the MCP config as your client shows it.") from None
+    if not isinstance(data, dict):
+        raise ValueError("The JSON must be an object of MCP server entries.")
+    if "mcpServers" in data:
+        block = data["mcpServers"]
+    elif isinstance(data.get("servers"), dict) and not _is_server(data["servers"]):  # VS Code
+        block = data["servers"]
+    elif _is_server(data):
+        return [("", data)]
+    else:
+        block = {k: v for k, v in data.items() if k != "inputs"}
+    if not isinstance(block, dict) or not block:
+        raise ValueError("No MCP servers found in the JSON.")
+    for key, entry in block.items():
+        if not isinstance(entry, dict):
+            raise ValueError(f"Server '{key}' must be an object.")
+    return [(str(key), entry) for key, entry in block.items()]
+
+
+def _from_entry(source_key: str, entry: dict, taken: set[str]) -> dict:
+    shown = source_key or "This server"
+    unknown = set(entry) - _IMPORT_FIELDS
+    if unknown:
+        raise ValueError(f"{shown}: unsupported field {', '.join(sorted(unknown))}.")
+    kind = str(
+        entry.get("type") or entry.get("transport") or ("stdio" if "command" in entry else "http")
+    ).lower()
+    if kind == "streamable-http":
+        kind = "http"
+    if kind == "sse":
+        raise ValueError(f"{shown}: SSE servers are not supported; only stdio and streamable HTTP are.")
+    if kind not in {"stdio", "http"}:
+        raise ValueError(f"{shown}: unsupported server type; only stdio and streamable HTTP are.")
+    headers = entry.get("headers") or {}
+    if not isinstance(headers, dict) or not all(
+        isinstance(k, str) and isinstance(v, str) for k, v in headers.items()
+    ):
+        raise ValueError(f"{shown}: headers must map names to text values.")
+    if kind == "stdio":
+        command, args, env = entry.get("command"), entry.get("args", []), entry.get("env") or {}
+        if not isinstance(command, str) or not command.strip():
+            raise ValueError(f"{shown}: a stdio server needs a command.")
+        if not isinstance(args, list) or not all(isinstance(a, str) for a in args):
+            raise ValueError(f"{shown}: args must be a list of text values.")
+        if not isinstance(env, dict) or not all(
+            isinstance(k, str) and isinstance(v, str) for k, v in env.items()
+        ):
+            raise ValueError(f"{shown}: env must map names to text values.")
+        if headers:
+            raise ValueError(f"{shown}: headers apply to HTTP servers only.")
+        fields = {"transport": "stdio", "command": command.strip(), "args": args, "env_keys": list(env)}
+        secret_keys = list(env)
+        package = _package_name(command.strip(), args)
+    else:
+        url = entry.get("url")
+        if not isinstance(url, str) or not url.strip():
+            raise ValueError(f"{shown}: an HTTP server needs a url.")
+        if "env" in entry:
+            raise ValueError(f"{shown}: env applies to stdio servers only.")
+        if any(k.lower() != "authorization" for k in headers):
+            raise ValueError(f"{shown}: only an Authorization header is supported (it becomes the token).")
+        fields = {"transport": "http", "url": url.strip()}
+        secret_keys = [BEARER_KEY] if any(k.lower() == "authorization" for k in headers) else []
+        package = urlsplit(url.strip()).hostname or "mcp"
+    base = _slug(source_key) if source_key else _slug(package)
+    try:
+        server = validate(
+            {
+                "name": _unique(base, taken),
+                "enabled": False,
+                "stages": [],
+                "allowed_tools": [],
+                "approval_required_tools": [],
+                "preset": "",
+                **fields,
+            }
+        )
+    except ValueError as exc:
+        raise ValueError(f"{shown}: {exc}") from None
+    return {"source_key": source_key, "server": server, "secret_keys": secret_keys}
+
+
+def parse_import(text: str) -> list[dict]:
+    """Validated, disabled servers for a pasted command or MCP JSON. Secret values are never returned: each result
+    lists only the secret NAMES (env keys; BEARER_TOKEN for an Authorization header)."""
+    if not isinstance(text, str) or not text.strip():
+        raise ValueError("Paste an npx, uvx or docker command, or an MCP JSON config.")
+    if len(text.encode("utf-8")) > MAX_IMPORT_BYTES:
+        raise ValueError("The pasted text is larger than 100 kB.")
+    body = text.strip()
+    entries = _json_entries(body) if body[0] in "{[" else [("", _command_entry(body))]
+    if len(entries) > MAX_SERVERS:
+        raise ValueError(f"At most {MAX_SERVERS} servers per import.")
+    taken = {s["name"] for s in load()}
+    return [_from_entry(key, entry, taken) for key, entry in entries]

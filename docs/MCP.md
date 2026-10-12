@@ -1,20 +1,23 @@
 # MCP servers
 
-Configuration > **MCP servers** lets you add Model Context Protocol servers (Jira, Playwright, others) and give chosen
-stages their tools. Everything is off until you enable it.
+Marketplace > **MCP servers** lets you add Model Context Protocol servers (Jira, Playwright, others) and give chosen
+stages their tools. Everything is off until you enable it. Configuration links there.
 
 ## Model
 
 `<user-data>/mcp_servers.json` holds, per server: `name` (slug), `transport` (`stdio` | `http`), `command`/`args`
 (stdio), `url` (http; https only, http for localhost), `env_keys` (secret variable NAMES), `enabled`, `stages`
-(default none), `allowed_tools` (auto-approved, read-only) and `approval_required_tools` (human approval), `preset`.
+(default none), `allowed_tools` (auto-approved, read-only) and `approval_required_tools` (human approval), `preset`, and
+`discovered_tools` (`[{name, description}]` from the last successful Test: at most 200 tools, descriptions redacted and
+at most 300 characters). Only Test writes `discovered_tools`; a client-sent value is ignored.
 **No secret values are ever in this file**; unknown fields (such as a pasted token) are rejected.
 
 ## Safety rules
 
 - Only tools listed in `allowed_tools` or `approval_required_tools` are visible to the model (MAF `allowed_tools`);
-  anything else, including tools a server adds later, does not exist for the agent. At most 8 tools per server and 8
-  MCP tools per stage (stage tool budget is 20).
+  anything else, including tools a server adds later, does not exist for the agent. A server may list at most 200 tools
+  (approved + approval-required), but at most 8 MCP tools reach a stage (stage tool budget is 20): a server whose
+  exposed tools would exceed that is skipped in the stage, and the UI warns about it.
 - `allowed_tools` run without asking; `approval_required_tools` use MAF `always_require` approval. After connecting, the
   runtime forces `always_require` on any exposed tool that is not auto-approved.
 - Approval requests are answered by `MAFHarnessRuntime.mcp_approver(stage, [{tool, arguments}]) -> [bool]`. **With no
@@ -61,7 +64,17 @@ REST. The tool must be on the server's auto-approved list (this call bypasses th
 Jira search JSON (`{"issues": [...]}`); sections map exactly as in the REST path. `cloud_id` (`[A-Za-z0-9-]{1,64}`) is passed as the tool's `cloudId` argument, which Atlassian tools require; no other
 arguments can be supplied. Not yet exposed in the UI form.
 
+## Import
+
+`POST /mcp-servers/import` with `{"text": "..."}` accepts a stdio command line (`npx -y <pkg>`, `uvx <pkg>`, `docker run -i --rm <image>`;
+a leading `KEY=value` is a secret) or an MCP JSON config (`mcpServers`, VS Code `servers`, a bare map or a single object).
+stdio and streamable HTTP are supported; SSE is rejected. An `Authorization` header becomes the `BEARER_TOKEN` secret;
+other headers are rejected. Servers are imported disabled with no stages and no tools. The response carries names and
+secret NAMES only (`imported: [{source_key, name, secret_keys}]`, plus `servers`). The import is all or nothing, at most
+20 servers and 100 kB of input.
+
 ## API
 
-`GET /mcp-servers`, `POST /mcp-servers` (upsert), `DELETE /mcp-servers/{name}`, `POST /mcp-servers/{name}/test`
-(connect, list tool names and count), `POST /mcp-servers/{name}/secrets` (body `{KEY: value}`; empty clears).
+`GET /mcp-servers` (also `max_tools_per_server`, `max_tools_per_stage`), `POST /mcp-servers` (upsert), `POST /mcp-servers/import`,
+`DELETE /mcp-servers/{name}`, `POST /mcp-servers/{name}/test` (connect, list tool names and count, store the catalogue),
+`POST /mcp-servers/{name}/secrets` (body `{KEY: value}`; empty clears).

@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+import threading
 from pathlib import Path
 
 import pytest
@@ -57,7 +58,7 @@ def test_stages_match_workflow():
         srv(env_keys=["SSL_CERT_FILE"]),
         srv(env_keys=["JAVA_TOOL_OPTIONS"]),
         srv(allowed_tools=["a"], approval_required_tools=["a"]),
-        srv(allowed_tools=[f"t{i}" for i in range(9)]),
+        srv(allowed_tools=[f"t{i}" for i in range(201)]),
         {"name": "h", "transport": "http", "url": "http://example.com/mcp"},
         {"name": "h", "transport": "http", "url": "https://u:p@example.com/mcp"},
         {"name": "h", "transport": "http", "url": "ftp://example.com"},
@@ -582,3 +583,197 @@ def test_api_test_probe_runs_without_holding_the_api_lock(api):
 
     api.mcp_probe = probe
     assert api.mcp_test("pw")["ok"] is True and lock_was_free == [True]
+
+
+# ---- import (paste a command or MCP JSON) and discovered tools --------------------------------------------------------
+IMPORT_SECRET = "tok-import-0123456789"
+HTTP_TOKEN = "test-authorization-token-32-characters"
+
+
+def test_import_npx_with_windows_path_keeps_backslashes():
+    [item] = mcp_servers.parse_import(r"npx -y @modelcontextprotocol/server-filesystem C:\work")
+    s = item["server"]
+    assert s["name"] == "server-filesystem" and s["command"] == "npx"
+    assert s["args"] == ["-y", "@modelcontextprotocol/server-filesystem", "C:\\work"]
+    assert s["enabled"] is False and s["stages"] == [] and s["allowed_tools"] == []
+    assert item["source_key"] == "" and item["secret_keys"] == []
+
+
+def test_import_uvx_and_docker_names():
+    [uvx] = mcp_servers.parse_import("uvx mcp-server-git --repository .")
+    assert uvx["server"]["name"] == "mcp-server-git" and uvx["server"]["args"] == [
+        "mcp-server-git",
+        "--repository",
+        ".",
+    ]
+    [docker] = mcp_servers.parse_import("docker run -i --rm mcp/fetch")
+    assert docker["server"]["name"] == "fetch" and docker["server"]["command"] == "docker"
+
+
+def test_import_env_assignment_is_a_secret_name_only():
+    [item] = mcp_servers.parse_import(f"API_TOKEN={IMPORT_SECRET} npx -y @playwright/mcp@latest")
+    assert item["server"]["env_keys"] == ["API_TOKEN"] and item["secret_keys"] == ["API_TOKEN"]
+    assert item["server"]["command"] == "npx" and item["server"]["args"] == ["-y", "@playwright/mcp@latest"]
+    assert item["server"]["name"] == "mcp"
+    assert IMPORT_SECRET not in json.dumps(item)
+
+
+def test_import_json_stdio_and_http_returns_names_never_values():
+    config = {
+        "mcpServers": {
+            "files": {"command": "npx", "args": ["-y", "server-x"], "env": {"API_TOKEN": IMPORT_SECRET}},
+            "jira": {
+                "type": "http",
+                "url": "https://mcp.example.com/mcp",
+                "headers": {"Authorization": f"Bearer {IMPORT_SECRET}"},
+            },
+        }
+    }
+    result = mcp_servers.parse_import(json.dumps(config))
+    assert [(i["source_key"], i["server"]["name"], i["secret_keys"]) for i in result] == [
+        ("files", "files", ["API_TOKEN"]),
+        ("jira", "jira", ["BEARER_TOKEN"]),
+    ]
+    assert (
+        result[1]["server"]["transport"] == "http"
+        and result[1]["server"]["url"] == "https://mcp.example.com/mcp"
+    )
+    assert IMPORT_SECRET not in json.dumps(result)
+
+
+def test_import_vscode_bare_map_and_single_object():
+    vscode = {
+        "inputs": [],
+        "servers": {"pw": {"type": "stdio", "command": "npx", "args": ["@playwright/mcp@latest"]}},
+    }
+    assert [i["server"]["name"] for i in mcp_servers.parse_import(json.dumps(vscode))] == ["pw"]
+    bare = {"pw": {"command": "uvx", "args": ["mcp-server-git"]}}
+    assert [i["server"]["name"] for i in mcp_servers.parse_import(json.dumps(bare))] == ["pw"]
+    [single] = mcp_servers.parse_import(json.dumps({"command": "uvx", "args": ["mcp-server-git"]}))
+    assert single["server"]["name"] == "mcp-server-git" and single["source_key"] == ""
+
+
+def test_import_rejects_sse_forbidden_env_and_other_headers():
+    with pytest.raises(ValueError, match="only stdio and streamable HTTP"):
+        mcp_servers.parse_import(
+            json.dumps({"mcpServers": {"old": {"type": "sse", "url": "https://x.example.com/sse"}}})
+        )
+    for entry in (
+        {"command": "node", "env": {"NODE_OPTIONS": "--require ./evil.js"}},
+        {"command": "node", "env": {"PATH": "/tmp"}},
+        {"type": "http", "url": "https://x.example.com/mcp", "headers": {"X-Api": "a"}},
+    ):
+        with pytest.raises(ValueError):
+            mcp_servers.parse_import(json.dumps({"mcpServers": {"x": entry}}))
+
+
+def test_import_duplicate_names_get_suffixes():
+    mcp_servers.upsert(srv(name="fs"))
+    names = [
+        i["server"]["name"]
+        for i in mcp_servers.parse_import(
+            json.dumps({"mcpServers": {"fs": {"command": "x"}, "FS": {"command": "y"}}})
+        )
+    ]
+    assert names == ["fs-2", "fs-3"]
+
+
+def test_import_bad_json_and_oversize_input():
+    with pytest.raises(ValueError, match="not valid JSON"):
+        mcp_servers.parse_import('{"mcpServers": {')
+    with pytest.raises(ValueError, match="100 kB"):
+        mcp_servers.parse_import("npx " + "x" * 100_000)
+    with pytest.raises(ValueError, match="At most 20"):
+        mcp_servers.parse_import(json.dumps({"mcpServers": {f"s{i}": {"command": "x"} for i in range(21)}}))
+
+
+def test_import_route_over_http_never_returns_secret_values(api):
+    from urllib.request import Request, urlopen
+
+    from maf_test_harness.ui.api import make_server
+
+    server = make_server(api, HTTP_TOKEN, 0)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    try:
+        text = json.dumps(
+            {"mcpServers": {"files": {"command": "npx", "args": ["x"], "env": {"API_TOKEN": IMPORT_SECRET}}}}
+        )
+        request = Request(
+            f"http://127.0.0.1:{server.server_port}/mcp-servers/import",
+            data=json.dumps({"text": text}).encode(),
+            headers={"Authorization": f"Bearer {HTTP_TOKEN}", "Content-Type": "application/json"},
+            method="POST",
+        )
+        raw = urlopen(request).read().decode()
+    finally:
+        server.shutdown()
+        server.server_close()
+    assert IMPORT_SECRET not in raw
+    result = json.loads(raw)
+    assert result["imported"] == [{"source_key": "files", "name": "files", "secret_keys": ["API_TOKEN"]}]
+    assert (
+        result["servers"][0]["secrets"] == {"API_TOKEN": False} and result["servers"][0]["enabled"] is False
+    )
+
+
+def test_probe_catalogue_is_redacted_and_capped(monkeypatch):
+    class Fn:
+        def __init__(self, name, description):
+            self.name, self.description, self.additional_properties = name, description, {}
+
+    class Tool:
+        functions = [
+            Fn("browser_snapshot", "Snapshot. Authorization: Bearer abcdefghijklmnopqrstuvwxyz " + "x" * 400)
+        ]
+
+        async def connect(self):
+            pass
+
+        async def close(self):
+            pass
+
+    monkeypatch.setattr(mcp_servers, "build_tool", lambda server, **_: Tool())
+    result = asyncio.run(mcp_servers.probe(srv()))
+    [entry] = result["catalog"]
+    assert result["tools"] == ["browser_snapshot"] and entry["name"] == "browser_snapshot"
+    assert "abcdefghijklmnopqrstuvwxyz" not in entry["description"] and len(entry["description"]) <= 300
+
+
+def test_discovered_tools_persist_after_test_and_survive_save(api):
+    api.mcp_save(srv())
+
+    async def probe(server):
+        return {
+            "tools": ["browser_snapshot", "browser_click"],
+            "count": 2,
+            "catalog": [
+                {"name": "browser_snapshot", "description": "Read the page"},
+                {"name": "browser_click", "description": "Click"},
+            ],
+        }
+
+    api.mcp_probe = probe
+    assert api.mcp_test("pw") == {"ok": True, "tools": ["browser_snapshot", "browser_click"], "count": 2}
+    stored = mcp_servers.get("pw")["discovered_tools"]
+    assert stored == [
+        {"name": "browser_snapshot", "description": "Read the page"},
+        {"name": "browser_click", "description": "Click"},
+    ]
+    view = api.mcp_save(srv(allowed_tools=["browser_snapshot"], discovered_tools=[{"name": "forged"}]))
+    assert view["discovered_tools"] == stored  # a client-sent catalogue is ignored, the stored one survives
+    assert api.mcp_list()["servers"][0]["discovered_tools"] == stored
+
+
+def test_old_config_without_discovered_tools_loads_and_catalogue_is_capped():
+    mcp_servers.upsert(srv())
+    path = mcp_servers.config_path()
+    raw = json.loads(path.read_text(encoding="utf-8"))
+    for item in raw["servers"]:
+        item.pop("discovered_tools", None)
+    path.write_text(json.dumps(raw), encoding="utf-8")
+    [server] = mcp_servers.load()
+    assert server["name"] == "pw" and server["discovered_tools"] == []
+    mcp_servers.set_discovered("pw", [{"name": f"t{i}", "description": ""} for i in range(250)])
+    assert len(mcp_servers.get("pw")["discovered_tools"]) == mcp_servers.MAX_DISCOVERED_TOOLS == 200
+    mcp_servers.validate(srv(allowed_tools=[f"t{i}" for i in range(200)]))  # the listed cap is 200
+    assert mcp_servers.MAX_MCP_TOOLS_PER_STAGE == 8
