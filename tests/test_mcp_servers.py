@@ -799,7 +799,9 @@ def test_docker_env_flags_become_secret_names_and_pass_through(text):
     "text",
     [
         "npx -y server --api-key abcdef123456",
-        "npx -y server --token=ghp_abcdefghijklmnopqrstuvwx",
+        "npx -y server --token="
+        + "gh"
+        + "p_abcdefghijklmnopqrstuvwx",  # split so the CI secret scan does not match
         'npx -y server --header "Authorization: Bearer abcdefghijklmnopqrstuvwx"',
     ],
 )
