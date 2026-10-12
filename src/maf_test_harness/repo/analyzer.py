@@ -424,6 +424,9 @@ def _commit_sha(root: Path) -> str | None:
         return None
 
 
+MAX_TRACKED_FILES = 20_000  # the plan reviewer's evidence check reads this list; bounds the stored artifact
+
+
 def analyze_repository(root: Path, repo_url: str, repo_name: str | None = None) -> RepoAnalysis:
     root = root.resolve()
     clear_self_rooted_cache()  # its key is the file list; a new analysis may see the same list with new contents
@@ -478,6 +481,7 @@ def analyze_repository(root: Path, repo_url: str, repo_name: str | None = None) 
         file_count=len(relative),
         source_file_count=source_count,
         source_files=sorted(rel for rel in relative if Path(rel).suffix.lower() in SOURCE_SUFFIXES),
+        tracked_files=sorted(relative)[:MAX_TRACKED_FILES],
         languages=dict(language_counts.most_common()),
         frameworks=frameworks,
         package_files=package_files[:80],

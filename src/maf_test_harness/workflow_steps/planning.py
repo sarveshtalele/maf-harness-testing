@@ -10,7 +10,7 @@ from uuid import uuid4
 from pydantic import ValidationError
 
 from ..agent import prompt_settings
-from ..agent.personas import persona_instructions
+from ..agent.personas import REVIEWER_ROLES, persona_instructions
 from ..agent.runtime import STAGE_AUTHOR, AgentOutputError, GatewayUnavailableError
 from ..envs.environment import build_environment_plan
 from ..envs.setup_guide import setup_guide
@@ -22,6 +22,7 @@ from ..models import (
     TestDesignDraft,
     TestPlan,
 )
+from ..qa.confidence import ConfidenceReviewerUnavailable
 from ..qa.controls import add_plan_controls, case_controls, plan_controls
 from ..qa.quality import existing_requirement_witnesses, existing_test_evidence
 from ..qa.report import design_cases
@@ -32,6 +33,7 @@ from ..run_options import restrict_levels
 from ..settings import (
     EXECUTION_TIMEOUT_SECONDS,
 )
+from ..settings import current as current_settings
 from ..skills.config import skills_for
 from ..skills.contracts import (
     expand_generated_lines,
@@ -51,21 +53,46 @@ from ..workflow_support import (
     atomic_json,
     case_budget,
 )
-from . import design_review
+from . import design_review, plan_review
 from .design import design_tests_batched
 from .planning_batches import plan_tests_batched, planning_is_batched
+
+LINK_KEY = "link"  # coverage keys: requirement links and control IDs a design attempt keeps
+
+
+def _model_for(stage: str) -> str | None:
+    """The model a stage call uses: the stage override from settings, else the default model."""
+    try:
+        current = current_settings()
+        return current["stage_models"].get(stage) or current["model"]
+    except (
+        KeyError,
+        TypeError,
+        ValueError,
+    ):  # unreadable settings must not stop a call; the ledger records no model
+        return None
 
 
 class PlanningSteps:
     async def _call_model(self, *, stage, persona, prompt, state, **kwargs):
         settings = prompt_settings.load(self.run_dir / "prompts.json")
         role = kwargs.pop("role", None)
-        if not role:
+        reviewer = role in REVIEWER_ROLES
+        override_sha = None
+        if reviewer:
+            # A reviewer's editable persona text comes first; the caller's detected-stack block follows. The user's
+            # repository guidance is never added to a reviewer (it is unverified and would weaken independence).
+            text = settings["personas"][role]
+            if text != prompt_settings.defaults()["personas"][role]:
+                override_sha = hashlib.sha256(text.encode("utf-8")).hexdigest()
+            persona = text + "\n\n" + persona
+        elif not role:
             persona = settings["personas"].get(stage, persona)
         batch = kwargs.pop("prompt_batch", None)
         key = f"{stage}:{batch}" if batch is not None else stage
-        prompt = settings["overrides"].get(key) or prompt
-        if settings["repository_prompt"]:
+        if not reviewer:  # whole-prompt overrides are for authors; a reviewer's prompt is never replaced
+            prompt = settings["overrides"].get(key) or prompt
+        if settings["repository_prompt"] and not reviewer:
             persona += "\n\nUSER REPOSITORY REVIEW GUIDANCE:\n" + settings["repository_prompt"]
         identifier = uuid4().hex
         folder = self.run_dir / "prompts"
@@ -88,7 +115,7 @@ class PlanningSteps:
         atomic_json(folder / f"{identifier}.json", record)
         self.save()
         try:
-            return await self.runtime.run_stage(
+            result = await self.runtime.run_stage(
                 stage=stage, persona=persona, prompt=prompt, state=state, role=role or STAGE_AUTHOR, **kwargs
             )
         finally:
@@ -102,6 +129,15 @@ class PlanningSteps:
                 if name
             ]
             atomic_json(folder / f"{identifier}.json", record)
+        # The call's identity, so a score in the confidence ledger can point at the exact prompt and persona.
+        call = {
+            "prompt_record_id": identifier,
+            "prompt_sha256": record["sha256"],
+            "persona_sha256": hashlib.sha256(persona.encode("utf-8")).hexdigest(),
+            "persona_override_sha256": override_sha,
+            "model": _model_for(stage),
+        }
+        return {**result, **call} if isinstance(result, dict) else result
 
     def _settle_response_cache(self, stage, validated: bool, role: str | None = None) -> None:
         """Tell the runtime whether the host accepted the last answer of this stage and role (only accepted ones are
@@ -260,8 +296,11 @@ class PlanningSteps:
                 {a["name"] for a in requirements["actors"]} | {"System"}
             )
         evidence_paths = re.findall(r"--- FILE: (.*?) ---", state.get("evidence", ""))
-        repair = ""
-        review_repaired = False
+        gate_key = f"{stage}:{prompt_batch}" if prompt_batch is not None else stage
+        # The reviewer feedback of the last gate failure is the first repair of the next attempt (Retry included).
+        repair = str((state.get("gate_feedback") or {}).get(gate_key) or "")
+        # Coverage the design must keep across repairs (keep or replace, never drop).
+        covered_before: set[str] = set()
         for attempt in range(1, MODEL_REPAIR_ATTEMPTS + 1):
             prompt = build_prompt(
                 {
@@ -431,19 +470,78 @@ class PlanningSteps:
                     "complete JSON object that fixes exactly this problem and keeps everything else valid."
                 )
                 continue
-            if stage == "test_design" and design_review.enabled():
-                reviews = await design_review.review_design_cases(
-                    self, state, design_cases(artifact), prompt_batch or 0
-                )
-                weak = design_review.flagged(reviews, state)
-                if weak and not review_repaired and attempt < MODEL_REPAIR_ATTEMPTS:
-                    review_repaired = True  # one reviewer-driven repair per batch, then keep and mark
-                    self.audit("design_review_repair", stage=stage, batch=prompt_batch, cases=len(weak))
-                    repair = design_review.repair_feedback(weak)
+            if stage == "test_design":
+                # A repair must keep every requirement link and control that an earlier attempt covered.
+                coverage = _design_coverage(artifact)
+                dropped = sorted(covered_before - coverage)
+                covered_before |= coverage
+                if dropped:
+                    self._settle_response_cache(stage, False)
+                    self.audit(
+                        "design_repair_dropped_coverage", stage=stage, batch=prompt_batch, dropped=dropped
+                    )
+                    message = (
+                        "Repair dropped coverage that an earlier attempt had: "
+                        + ", ".join(dropped)
+                        + ". Keep or replace, do not delete: every requirement and control covered before must keep "
+                        "a case that links it."
+                    )
+                    if attempt == MODEL_REPAIR_ATTEMPTS:
+                        raise ValueError(message)
+                    repair = message
                     continue
+            if stage == "test_planning":
+                try:
+                    reviews = await plan_review.review_plan_areas(self, state, artifact, prompt_batch or 0)
+                except ConfidenceReviewerUnavailable:
+                    self._settle_response_cache(stage, False)
+                    if plan_review.gate_on(state):
+                        raise  # an outage is not a low score: no author repair attempts are spent
+                    self.audit(
+                        "plan_review_advisory", stage=stage, batch=prompt_batch, note="reviewer unavailable"
+                    )
+                    reviews = None
+                if reviews is not None:
+                    weak = plan_review.weak_areas(reviews, artifact, state)
+                    if weak and attempt < MODEL_REPAIR_ATTEMPTS:
+                        self.audit("plan_review_repair", stage=stage, batch=prompt_batch, areas=len(weak))
+                        repair = plan_review.repair_feedback(weak)
+                        continue
+                    if weak and plan_review.gate_on(state):
+                        self._settle_response_cache(stage, False)
+                        self._keep_gate_feedback(state, gate_key, plan_review.repair_feedback(weak))
+                        raise ValueError(plan_review.gate_message(weak, len(artifact["areas"]), state))
+            if stage == "test_design" and design_review.enabled():
+                cases = design_cases(artifact)
+                try:
+                    reviews = await design_review.review_design_cases(self, state, cases, prompt_batch or 0)
+                except ConfidenceReviewerUnavailable:
+                    self._settle_response_cache(stage, False)
+                    if design_review.gate_on(state):
+                        raise
+                    self.audit(
+                        "design_review_advisory", stage=stage, batch=prompt_batch, note="reviewer unavailable"
+                    )
+                    reviews = None
+                if reviews is not None:
+                    weak = design_review.weak_cases(reviews, cases, state)
+                    if weak and attempt < MODEL_REPAIR_ATTEMPTS:
+                        self.audit("design_review_repair", stage=stage, batch=prompt_batch, cases=len(weak))
+                        repair = design_review.repair_feedback(weak)
+                        continue
+                    if weak and design_review.gate_on(state):
+                        self._settle_response_cache(stage, False)
+                        self._keep_gate_feedback(state, gate_key, design_review.repair_feedback(weak))
+                        raise ValueError(design_review.gate_message(weak, len(cases), state))
             self._settle_response_cache(stage, True)
+            (state.get("gate_feedback") or {}).pop(gate_key, None)
             break
         return artifact
+
+    def _keep_gate_feedback(self, state: dict, key: str, feedback: str) -> None:
+        """Persist the last gate failure's reviewer feedback: the next attempt (after Retry too) repairs with it."""
+        state.setdefault("gate_feedback", {})[key] = feedback[:4000]
+        self.save()
 
     async def validate(self, stage, state, requirements_source=None):
 
@@ -510,7 +608,9 @@ class PlanningSteps:
             if isinstance(draft, dict):
                 draft = {k: v for k, v in draft.items() if k != "controls"}
                 draft["areas"] = [
-                    {k: v for k, v in area.items() if k != "area_id"} if isinstance(area, dict) else area
+                    {k: v for k, v in area.items() if k not in {"area_id", "origins"}}
+                    if isinstance(area, dict)
+                    else area
                     for area in draft.get("areas") or []
                 ]
             plan = TestPlan.model_validate(draft)
@@ -591,3 +691,11 @@ class PlanningSteps:
                 "completion_note": "Generation and static traceability validation complete. Each descriptive test ID is mapped to exactly one generated test file; tests were not executed.",
             }
         raise ValueError(f"Unsupported validation stage: {stage}")
+
+
+def _design_coverage(design: dict) -> set[str]:
+    """What a design attempt covers by case linkage: every traceability link ID and every control ID of its cases."""
+    cases = design_cases(design)
+    return {
+        f"{LINK_KEY}:{link.get('id')}" for case in cases for link in case.get("traceability_links", [])
+    } | {f"control:{control}" for case in cases for control in case.get("control_ids", [])}

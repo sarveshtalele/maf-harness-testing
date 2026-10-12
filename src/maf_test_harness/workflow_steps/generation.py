@@ -13,7 +13,7 @@ from ..envs import Provisioned
 from ..envs.platform_compat import raise_if_cancelled
 from ..llm.prompts import generation_prompt
 from ..models import GeneratedFilesDraft
-from ..qa.confidence import review_accepted, verification_note
+from ..qa.confidence import ConfidenceReviewerUnavailable, review_accepted, verification_note
 from ..qa.quality import (
     existing_requirement_witnesses,
     existing_test_evidence,
@@ -36,7 +36,7 @@ from ..settings import (
     AUTOFIX,
     BUILD_GATE,
     MAX_FAILED_BATCH_RATIO,
-    REQUIRE_FULL_ACCURACY,
+    full_accuracy,
     test_review_threshold,
 )
 from ..skills.config import skills_for
@@ -134,7 +134,7 @@ class GenerationSteps:
 
         total_batches = (len(cases) + TEST_GENERATION_BATCH_SIZE - 1) // TEST_GENERATION_BATCH_SIZE
         # Greenfield runs without application code have no source to review against, so the gate cannot apply.
-        gate_on = REQUIRE_FULL_ACCURACY and not has_no_code(state)
+        gate_on = full_accuracy(state) and not has_no_code(state)
         verification_rounds: dict[str, int] = {}
         # Reviews recorded before this run (an earlier attempt, a revise or a rerun) are not evidence for it.
         review_scope = len(state.get("test_reviews", []))
@@ -493,8 +493,8 @@ class GenerationSteps:
                     break
                 except Exception as exc:
                     self._settle_response_cache("test_generation", False)
-                    if isinstance(exc, GatewayUnavailableError):
-                        raise  # gateway down, not a bad batch: stop now; Retry resumes from the cached batches
+                    if isinstance(exc, GatewayUnavailableError | ConfidenceReviewerUnavailable):
+                        raise  # gateway or reviewer down, not a bad batch: stop now; Retry resumes from the cached batches
                     repair_feedback = (
                         f"Attempt {attempt} failed generation or static validation: {exc}. "
                         + (f"HOW TO FIX: {remedy_for(str(exc))} " if remedy_for(str(exc)) else "")

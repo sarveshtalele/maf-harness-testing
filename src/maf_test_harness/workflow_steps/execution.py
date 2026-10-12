@@ -18,6 +18,7 @@ from ..hooks import (
     ON_ENV_ERROR,
     ON_EXEC_ERROR,
 )
+from ..qa import ledger
 from ..qa.report import build_qa_report, render_markdown
 from ..qa.step_reports import run_completed_at
 from ..qa.triage import remedy_for
@@ -58,6 +59,7 @@ class ExecutionSteps:
                 "status": state.get("environment", {}).get("status"),
             },
             plan=arts.get("test_planning"),
+            confidence=ledger.entries(self.run_dir),
             provenance={
                 "runtime": state.get("runtime_provenance"),
                 "skills": state.get("skill_provenance"),

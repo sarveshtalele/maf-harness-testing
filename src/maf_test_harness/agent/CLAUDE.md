@@ -4,7 +4,7 @@ Builds MAF agents and runs one stage call at a time with budget, trace, hook and
 
 ## Key files
 - `runtime.py`: `MAFHarnessRuntime` (`run_stage`, `run_tool_agent`), `BudgetGuard`, `ToolTraceMiddleware`, `extract_json_object`, `response_cache_dir`, `AgentOutputError`.
-- `personas.py`: `PERSONAS` (stage -> `AgentPersona`), `persona_instructions`, `chief_architect_persona` (design review).
+- `personas.py`: `PERSONAS` (stage -> `AgentPersona`), `persona_instructions`, `REVIEWER_ROLES` and `PERSONA_LABELS` (`plan_reviewer`, `design_reviewer`, `test_reviewer` are editable confidence reviewers; `stack_expertise` is the detected-stack block the host appends), `chief_architect_persona` (kept for tests).
 - `prompt_settings.py`: user-editable prompt templates (`defaults`, `validate`, `load`, `save`); a run snapshots them in `prompts.json`.
 - `diagnosis.py`: `DiagnosisNote`, `diagnosis_prompt`; LLM helper used only after deterministic recovery failed.
 

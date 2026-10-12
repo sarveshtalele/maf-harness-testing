@@ -146,14 +146,23 @@ def test_review_threshold(state: dict | None = None) -> int:
 
 # Import-time alias kept for modules that still read the test gate as a constant (new code uses the resolver).
 TEST_REVIEW_MIN_CONFIDENCE = review_threshold("test")
-# Full-accuracy gate (default on): every designed case must be generated and accepted before execution can start.
-# Off restores the fail-soft behaviour, where failed or unverified cases run and report generation_failed.
-REQUIRE_FULL_ACCURACY = os.getenv("HARNESS_REQUIRE_FULL_ACCURACY", "1").strip().lower() not in {
-    "0",
-    "false",
-    "off",
-    "no",
-}
+
+
+def full_accuracy(state: dict | None = None) -> bool:
+    """Full-accuracy gate (default on): every designed case must be generated and accepted before execution can start.
+    Off restores the fail-soft behaviour (failed or unverified cases run and report generation_failed; reviewer gates
+    turn advisory). A run's own ``require_full_accuracy`` wins over ``HARNESS_REQUIRE_FULL_ACCURACY``, read at call time."""
+    value = (state or {}).get("require_full_accuracy")
+    if isinstance(value, bool):
+        return value
+    return os.getenv("HARNESS_REQUIRE_FULL_ACCURACY", "1").strip().lower() not in {"0", "false", "off", "no"}
+
+
+def design_review_enabled() -> bool:
+    """HARNESS_DESIGN_REVIEW=0 turns the design confidence reviewer, and its gate, off."""
+    return os.getenv("HARNESS_DESIGN_REVIEW", "1").strip().lower() not in {"0", "false", "off", "no"}
+
+
 # Targeted regeneration rounds for cases still unverified before the gate blocks (clamped to 0-5).
 ACCURACY_ROUNDS = max(0, min(5, int(os.getenv("HARNESS_ACCURACY_ROUNDS", "2"))))
 

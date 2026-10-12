@@ -23,6 +23,7 @@ STAGE_ORDER = (
     "assignment",
     "output_contract",
     "json_rules",
+    "rubric",
     "repository",
     "stack_profile",
     "live_app",
@@ -31,6 +32,9 @@ STAGE_ORDER = (
     "traceability_rule",
     # Per batch from here on: this batch's requirements, evidence, tests and allowed IDs.
     "approved_inputs",
+    "plan_areas",
+    "controls",
+    "repository_files",
     "repository_evidence",
     "existing_tests",
     "existing_test_witnesses",

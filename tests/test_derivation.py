@@ -453,7 +453,7 @@ def test_line_number_prefixes_are_stripped_inside_quotes_too():
         "value": "3",
         "steps": "s",
         "source_quote": "1: def f(a): 2: return a + 1",
-        "fixture_quote": "f(2)",
+        "fixture_quote": "assert f(2) == 3",
     }
     status = derivation_status(
         slots=slots,

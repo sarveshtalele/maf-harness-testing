@@ -9,18 +9,25 @@ from .. import paths
 from ..storage import atomic_json
 from .personas import PERSONAS
 
+REVIEWER_KEYS = tuple(key for key in PERSONAS if key.endswith("_reviewer"))
+
+
+def _builtin_personas() -> dict[str, str]:
+    return {stage: persona.instructions() for stage, persona in PERSONAS.items()}
+
 
 def defaults() -> dict:
     example = paths.prompts_dir() / "repository-review.md"
     persona_file = paths.prompts_dir() / "personas.json"
-    personas = (
-        json.loads(persona_file.read_text(encoding="utf-8"))
-        if persona_file.is_file()
-        else {stage: persona.instructions() for stage, persona in PERSONAS.items()}
-    )
-    if set(personas) != set(PERSONAS) or not all(
-        isinstance(value, str) and value.strip() for value in personas.values()
-    ):
+    personas = _builtin_personas()
+    if persona_file.is_file():
+        # A user file from before a stage existed (for example the reviewer personas) keeps its own texts and gets the
+        # built-in text for every missing stage; an unknown stage or an empty text is still refused.
+        stored = json.loads(persona_file.read_text(encoding="utf-8"))
+        if not isinstance(stored, dict) or set(stored) - set(PERSONAS):
+            raise ValueError("Persona file may contain only configured stages.")
+        personas.update(stored)
+    if not all(isinstance(value, str) and value.strip() for value in personas.values()):
         raise ValueError(
             "Default persona file must contain every configured stage with nonempty instructions."
         )
@@ -29,6 +36,13 @@ def defaults() -> dict:
         "personas": personas,
         "overrides": {},
     }
+
+
+def _targets_reviewer(key: str) -> bool:
+    """True for an override that would replace a reviewer call: a reviewer stage, or a reviewer batch (review-, plan-review-,
+    recheck-) of any stage. Reviewer answers are judged against the host's own prompt, so they cannot be overridden."""
+    stage, _, batch = str(key).partition(":")
+    return stage in REVIEWER_KEYS or batch.startswith(("review-", "plan-review-", "recheck-"))
 
 
 def validate(value: dict) -> dict:
@@ -42,6 +56,8 @@ def validate(value: dict) -> dict:
         if not isinstance(values, dict):
             raise ValueError(f"{field} must be a prompt mapping.")
         for key, text in values.items():
+            if field == "overrides" and _targets_reviewer(key):
+                raise ValueError("Whole-prompt overrides cannot target a confidence reviewer.")
             if (
                 (key not in PERSONAS if field == "personas" else key.split(":")[0] not in PERSONAS)
                 or not isinstance(text, str)
@@ -54,7 +70,13 @@ def validate(value: dict) -> dict:
 
 
 def load(path: Path) -> dict:
-    return validate(json.loads(path.read_text(encoding="utf-8"))) if path.is_file() else defaults()
+    """Stored settings. An override that targets a reviewer (written before the restriction) is dropped, not fatal."""
+    if not path.is_file():
+        return defaults()
+    raw = json.loads(path.read_text(encoding="utf-8"))
+    if isinstance(raw, dict) and isinstance(raw.get("overrides"), dict):
+        raw = {**raw, "overrides": {k: v for k, v in raw["overrides"].items() if not _targets_reviewer(k)}}
+    return validate(raw)
 
 
 def save(path: Path, value: dict) -> dict:

@@ -107,7 +107,13 @@ from .workflow_support import (
 
 RUN_LOCK_TIMEOUT = 5  # seconds; another process holding the run must not block this one forever
 # Run-level settings edited from the UI (ui/api.py set_case_budget / rename_run) that must survive gate resumes.
-RUN_OVERRIDE_KEYS = ("case_budget", "run_name", "confidence_thresholds")
+RUN_OVERRIDE_KEYS = (
+    "case_budget",
+    "run_name",
+    "confidence_thresholds",
+    "require_full_accuracy",
+    "ledger_epoch",  # a rerun-from-step bumps it; gate resumes must keep the new epoch
+)
 
 
 @contextmanager
@@ -307,6 +313,7 @@ class Harness(RerunSteps, ExecutionSteps, GenerationSteps, GreenfieldSteps, Plan
         case_budget: int | None = None,
         run_name: str | None = None,
         confidence_thresholds: dict | None = None,
+        require_full_accuracy: bool | None = None,
         run_mode: str = "brownfield",
         test_types: list[str] | None = None,
         spec_sources: dict | None = None,
@@ -390,6 +397,13 @@ class Harness(RerunSteps, ExecutionSteps, GenerationSteps, GreenfieldSteps, Plan
             "app_component": app_component,
             **({"case_budget": {"per_requirement": case_budget}} if case_budget else {}),
             **({"confidence_thresholds": dict(confidence_thresholds)} if confidence_thresholds else {}),
+            # Per-run full-accuracy gate; absent means HARNESS_REQUIRE_FULL_ACCURACY decides (settings.full_accuracy).
+            **(
+                {"require_full_accuracy": bool(require_full_accuracy)}
+                if require_full_accuracy is not None
+                else {}
+            ),
+            "ledger_epoch": 0,
             "stages": self.stages,
             "artifacts": {},
             "revisions": {},

@@ -6,25 +6,30 @@ caps the case. A verified derivation that disagrees with the asserted literal is
 revealed; only a confirmed disagreement caps the case (40). Reviewer mistakes are charged to the reviewer.
 """
 
-from ..agent.personas import chief_architect_persona
-from ..agent.runtime import AgentOutputError
+from ..agent.personas import stack_expertise
+from ..agent.runtime import AgentOutputError, GatewayUnavailableError
 from ..llm.prompts import generation_prompt
 from ..models import DerivationRecheckDraft, TestReviewDraft
 from ..qa.confidence import (
     RUBRIC,
+    ConfidenceReviewerUnavailable,
+    confident_target,
     derivation_findings,
     derivation_problems,
     derivation_status,
     resolve_target,
     review_accepted,
+    reviewer_unavailable,
     score_review,
     settle_deterministic,
     verification_note,
 )
 from ..qa.derivation import deterministic_findings, mask_expected_literals
+from ..qa.ledger import append_score
 from ..repo.analyzer import build_repository_evidence, extract_target_sources
-from ..settings import test_review_threshold
+from ..settings import full_accuracy, test_review_threshold
 from ..workflow_support import MODEL_REPAIR_ATTEMPTS
+from .greenfield import has_no_code
 
 TARGET_BUDGET = 28_000  # the old 24k shared budget plus a modest margin; method bodies are always sent
 DERIVATION_RETRIES = 2  # format repairs the reviewer gets before the host applies its derivation caps
@@ -45,14 +50,15 @@ def _case_source(
     return found
 
 
-def _confident_target(target: str) -> bool:
-    resolved = resolve_target(target)
-    return resolved is not None and resolved.kind != "route"
+def _exists(root, path: str) -> bool:
+    """A reviewer-cited source file that is really present in the analysed repository (no symlink escape)."""
+    target = root / path
+    return not target.is_symlink() and target.resolve().is_relative_to(root) and target.is_file()
 
 
 def _source_found(root, target: str, source_files: list[str]) -> bool:
     """Only a confident code symbol needs source (routes and free-text targets are not caps-checked against it)."""
-    if not _confident_target(target):
+    if not confident_target(target):
         return True
     return bool(_case_source(root, target, source_files))
 
@@ -92,7 +98,7 @@ def _case_views(cid: str, case_target: dict[str, str], slots, candidate, masked_
         "source": target_texts.get(target, ""),
         "content": "\n".join(f["content"] for f in candidate["files"] if cid in f["case_ids"]),
         "masked": "\n".join(f["content"] for f in masked_files if cid in f["case_ids"]),
-        "require_source": _confident_target(target),
+        "require_source": confident_target(target),
     }
 
 
@@ -114,7 +120,7 @@ def _format_problems(reviews, slots, case_target, target_texts, candidate, maske
 
 
 async def _recheck_mismatches(
-    host, *, state, reviews, slots, case_target, target_texts, candidate, masked_files, persona, batch
+    host, *, state, reviews, slots, case_target, target_texts, candidate, masked_files, persona, batch, calls
 ):
     """Re-ask once for verified derivations that disagree with the literal, with the literal revealed."""
     flagged: dict[str, str] = {}
@@ -178,9 +184,14 @@ async def _recheck_mismatches(
             persist=host.save,
             response_format=DerivationRecheckDraft,
         )
+        calls.append(result)
         if result.get("status") != "completed":
             raise ValueError("Derivation re-check did not complete.")
         answers = DerivationRecheckDraft.model_validate(result["artifact"]).model_dump()["derivations"]
+    except GatewayUnavailableError as exc:
+        raise reviewer_unavailable(
+            "generated tests", f"re-check gateway unreachable: {str(exc)[:300]}"
+        ) from exc
     except (ValueError, AgentOutputError) as exc:
         host.audit(
             "test_reviewer_recheck_skipped", stage="test_generation", batch=batch, error=str(exc)[:300]
@@ -206,6 +217,20 @@ async def _recheck_mismatches(
     return reviews
 
 
+def _reviewer_down(host, state: dict, batch, error: ConfidenceReviewerUnavailable) -> list:
+    """An unavailable reviewer is not a low score. Gate on: the stage stops with the distinct error at once (author
+    repairs are not spent). Gate off: advisory, the batch's cases stay unreviewed and the audit keeps the note."""
+    if full_accuracy(state) and not has_no_code(state):
+        host.audit("test_reviewer_unavailable", stage="test_generation", batch=batch, error=str(error)[:300])
+        host.save()
+        raise error
+    host.audit(
+        "test_reviewer_unavailable_advisory", stage="test_generation", batch=batch, error=str(error)[:300]
+    )
+    host.save()
+    return []
+
+
 async def review_generated_tests(host, state, candidate, cases, batch, partial_ok: bool = False):
     """Review each case; raise on any rejection unless partial_ok (last attempt), which returns every review."""
     requirements = state["artifacts"].get("requirements", {})
@@ -228,8 +253,9 @@ async def review_generated_tests(host, state, candidate, cases, batch, partial_o
     )
     # Blind derivation: each assertion's right-hand literal is masked as «E<n>» and the expected values are withheld.
     masked_files, slots = mask_expected_literals(candidate["files"])
+    # The reviewer's editable persona (PERSONAS["test_reviewer"]) is prepended by the model call; this is the detected stack.
     persona = (
-        chief_architect_persona(
+        stack_expertise(
             state.get("stack"),
             state["artifacts"].get("repo_analysis", {}).get("languages"),
             state["artifacts"].get("repo_analysis", {}).get("frameworks", ()),
@@ -263,6 +289,7 @@ async def review_generated_tests(host, state, candidate, cases, batch, partial_o
     repair = None
     contract_attempts = 0
     format_retries = 0
+    calls: list[dict] = []  # every reviewer call behind this batch's scores, for the confidence ledger
     while True:
         contract_attempts += 1
         try:
@@ -278,6 +305,7 @@ async def review_generated_tests(host, state, candidate, cases, batch, partial_o
                 persist=host.save,
                 response_format=TestReviewDraft,
             )
+            calls.append(result)
             if result.get("status") != "completed":
                 raise ValueError("Independent test reviewer did not produce a completed review.")
             reviews = TestReviewDraft.model_validate(result["artifact"]).model_dump()["reviews"]
@@ -288,12 +316,7 @@ async def review_generated_tests(host, state, candidate, cases, batch, partial_o
                 )
             for review in reviews:
                 for path in review["source_files"]:
-                    target = root / path
-                    if (
-                        target.is_symlink()
-                        or not target.resolve().is_relative_to(root)
-                        or not target.is_file()
-                    ):
+                    if not _exists(root, path):
                         raise ValueError(
                             f"Reviewer cited unavailable source: {path}. Cite existing implementation paths from repository_evidence, not generated test paths."
                         )
@@ -316,6 +339,14 @@ async def review_generated_tests(host, state, candidate, cases, batch, partial_o
                 _settle(host, False)
                 continue
             break
+        except GatewayUnavailableError as exc:
+            _settle(host, False)
+            return _reviewer_down(
+                host,
+                state,
+                batch,
+                reviewer_unavailable("generated tests", f"gateway unreachable: {str(exc)[:400]}"),
+            )
         except (ValueError, AgentOutputError) as exc:
             repair = str(exc)
             host.audit(
@@ -328,20 +359,32 @@ async def review_generated_tests(host, state, candidate, cases, batch, partial_o
             host.save()
             _settle(host, False)
             if contract_attempts == MODEL_REPAIR_ATTEMPTS:
-                raise
+                return _reviewer_down(
+                    host,
+                    state,
+                    batch,
+                    reviewer_unavailable(
+                        "generated tests",
+                        f"returned no usable review after {MODEL_REPAIR_ATTEMPTS} attempts: {repair}",
+                    ),
+                )
     _settle(host, True)
-    reviews = await _recheck_mismatches(
-        host,
-        state=state,
-        reviews=reviews,
-        slots=slots,
-        case_target=case_target,
-        target_texts=target_texts,
-        candidate=candidate,
-        masked_files=masked_files,
-        persona=persona,
-        batch=batch,
-    )
+    try:
+        reviews = await _recheck_mismatches(
+            host,
+            state=state,
+            reviews=reviews,
+            slots=slots,
+            case_target=case_target,
+            target_texts=target_texts,
+            candidate=candidate,
+            masked_files=masked_files,
+            persona=persona,
+            batch=batch,
+            calls=calls,
+        )
+    except ConfidenceReviewerUnavailable as error:
+        return _reviewer_down(host, state, batch, error)
     scored = []
     for review in reviews:
         cid = review["case_id"]
@@ -388,6 +431,35 @@ async def review_generated_tests(host, state, candidate, cases, batch, partial_o
             )
         )
     reviews = scored
+    threshold = test_review_threshold(state)
+    gate = "hard" if full_accuracy(state) and not has_no_code(state) else "advisory"
+    case_controls = {str(c["id"]): c.get("control_ids") or [] for c in cases}
+    for review in reviews:
+        append_score(
+            host.run_dir,
+            kind="test",
+            subject_id=review["case_id"],
+            control_ids=case_controls.get(review["case_id"], []),
+            batch=batch,
+            scored={
+                "scores": review["scores"],
+                "points": review["model_score"],
+                "caps": review["caps"],
+                "notes": review["notes"],
+                "confidence": review["confidence"],
+                "verdict": review["verdict"],
+                "reason": review["reason"],
+                "accepted": review_accepted(review, threshold),
+                "derivations": review.get("derivations", []),
+                "evidence": [
+                    {"quote": path, "exists": _exists(root, path)} for path in review["source_files"]
+                ],
+            },
+            threshold=threshold,
+            calls=calls,
+            gate=gate,
+            epoch=int(state.get("ledger_epoch") or 0),
+        )
     rejected = [r for r in reviews if not review_accepted(r, test_review_threshold(state))]
     host.audit("test_reviewer_result", stage="test_generation", batch=batch, reviews=reviews)
     state.setdefault("test_reviews", []).append({"batch": batch, "reviews": reviews})

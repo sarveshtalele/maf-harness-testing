@@ -110,13 +110,13 @@ export function ErrorsView() {
   const counts = run.errors?.counts ?? {};
   const data = items.filter(e => !category || e.category === category).map(e => {
     const ids = Array.isArray(e.case_ids) ? e.case_ids.map(value => text(value)) : [];
-    return { time: e.at ? new Date(text(e.at)).toLocaleString() : '—', stage: label(e.stage), batch: e.batch == null ? '—' : text(e.batch), cases: ids.slice(0, 2).join(', ') + (ids.length > 2 ? ` +${ids.length - 2}` : ''), category: e.category, summary: text(e.summary), detail: text(e.detail), id: text(e.id) };
+    return { time: e.at ? new Date(text(e.at)).toLocaleString() : '—', stage: label(e.stage), batch: e.batch == null ? '—' : text(e.batch), cases: ids.slice(0, 2).join(', ') + (ids.length > 2 ? ` +${ids.length - 2}` : ''), category: e.category, summary: text(e.summary), detail: text(e.detail), remedy: text(e.remedy), id: text(e.id) };
   });
   const columns: Column[] = [
     { key: 'time', label: 'Time', width: '150px' }, { key: 'stage', label: 'Stage', width: '130px' }, { key: 'batch', label: 'Batch', width: '70px' },
     { key: 'cases', label: 'Cases', width: '150px', render: row => <span className="cell-id">{text(row.cases)}</span> },
     { key: 'category', label: 'Category', width: '130px', render: row => <StatusBadge value={row.category} tone="bad" /> },
-    { key: 'summary', label: 'Summary', render: row => <details><summary>{text(row.summary)}</summary><pre className="error-detail">{text(row.detail)}</pre></details> },
+    { key: 'summary', label: 'Summary', render: row => <details><summary>{text(row.summary)}</summary><pre className="error-detail">{text(row.detail)}</pre>{row.remedy ? <p className="field-help"><strong>Remedy:</strong> {text(row.remedy)}</p> : null}</details> },
   ];
   return <DetailPage level={2} title="Errors" eyebrow="Run errors" children={<>
     {!items.length ? <p className="empty-inline">No errors recorded for this run.</p> : <>

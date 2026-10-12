@@ -69,11 +69,31 @@ class TestReviewDraft(BaseModel):
     reviews: list[TestCaseReview] = Field(min_length=1, max_length=8)
 
 
+class DesignScores(BaseModel):
+    """Rubric points of the design confidence reviewer (qa/confidence.py DESIGN_RUBRIC; the host sums them)."""
+
+    model_config = ConfigDict(extra="forbid")
+    source_proven: int = Field(ge=0, le=30)
+    correct_target: int = Field(ge=0, le=25)
+    expected_derivable: int = Field(ge=0, le=25)
+    fixture_validity: int = Field(ge=0, le=20)
+
+
 class DesignCaseReview(BaseModel):
     model_config = ConfigDict(extra="forbid")
     case_id: str = Field(min_length=1)
+    scores: DesignScores
     verdict: Literal["approved", "revise", "reject"]
-    confidence: int = Field(ge=0, le=100)
+    derivation: str = Field(
+        default="",
+        max_length=600,
+        description="How the expected result follows from target_source, in one or two sentences.",
+    )
+    source_quote: str = Field(
+        default="",
+        max_length=600,
+        description="Verbatim lines from target_source that support the derivation.",
+    )
     reason: str = Field(min_length=1, max_length=1500)
     suggested_target: str | None = Field(default=None, max_length=300)
 
@@ -83,6 +103,28 @@ class DesignReviewDraft(BaseModel):
     reviews: list[DesignCaseReview] = Field(min_length=1, max_length=60)
 
 
+class PlanScores(BaseModel):
+    """Rubric points of the planning confidence reviewer (qa/confidence.py PLAN_RUBRIC; the host sums them)."""
+
+    model_config = ConfigDict(extra="forbid")
+    controls_covered: int = Field(ge=0, le=40)
+    level_fit: int = Field(ge=0, le=30)
+    scenarios_derivable: int = Field(ge=0, le=30)
+
+
+class PlanAreaReview(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    area_id: str = Field(min_length=1)
+    scores: PlanScores
+    verdict: Literal["approved", "revise", "reject"]
+    reason: str = Field(min_length=1, max_length=1500)
+
+
+class PlanReviewDraft(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    reviews: list[PlanAreaReview] = Field(min_length=1, max_length=24)
+
+
 class RepoAnalysis(BaseModel):
     repo_url: str
     repo_name: str
@@ -90,6 +132,9 @@ class RepoAnalysis(BaseModel):
     file_count: int = 0
     source_file_count: int = 0
     source_files: list[str] = Field(default_factory=list)
+    tracked_files: list[str] = Field(
+        default_factory=list
+    )  # every tracked regular file (plan evidence may cite any)
     languages: dict[str, int] = Field(default_factory=dict)
     frameworks: list[str] = Field(default_factory=list)
     package_files: list[str] = Field(default_factory=list)

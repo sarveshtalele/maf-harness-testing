@@ -35,6 +35,7 @@ from ..settings import is_local_app_url, validate_gateway_settings
 from ..storage import read_json
 from ..workflow import Harness
 from ..workflow_support import atomic_json
+from .confidence_api import ConfidenceAPI
 from .errors import run_errors
 from .eta import case_budget_view, run_eta
 from .evidence_api import EvidenceAPI
@@ -66,6 +67,8 @@ PUBLIC_STATE = (
     "budget",
     "case_budget",
     "confidence_thresholds",
+    "require_full_accuracy",
+    "ledger_epoch",
     "environment",
     "completed_reason",
     "runtime_provenance",
@@ -76,6 +79,15 @@ PUBLIC_STATE = (
     "heal_rounds",
     "test_reviews",
 )
+
+
+def _full_accuracy(value) -> bool | None:
+    """Per-run full-accuracy gate: a JSON boolean, or absent (the environment default applies)."""
+    if value is None:
+        return None
+    if not isinstance(value, bool):
+        raise ValueError("require_full_accuracy must be true or false.")
+    return value
 
 
 def _confidence_thresholds(value) -> dict[str, int]:
@@ -145,7 +157,7 @@ def _budget_value(value) -> int:
     return value
 
 
-class LocalAPI(EvidenceAPI, SettingsAPI, McpAPI):
+class LocalAPI(EvidenceAPI, SettingsAPI, McpAPI, ConfidenceAPI):
     def __init__(
         self,
         runs: Path,
@@ -397,6 +409,7 @@ class LocalAPI(EvidenceAPI, SettingsAPI, McpAPI):
             ):
                 raise ValueError("Repository and application URLs must be text; start_app must be boolean.")
             thresholds = _confidence_thresholds(body.get("confidence_thresholds"))
+            full_accuracy_flag = _full_accuracy(body.get("require_full_accuracy"))
             budget = body.get("case_budget")
             if budget is not None:
                 budget = _budget_value(
@@ -429,6 +442,11 @@ class LocalAPI(EvidenceAPI, SettingsAPI, McpAPI):
                             "run_mode": opts["run_mode"],
                             "test_types": opts["test_types"],
                             **({"confidence_thresholds": thresholds} if thresholds else {}),
+                            **(
+                                {"require_full_accuracy": full_accuracy_flag}
+                                if full_accuracy_flag is not None
+                                else {}
+                            ),
                         },
                         "consumed": [],
                     },
@@ -446,6 +464,7 @@ class LocalAPI(EvidenceAPI, SettingsAPI, McpAPI):
                         run_name,
                         run_mode=opts["run_mode"],
                         confidence_thresholds=thresholds or None,
+                        require_full_accuracy=full_accuracy_flag,
                         test_types=opts["test_types"],
                         spec_sources=opts["spec_sources"],
                         documents=opts["documents"],
@@ -778,6 +797,8 @@ def make_server(api: LocalAPI, token: str, port: int = 8765):
                             self.reply(200, api.audit(key))
                         elif parts[2:] == ["observability"]:
                             self.reply(200, public(build_report(api.run_path(key), paths.skills_dir())))
+                        elif parts[2:] == ["confidence"]:
+                            self.reply(200, api.confidence(key, query))
                         elif parts[2:] == ["evidence"]:
                             self.reply(200, api.evidence(key))
                         elif len(parts) >= 4 and parts[2] == "evidence":

@@ -13,6 +13,7 @@ import pytest
 from fakes import ScriptedStageRuntime, clone_fixture, local_env_plan
 
 import maf_test_harness.workflow as wf
+from maf_test_harness.agent.runtime import STAGE_AUTHOR
 from maf_test_harness.envs.runners import RunPlan, Step
 from maf_test_harness.ui.runtime_service import RuntimeService
 from maf_test_harness.workflow_steps import execution as execution_steps
@@ -568,7 +569,8 @@ def test_truncated_structured_output_gets_a_compact_retry_not_an_error_gate(tmp_
     prompts = []
 
     async def truncating(**kwargs):
-        if kwargs["stage"] == "test_planning":
+        # the plan author only: the confidence reviewer of the same stage has its own role and prompt
+        if kwargs["stage"] == "test_planning" and kwargs.get("role", STAGE_AUTHOR) == STAGE_AUTHOR:
             prompts.append(kwargs["prompt"])
             if len(prompts) == 1:
                 raise AgentOutputError(

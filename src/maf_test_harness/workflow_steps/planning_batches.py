@@ -1,6 +1,8 @@
 """Component-batched test planning: one compact plan per requirement batch, merged deterministically."""
 
 from ..envs.platform_compat import raise_if_cancelled
+from ..qa.controls import area_id
+from ..qa.ledger import remap_plan_subjects
 from ..workflow_support import case_budget, digest
 from .design import requirement_batches
 
@@ -34,6 +36,8 @@ def _merge_areas(areas, cap=24):
                 into["risk"] = a["risk"]
             into["evidence_files"] = _uniq([*into["evidence_files"], *a["evidence_files"]], 8)
             into["scenarios"] = _uniq([*into["scenarios"], *a["scenarios"]], 8)
+            if a.get("origins") or "origins" in into:
+                into["origins"] = _uniq([*into.get("origins", []), *a.get("origins", [])], 64)
         areas = list(folded.values())
     return areas[:cap]
 
@@ -82,8 +86,26 @@ async def plan_tests_batched(host, state):
                 requirements=len(subset["requirement_model"]["requirements"]),
             )
             host.save()
-        plans.append(plan)
-    state["draft"] = merge_plans(plans)
+        # Each batch numbers its areas from PLN-01, so an area's origin is "<batch>|<batch-local PLN ID>".
+        plans.append(
+            {
+                **plan,
+                "areas": [
+                    {**a, "origins": [f"{index}|{a['area_id']}"]} if a.get("area_id") else dict(a)
+                    for a in plan.get("areas") or []
+                ],
+            }
+        )
+    merged = merge_plans(plans)
+    state["draft"] = merged
     plan = await host.validate("test_planning", state)
+    # Plan confidence records were written under batch-local IDs; move them to the FINAL merged area IDs.
+    mapping: dict[tuple[int, str], str] = {}
+    for index, area in enumerate(merged["areas"], 1):
+        for origin in area.get("origins", []):
+            batch, local = origin.split("|", 1)
+            mapping[(int(batch), local)] = area_id(index)
+    if getattr(host, "run_dir", None) is not None:  # the ledger lives in the run folder
+        remap_plan_subjects(host.run_dir, mapping)
     host.save()
     return plan
