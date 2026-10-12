@@ -42,6 +42,10 @@ class Step:
     report_glob: str = ""  # relative to workspace, for junit/jest/trx
     continue_on_failure: bool = False
     scope: str = "generated"
+    # Measured coverage (test step only): extra argv used when the coverage tools are present in the isolated venv,
+    # and the coverage.json it writes (relative to the workspace). Empty for every other step.
+    optional_argv: list[str] = field(default_factory=list)
+    coverage_report: str = ""
 
 
 @dataclass
@@ -63,6 +67,33 @@ def _playwright_browsers() -> dict[str, str]:
         return {"PLAYWRIGHT_BROWSERS_PATH": os.environ["PLAYWRIGHT_BROWSERS_PATH"]}
     candidate = platform_compat.playwright_cache_dir()
     return {"PLAYWRIGHT_BROWSERS_PATH": str(candidate)} if candidate else {}
+
+
+# Test-only coverage tooling for the isolated venv: exact pins (never relaxed), installed next to pytest.
+COVERAGE_PACKAGES = ("coverage==7.10.7", "pytest-cov==7.0.0")
+COVERAGE_JSON = f"{REPORT_DIR}/coverage.json"
+COVERAGE_INI = f"{REPORT_DIR}/coverage.ini"
+# Repository source only: generated and repository tests, fixtures and the isolated venv are never measured.
+COVERAGE_INI_TEXT = """[run]
+branch = True
+omit =
+    */.harness-*/*
+    .harness-*/*
+    */site-packages/*
+    */.venv/*
+    */venv/*
+    */tests/*
+    tests/*
+    */test/*
+    test/*
+    */conftest.py
+    conftest.py
+    test_*.py
+    */test_*.py
+    *_test.py
+    */*_test.py
+"""
+COVERAGE_ARGV = ["--cov=.", f"--cov-config={COVERAGE_INI}", f"--cov-report=json:{COVERAGE_JSON}"]
 
 
 # Third-party test helpers the python adapter may install (allow-list: never install arbitrary model-named packages).
@@ -311,6 +342,15 @@ def setup_steps(
             steps += [
                 _create_venv_step(ws, timeout, python_override),
                 Step("install-pytest", [*pip_cmd, "pytest"], "setup", env=pip, timeout=timeout),
+                # Optional: without it the tests still run and coverage is reported as not measured.
+                Step(
+                    "install-coverage",
+                    [*pip_cmd, *COVERAGE_PACKAGES],
+                    "setup",
+                    env=pip,
+                    timeout=timeout,
+                    continue_on_failure=True,
+                ),
             ]
             if (ws / "requirements.txt").is_file():
                 steps.append(
@@ -510,6 +550,8 @@ def build_plan(
                 step.cwd = (PurePosixPath(cwd) / step.cwd).as_posix()
                 if step.report_glob and cwd != ".":
                     step.report_glob = (PurePosixPath(cwd) / step.report_glob).as_posix()
+                if step.coverage_report and cwd != ".":
+                    step.coverage_report = (PurePosixPath(cwd) / step.coverage_report).as_posix()
                 steps.append(step)
             notes.append(f"{kind} component: {cwd} ({len(members)} generated files)")
             notes.extend(child.notes)
@@ -546,6 +588,10 @@ def build_plan(
         steps = setup_steps(
             eco, ws, cache, timeout, helpers=python_test_helpers(files, ws), env_ready=env_ready
         )
+        try:  # the config the coverage plugin reads (repository source only); the argv is added only if it is installed
+            (reports / "coverage.ini").write_text(COVERAGE_INI_TEXT, encoding="utf-8")
+        except OSError:
+            pass
         steps.append(
             Step(
                 "pytest",
@@ -571,6 +617,8 @@ def build_plan(
                 timeout=timeout,
                 parser="junit",
                 report_glob=f"{REPORT_DIR}/pytest-results.xml",
+                optional_argv=list(COVERAGE_ARGV),
+                coverage_report=COVERAGE_JSON,
             )
         )
         return RunPlan("python-pytest", steps)
@@ -1314,6 +1362,82 @@ def _recover_test_tooling(
     return _run_test_step(step, workspace, out_dir, f"{label}-retry-tooling")
 
 
+def _with_coverage(step: Step, workspace: Path, out_dir: Path, label: str) -> tuple[Step, str]:
+    """The test step with the coverage argv when the coverage tools are installed in its venv, else the reason why not.
+
+    The install is optional (continue_on_failure), so the probe decides; a missing plugin never turns into an
+    "unrecognized arguments" failure of the test run itself.
+    """
+    if not step.optional_argv:
+        return step, ""
+    probe = run_command(
+        [step.argv[0], "-c", "import coverage, pytest_cov"],
+        (workspace / step.cwd).resolve(),
+        out_dir / f"{label}-coverage-probe",
+        timeout=60,
+        env=_expand_env(step.env, workspace),
+        inherit_env=True,
+    )
+    if probe["status"] not in {"command_succeeded", "passed"}:
+        return (
+            step,
+            "coverage.py and pytest-cov are not installed in the isolated environment (install-coverage failed)",
+        )
+    return replace(step, argv=[*step.argv, *step.optional_argv]), ""
+
+
+def _coverage_run(
+    step: Step, workspace: Path, out_dir: Path, label: str, started: float, reason: str
+) -> dict:
+    """What one test step measured: the coverage.json it wrote (kept as evidence) or why it measured nothing."""
+    if reason or not step.coverage_report:
+        return {
+            "status": "not_measured",
+            "cwd": step.cwd,
+            "reason": reason or "no coverage run for this step",
+        }
+    source = workspace / step.coverage_report
+    if not source.is_file() or source.stat().st_mtime < started:
+        return {
+            "status": "not_measured",
+            "cwd": step.cwd,
+            "reason": "coverage.py wrote no report (the test run ended before coverage was saved)",
+        }
+    try:
+        data = json.loads(source.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        return {"status": "not_measured", "cwd": step.cwd, "reason": f"coverage report unreadable: {exc}"}
+    from ..qa.coverage import file_counts
+
+    evidence = out_dir / label / "coverage.json"
+    evidence.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copyfile(source, evidence)
+    return {"status": "measured", "cwd": step.cwd, "evidence": str(evidence), "files": file_counts(data)}
+
+
+def _coverage_result(plan: RunPlan, runs: list[dict]) -> dict:
+    """The execution's coverage: measured only when every test step with coverage measured; never estimated."""
+    eco = (plan.adapter or "").split("-")[0]
+    if not runs:
+        return {
+            "status": "not_measured",
+            "tool": None,
+            "reason": f"coverage: not measured for {eco or 'this stack'}",
+        }
+    if any(run["status"] != "measured" for run in runs):
+        reasons = "; ".join(f"{run['cwd']}: {run['reason']}" for run in runs if run["status"] != "measured")
+        return {"status": "not_measured", "tool": "coverage.py", "reason": reasons, "runs": runs}
+    from ..qa.coverage import merge
+
+    return {
+        "status": "measured",
+        "tool": "coverage.py",
+        "reason": "",
+        "runs": [{k: v for k, v in run.items() if k != "files"} for run in runs],
+        "files": merge(*(run["files"] for run in runs)),
+    }
+
+
 def execute_plan(
     plan: RunPlan, workspace: Path, out_dir: Path, generated_paths: list[str] | None = None
 ) -> dict:
@@ -1340,9 +1464,12 @@ def execute_plan(
         return report
     setup_failed = False
     diagnostics: list[str] = []
+    coverage_runs: list[dict] = []
     for index, step in enumerate(plan.steps, 1):
         label = f"{index:02d}-{step.name}"
         if step.kind == "test":
+            step, unmeasured = _with_coverage(step, workspace, out_dir, label)
+            started = time.time()
             entry, cases = _run_test_step(step, workspace, out_dir, label)
             for retry in range(1, MAX_QUARANTINE_ROUNDS + 1):
                 if cases or entry["status"] in {"command_succeeded", "passed"} or not generated_paths:
@@ -1364,6 +1491,8 @@ def execute_plan(
                 entry, cases = _recover_test_tooling(step, workspace, out_dir, label, entry, cases, report)
             report["steps"].append(entry)
             report["cases"].extend(cases)
+            if step.coverage_report or unmeasured:
+                coverage_runs.append(_coverage_run(step, workspace, out_dir, label, started, unmeasured))
             continue
         step = _tune_test_tooling(step, workspace)
         result = run_command(
@@ -1400,6 +1529,7 @@ def execute_plan(
                     error=f"Setup step '{step.name}' failed: {result['status']}" + _why(diagnoses),
                 )
                 break
+    report["coverage"] = _coverage_result(plan, coverage_runs)
     if not setup_failed:
         if not report["cases"] or report.get("quarantined"):
             last = next((e for e in reversed(report["steps"]) if e["kind"] == "test"), None)

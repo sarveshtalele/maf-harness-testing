@@ -16,6 +16,7 @@ from ..qa import ledger
 from ..qa.confidence import review_accepted
 from ..settings import TEST_REVIEW_MIN_CONFIDENCE, design_review_enabled
 from .controls import case_controls, plan_controls, summarize_trace, summary_text, trace_rows
+from .coverage import not_measured, summarize
 from .triage import build_updates
 from .verification import documented_quote, is_verified, summarize_triage, triage_cases
 
@@ -207,6 +208,20 @@ def confidence_summary(
     return {"ledger": ledger.LEDGER, "records": len(records), "gates": gates, "rows": rows}
 
 
+def measured_coverage(execution: dict[str, Any] | None, req_sources: dict[str, list[str]]) -> dict[str, Any]:
+    """Line and branch coverage the generated test run measured, per file and per requirement. Anything not measured
+    (other stacks, a failed install, no execution) is reported as not measured with its reason."""
+    cov = (execution or {}).get("coverage")
+    if execution is None:
+        return not_measured("coverage: not measured (no test execution)")
+    if not cov:
+        stack = str((execution or {}).get("adapter") or "").split("-")[0] or "this stack"
+        return not_measured(f"coverage: not measured for {stack}")
+    if cov.get("status") != "measured":
+        return not_measured(cov.get("reason") or "coverage: not measured", cov.get("tool"))
+    return summarize(cov.get("files") or {}, req_sources)
+
+
 def build_qa_report(
     *,
     repo: dict[str, Any],
@@ -378,6 +393,7 @@ def build_qa_report(
     }
     environment = {**(environment or {}), "diagnoses": (execution or {}).get("diagnoses", [])}
     updates = build_updates(cases, files, repo.get("source_files", []), coverage, req_sources, environment)
+    measured_cov = measured_coverage(execution, req_sources)
     verdict = verdict_for(execution)
     if counts.get("failed") or counts.get("error"):
         verdict = "FAIL"
@@ -484,7 +500,16 @@ def build_qa_report(
             "requirement_source_files": len(represented_files & source_files),
             "scope": "Discovered static declarations, not complete business requirements or runtime coverage.",
         },
-        "runtime_coverage": {"line": "not_measured", "branch": "not_measured", "mutation": "not_measured"},
+        "runtime_coverage": {
+            "line": measured_cov["totals"]["line_percent"]
+            if measured_cov["status"] == "measured"
+            else "not_measured",
+            "branch": measured_cov["totals"]["branch_percent"]
+            if measured_cov["status"] == "measured"
+            else "not_measured",
+            "mutation": "not_measured",
+        },
+        "measured_coverage": measured_cov,
         "execution_status": (execution or {}).get("status", "not_run"),
         "adapter": (execution or {}).get("adapter"),
         "case_status_counts": counts,
@@ -634,6 +659,52 @@ def confidence_gates_text(report: dict[str, Any]) -> str:
     return "Confidence gates: " + "; ".join(parts) + "."
 
 
+def _coverage_line(report: dict[str, Any]) -> list[str]:
+    """States measured line and branch coverage only when a coverage run produced it; mutation is never measured."""
+    cov = report.get("measured_coverage") or {}
+    if cov.get("status") != "measured":
+        return [
+            f"Line and branch coverage: **not measured** ({cov.get('reason') or 'no coverage run'}). Mutation: not measured."
+        ]
+    totals = cov["totals"]
+    return [
+        f"Line coverage **{_pct(totals['line_percent'])}** and branch coverage **{_pct(totals['branch_percent'])}** "
+        "measured by coverage.py for the repository source executed by the generated tests. Mutation: not measured. "
+        "This is not coverage of the complete application.",
+    ]
+
+
+def _pct(value: Any) -> str:
+    return "n/a" if value is None else f"{value}%"
+
+
+def measured_coverage_markdown(report: dict[str, Any]) -> list[str]:
+    cov = report.get("measured_coverage") or {}
+    if cov.get("status") != "measured":
+        return []
+    lines = [
+        "## Measured coverage",
+        "",
+        f"{cov['scope']} Per-file percentages come from the same run; requirement rows use only the measured files "
+        "among each requirement's source files.",
+        "",
+        "| File | Line | Branch | Statements covered | Branches covered |",
+        "|---|---|---|---|---|",
+    ]
+    lines += [
+        f"| `{md_cell(row['file'])}` | {_pct(row['line_percent'])} | {_pct(row['branch_percent'])} "
+        f"| {row['covered_lines']}/{row['num_statements']} | {row['covered_branches']}/{row['num_branches']} |"
+        for row in cov["files"]
+    ]
+    lines += ["", "| Requirement | Measured files | Line | Branch |", "|---|---|---|---|"]
+    lines += [
+        f"| {md_cell(row['id'])} | {len(row['measured_files'])}/{len(row['source_files'])} "
+        f"| {_pct(row['line_percent'])} | {_pct(row['branch_percent'])} |"
+        for row in cov["requirements"]
+    ]
+    return [*lines, ""]
+
+
 def _verification_markdown(report: dict[str, Any]) -> list[str]:
     summary = report.get("verification") or {}
     if not summary:
@@ -720,7 +791,7 @@ def render_markdown(report: dict[str, Any]) -> str:
         f"Generated suite: **{report.get('generated_verdict', report['verdict'])}**. "
         "A suite verdict does not qualify the complete application.",
         "",
-        "Line, branch and mutation coverage: **not measured**.",
+        *_coverage_line(report),
         "",
         *_verification_markdown(report),
         "| Existing regression scope | Verdict | Tests | Reason |",
@@ -731,6 +802,7 @@ def render_markdown(report: dict[str, Any]) -> str:
         ],
         "",
         *_traceability_markdown(report),
+        *measured_coverage_markdown(report),
         *_confidence_markdown(report),
     ]
     for c in report["cases"]:
