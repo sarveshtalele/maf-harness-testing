@@ -2,71 +2,41 @@
 
 Agentic QE Platform is a Python harness on Microsoft Agent Framework with a Next.js UI and an Electron desktop shell. The repository is private, for the internal team.
 
-Read first:
+This page is the short version. The full rules, with examples and the reasons behind them, are in the [Developer guide](docs/DEVELOPER_GUIDE.md). Project rules for people and agents are in [CLAUDE.md](CLAUDE.md). Release steps and owner settings are in [docs/RELEASING.md](docs/RELEASING.md).
 
-- [CLAUDE.md](CLAUDE.md): project rules.
-- [docs/DEVELOPER_GUIDE.md](docs/DEVELOPER_GUIDE.md): setup, checks and recipes (section 1 covers the dev environment).
-- [docs/RELEASING.md](docs/RELEASING.md): releases, tags and owner settings.
+## Branches
 
-## Branch model
-
-| Branch | Purpose | Merges into |
-|---|---|---|
-| `feature/*` | New work | `develop`, by pull request |
-| `develop` | Integration branch and default branch | |
-| `main` | Released code only; its README is the user guide | Tagged `vX.Y.Z` (see [RELEASING.md](docs/RELEASING.md)) |
-
-`release/x.y` and `hotfix/*` branches are not used today; releases are made from `develop` merged into `main`.
-
-- Do not push directly to `main` or `develop` (the orchestrator merge described in CLAUDE.md is the only exception).
-- Open pull requests into `develop`. The repository owner sets branch protection (see [RELEASING.md](docs/RELEASING.md)). On the current GitHub plan these rules may not be enforced by GitHub, so follow the rule anyway.
-
-## Pull requests
-
-1. Branch from `develop`: `git checkout -b feature/<short-name> develop`.
-2. Keep each commit to one logical change.
-3. Run the local checks below.
-4. Open a pull request into `develop`. Describe what changed and why. For changes to file or process code, say how the Windows path was checked.
-5. Wait for these required checks to pass: `ci` (jobs `test` and `secrets-scan`) and `Local UI compatibility` (job `local-ui`, from `ui.yml`).
-6. Get an approving review. Code owners review the files they own.
-7. Merge.
-
-Significant changes (a new workflow stage, a new skill, an architecture change, a release, a non-trivial bug fix) also need a short dated entry in the "Core memory log" in [memory.md](memory.md). Mention the change in the pull request so the maintainers add it.
+- `develop` is the integration branch and the default branch. `main` holds released code only, and its README is the user guide. Details: [guide section 2](docs/DEVELOPER_GUIDE.md#2-branching-model).
+- One branch per component change, named `<type>/<component>-<short-topic>`, for example `feat/qa-confidence-ledger` or `fix/desktop-orphan-reaping`. Types and components are listed in the guide.
+- Do not push directly to `main` or `develop`.
+- Open pull requests into `develop`.
 
 ## Commits
 
-Use Conventional Commits:
+Use Conventional Commits: `<type>(<scope>): <imperative summary>`, with a body that explains why. Keep one logical change per commit. Add a `Co-Authored-By:` trailer when the work was AI-assisted. Details: [guide section 3](docs/DEVELOPER_GUIDE.md#3-commits).
 
-```
-<type>(<optional scope>): <imperative summary>
-```
+## Before you open a pull request
 
-Types: `feat`, `fix`, `docs`, `chore`, `test`, `refactor`, `ci`, `build`, `style`.
-
-Examples: `feat(evidence): resolve bare symbol targets`, `fix(ui): keep run table sorted`, `ci: pin checkout action`.
-
-## Local checks
-
-Run the merge gate from the repository root before you open a pull request:
+Run the merge gate from the repository root:
 
 ```bash
-uv sync --locked --extra dev
 uv run python scripts/check_all.py
 ```
 
-`check_all.py` runs, in order: ruff check and format, the architecture map check, the version files check, `lint-skills --strict`, pytest, the frontend typecheck, build and Playwright tests, and the desktop shell tests. It prints a summary and exits non-zero if any step fails. Use `--skip-ui` or `--skip-desktop` only when that area is untouched. The frontend steps need `npm ci --include=dev` in `frontend/` and `npm ci` in `desktop/` first. Details are in [docs/DEVELOPER_GUIDE.md](docs/DEVELOPER_GUIDE.md), section 1.6.
+It runs lint, format, the architecture map, the version files, the skill lock, pytest, the frontend typecheck, build and browser tests, and the desktop tests. Use `--skip-ui` or `--skip-desktop` only when that area is untouched, and say so in the PR. The steps and the setup are in [guide section 7](docs/DEVELOPER_GUIDE.md#7-the-merge-gate).
 
-If you add, remove or move " + MAP_RULE + ", regenerate the architecture map with `uv run python scripts/gen_architecture.py`. Never edit `docs/ARCHITECTURE_MAP.md` by hand. `desktop/src` is not part of the map.
+Every change must work on Windows, macOS and Linux. Use `pathlib`, `encoding="utf-8"` and argument lists, and never `shell=True`. [Guide section 5](docs/DEVELOPER_GUIDE.md#5-coding-standards-and-principles) covers this and the security rules. Never commit `.env`, run evidence under `.maf-harness/`, or `agent-framework.pdf`.
 
-## Cross-OS rule
+## Pull requests and review
 
-Every change must work on Windows, macOS and Linux.
+1. Branch from `develop` with a name from the convention above.
+2. Keep each commit to one logical change, and update the `CLAUDE.md` of each area you changed in the same commit.
+3. Run the merge gate.
+4. Open a pull request into `develop`. The template has the review checklist.
+5. Wait for these required checks: `ci` (jobs `test` and `secrets-scan`) and `Local UI compatibility` (job `local-ui`, from `ui.yml`).
+6. Get a review. `@sarveshtalele` owns every file (`.github/CODEOWNERS`). Security-sensitive changes (plugins, MCP, secrets, desktop, skills) get the owner's review before merge. The review checklist is in [guide section 8](docs/DEVELOPER_GUIDE.md#8-review-process).
+7. Merge.
 
-- Use `pathlib` and `encoding="utf-8"` explicitly.
-- Run subprocesses through `run_command` or `run_cancellable`, which use process groups. Never use `shell=True`.
-- Keep the launchers thin (`start-windows.cmd`, `start-macos.command`, `start-linux.sh`). They delegate to `scripts/start_ui.py`.
-- Node 24 is enforced by `engines`, `.npmrc` (`engine-strict`) and `.nvmrc` in both `frontend/` and `desktop/`. Python is `>=3.11` (`requires-python`); CI tests 3.11 and 3.12, and the launchers use 3.12.
+GitHub rulesets, required reviewers and secret scanning need a paid plan. The current plan does not enforce them, so follow these rules anyway.
 
-## Secrets and run evidence
-
-Never commit credentials, `.env`, run evidence under `.maf-harness/`, or `docs/agent-framework.pdf`. Use placeholders such as `<api-key>` in docs and tests. The `secrets-scan` job in `ci.yml` fails on token-shaped strings.
+A significant change (a new workflow stage, a new skill, an architecture change, a release, a non-trivial bug fix) is logged in `memory.md` by the orchestrator. Mention it in the pull request. Do not edit `memory.md` yourself.

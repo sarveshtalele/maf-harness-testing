@@ -9,7 +9,9 @@ Files marked **historical** are dated reviews, plans or evidence. They record wh
 ## Start here
 
 - [USER_GUIDE.md](USER_GUIDE.md): install the desktop app from GitHub Releases and use it (this is the README of `main`).
-- [DEVELOPER_GUIDE.md](DEVELOPER_GUIDE.md): dev environment, layout, the run lifecycle, how-to recipes, debugging, testing and conventions.
+- [DEVELOPER_GUIDE.md](DEVELOPER_GUIDE.md): the developer guide. Setup, repository map, branching, commits, naming, coding and testing standards, the merge gate, review, how-to recipes and troubleshooting. Its sections are listed at the top of the file.
+- [../CONTRIBUTING.md](../CONTRIBUTING.md): the short contribution steps, with links into the guide.
+- [../AGENTS.md](../AGENTS.md): the rules for coding assistants, which point to the guide for everything else.
 - [README.md](README.md): this index.
 
 ## Architecture
