@@ -5,7 +5,8 @@ Read-only, bounded, deterministic. Repository code is never executed here.
 ## Key files
 - `analyzer.py`: `validate_github_url`, `clone_repository`, `analyze_repository`, `build_repository_evidence`, `extract_target_sources` (brace-aware `_brace_body_end`), `collaborator_signatures`, `declared_dependencies`.
 - `git_transport.py`: `run_git`, `read_operation` (file-backed git output, cancellable, process-tree lifetime).
-- `reverse_engineering.py` `reverse_engineer`; `requirements.py` `requirements_from_facts`: inputs/outputs of the two locked host skills.
+- `reverse_engineering.py` `reverse_engineer`; `requirements.py` `requirements_from_facts`: inputs/outputs of the two locked host skills; product requirements (tier `product`) are passed in via `analysis["product_requirements"]`.
+- `product_requirements.py`: deterministic product extractor (README/SKILL.md/docs/references tables, feature bullets, should/must/will sentences, CLI options with defaults), every item with a verbatim quote; `verify_quotes` demotes unverified ones to status `gap`; `product_doc_evidence` feeds the model path.
 - `stack.py`: `StackProfile`, `detect_stack`. `routes.py`: `extract_routes`.
 - `testability.py`: `analyze_testability`, `testability_for_targets`, `non_public_targets`, `retarget_cases`.
 - `import_recipes.py`: `python_import_recipes`, `recipes_for_files` (literal bootstrap code for Python targets plain imports cannot reach).

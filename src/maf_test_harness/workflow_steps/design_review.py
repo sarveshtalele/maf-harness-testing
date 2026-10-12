@@ -87,7 +87,12 @@ def score_case(review: dict, case: dict, source: str, threshold: int, evidence: 
     scores = {dimension: int(review["scores"][dimension]) for dimension in DESIGN_RUBRIC}
     quote = str(review.get("source_quote") or "")
     quote_ok = quote_verified(quote, source) or quote_verified(quote, evidence)
-    derivable = bool(str(review.get("derivation") or "").strip()) and quote_ok
+    # The case's oracle (qa/oracles.py, host-verified) is the other evidence of the expected value. Characterization
+    # is current behaviour only, so only the reviewer's source quote can make it derivable.
+    oracle = case.get("oracle") if isinstance(case.get("oracle"), dict) else {}
+    kind = oracle.get("kind")
+    oracle_ok = oracle.get("verified") is True and kind != "characterization"
+    derivable = bool(str(review.get("derivation") or "").strip()) and (quote_ok or oracle_ok)
     findings: list[dict] = []
     if not derivable:
         scores["expected_derivable"] = 0
@@ -96,7 +101,15 @@ def score_case(review: dict, case: dict, source: str, threshold: int, evidence: 
                 "rule": "expected_derivable_unproven",
                 "cap": None,
                 "reason": "expected_derivable needs a derivation and a source_quote verbatim in target_source or in the "
-                "approved requirement evidence.",
+                "approved requirement evidence, or a verified oracle (specified, derived, golden, metamorphic, property).",
+            }
+        )
+    if kind == "characterization":
+        findings.append(
+            {
+                "rule": "characterization",
+                "cap": None,
+                "reason": "Characterization: the expected value records current behaviour and is never verified.",
             }
         )
     target = str(case.get("target") or "")
@@ -123,6 +136,7 @@ def score_case(review: dict, case: dict, source: str, threshold: int, evidence: 
         "verdict": review["verdict"],
         "reason": review["reason"],
         "suggested_target": review.get("suggested_target"),
+        "oracle": kind,
         "accepted": review["verdict"] == "approved" and scored["confidence"] >= threshold,
         # The fields the design artifact and older readers expect.
         "confidence": scored["confidence"],
@@ -208,7 +222,7 @@ async def review_design_cases(host, state, cases, batch_index):
         if r["id"] in {link["id"] for c in cases for link in c.get("traceability_links", [])}
     ]
     sections = {
-        "assignment": "Independently validate EACH recommended test design case against the actual source. Score four dimensions from the evidence (scores field): source_proven (0-30) the asserted behaviour is implemented by target_source, or is stated by the approved requirement evidence when the target is not code (UI page, CLI command, route, flow); correct_target (0-25) the target is the method, page, command or route that implements it; expected_derivable (0-25) the expected result follows from the source or the approved requirement evidence, with a derivation and a source_quote copied verbatim from target_source or from approved_inputs.requirements; fixture_validity (0-20) the steps and data are valid for the real code or interface. Verdict approved only for full marks; revise when a concrete fix exists (give suggested_target when the target is wrong); reject when the behaviour is not in the source or evidence. Return one review per supplied case ID. The host computes the final confidence from your scores and its caps; do not inflate scores.",
+        "assignment": "Independently validate EACH recommended test design case against the actual source. Each case's oracle says where its expected value comes from: the host verified its quote or relation, so a verified specified, derived, golden, metamorphic or property oracle makes the expected value derivable; a characterization oracle records current behaviour only and needs the source quote to be derivable. Score four dimensions from the evidence (scores field): source_proven (0-30) the asserted behaviour is implemented by target_source, or is stated by the approved requirement evidence when the target is not code (UI page, CLI command, route, flow); correct_target (0-25) the target is the method, page, command or route that implements it; expected_derivable (0-25) the expected result follows from the source or the approved requirement evidence, with a derivation and a source_quote copied verbatim from target_source or from approved_inputs.requirements; fixture_validity (0-20) the steps and data are valid for the real code or interface. Verdict approved only for full marks; revise when a concrete fix exists (give suggested_target when the target is wrong); reject when the behaviour is not in the source or evidence. Return one review per supplied case ID. The host computes the final confidence from your scores and its caps; do not inflate scores.",
         "rubric": {"dimensions": DESIGN_RUBRIC, "verdict_caps": {"revise": 79, "reject": 0}},
         "output_contract": DesignReviewDraft.model_json_schema(),
         "json_rules": {"single_complete_object": True, "markdown_fences": False},

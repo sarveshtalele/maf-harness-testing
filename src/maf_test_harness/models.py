@@ -172,6 +172,15 @@ class ActorDraft(BaseModel):
     source_files: list[str] = Field(min_length=1, max_length=6)
 
 
+class EvidenceQuoteDraft(BaseModel):
+    """A verbatim line range of one repository file that a product requirement is stated in."""
+
+    model_config = ConfigDict(extra="forbid")
+    file: str = Field(min_length=1, max_length=240)
+    line: int = Field(ge=0, description="1-based line where the quote starts.")
+    quote: str = Field(min_length=1, max_length=500, description="Copied verbatim from the file.")
+
+
 class RequirementEvidenceDraft(BaseModel):
     model_config = ConfigDict(extra="forbid")
     text: str = Field(min_length=1, max_length=700)
@@ -181,6 +190,16 @@ class RequirementEvidenceDraft(BaseModel):
     actor: str = Field(min_length=1, max_length=80, description="Actor name from `actors`, or 'system'.")
     source_symbol: str = ""
     source_line: int = Field(default=0, ge=0)
+    tier: Literal["product", "component"] = Field(
+        default="component",
+        description="product: what the repository promises its users (README, SKILL.md, docs, CLI help); "
+        "component: a callable-level behaviour. Product requirements need evidence_quotes.",
+    )
+    evidence_quotes: list[EvidenceQuoteDraft] = Field(
+        default_factory=list,
+        max_length=4,
+        description="Required for product requirements: verbatim quotes with file and line.",
+    )
 
 
 class AcceptanceCriterionDraft(BaseModel):
@@ -289,6 +308,37 @@ class TraceabilityLinkDraft(BaseModel):
     id: str = Field(min_length=1, max_length=160)
 
 
+class OracleSourceDraft(BaseModel):
+    """Where an expected value is written down: a documentation/spec file or implementation file, and the verbatim quote."""
+
+    model_config = ConfigDict(extra="forbid")
+    file: str = Field(min_length=1, max_length=240)
+    line: int = Field(ge=0, description="1-based line where the quote starts.")
+    quote: str = Field(min_length=1, max_length=600, description="Copied verbatim from the file.")
+
+
+class OracleDraft(BaseModel):
+    """Where the expected value comes from (every design case has one; see qa/oracles.py for the rules).
+
+    specified: a documentation or spec quote. derived: a quote from the target implementation. metamorphic: a stated
+    relation between runs (for example determinism or irrelevant-input invariance). golden: a fixture scenario with an
+    answer derived by hand from a documented rule (source = that rule). property: a stated property of the output.
+    characterization: current behaviour only; never counted as verified.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+    kind: Literal["specified", "derived", "metamorphic", "golden", "property", "characterization"]
+    source: OracleSourceDraft | None = Field(
+        description="Required for specified, derived and golden; null otherwise."
+    )
+    relation: str | None = Field(
+        default=None,
+        max_length=600,
+        description="Required for metamorphic (the relation), golden (scenario fixture and derivation) and property "
+        "(the property). Null otherwise.",
+    )
+
+
 class TestDesignCaseDraft(BaseModel):
     model_config = ConfigDict(extra="forbid")
     """Authoring-only test case. The host assigns id/type and derived metrics."""
@@ -304,6 +354,7 @@ class TestDesignCaseDraft(BaseModel):
     preconditions: list[str] = Field(max_length=6)
     data_notes: str = Field(max_length=400, description="Concrete inputs/fixtures; empty when none.")
     expected_result: str = Field(min_length=1, max_length=1000)
+    oracle: OracleDraft = Field(description="Where expected_result comes from. Required on every case.")
     steps: list[str] = Field(min_length=1, max_length=10)
     traceability_links: list[TraceabilityLinkDraft] = Field(min_length=1, max_length=8)
 

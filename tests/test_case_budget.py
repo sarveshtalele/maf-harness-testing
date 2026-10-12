@@ -44,6 +44,7 @@ def _case(title, priority, *reqs):
         "preconditions": [],
         "data_notes": "",
         "expected_result": "ok",
+        "oracle": {"kind": "characterization", "source": None, "relation": None},
         "steps": ["go"],
         "traceability_links": [{"type": "requirement", "id": r} for r in reqs],
     }

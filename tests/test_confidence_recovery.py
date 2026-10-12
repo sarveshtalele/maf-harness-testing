@@ -623,6 +623,7 @@ def _case(title, req_id):
         "preconditions": [],
         "data_notes": "1 and 2",
         "expected_result": "add(1, 2) returns 3",
+        "oracle": {"kind": "characterization", "source": None, "relation": None},
         "steps": ["Call add(1, 2)", "Compare with 3"],
         "traceability_links": [{"type": "requirement", "id": req_id}],
     }

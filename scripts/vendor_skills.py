@@ -110,6 +110,33 @@ def lock_project_skills() -> int:
     return 0
 
 
+def refresh_project_skill(name: str) -> int:
+    """Recompute the file hashes of one edited project-owned skill (audit and origin kept). Refuses unknown skills and
+    upstream-vendored skills, which are re-vendored from their source instead."""
+    path = SKILLS / "SKILLS.lock.json"
+    lock = json.loads(path.read_text(encoding="utf-8"))
+    entry = lock["skills"].get(name)
+    if entry is None:
+        raise SystemExit(
+            f"unknown skill {name!r}: not in SKILLS.lock.json (use --lock-project to add a new one)"
+        )
+    if entry.get("origin") != "local":
+        raise SystemExit(
+            f"refusing to refresh {name!r}: origin is {entry.get('origin')!r}; re-vendor it from its source"
+        )
+    directory = SKILLS / name
+    if not directory.is_dir():
+        raise SystemExit(f"skill folder missing: {directory}")
+    new_files = package_files(directory)
+    for rel in sorted(set(entry.get("files", {})) | set(new_files)):
+        old, new = entry.get("files", {}).get(rel), new_files.get(rel)
+        if old != new:
+            print(f"{name}/{rel}: {old or '(absent)'} -> {new or '(removed)'}")
+    entry["files"] = new_files
+    path.write_text(json.dumps(lock, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    return 0
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
@@ -118,9 +145,16 @@ def main() -> int:
     parser.add_argument(
         "--lock-project", action="store_true", help="Only add lock entries for unlocked project-owned skills"
     )
+    parser.add_argument(
+        "--refresh-project",
+        metavar="NAME",
+        help="Recompute the lock hashes of one edited project-owned skill (upstream skills are refused)",
+    )
     parser.add_argument("--url", default="https://github.com/shivswami/awesome-agent-skills.git")
     parser.add_argument("--audit-dir", type=Path, default=ROOT / ".skill-audit")
     args = parser.parse_args()
+    if args.refresh_project:
+        return refresh_project_skill(args.refresh_project)
     if args.lock_project:
         return lock_project_skills()
     if not args.source:

@@ -5,6 +5,7 @@ import json
 import re
 from typing import Any
 
+from .qa.oracles import tier_of
 from .settings import (
     CASES_PER_REQUIREMENT,
     GENERATION_BATCH_SIZE,
@@ -138,7 +139,8 @@ def _compact_requirements(source: dict[str, Any]) -> dict[str, Any]:
         "app_name": source.get("app_name"),
         "summary": source.get("summary", ""),
         "actors": source.get("actors", []),
-        "requirements": model.get("requirements", []),
+        # Product requirements (what the repository promises) come first; the order is otherwise unchanged.
+        "requirements": sorted(model.get("requirements", []), key=lambda r: tier_of(r) != "product"),
         "validation_rules": model.get("validation_rules", []),
         "acceptance_criteria": model.get("acceptance_criteria", []),
         "api_contracts": source.get("api_contracts", []),

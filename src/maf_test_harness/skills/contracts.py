@@ -24,6 +24,7 @@ from urllib.parse import urlsplit
 import jsonschema
 import yaml
 
+from ..qa.oracles import oracle_shape_problems
 from .config import SKILL_NAMES
 
 _NAMESPACE = uuid.NAMESPACE_URL
@@ -184,6 +185,13 @@ def finalize_discovered_requirements(document: dict[str, Any], repo_url: str) ->
                 "source_files": _clean_paths(item.get("source_files"), "inferred requirement"),
                 "category": item.get("category", "functional"),
                 "actor": actor,
+                # Tier and quotes are host-checked (repo/product_requirements.verify_quotes); status starts verified.
+                "tier": item.get("tier") if item.get("tier") in ("product", "component") else "component",
+                "evidence_quotes": [
+                    {"file": str(q["file"]), "line": int(q.get("line") or 0), "quote": str(q["quote"])}
+                    for q in item.get("evidence_quotes") or []
+                ],
+                "status": "verified",
                 **(
                     {"source_symbol": item["source_symbol"], "source_line": item.get("source_line", 0)}
                     if item.get("source_symbol")
@@ -492,6 +500,9 @@ def finalize_design(
                     unsupported = set(map(str, case["expected_status_codes"])) - documented
                     if unsupported:
                         raise ValueError(f"unsupported contract status codes: {sorted(unsupported)}")
+            # Every case states its expected-value source; the host verifies the quote or relation afterwards.
+            if problems := oracle_shape_problems(case):
+                raise ValueError("; ".join(problems))
             case["id"] = _case_id(section, case, normalized_repo_url)
             if case["id"] in seen_test_ids:
                 raise ValueError("duplicate test content creates duplicate stable ID")

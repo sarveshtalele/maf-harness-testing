@@ -73,6 +73,11 @@ class BrowserRuntime(ScriptedStageRuntime):
                     "preconditions": ["service.py is importable"],
                     "data_notes": "1 and 2",
                     "expected_result": "add(1, 2) returns 3",
+                    "oracle": {
+                        "kind": "derived",
+                        "source": {"file": "service.py", "line": 2, "quote": "return a + b"},
+                        "relation": None,
+                    },
                     "steps": ["Call add(1, 2)", "Compare with 3"],
                     "traceability_links": [{"type": "acceptance_criterion", "id": criterion}],
                 }

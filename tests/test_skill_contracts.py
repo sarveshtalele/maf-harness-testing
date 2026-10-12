@@ -36,6 +36,7 @@ def _document():
             "type": kind,
             "priority": "P1",
             "expected_result": "Documented outcome occurs",
+            "oracle": {"kind": "characterization", "source": None, "relation": None},
             "traceability_links": [{"type": link_type, "id": link_id}],
         }
 
@@ -374,6 +375,7 @@ def test_contract_cases_without_api_contracts_are_reclassified_to_validation(tmp
                 "priority": "P1",
                 "description": "Verify observable CLI behavior.",
                 "expected_result": "CLI behavior matches requirement.",
+                "oracle": {"kind": "characterization", "source": None, "relation": None},
                 "steps": ["Invoke CLI", "Verify result"],
                 "traceability_links": [{"type": "requirement", "id": "REQ-CLI"}],
             }
@@ -423,6 +425,7 @@ def test_contract_case_with_explicit_api_contract_remains_contract():
                 "priority": "P1",
                 "description": "Verify documented health endpoint.",
                 "expected_result": "GET /health returns 200.",
+                "oracle": {"kind": "characterization", "source": None, "relation": None},
                 "steps": ["Call GET /health", "Verify 200"],
                 "traceability_links": [
                     {"type": "requirement", "id": "REQ-API"},

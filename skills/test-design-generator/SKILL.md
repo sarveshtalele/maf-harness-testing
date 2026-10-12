@@ -21,7 +21,9 @@ Return `INVALID_INPUT` when the requirement model is missing, malformed, or lack
 
 ## Output contract
 
-`assets/testcase_templates.yaml` is the single authoritative schema. Emit all top-level sections defined there, including empty arrays/objects where no evidence exists. Each test must contain an ID, title, type, priority, expected result, and at least one `traceability_links` entry.
+`assets/testcase_templates.yaml` is the single authoritative schema. Emit all top-level sections defined there, including empty arrays/objects where no evidence exists. Each test must contain an ID, title, type, priority, expected result, an `oracle`, and at least one `traceability_links` entry.
+
+Each `oracle` states where the expected result comes from: `kind` is one of `specified` (a verbatim documentation or spec quote), `derived` (a verbatim quote from the target implementation), `metamorphic` (a stated relation between runs), `golden` (a fixture scenario with an answer derived by hand from a documented rule), `property` (a stated property of the output) or `characterization` (current behaviour only). `source` ({file, line, quote}) is required for `specified`, `derived` and `golden`; `relation` is required for `metamorphic`, `golden` and `property`. The host checks each quote verbatim against its file and marks the oracle `verified`. A `characterization` case is never reported as verified.
 
 Return the design in the host-supplied structured output; any human-readable report accompanies it.
 
@@ -35,7 +37,8 @@ Return the design in the host-supplied structured output; any human-readable rep
 6. Give every test a `traceability_links` entry for each source artifact it directly verifies. Valid link types are `requirement`, `acceptance_criterion`, `validation`, and `api_contract`.
 7. Account for every supplied requirement with exactly one of: a new traceable case; an existing repository test that directly invokes and asserts it (cite `path::test name` in `gaps` with the exact requirement ID); or an ID-linked gap with a concrete reason. Unexplained omissions are errors.
 8. Target the method that actually implements the expected behavior (arithmetic done in a callee belongs to the callee), and invoke the method each case claims.
-9. Assign priority from source impact: `P0` for release-blocking, security, payment, or data-loss behavior explicitly identified in evidence; `P1` for core behavior and validations; `P2` otherwise. Do not infer criticality when source evidence is silent; use `P1` and note the default in `gaps_report.notes`.
+9. Choose the oracle before the expected result. Prefer `specified`, `derived`, `metamorphic` and `golden` over `characterization`. For ranking, scoring or analysis tools, use metamorphic relations (determinism, irrelevant-input invariance, order invariance) and golden scenarios whose answers come from the documented rule (see references/test_design_patterns.md), never from the implementation's output.
+10. Assign priority from source impact: `P0` for release-blocking, security, payment, or data-loss behavior explicitly identified in evidence; `P1` for core behavior and validations; `P2` otherwise. Do not infer criticality when source evidence is silent; use `P1` and note the default in `gaps_report.notes`.
 
 ## Ambiguity Resolution and Anti-Hallucination
 

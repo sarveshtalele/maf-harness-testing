@@ -70,7 +70,7 @@ output_contract:
       type: array
       items:
         type: object
-        required: [id, title, type, priority, expected_result, traceability_links]
+        required: [id, title, type, priority, expected_result, oracle, traceability_links]
         properties:
           id: {type: string, minLength: 1}
           title: {type: string, minLength: 1}
@@ -78,6 +78,24 @@ output_contract:
           priority: {type: string, enum: [P0, P1, P2]}
           description: {type: string}
           expected_result: {type: string, minLength: 1}
+          oracle:
+            description: Where expected_result comes from. characterization is current behaviour only and never verified.
+            type: object
+            required: [kind, source, relation]
+            properties:
+              kind: {type: string, enum: [specified, derived, metamorphic, golden, property, characterization]}
+              source:
+                type: [object, "null"]
+                description: Required for specified, derived and golden (verbatim quote, file, line).
+                required: [file, line, quote]
+                properties:
+                  file: {type: string, minLength: 1}
+                  line: {type: integer, minimum: 0}
+                  quote: {type: string, minLength: 1}
+              relation:
+                type: [string, "null"]
+                description: Required for metamorphic, golden and property.
+              verified: {type: boolean, description: Set by the host after it checks the quote or relation.}
           steps: {type: array, items: {type: string}}
           test_data: {type: object}
           boundary_condition: {type: string}
