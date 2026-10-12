@@ -21,7 +21,7 @@ test('skill cards show trust badges and stages; import and approve use the plugi
   });
   await page.goto('/');
   await page.getByRole('navigation', { name: 'Main navigation' }).getByRole('link', { name: 'Marketplace', exact: true }).click();
-  await expect(page.getByRole('tab', { name: 'Agent Skills', exact: true })).toHaveAttribute('aria-selected', 'true');
+  await expect(page.getByRole('navigation', { name: 'Marketplace sections' }).getByRole('link', { name: 'Agent Skills', exact: true })).toHaveAttribute('aria-current', 'page');
   const junit = page.locator('.skill-card').filter({ hasText: 'junit-generator' });
   await expect(junit.getByText('Repo', { exact: true })).toBeVisible();
   await expect(junit.getByText('Verified', { exact: true })).toBeVisible();
@@ -47,6 +47,6 @@ test('/?page=skills still opens the Agent Skills list in Marketplace', async ({ 
   await page.route('**/api/harness/skills', route => route.fulfill({ json: { skills: [card('junit-generator', { source: 'repo', verified: true, approved: false })], upstream: {}, executions: [] } }));
   await page.goto('/marketplace');
   await expect(page.getByRole('heading', { name: 'Agent skills', exact: true })).toBeVisible();
-  await expect(page.getByRole('tab', { name: 'Agent Skills', exact: true })).toHaveAttribute('aria-selected', 'true');
+  await expect(page.getByRole('navigation', { name: 'Marketplace sections' }).getByRole('link', { name: 'Agent Skills', exact: true })).toHaveAttribute('aria-current', 'page');
   await expect(page.locator('.skill-card').filter({ hasText: 'junit-generator' })).toBeVisible();
 });

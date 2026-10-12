@@ -181,7 +181,7 @@ export function SettingsView() {
   return <>
     <div className="page-header"><div><h1 className="page-title"><Icon name="gear" />Configuration</h1><p>Current backend settings and local workspace preferences.</p></div></div>
     <ModelSettings stages={config.stages} onSaved={() => void refresh()} />
-    <p className="field-help">MCP servers are managed in <Link href="/marketplace?tab=mcp">Marketplace → MCP servers</Link>.</p>
+    <p className="field-help">MCP servers are managed in <Link href="/marketplace/mcp">Marketplace → MCP servers</Link>.</p>
     <Panel title="Daily usage" storageKey="config:daily"><Metrics values={config.daily} /><p>Shared across runs for this OS user; resets at execution-host local midnight.</p></Panel>
     <Panel title="Debugging logs" storageKey="config:logs"><Fields data={{ service_and_setup_logs: record(config).service_log_directory, run_evidence: record(config).run_directory }} /><p>Each run’s Logs, Audit and Observability show workflow activity. Service logs also capture startup failures before a run exists.</p></Panel>
   </>;

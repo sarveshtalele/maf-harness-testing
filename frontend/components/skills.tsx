@@ -1,29 +1,49 @@
 'use client';
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import Link from 'next/link';
-import { useSearchParams } from 'next/navigation';
 import { api, label, rows, text, type Row } from '@/lib/harness';
 import { ConfirmDialog, Fields, Metrics, StatusBadge, Table } from './page';
 import Markdown from './markdown';
 import Icon from './icons';
 
 const Badge = StatusBadge;
+const trustBadge = (s: Skill) => <>
+  <Badge value={s.source === 'plugin' ? 'Plugin' : 'Repo'} />
+  <Badge value={s.verified ? 'Verified' : s.approved ? 'Approved' : 'Unverified'} />
+</>;
 
 type Skill = { name: string; tree_sha256?: string; description: string; role: string; primary_stages: string[]; purpose?: string; instructions: string; resources: string[]; metadata: Row; reviewed_scripts: Row; sha256: string; source?: 'repo' | 'plugin'; verified?: boolean; approved?: boolean; stages?: string[]; kind?: string; valid: boolean; locked: boolean; errors: string[]; warnings: string[]; provenance: Row; executions: Row[] };
 
-export default function Skills() {
-  const [catalog, setCatalog] = useState<{ skills: Skill[]; upstream: Row } | null>(null);
+type Catalog = { skills: Skill[]; upstream: Row };
+/** The skills catalogue, loaded once per page view. */
+function useCatalog() {
+  const [catalog, setCatalog] = useState<Catalog | null>(null);
   const [error, setError] = useState('');
-  const [search, setSearch] = useState('');
-  const selected = useSearchParams().get('skill') || '';
-  const [notice, setNotice] = useState('');
-  const [approving, setApproving] = useState<Skill | null>(null);
-  const reload = (signal?: AbortSignal) => api<{ skills: Skill[]; upstream: Row }>('skills', undefined, signal).then(setCatalog).catch(e => { if (!signal?.aborted) setError(e.message); });
+  const reload = useCallback((signal?: AbortSignal) => api<Catalog>('skills', undefined, signal).then(setCatalog).catch(e => { if (!signal?.aborted) setError(e.message); }), []);
   useEffect(() => {
     const controller = new AbortController();
     void reload(controller.signal);
     return () => controller.abort();
-  }, []);
+  }, [reload]);
+  return { catalog, error, setError, reload };
+}
+
+export default function Skills() {
+  const { catalog, error, setError, reload } = useCatalog();
+  const [search, setSearch] = useState('');
+  const [notice, setNotice] = useState('');
+  const [approving, setApproving] = useState<Skill | null>(null);
+  // The approval names the hash the user reviewed; the backend refuses it if the skill changed since then.
+  const approveSkill = async (skill: Skill) => {
+    if (!skill.tree_sha256) return; // the dialog disables Approve without the reviewed hash
+    setApproving(null); setError(''); setNotice('');
+    try { await api(`skills/${encodeURIComponent(skill.name)}/approve`, { tree_sha256: skill.tree_sha256 }); setNotice(`${skill.name} approved.`); await reload(); }
+    catch (e) {
+      const message = e instanceof Error ? e.message : 'Approval failed.';
+      setError(/changed since it was reviewed/i.test(message) ? `${message} The list has been reloaded; review the skill again before approving.` : message);
+      await reload();
+    }
+  };
   const addSkill = async (file?: File) => {
     if (!file) return;
     setError(''); setNotice('');
@@ -36,31 +56,8 @@ export default function Skills() {
       await reload();
     } catch (e) { setError(e instanceof Error ? e.message : 'Import failed.'); }
   };
-  // The approval names the hash the user reviewed; the backend refuses it if the skill changed since then.
-  const approveSkill = async (skill: Skill) => {
-    if (!skill.tree_sha256) return; // the dialog disables Approve without the reviewed hash
-    setApproving(null); setError(''); setNotice('');
-    try { await api(`skills/${encodeURIComponent(skill.name)}/approve`, { tree_sha256: skill.tree_sha256 }); setNotice(`${skill.name} approved.`); await reload(); }
-    catch (e) {
-      const message = e instanceof Error ? e.message : 'Approval failed.';
-      setError(/changed since it was reviewed/i.test(message) ? `${message} The list has been reloaded; review the skill again before approving.` : message);
-      await reload();
-    }
-  };
-  const trustBadge = (s: Skill) => <>
-    <Badge value={s.source === 'plugin' ? 'Plugin' : 'Repo'} />
-    <Badge value={s.verified ? 'Verified' : s.approved ? 'Approved' : 'Unverified'} />
-  </>;
   const skills = catalog?.skills || [];
   const visible = skills.filter(s => `${s.name} ${s.description} ${s.role} ${s.primary_stages.join(' ')}`.toLowerCase().includes(search.toLowerCase()));
-  const skill = skills.find(s => s.name === selected);
-  if (selected && catalog) return <><Link className="button small" href="/marketplace">← All agent skills</Link>{skill ? <article className="skill-document">
-    <header><span className="eyebrow">Agent skill · {skill.role}</span><h2>{label(skill.name.replaceAll('-', ' '))}</h2><p>{skill.description}</p><div className="skill-tags"><Badge value={skill.valid ? 'Valid package' : 'Integrity error'} />{trustBadge(skill)}{skill.primary_stages.map(stage => <Badge key={stage} value={stage} />)}</div></header>
-    <section><h2>Recorded execution by run and step</h2><Table caption={`${skill.name} recorded executions`} rows={rows(skill.executions)} searchable empty="No recorded executions." /><p>Package loading and script execution are different events. Historical adapter calls have no script execution record.</p></section>
-    <Markdown text={skill.instructions} />
-    <section><h2>Package resources</h2><ul>{skill.resources.map(resource => <li key={resource}><code>{resource}</code></li>)}</ul></section>
-    <section><h2>Integrity and reviewed scripts</h2><Fields data={{ package_sha256: skill.sha256, errors: skill.errors, warnings: skill.warnings, reviewed_scripts: skill.reviewed_scripts }} /></section>
-  </article> : <p role="alert">This skill is not in the installed catalog.</p>}</>;
   return <><div className="page-header"><div><span className="eyebrow">Project skill library</span><h2><Icon name="spark" />Agent skills</h2><p>Installed packages, workflow roles, instructions and integrity details.</p></div><label className="button primary">Add skill<input aria-label="Add skill (.zip)" type="file" accept=".zip,application/zip" hidden onChange={e => { void addSkill(e.target.files?.[0]); e.target.value = ''; }} /></label></div>
     {notice && <div className="notice" role="status">{notice}</div>}
     {error && <div className="notice bad" role="alert">{error}</div>}
@@ -75,7 +72,7 @@ export default function Skills() {
         {!!skill.stages?.length && <div className="skill-tags" aria-label={`${skill.name} stages`}>{skill.stages.map(stage => <Badge key={stage} value={label(stage)} />)}</div>}
         {skill.purpose && <p className="field-help">{skill.purpose}</p>}
         {!skill.verified && !skill.approved && <button className="small" onClick={() => setApproving(skill)}>Approve {skill.name}</button>}
-        <Link className="button small" href={`/marketplace?skill=${encodeURIComponent(skill.name)}`}>View skill details →</Link>
+        <Link className="button small" href={`/marketplace/skills/${encodeURIComponent(skill.name)}`}>View skill details →</Link>
       </article>)}</div>
       <p className="field-help">Availability does not mean every skill runs on every repository. Companion skills are selected from repository facts and the approved test design.</p>
     </>}
@@ -86,4 +83,19 @@ export default function Skills() {
         : <p className="notice bad" role="alert">The reviewed hash is unavailable, so this approval cannot be sent. <button type="button" onClick={() => { setApproving(null); void reload(); }}>Reload the list</button></p>}
     </ConfirmDialog>
   </>;
+}
+
+/** One skill as a route (/marketplace/skills/[name]): its instructions, recorded runs and integrity details. */
+export function SkillDetail({ name }: { name: string }) {
+  const { catalog, error } = useCatalog();
+  const skill = catalog?.skills.find(item => item.name === name);
+  if (error) return <p className="notice bad" role="alert">{error}</p>;
+  if (!catalog) return <p role="status">Loading project skills…</p>;
+  return <><Link className="button small" href="/marketplace/skills">← All agent skills</Link>{skill ? <article className="skill-document">
+    <header><span className="eyebrow">Agent skill · {skill.role}</span><h2>{label(skill.name.replaceAll('-', ' '))}</h2><p>{skill.description}</p><div className="skill-tags"><Badge value={skill.valid ? 'Valid package' : 'Integrity error'} />{trustBadge(skill)}{skill.primary_stages.map(stage => <Badge key={stage} value={stage} />)}</div></header>
+    <section><h2>Recorded execution by run and step</h2><Table caption={`${skill.name} recorded executions`} rows={rows(skill.executions)} searchable empty="No recorded executions." /><p>Package loading and script execution are different events. Historical adapter calls have no script execution record.</p></section>
+    <Markdown text={skill.instructions} />
+    <section><h2>Package resources</h2><ul>{skill.resources.map(resource => <li key={resource}><code>{resource}</code></li>)}</ul></section>
+    <section><h2>Integrity and reviewed scripts</h2><Fields data={{ package_sha256: skill.sha256, errors: skill.errors, warnings: skill.warnings, reviewed_scripts: skill.reviewed_scripts }} /></section>
+  </article> : <p role="alert">This skill is not in the installed catalog.</p>}</>;
 }

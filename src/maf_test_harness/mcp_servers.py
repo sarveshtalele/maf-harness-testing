@@ -50,6 +50,8 @@ _SECRET_QUERY = re.compile(
 _WINDOWS_PATH = re.compile(r"[A-Za-z]:\\|(?:^|\s)\\\\[^\\\s]")  # drive letter or UNC path
 CONNECT_TIMEOUT_SECONDS = 25  # below the UI proxy's 30 s limit
 _SLUG = re.compile(r"[a-z][a-z0-9-]{0,31}")
+# Route segments of the UI (/marketplace/mcp/new): a server with one of these names would have no page of its own.
+RESERVED_NAMES = frozenset({"new"})
 _ENV_KEY = re.compile(r"[A-Z][A-Z0-9_]{0,63}")
 _TOOL_NAME = re.compile(r"[A-Za-z0-9_.:-]{1,100}")
 # Variables that change how a process loads code, resolves hosts or trusts certificates; a secret field must never set them.
@@ -159,6 +161,8 @@ def validate(data: dict) -> dict:
     name = str(data.get("name", "")).strip()
     if not _SLUG.fullmatch(name):
         raise ValueError("Name must be a lowercase slug (a-z, 0-9, '-'; max 32; starts with a letter).")
+    if name in RESERVED_NAMES:
+        raise ValueError(f"'{name}' is reserved; choose another name.")
     transport = data.get("transport")
     if transport not in {"stdio", "http"}:
         raise ValueError("Transport must be 'stdio' or 'http'.")
@@ -251,13 +255,18 @@ def config_path():
 
 
 def _tool_catalog(items: Any) -> list[dict]:
-    """Stored tool catalogue: names matching the tool-name pattern, descriptions at most 300 characters."""
+    """Stored tool catalogue: names matching the tool-name pattern, descriptions at most 300 characters, and the
+    server's MCP hints (readOnlyHint, destructiveHint) when it sent them. Entries from older files lack the hints."""
     out: list[dict] = []
     for item in items if isinstance(items, list) else []:
         name = item.get("name") if isinstance(item, dict) else None
         if isinstance(name, str) and _TOOL_NAME.fullmatch(name):
             desc = item.get("description")
-            out.append({"name": name, "description": desc[:300] if isinstance(desc, str) else ""})
+            entry: dict[str, Any] = {"name": name, "description": desc[:300] if isinstance(desc, str) else ""}
+            for hint in ("read_only", "destructive"):
+                if isinstance(item.get(hint), bool):
+                    entry[hint] = item[hint]
+            out.append(entry)
         if len(out) == MAX_DISCOVERED_TOOLS:
             break
     return out
@@ -567,12 +576,49 @@ def _catalog_entry(fn) -> dict:
     }  # redact, then cap
 
 
+async def _hints(session: Any) -> dict[str, dict]:
+    """readOnlyHint and destructiveHint per tool name, from the server's own tools/list (the framework drops them).
+    Only booleans are kept; a hint the server did not send is absent, never guessed."""
+    from mcp import types
+
+    out: dict[str, dict] = {}
+    cursor = None
+    for _ in range(50):  # pages: a server listing more than this is truncated, as the catalogue is
+        page = await session.list_tools(
+            params=types.PaginatedRequestParams(cursor=cursor) if cursor else None
+        )
+        for item in page.tools:
+            annotations = item.annotations
+            flags = {}
+            if annotations is not None:
+                if isinstance(annotations.readOnlyHint, bool):
+                    flags["read_only"] = annotations.readOnlyHint
+                if isinstance(annotations.destructiveHint, bool):
+                    flags["destructive"] = annotations.destructiveHint
+            if flags:
+                out[item.name] = flags
+        cursor = page.nextCursor
+        if not cursor:
+            break
+    return out
+
+
 async def probe(server: dict) -> dict:
-    """Connect, list every tool the server offers (names and redacted descriptions), disconnect. Never returns secrets."""
+    """Connect, list every tool the server offers (names, redacted descriptions and MCP hints), disconnect.
+    Never returns secrets."""
     tool = build_tool(server, expose_all=True)
     try:
         await connect(tool)
-        catalog = sorted((_catalog_entry(f) for f in tool.functions), key=lambda t: t["name"])
+        session = getattr(tool, "session", None)
+        try:
+            hints = await _hints(session) if session is not None else {}
+        except Exception:  # hints are optional: a failed tools/list page must not fail the whole Test
+            hints = {}
+        entries = [_catalog_entry(f) for f in tool.functions]
+        catalog = sorted(
+            ({**e, **hints.get(e["name"], {})} for e in entries),
+            key=lambda t: t["name"],
+        )
     finally:
         try:
             await tool.close()
@@ -600,7 +646,7 @@ def _slug(raw: str) -> str:
 
 def _unique(name: str, taken: set[str]) -> str:
     candidate, n = name, 2
-    while candidate in taken:
+    while candidate in taken or candidate in RESERVED_NAMES:
         suffix = f"-{n}"
         candidate = f"{name[: 32 - len(suffix)].rstrip('-')}{suffix}"
         n += 1

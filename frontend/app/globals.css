@@ -168,11 +168,7 @@ code,.data-text,.data-fields dd,.cell-text{overflow-wrap:break-word}
 .jira-fields{border:0;padding:0;margin:0 0 12px;min-width:0}.jira-fields legend{font-weight:600;padding:0 0 4px}
 .fields{min-width:0}.fields label{display:block;font-size:12px;font-weight:600;margin:16px 0 7px}.fields input:not([type=checkbox]):not([type=radio]),.fields textarea,.fields select{display:block;width:100%;max-width:100%;margin-top:8px;min-width:0}.fields textarea{min-height:110px;resize:vertical}.fields select{min-height:40px}
 @media (max-width:700px){.case-table table{min-width:760px}}
-/* marketplace */.mp-command{display:block;font-size:12px;overflow-wrap:anywhere;color:var(--muted);margin:2px 0 8px}
-/* marketplace */.mp-tools{list-style:none;padding:0;margin:8px 0;display:grid;gap:6px}.mp-tools li{display:flex;gap:8px;align-items:center;flex-wrap:wrap;min-width:0;overflow-wrap:anywhere}
-/* marketplace */.mp-warn{display:flex;gap:8px;align-items:center;flex-wrap:wrap;font-size:12px;color:var(--warn);margin:8px 0}
-/* marketplace */dialog.detail-dialog{overflow:auto}
-/* dialogs */.detail-dialog{width:min(640px,calc(100vw - 32px));max-height:85dvh;background:var(--surface);color:var(--text);border:1px solid var(--border);border-radius:12px;padding:0;box-shadow:0 18px 50px #0003}.detail-dialog:focus,.detail-dialog:focus-visible{outline:none}.page-header>button,.page-header>.button,.page-header>label.button{white-space:nowrap;flex-shrink:0}.detail-dialog fieldset{border:1px solid var(--border);border-radius:8px;padding:10px 14px;margin:12px 0}
+/* dialogs */.page-header>button,.page-header>.button,.page-header>label.button{white-space:nowrap;flex-shrink:0}
 /* icons + sidebar */.icon{flex:none}.tabs .icon{width:16px;height:16px}.page-header h1{display:flex;align-items:center;gap:10px}.page-header h1 .icon{width:24px;height:24px}.sidebar-top{display:flex;align-items:center;gap:8px}.sidebar-top .brand{flex:1;min-width:0}.sidebar-toggle{flex:none;width:32px;height:32px;padding:0;color:var(--muted)}.sidebar nav .nav-label{width:auto;font-size:inherit}.sidebar nav button .icon{flex:none}.app-shell{--sidebar:var(--sidebar-width,236px)}.app-shell.moving .sidebar,.app-shell.moving .sidebar nav button,.app-shell.moving .sidebar .brand,.app-shell.moving .sidebar-top,.app-shell.moving .sidebar-footer,.app-shell.moving main{transition:width .2s ease,padding .2s ease,margin-left .2s ease}.theme-toggle{gap:10px}@media(max-width:700px){.sidebar-toggle{display:none}}@media(prefers-reduced-motion:reduce){.app-shell.moving .sidebar,.app-shell.moving .sidebar nav button,.app-shell.moving .sidebar .brand,.app-shell.moving .sidebar-top,.app-shell.moving .sidebar-footer,.app-shell.moving main{transition:none}}@media(min-width:701px){html[data-sidebar=collapsed] .app-shell{--sidebar:64px}html[data-sidebar=collapsed] .sidebar{padding:20px 10px}html[data-sidebar=collapsed] .sidebar-top{flex-direction:column;gap:14px}html[data-sidebar=collapsed] .brand{flex:none;padding:0 4px}html[data-sidebar=collapsed] .rail-hide{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}html[data-sidebar=collapsed] .workspace-label,html[data-sidebar=collapsed] .sidebar-run,html[data-sidebar=collapsed] .sidebar-footer>:not(.theme-toggle),html[data-sidebar=collapsed] .sidebar>.resize-handle{display:none}html[data-sidebar=collapsed] .sidebar-footer{padding:12px 0 0}html[data-sidebar=collapsed] .sidebar nav button,html[data-sidebar=collapsed] .theme-toggle{width:44px;height:44px;padding:0 12px;justify-content:flex-start}html[data-sidebar=collapsed] .sidebar [data-label]{position:relative}html[data-sidebar=collapsed] .sidebar [data-label]:is(:hover,:focus-visible)::after{content:attr(data-label) / "";position:absolute;left:calc(100% + 10px);top:50%;transform:translateY(-50%);z-index:10;background:var(--text);color:var(--bg);font-size:12px;line-height:1.4;padding:4px 8px;border-radius:6px;white-space:nowrap;pointer-events:none}}
 
 /* ---- Layout and wrapping (review findings 2, 3, 4, 31): long names wrap, actions never squeeze ---- */
@@ -342,3 +338,63 @@ a:visited{color:var(--link)}
   .tabs{flex-wrap:nowrap;overflow-x:auto;padding-right:28px;-webkit-mask-image:linear-gradient(to right,#000 86%,transparent);mask-image:linear-gradient(to right,#000 86%,transparent)}
   .tabs a{flex:0 0 auto}
 }
+
+/* ---- MCP servers (components/mcp-servers.tsx cards, mcp-server.tsx page, mcp-add.tsx). Long commands and tool names wrap; min-width:0 everywhere. ---- */
+.mp-command,.mp-tools,.mp-warn{min-width:0}
+.mp-command{display:block;font-size:12px;overflow-wrap:anywhere;color:var(--muted);margin:2px 0 8px}
+.mp-tools{list-style:none;padding:0;margin:8px 0;display:grid;grid-template-columns:minmax(0,1fr);gap:6px}.mp-tools li{min-width:0;overflow-wrap:anywhere;word-break:break-all}.mp-tools code,.mcp-tool-title code{min-width:0;max-width:100%;overflow-wrap:anywhere;word-break:break-all}
+.mp-warn{display:flex;gap:8px;align-items:center;flex-wrap:wrap;font-size:12px;color:var(--warn);margin:8px 0;min-width:0;overflow-wrap:anywhere}
+.mcp-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(min(100%,300px),1fr));gap:18px;min-width:0}
+.mcp-card{position:relative;min-width:0;display:flex;flex-direction:column;gap:2px;padding:20px;background:var(--surface);border:1px solid var(--border);border-radius:10px;overflow-wrap:anywhere}
+.mcp-card:focus-within{border-color:var(--primary)}
+.mcp-card-head{display:flex;justify-content:space-between;align-items:flex-start;flex-wrap:wrap;gap:8px 12px;min-width:0}
+.mcp-card-title{min-width:0;flex:1 1 150px;overflow-wrap:anywhere;font-size:16px}
+.mcp-stretch{color:var(--text);text-decoration:none}
+.mcp-stretch::after{content:"";position:absolute;inset:0;border-radius:10px}
+.mcp-stretch:focus-visible{outline:none}
+.mcp-card:has(.mcp-stretch:focus-visible){outline:3px solid var(--primary);outline-offset:3px}
+.mcp-card-actions{position:relative;z-index:1;display:flex;flex-wrap:wrap;gap:8px;margin-top:auto;padding-top:12px}
+.mcp-card-actions a,.mcp-card-actions button{position:relative;z-index:1}
+.mcp-code{display:block;max-width:100%;min-width:0;font:12px/1.5 ui-monospace,SFMono-Regular,Consolas,monospace;background:var(--surface-alt);border:1px solid var(--border);border-radius:7px;padding:8px 10px;margin:8px 0;white-space:pre-wrap;overflow-wrap:anywhere;word-break:break-word}
+.mcp-code code{font:inherit;color:var(--text);background:none;overflow-wrap:anywhere}
+.mcp-problems{margin:8px 0;padding-left:18px;color:var(--warn);overflow-wrap:anywhere}
+.mcp-switch{display:inline-flex;align-items:center;gap:8px;font-size:13px;font-weight:600;cursor:pointer;min-width:0}
+.mcp-switch input{appearance:none;-webkit-appearance:none;position:relative;flex:none;width:40px;height:22px;margin:0;border-radius:999px;background:var(--border);cursor:pointer;transition:background .15s}
+.mcp-switch input::after{content:"";position:absolute;top:3px;left:3px;width:16px;height:16px;border-radius:50%;background:var(--surface);transition:transform .15s}
+.mcp-switch input:checked{background:var(--primary)}
+.mcp-switch input:checked::after{transform:translateX(18px);background:var(--on-primary)}
+.mcp-switch input:disabled{opacity:.5;cursor:not-allowed}
+.mcp-switch input:focus-visible{outline:3px solid var(--primary);outline-offset:3px}
+.mcp-enable-reason{font-size:12px}
+.mcp-delete{color:var(--bad);border-color:var(--bad)}
+.mcp-delete:hover{background:var(--bad-bg)}
+.mcp-group{margin:14px 0}
+.mcp-group h4{font-size:12px;color:var(--muted);text-transform:uppercase;letter-spacing:.06em;margin:0 0 4px}
+.mcp-bulk{margin:12px 0}
+.mcp-tool-list{list-style:none;margin:0;padding:0;border-top:1px solid var(--border)}
+.mcp-tool{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:12px 16px;align-items:start;padding:12px 0;border-bottom:1px solid var(--border);min-width:0}
+.mcp-tool-main{min-width:0;overflow-wrap:anywhere}
+.mcp-tool-title{display:flex;flex-wrap:wrap;align-items:center;gap:6px 8px;min-width:0}
+.mcp-tool-title code{overflow-wrap:anywhere;word-break:break-word;min-width:0}
+.mcp-tool-desc{display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;margin:4px 0 2px;font-size:12px;overflow-wrap:anywhere}
+.mcp-tool-desc.open{display:block;-webkit-line-clamp:unset}
+.mcp-seg{display:inline-flex;flex-wrap:wrap;max-width:100%;border:1px solid var(--border);border-radius:8px;overflow:hidden}
+.mcp-seg button{border:0;border-radius:0;background:transparent;font-size:12px;padding:6px 10px;white-space:nowrap}
+.mcp-seg button+button{border-left:1px solid var(--border)}
+.mcp-seg button[aria-checked=true]{background:var(--primary);color:var(--on-primary)}
+.mcp-seg button:focus-visible{outline-offset:-3px;position:relative;z-index:1}
+.mcp-footer{position:sticky;bottom:0;z-index:4;margin-top:24px;padding:10px 16px;background:var(--surface);border:1px solid var(--border);border-radius:10px;box-shadow:0 -6px 18px #0001;min-width:0}
+.mcp-footer-main{display:flex;align-items:center;justify-content:space-between;gap:12px;min-width:0}
+.mcp-summary{min-width:0;flex:1 1 auto;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.mcp-footer-main .header-actions{flex:none;flex-wrap:nowrap}
+.mcp-footer-details{margin-top:6px;min-width:0}
+.mcp-footer-details>summary{font-size:12px;color:var(--muted);cursor:pointer}
+.mcp-footer-notes{display:flex;flex-direction:column;gap:4px;margin-top:6px;font-size:12px;min-width:0;overflow-wrap:anywhere}
+.mcp-footer-notes .mp-warn{margin:0}
+:root:has(.mcp-footer){scroll-padding-bottom:160px}
+.detail-page fieldset{border:1px solid var(--border);border-radius:8px;padding:10px 14px;margin:12px 0;min-width:0}
+.detail-page legend{padding:0 6px;font-size:12px;font-weight:600}
+.mcp-confirm-list{margin:8px 0 0;padding-left:18px;max-height:40vh;overflow:auto;overflow-wrap:anywhere}
+.mcp-add-panel{min-width:0}
+.mcp-open-links{display:flex;flex-wrap:wrap;gap:8px}
+@media (max-width:700px){.mcp-tool{grid-template-columns:minmax(0,1fr)}.mcp-seg{width:100%}.mcp-seg button{flex:1 1 auto}.mcp-footer{padding:8px 12px}.mcp-footer-main .header-actions>button{padding:6px 10px}:root:has(.mcp-footer){scroll-padding-bottom:120px}}

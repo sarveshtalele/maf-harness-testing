@@ -15,10 +15,14 @@ const config: NextConfig = {
       { source: '/', has: [{ type: 'query' as const, key: 'page', value: 'new' }], destination: '/runs/new', permanent: false },
       { source: '/', has: [{ type: 'query' as const, key: 'page', value: 'prompts' }], destination: '/prompts', permanent: false },
       { source: '/', has: [{ type: 'query' as const, key: 'page', value: 'configuration' }], destination: '/settings', permanent: false },
-      { source: '/', has: [{ type: 'query' as const, key: 'page', value: 'marketplace' }, { type: 'query' as const, key: 'tab', value: 'mcp' }], destination: '/marketplace?tab=mcp', permanent: false },
-      { source: '/', has: [{ type: 'query' as const, key: 'page', value: 'marketplace' }], destination: '/marketplace', permanent: false },
-      { source: '/', has: [{ type: 'query' as const, key: 'page', value: 'skills' }, { type: 'query' as const, key: 'skill', value: '(?<skill>[^&]{1,200})' }], destination: '/marketplace?skill=:skill', permanent: false },
-      { source: '/', has: [{ type: 'query' as const, key: 'page', value: 'skills' }], destination: '/marketplace', permanent: false },
+      { source: '/', has: [{ type: 'query' as const, key: 'page', value: 'marketplace' }, { type: 'query' as const, key: 'tab', value: 'mcp' }], destination: '/marketplace/mcp', permanent: false },
+      { source: '/', has: [{ type: 'query' as const, key: 'page', value: 'marketplace' }], destination: '/marketplace/skills', permanent: false },
+      { source: '/', has: [{ type: 'query' as const, key: 'page', value: 'skills' }, { type: 'query' as const, key: 'skill', value: '(?<skill>[^&]{1,200})' }], destination: '/marketplace/skills/:skill', permanent: false },
+      { source: '/', has: [{ type: 'query' as const, key: 'page', value: 'skills' }], destination: '/marketplace/skills', permanent: false },
+      // Marketplace links from before the sub-routes: ?tab=mcp and ?skill= move to the routes; the bare page opens skills.
+      { source: '/marketplace', has: [{ type: 'query' as const, key: 'tab', value: 'mcp' }], destination: '/marketplace/mcp', permanent: false },
+      { source: '/marketplace', has: [{ type: 'query' as const, key: 'skill', value: '(?<skill>[^&]{1,200})' }], destination: '/marketplace/skills/:skill', permanent: false },
+      { source: '/marketplace', destination: '/marketplace/skills', permanent: false },
     ];
   },
   // Only same-origin framing: the evidence report iframe is same-origin; approvals must not be framed elsewhere.
