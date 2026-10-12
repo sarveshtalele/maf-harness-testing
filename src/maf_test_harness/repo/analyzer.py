@@ -588,9 +588,10 @@ def build_repository_evidence(
         excerpt = numbered[:room]
         if target_symbols and len(numbered) > room:  # keep the head and splice in the complete target bodies
             wanted = set(re.findall(r"[A-Za-z_]\w*", " ".join(target_symbols)))
+            methods = _method_pairs(target_symbols)
             bodies = "".join(
                 f"\n[target {name}, lines {first}-{last}]\n{body}"
-                for name, first, last, body in _target_chunks(rel, content, wanted)
+                for name, first, last, body in _target_chunks(rel, content, wanted, methods)
             )
             if bodies:
                 head = max(room // 4, 200)
@@ -665,8 +666,22 @@ def _compact_lines(source_lines: list[str], first: int) -> str:
     )
 
 
-def _python_target_chunks(src: str, wanted: set[str]) -> list[tuple[str, int, int, str]]:
-    """Complete bodies of the wanted top-level functions/classes plus the same-module helpers they call."""
+_METHOD_TARGET = re.compile(r"(?<![\w.])([A-Za-z_]\w*)(?:\.|::|#)([A-Za-z_]\w*)")
+
+
+def _method_pairs(targets) -> frozenset[tuple[str, str]]:
+    """(class, method) pairs named by targets such as "Class.method" (a module.function pair is kept too, then ignored)."""
+    return frozenset(pair for text in targets for pair in _METHOD_TARGET.findall(str(text)))
+
+
+def _python_target_chunks(
+    src: str, wanted: set[str], methods: frozenset[tuple[str, str]] = frozenset(), hop: bool = True
+) -> list[tuple[str, int, int, str]]:
+    """Complete bodies of the wanted top-level functions/classes plus the same-module helpers they call.
+
+    A "Class.method" target yields only that method (under a one-line class header) and the sibling methods it calls
+    through self.x, one hop, so a large class cannot crowd the prompt out. Other class names are emitted whole.
+    """
     try:
         tree = ast.parse(src)
     except SyntaxError:
@@ -674,16 +689,48 @@ def _python_target_chunks(src: str, wanted: set[str]) -> list[tuple[str, int, in
     top = {
         n.name: n for n in tree.body if isinstance(n, ast.FunctionDef | ast.AsyncFunctionDef | ast.ClassDef)
     }
-    chosen = [name for name in top if name in wanted]
-    for name in list(
-        chosen
-    ):  # one hop of callees inside the same module (e.g. the scorers a total is built from)
+    lines = src.splitlines()
+    method_chunks: list[tuple[str, int, int, str]] = []
+    handled_owners: set[str] = set()
+    for owner, method in sorted(methods):
+        cls = top.get(owner)
+        if not isinstance(cls, ast.ClassDef) or owner not in wanted or method not in wanted:
+            continue
+        members = {n.name: n for n in cls.body if isinstance(n, ast.FunctionDef | ast.AsyncFunctionDef)}
+        if method not in members:
+            continue
+        chosen = [method]
+        for call in ast.walk(members[method]) if hop else ():
+            callee = (
+                call.func.attr
+                if isinstance(call, ast.Call) and isinstance(call.func, ast.Attribute)
+                else None
+            )
+            if (
+                callee in members
+                and callee not in chosen
+                and isinstance(call.func.value, ast.Name)
+                and call.func.value.id == "self"
+            ):
+                chosen.append(callee)
+        block = [f"{cls.lineno}: class {owner}:"] + [
+            _compact_lines(lines[members[name].lineno - 1 : members[name].end_lineno], members[name].lineno)
+            for name in chosen
+        ]
+        node = members[method]
+        method_chunks.append(
+            (f"{owner}.{method}", node.lineno, node.end_lineno or node.lineno, "\n".join(block))
+        )
+        handled_owners.add(owner)
+    chosen = [name for name in top if name in wanted and name not in handled_owners]
+    for name in (
+        list(chosen) if hop else []
+    ):  # one hop of callees inside the same module (the scorers a total uses)
         for call in ast.walk(top[name]):
             callee = call.func.id if isinstance(call, ast.Call) and isinstance(call.func, ast.Name) else None
-            if callee in top and callee not in chosen:
+            if callee in top and callee not in chosen and callee not in handled_owners:
                 chosen.append(callee)
-    lines = src.splitlines()
-    return [
+    return method_chunks + [
         (
             name,
             top[name].lineno,
@@ -694,9 +741,11 @@ def _python_target_chunks(src: str, wanted: set[str]) -> list[tuple[str, int, in
     ]
 
 
-def _target_chunks(rel: str, src: str, wanted: set[str]) -> list[tuple[str, int, int, str]]:
+def _target_chunks(
+    rel: str, src: str, wanted: set[str], methods: frozenset[tuple[str, str]] = frozenset(), hop: bool = True
+) -> list[tuple[str, int, int, str]]:
     if rel.endswith(".py"):
-        return _python_target_chunks(src, wanted)
+        return _python_target_chunks(src, wanted, methods, hop)
     all_lines = src.splitlines()
     found = []
     for index, line in enumerate(all_lines):
@@ -736,7 +785,7 @@ def _defining_files(root: Path, source_files: list[str], target: str, cache: dic
 
 
 def extract_target_sources(
-    root: Path, targets: list[str], source_files: list[str], max_chars: int = 24_000
+    root: Path, targets: list[str], source_files: list[str], max_chars: int = 24_000, hop: bool = True
 ) -> str:
     """Complete source of the code each case targets, so tests are written against what the code really does.
 
@@ -761,7 +810,7 @@ def extract_target_sources(
             src = _safe_read(root / rel)
             if not src:
                 continue
-            found = _target_chunks(rel, src, wanted)
+            found = _target_chunks(rel, src, wanted, _method_pairs([text]), hop)
             for name, start, end, body in found:
                 if (rel, name) in seen:
                     continue

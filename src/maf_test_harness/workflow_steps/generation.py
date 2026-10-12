@@ -67,6 +67,17 @@ from .greenfield import has_no_code
 from .test_review import review_generated_tests
 
 
+def _check_case_collisions(candidate: dict) -> None:
+    """Two files of one batch whose paths differ only by case would overwrite each other on Windows and macOS."""
+    seen: dict[str, str] = {}
+    for item in candidate.get("files", []):
+        key = str(item["path"]).casefold()
+        if seen.setdefault(key, item["path"]) != item["path"]:
+            raise ValueError(
+                f"Generated paths differ only by case and would overwrite each other: {seen[key]}, {item['path']}"
+            )
+
+
 class GenerationSteps:
     async def _generate_tests_batched(self, state: dict) -> dict:
         """Generate approved design cases in small validated batches with bounded repair retries."""
@@ -87,17 +98,24 @@ class GenerationSteps:
                 "evidence": state.get("evidence"),
                 "batch_size": TEST_GENERATION_BATCH_SIZE,
                 "review_threshold": TEST_REVIEW_MIN_CONFIDENCE,
-                "quality_policy": "strict-source-invocation-reviewed-v3",
+                "quality_policy": "strict-source-invocation-reviewed-v4",
                 "skills": {
                     name: (self.skills_root / name / "SKILL.md").read_text(encoding="utf-8")
                     for name in skills_for("test_generation", state).all
                 },
+                # The reviewer's instructions decide which answers are accepted, so they are part of the cache key too.
+                "reviewer_skill": (self.skills_root / "test-reviewer" / "SKILL.md").read_text(
+                    encoding="utf-8"
+                ),
             }
         )
         cache = state.setdefault("accepted_generation_batches", {})
         if cache.get("signature") != signature:
             cache.clear()
             cache.update(signature=signature, batches={})
+            state[
+                "generation_rounds"
+            ] = {}  # round counts (temperature, response cache) belong to one signature
         state["routes"] = await asyncio.to_thread(
             extract_routes, self.run_dir / "repo", state["artifacts"]["repo_analysis"].get("source_files", [])
         )
@@ -393,6 +411,7 @@ class GenerationSteps:
                             used.add(old["path"])
                             self.audit("generation_case_carried_over", batch=batch_index, case_id=cid)
                     raw_batches.append(json.dumps(candidate, separators=(",", ":"), default=str))
+                    _check_case_collisions(candidate)
                     validation = validate_generated_files(candidate, work_ids)
                     validate_java_traceability(candidate, work, requirements, self.run_dir / "repo")
                     self._check_imports(candidate, state, preferred)
@@ -402,8 +421,10 @@ class GenerationSteps:
                             "Generated batch does not implement all approved case IDs: "
                             + ", ".join(validation["uncovered_case_ids"])
                         )
-                    collisions = (accepted_paths | {f["path"] for f in kept_files}) & {
-                        item["path"] for item in candidate["files"]
+                    # Case-insensitive: tests/test_A.py and tests/test_a.py overwrite each other on Windows and macOS.
+                    taken = {p.casefold() for p in accepted_paths | {f["path"] for f in kept_files}}
+                    collisions = {
+                        item["path"] for item in candidate["files"] if item["path"].casefold() in taken
                     }
                     if collisions:
                         raise ValueError(
@@ -412,7 +433,6 @@ class GenerationSteps:
                         )
                     await self._build_gate(candidate, batch_index)
                     carried.update({i: f for f in candidate["files"] for i in f["case_ids"]})
-                    self._settle_response_cache("test_generation", True)  # accepted: cache this model answer
                     # The source-backed reviewer needs application code; a no-repo greenfield run has none yet.
                     candidate["case_reviews"] = (
                         []
@@ -431,6 +451,8 @@ class GenerationSteps:
                         for r in candidate["case_reviews"]
                         if not review_accepted(r, TEST_REVIEW_MIN_CONFIDENCE)
                     }
+                    # The model answer is cached only once the review accepts it (a rejected answer must not replay).
+                    self._settle_response_cache("test_generation", not rejected_ids)
                     if rejected_ids:
                         # Last attempt: verified cases keep their files and reviews; only the rejected IDs fail and
                         # go to the accuracy rounds (or stay generation_failed when the gate is off).
@@ -445,7 +467,6 @@ class GenerationSteps:
                         candidate["case_reviews"] = [
                             r for r in candidate["case_reviews"] if r["case_id"] not in rejected_ids
                         ]
-                        self._settle_response_cache("test_generation", False)
                         failures.append(
                             {
                                 "batch": batch_index,
@@ -537,9 +558,9 @@ class GenerationSteps:
             if missing:
                 lines = [f"{case['id']}: {verification_reason(str(case['id']))}"[:600] for case in missing]
                 raise ValueError(
-                    f"Accuracy gate: {len(missing)} of {len(cases)} cases are not verified; execution is blocked.\n"
+                    f"Accuracy gate: {len(missing)} of {len(cases)} cases are not source-review accepted; execution is blocked.\n"
                     + "\n".join(lines[:30])
-                    + "\nRetry the generation stage (verified cases are kept; Rerun-from-step or Revise regenerate everything), revise the design for these cases, "
+                    + "\nRetry the generation stage (source-review accepted cases are kept; Rerun-from-step or Revise regenerate everything), revise the design for these cases, "
                     "or set HARNESS_REQUIRE_FULL_ACCURACY=0 to allow partial execution."
                 )
             failures.clear()  # every case is verified, so earlier failure records are superseded

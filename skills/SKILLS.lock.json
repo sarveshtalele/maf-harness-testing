@@ -248,6 +248,16 @@
       },
       "origin": "local"
     },
+    "test-reviewer": {
+      "audit": {
+        "status": "repo-reviewed"
+      },
+      "files": {
+        "SKILL.md": "bd31891b3ab1da2a27570cdc321d0e90c6dcf8f067c5715df23537fa52e371e8",
+        "plugin.yaml": "5290289b50ddf85c9cc8fb7f32da340643e9ec1801f7a967a6608e5dbb1abce2"
+      },
+      "origin": "local"
+    },
     "traceability-generator": {
       "audit": {
         "gate": "PASS",

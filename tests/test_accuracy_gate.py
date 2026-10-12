@@ -5,8 +5,16 @@ import re
 from pathlib import Path
 
 import pytest
-from fakes import FULL_MARKS, ScriptedStageRuntime, clone_fixture, review_response
+from fakes import (
+    FULL_MARKS,
+    ScriptedStageRuntime,
+    clone_fixture,
+    record_generated,
+    review_response,
+    scripted_derivations,
+)
 
+from maf_test_harness.qa.confidence import review_accepted
 from maf_test_harness.qa.controls import _case_outcome
 from maf_test_harness.qa.report import build_qa_report, render_markdown
 from maf_test_harness.qa.triage import remedy_for
@@ -41,12 +49,19 @@ class ReviewHost:
         self.review = {"scores": scores, "confidence": confidence, "verdict": verdict, "reason": reason}
 
     async def _call_model(self, **kwargs):
-        cases = json.loads(kwargs["prompt"])["approved_inputs"]["approved_cases"]
+        prompt = json.loads(kwargs["prompt"])
+        cases = prompt["approved_inputs"]["approved_cases"]
         return {
             "status": "completed",
             "artifact": {
                 "reviews": [
-                    {"case_id": c["id"], **self.review, "source_files": ["service.py"]} for c in cases
+                    {
+                        "case_id": c["id"],
+                        **self.review,
+                        "source_files": ["service.py"],
+                        "derivations": scripted_derivations(prompt, str(c["id"])),
+                    }
+                    for c in cases
                 ]
             },
         }
@@ -62,6 +77,7 @@ def review_fixture(tmp_path):
     (tmp_path / "repo").mkdir(exist_ok=True)
     (tmp_path / "repo" / "service.py").write_text("def add(a, b):\n    return a + b\n", encoding="utf-8")
     candidate = {"files": [{"path": "tests/test_add.py", "case_ids": ["TC-1"], "content": PY_OK}]}
+    record_generated(candidate["files"])
     return candidate, [{"id": "TC-1", "target": "service.add"}]
 
 
@@ -151,7 +167,9 @@ def test_accuracy_gate_blocks_execution_when_a_case_never_verifies(tmp_path, mon
         # The gate fails the generation stage itself: it is retryable there, and no later stage was reached.
         assert pending["stage"] == "test_generation" and pending["kind"] == "error"
         message = pending["error"]
-        assert message.startswith("Accuracy gate: 1 of 2 cases are not verified; execution is blocked.")
+        assert message.startswith(
+            "Accuracy gate: 1 of 2 cases are not source-review accepted; execution is blocked."
+        )
         assert "target_not_invoked cap 40" in message
         assert message.rstrip().endswith("or set HARNESS_REQUIRE_FULL_ACCURACY=0 to allow partial execution.")
     finally:
@@ -280,7 +298,7 @@ def test_qa_report_shows_confidence_and_the_verification_line():
     assert "| Pri | Confidence | Status | File |" in markdown
     assert re.search(r"\| TC-1 \|.*\| P1 \| 95 \| ", markdown)
     assert (
-        "Verification: verified 1/2 cases (threshold 85, lowest verified confidence 95; full-accuracy gate)."
+        "Source review: 1/2 cases source-review accepted (threshold 85, lowest accepted confidence 95; full-accuracy gate)."
         in markdown
     )
     outcome = _case_outcome(
@@ -290,7 +308,7 @@ def test_qa_report_shows_confidence_and_the_verification_line():
 
 
 def test_accuracy_gate_has_its_own_error_category_and_remedy():
-    message = "Accuracy gate: 1 of 2 cases are not verified; execution is blocked.\nTC-2: confidence 40"
+    message = "Accuracy gate: 1 of 2 cases are not source-review accepted; execution is blocked.\nTC-2: confidence 40"
     assert categorize(message) == "accuracy_gate"
     assert "HARNESS_REQUIRE_FULL_ACCURACY=0" in remedy_for(message)
 
@@ -410,10 +428,12 @@ def test_gate_on_skips_the_early_ratio_raise_and_reports_the_unverified_cases(tm
     with pytest.raises(ValueError) as exc:
         asyncio.run(host._generate_tests_batched(state))
     message = str(exc.value)
-    assert message.startswith("Accuracy gate: 3 of 3 cases are not verified; execution is blocked.")
+    assert message.startswith(
+        "Accuracy gate: 3 of 3 cases are not source-review accepted; execution is blocked."
+    )
     assert "failed for" not in message
     assert (
-        "Retry the generation stage (verified cases are kept; Rerun-from-step or Revise regenerate everything)"
+        "Retry the generation stage (source-review accepted cases are kept; Rerun-from-step or Revise regenerate everything)"
         in message
     )
 
@@ -472,4 +492,524 @@ def test_default_review_threshold_is_80_and_the_model_need_not_emit_confidence(t
 
     candidate, cases = review_fixture(tmp_path)
     asyncio.run(review_generated_tests(PromptHost(tmp_path, FULL_MARKS), REVIEW_STATE, candidate, cases, 1))
-    assert "each dimension should be at least 85% of its maximum" in seen[0]
+    assert "85%" not in seen[0]
+    sent = json.loads(seen[0])
+    assert "expected_result" not in json.dumps(sent["approved_inputs"])
+    assert "«E1»" in sent["generated_source"][0]["content"]
+
+
+# Regression fixtures for the requirement-analysis-skill run (2026-10-12): both generated tests were reviewed as
+# "supported" at full marks and then failed at execution. The reviewer transport below is scripted, so each case
+# is the real source snippet plus the wrong (or right) literal and a rubber-stamp reviewer response.
+CTL003_SOURCE = """class LocationResolver:
+    def __init__(self, places):
+        self.places = list(places)
+
+    def score(self, query, place):
+        return sum(1 for ch in query if ch in place)
+
+    def resolve(self, query):
+        scored = [(self.score(query, place), place) for place in self.places]
+        return [place for points, place in scored if points > 0]
+"""
+CTL001_SOURCE = """from pathlib import Path
+
+
+class CodebaseIndexer:
+    def __init__(self, root):
+        self.root = Path(root)
+
+    def build(self):
+        index = {}
+        for path in sorted(self.root.rglob("*.py")):
+            content = path.read_text(encoding="utf-8")
+            index[path.name] = {"line_count": content.count("\\n") + 1}
+        return index
+"""
+CTL003_WRONG = """from location import LocationResolver
+
+
+def test_resolve_keeps_both_places():
+    resolver = LocationResolver(["Berlin", "Paris"])
+    assert len(resolver.resolve("Bx")) == 2
+"""
+CTL003_RIGHT = CTL003_WRONG.replace("== 2", "== 1")
+CTL001_WRONG = """from indexer import CodebaseIndexer
+
+
+def test_build_counts_lines(tmp_path):
+    (tmp_path / "app.py").write_text("x = 1\\ny = 2\\n", encoding="utf-8")
+    index = CodebaseIndexer(tmp_path).build()
+    assert index["app.py"]["line_count"] == 2
+"""
+CTL001_RIGHT = CTL001_WRONG.replace("== 2", "== 3")
+
+
+def ctl_review(tmp_path, *, source_name, source, test_text, target, case_id="TC-1", derivations=None):
+    """Review one generated test against its real source with a rubber-stamp reviewer (full marks, supported)."""
+    (tmp_path / "repo").mkdir(exist_ok=True)
+    (tmp_path / "repo" / source_name).write_text(source, encoding="utf-8")
+    candidate = {"files": [{"path": "tests/test_case.py", "case_ids": [case_id], "content": test_text}]}
+    record_generated(candidate["files"])
+    cases = [{"id": case_id, "target": target}]
+    state = {"artifacts": {"requirements": {}, "repo_analysis": {"source_files": [source_name]}}}
+
+    class Reviewer(ReviewHost):
+        async def _call_model(self, **kwargs):
+            prompt = json.loads(kwargs["prompt"])
+            review = {
+                "case_id": case_id,
+                "scores": FULL_MARKS,
+                "confidence": 100,
+                "verdict": "supported",
+                "reason": "Reviewer: the expectation follows from the source.",
+                "source_files": [source_name],
+            }
+            review["derivations"] = (
+                derivations if derivations is not None else scripted_derivations(prompt, case_id)
+            )
+            return {"status": "completed", "artifact": {"reviews": [review]}}
+
+    (result,) = asyncio.run(
+        review_generated_tests(Reviewer(tmp_path, FULL_MARKS), state, candidate, cases, 1, partial_ok=True)
+    )
+    return result
+
+
+def test_ctl003_wrong_expectation_is_rejected_before_execution(tmp_path):
+    result = ctl_review(
+        tmp_path,
+        source_name="location.py",
+        source=CTL003_SOURCE,
+        test_text=CTL003_WRONG,
+        target="LocationResolver.resolve",
+        derivations=CTL003_TRUTH,
+    )
+    assert not review_accepted(result, 80)
+    assert result["confidence"] <= 60
+    assert "count_assumes_no_filter" in {cap["rule"] for cap in result["caps"]}
+
+
+CTL001_TRUTH = [
+    {
+        "slot": "E1",
+        "value": "3",
+        "steps": "The fixture has two lines and a trailing newline; count('\\n') is 2 and the source adds one.",
+        "source_quote": 'index[path.name] = {"line_count": content.count("\\n") + 1}',
+        "fixture_quote": '(tmp_path / "app.py").write_text(',
+    }
+]
+CTL003_TRUTH = [
+    {
+        "slot": "E1",
+        "value": "1",
+        "steps": "Both places score against Bx, but only Berlin has a positive score, so the filter drops Paris.",
+        "source_quote": "return [place for points, place in scored if points > 0]",
+        "fixture_quote": 'LocationResolver(["Berlin", "Paris"])',
+    }
+]
+
+
+def test_ctl001_wrong_expectation_with_a_correct_reviewer_ends_at_zero(tmp_path):
+    result = ctl_review(
+        tmp_path,
+        source_name="indexer.py",
+        source=CTL001_SOURCE,
+        test_text=CTL001_WRONG,
+        target="CodebaseIndexer.build",
+        derivations=CTL001_TRUTH,
+    )
+    assert not review_accepted(result, 80) and result["confidence"] == 0
+    assert {"expectation_contradicts_source", "blind_derivation_mismatch"} <= {
+        c["rule"] for c in result["caps"]
+    }
+
+
+def test_ctl001_wrong_expectation_confirmed_by_the_reviewer_is_a_conflict_not_a_zero(tmp_path):
+    """A reviewer that agrees with the wrong literal is charged to the reviewer: the case needs a human look (60)."""
+    result = ctl_review(
+        tmp_path,
+        source_name="indexer.py",
+        source=CTL001_SOURCE,
+        test_text=CTL001_WRONG,
+        target="CodebaseIndexer.build",
+    )
+    assert not review_accepted(result, 80)
+    assert result["confidence"] == 60
+    assert "expectation_conflict" in {c["rule"] for c in result["caps"]}
+
+
+@pytest.mark.parametrize(
+    ("source_name", "source", "test_text", "target"),
+    [
+        ("location.py", CTL003_SOURCE, CTL003_RIGHT, "LocationResolver.resolve"),
+        ("indexer.py", CTL001_SOURCE, CTL001_RIGHT, "CodebaseIndexer.build"),
+    ],
+    ids=["CTL-003-expected-1", "CTL-001-expected-3"],
+)
+def test_correct_expectations_are_accepted_before_and_after_the_fix(
+    tmp_path, source_name, source, test_text, target
+):
+    result = ctl_review(tmp_path, source_name=source_name, source=source, test_text=test_text, target=target)
+    assert review_accepted(result, 80), result["caps"]
+
+
+def test_malformed_reviewer_output_is_repaired_not_escaped(tmp_path):
+    """AgentOutputError (truncated or invalid reviewer JSON) takes the same repair path as a contract error."""
+    from maf_test_harness.agent.runtime import AgentOutputError
+
+    candidate, cases = review_fixture(tmp_path)
+    host = ReviewHost(tmp_path, FULL_MARKS)
+    calls = {"n": 0}
+    real_call = host._call_model
+
+    async def flaky(**kwargs):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise AgentOutputError("reviewer returned truncated JSON")
+        return await real_call(**kwargs)
+
+    host._call_model = flaky
+    (result,) = asyncio.run(review_generated_tests(host, REVIEW_STATE, candidate, cases, 1))
+    assert calls["n"] == 2 and review_accepted(result, 80)
+
+
+def test_generated_case_settles_the_response_cache_only_after_review(tmp_path, monkeypatch):
+    """A model answer the reviewer rejects must not be replayed from the response cache."""
+    monkeypatch.setattr(generation_steps, "TEST_GENERATION_BATCH_SIZE", 1)
+    monkeypatch.setattr(generation_steps, "TEST_GENERATION_MAX_ATTEMPTS", 2)
+    monkeypatch.setattr(generation_steps, "REQUIRE_FULL_ACCURACY", False)
+
+    class Settling(CountingProvider):
+        settled: list = []
+
+        def settle_response_cache(self, stage, validated, role=None):
+            self.settled.append((stage, validated, role))
+
+    provider = Settling({"TC-1": 1})  # first answer does not invoke the target, the second does
+    host, state = counting_host(tmp_path, provider, ids=("TC-1",))
+    asyncio.run(host._generate_tests_batched(state))
+    author = [(stage, ok) for stage, ok, role in provider.settled if role is None]
+    assert author == [("test_generation", False), ("test_generation", True)]  # the author's answers only
+
+
+def test_control_ids_survive_into_the_generator_design(tmp_path):
+    from maf_test_harness.workflow_support import _compact_design
+
+    design = {"positive_tests": [{"id": "TC-1", "target": "service.add", "control_ids": ["CTL-001"]}]}
+    (case,) = _compact_design(design)["cases"]
+    assert case["control_ids"] == ["CTL-001"]
+
+
+def test_write_generated_refuses_names_that_differ_only_by_case(tmp_path):
+    from maf_test_harness.envs.execution import write_generated
+
+    files = [
+        {"path": "tests/test_A.py", "content": "x = 1\n"},
+        {"path": "tests/test_a.py", "content": "x = 2\n"},
+    ]
+    with pytest.raises(ValueError, match="differ only by case"):
+        write_generated(tmp_path / "workspace", files)
+
+
+def test_review_miss_flags_an_accepted_case_that_fails_an_assertion():
+    design = {
+        "positive_tests": [
+            {
+                "id": "TC-1",
+                "title": "adds",
+                "level": "unit",
+                "priority": "P1",
+                "actor": "Developer",
+                "traceability_links": [],
+            }
+        ]
+    }
+    generation = {
+        "files": [{"path": "tests/test_add.py", "case_ids": ["TC-1"], "content": PY_OK}],
+        "case_reviews": [
+            {
+                "case_id": "TC-1",
+                "confidence": 95,
+                "model_score": 95,
+                "verdict": "supported",
+                "reason": "r",
+                "scores": FULL_MARKS,
+                "caps": [],
+            }
+        ],
+        "generation_failures": [],
+        "verification_summary": {
+            "enforced": True,
+            "verified": 1,
+            "total": 1,
+            "min_confidence": 95,
+            "threshold": 80,
+        },
+    }
+    execution = {
+        "status": "completed",
+        "cases": [
+            {
+                "name": "test_add",
+                "file": "tests/test_add.py",
+                "status": "failed",
+                "message": "AssertionError: assert 2 == 3",
+            }
+        ],
+    }
+    report = build_qa_report(
+        repo={}, requirements={}, design=design, generation=generation, execution=execution
+    )
+    (row,) = [c for c in report["cases"] if c["id"] == "TC-1"]
+    assert row["status"] == "failed" and row["source_review"] == "accepted" and row["review_miss"] is True
+    assert report["case_verification"]["TC-1"]["review_miss"] is True
+    markdown = render_markdown(report)
+    assert "## Review vs execution" in markdown
+    assert "| TC-1 | accepted | 95 | failed | yes |" in markdown
+    assert "Review misses (accepted, then failed an assertion): 1" in markdown
+
+
+class ReviewerModeProvider:
+    """Generates the same test for every approved case and answers the reviewer in a chosen way.
+
+    modes: correct (scripted, computed from the recorded test), wrong (the value is wrong, and so is the re-check),
+    wrong_then_correct (wrong first, the re-check fixes it), missing (no derivations), unverifiable (quotes not in the
+    source), counted (correct, with the steps and quote the caller gives).
+    """
+
+    def __init__(self, lines, mode="correct", steps=None, source_quote=None):
+        from maf_test_harness.models import TestReviewDraft  # noqa: F401  (import check at construction)
+
+        self.lines = lines
+        self.mode = mode
+        self.steps = steps
+        self.source_quote = source_quote
+        self.calls = {"review": 0, "recheck": 0}
+
+    def _correct(self, prompt, case_id):
+        derivations = scripted_derivations(prompt, case_id)
+        for d in derivations:
+            if self.steps:
+                d["steps"] = self.steps
+            if self.source_quote:
+                d["source_quote"] = self.source_quote
+        return derivations
+
+    def _wrong(self, derivations):
+        return [{**d, "value": "9"} for d in derivations]
+
+    async def run_stage(self, **kwargs):
+        from maf_test_harness.models import DerivationRecheckDraft, TestReviewDraft
+
+        if kwargs.get("response_format") is TestReviewDraft:
+            self.calls["review"] += 1
+            prompt = json.loads(kwargs["prompt"])
+            reviews = []
+            for case in prompt["approved_inputs"]["approved_cases"]:
+                cid = str(case["id"])
+                if self.mode == "missing":
+                    derivations = []
+                elif self.mode == "unverifiable":
+                    derivations = [
+                        {**d, "source_quote": "a line that is not in the implementation"}
+                        for d in self._correct(prompt, cid)
+                    ]
+                elif self.mode in {"wrong", "wrong_then_correct"}:
+                    derivations = self._wrong(self._correct(prompt, cid))
+                else:
+                    derivations = self._correct(prompt, cid)
+                reviews.append(
+                    {
+                        "case_id": cid,
+                        "scores": dict(FULL_MARKS),
+                        "confidence": 90,
+                        "verdict": "supported",
+                        "reason": "Scripted reviewer.",
+                        "source_files": ["service.py" if (self.mode != "lifted") else "items.py"],
+                        "derivations": derivations,
+                    }
+                )
+            return {"status": "completed", "artifact": {"reviews": reviews}}
+        if kwargs.get("response_format") is DerivationRecheckDraft:
+            self.calls["recheck"] += 1
+            prompt = json.loads(kwargs["prompt"])
+            answers = []
+            for item in prompt["slots_to_recheck"]:
+                correct = [d for d in self._correct(prompt, item["case_id"]) if d["slot"] == item["slot"]]
+                answers += correct if self.mode == "wrong_then_correct" else self._wrong(correct)
+            return {"status": "completed", "artifact": {"derivations": answers}}
+        approved = [c["id"] for c in json.loads(kwargs["prompt"])["approved_inputs"]["approved_cases"]]
+        files = [{"path": f"tests/test_{cid}.py", "lines": self.lines, "case_ids": [cid]} for cid in approved]
+        return {
+            "status": "completed",
+            "artifact": {
+                "selected_language": "Python",
+                "selected_framework": "pytest",
+                "rationale": "native",
+                "files": files,
+            },
+        }
+
+
+SERVICE_TEST = ["from service import value", "", "", "def test_value():", "    assert value() == 2"]
+LIFT_TEST = [
+    "from items import Pick",
+    "",
+    "",
+    "def test_run():",
+    '    assert len(Pick().run(["a", "b"])) == 2',
+]
+
+
+def gate_run(
+    tmp_path,
+    monkeypatch,
+    provider,
+    *,
+    source_name="service.py",
+    source="def value(): return 2",
+    target="service.value",
+    ids=("TC-1",),
+    rounds=1,
+):
+    import maf_test_harness.workflow_steps.generation as gen
+
+    monkeypatch.setattr(gen, "TEST_GENERATION_BATCH_SIZE", 1)
+    monkeypatch.setattr(gen, "TEST_GENERATION_MAX_ATTEMPTS", 1)
+    monkeypatch.setattr(gen, "ACCURACY_ROUNDS", rounds)
+    (tmp_path / "repo").mkdir(exist_ok=True)
+    (tmp_path / "repo" / source_name).write_text(source, encoding="utf-8")
+    host = Harness(tmp_path, skills_root=Path("skills"), requirements_mode="model", runtime=provider)
+    state = {
+        "artifacts": {
+            "repo_analysis": {"languages": {"Python": 1}, "source_files": [source_name]},
+            "test_design": {"positive_tests": [{"id": i, "target": target} for i in ids]},
+        }
+    }
+    return asyncio.run(host._generate_tests_batched(state))
+
+
+@pytest.mark.parametrize(
+    ("mode", "expected_rule"),
+    [
+        (
+            "wrong",
+            "blind_derivation_mismatch cap 40",
+        ),  # the reviewer is wrong and confirms it on the re-check
+        ("missing", "derivation_missing cap 60"),  # no derivation, twice
+        ("unverifiable", "derivation_unverifiable cap 50"),  # quotes that are not in the source
+    ],
+)
+def test_reviewer_defects_end_in_rejection_through_the_accuracy_gate(
+    tmp_path, monkeypatch, mode, expected_rule
+):
+    provider = ReviewerModeProvider(SERVICE_TEST, mode=mode)
+    with pytest.raises(ValueError, match="Accuracy gate: 1 of 1 cases are not source-review accepted") as exc:
+        gate_run(tmp_path, monkeypatch, provider)
+    assert expected_rule in str(exc.value)
+
+
+def test_missing_derivation_is_retried_twice_before_the_cap(tmp_path, monkeypatch):
+    provider = ReviewerModeProvider(SERVICE_TEST, mode="missing")
+    with pytest.raises(ValueError, match="Accuracy gate"):
+        gate_run(tmp_path, monkeypatch, provider, rounds=0)
+    assert provider.calls["review"] == 3  # the first answer and two format repairs; only then the cap applies
+
+
+def test_a_wrong_derivation_the_reviewer_corrects_on_recheck_is_accepted(tmp_path, monkeypatch):
+    provider = ReviewerModeProvider(SERVICE_TEST, mode="wrong_then_correct")
+    result = gate_run(tmp_path, monkeypatch, provider)
+    assert result["verification_summary"]["verified"] == 1
+    assert provider.calls["recheck"] == 1
+
+
+def test_a_correct_reviewer_on_a_filtering_target_lifts_the_count_finding(tmp_path, monkeypatch):
+    """D1 fires (the fixture has two items and the target filters), and the verified derivation cites the filter: lifted."""
+    source = "class Pick:\n    def run(self, items):\n        return [item for item in items if item]\n"
+    provider = ReviewerModeProvider(
+        LIFT_TEST,
+        mode="lifted",
+        steps="Both strings are non-empty, so the item filter keeps both items and the count is 2.",
+        source_quote="return [item for item in items if item]",
+    )
+    result = gate_run(
+        tmp_path, monkeypatch, provider, source_name="items.py", source=source, target="Pick.run"
+    )
+    assert result["verification_summary"]["verified"] == 1
+    (case,) = result["case_reviews"]
+    assert case["caps"] == [] and case["confidence"] == 100
+    assert [n["rule"] for n in case["notes"]] == ["count_assumes_no_filter"]
+
+
+def test_a_correct_count_without_evidence_of_the_filter_is_capped_at_60(tmp_path, monkeypatch):
+    source = "class Pick:\n    def run(self, items):\n        return [item for item in items if item]\n"
+    provider = ReviewerModeProvider(
+        LIFT_TEST, mode="lifted", steps="Two strings were passed in.", source_quote="class Pick:"
+    )
+    with pytest.raises(ValueError, match="Accuracy gate") as exc:
+        gate_run(tmp_path, monkeypatch, provider, source_name="items.py", source=source, target="Pick.run")
+    assert "count_assumes_no_filter cap 60" in str(exc.value)
+
+
+def test_review_miss_matches_real_assertion_signatures_only():
+    from maf_test_harness.qa.report import _ASSERTION_MISMATCH
+
+    assert _ASSERTION_MISMATCH.search("AssertionError: assert 2 == 3")
+    assert _ASSERTION_MISMATCH.search("E   assert add(1, 2) == 3")
+    assert _ASSERTION_MISMATCH.search("expected 3 got 2")
+    assert not _ASSERTION_MISMATCH.search("ValueError: boom in the assert helper")
+    assert not _ASSERTION_MISMATCH.search("NameError: name assert_x is not defined")
+
+
+def test_review_miss_also_flags_an_error_that_is_an_assertion_failure():
+    design = {
+        "positive_tests": [
+            {
+                "id": "TC-1",
+                "title": "adds",
+                "level": "unit",
+                "priority": "P1",
+                "actor": "Developer",
+                "traceability_links": [],
+            }
+        ]
+    }
+    generation = {
+        "files": [{"path": "tests/test_add.py", "case_ids": ["TC-1"], "content": PY_OK}],
+        "case_reviews": [
+            {
+                "case_id": "TC-1",
+                "confidence": 95,
+                "model_score": 95,
+                "verdict": "supported",
+                "reason": "r",
+                "scores": FULL_MARKS,
+                "caps": [],
+            }
+        ],
+        "generation_failures": [],
+        "verification_summary": {
+            "enforced": True,
+            "verified": 1,
+            "total": 1,
+            "min_confidence": 95,
+            "threshold": 80,
+        },
+    }
+    execution = {
+        "status": "completed",
+        "cases": [
+            {
+                "name": "test_add",
+                "file": "tests/test_add.py",
+                "status": "error",
+                "message": "AssertionError: assert 2 == 3",
+            }
+        ],
+    }
+    report = build_qa_report(
+        repo={}, requirements={}, design=design, generation=generation, execution=execution
+    )
+    (row,) = report["cases"]
+    assert row["status"] == "error" and row["review_miss"] is True

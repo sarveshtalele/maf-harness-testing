@@ -356,3 +356,14 @@ def test_empty_zip_is_refused_with_a_clear_message():
         pass
     with pytest.raises(ValueError, match="Archive is empty"):
         trust.import_skill(REPO, zip_base64=base64.b64encode(empty.getvalue()).decode())
+
+
+def test_reviewer_skill_is_never_attached_to_generation_and_passes_the_runtime_gate():
+    """The reviewer role is not selected by skills_for, but the host can still load it by name through the same
+    trust gate the runtime applies to every call."""
+    from maf_test_harness.skills.config import skills_for
+
+    state = {"requirements_mode": "model", "artifacts": {"repo_analysis": {"languages": {"Python": 1}}}}
+    assert "test-reviewer" not in skills_for("test_generation", state).all
+    rt = MAFHarnessRuntime(api_key="k", model="m", skills_root=Path("skills"))
+    assert rt._trusted_skills("test_generation", ["test-reviewer"], {}) == ["test-reviewer"]

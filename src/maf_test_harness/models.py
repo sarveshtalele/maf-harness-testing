@@ -16,10 +16,39 @@ class ReviewScores(BaseModel):
     traceability: int = Field(ge=0, le=10)
 
 
+class Derivation(BaseModel):
+    """The reviewer's own derivation of one masked assertion literal («E<n>») from the implementation."""
+
+    model_config = ConfigDict(extra="forbid")
+    slot: str = Field(min_length=1, max_length=12, pattern=r"^E\d{1,4}$")
+    value: str = Field(
+        max_length=300, description="The literal's value, derived from target_source and the fixture."
+    )
+    steps: str = Field(max_length=800, description="Short computation steps from the fixture to the value.")
+    source_quote: str = Field(
+        max_length=600, description="Verbatim implementation lines (from target_source) the derivation uses."
+    )
+    fixture_quote: str = Field(
+        max_length=600, description="Verbatim lines of the generated test that supply the input."
+    )
+
+
+class DerivationRecheckDraft(BaseModel):
+    """Second answer for slots whose first derivation disagreed with the asserted literal (the literal is revealed)."""
+
+    model_config = ConfigDict(extra="forbid")
+    derivations: list[Derivation] = Field(min_length=1)
+
+
 class TestCaseReview(BaseModel):
     model_config = ConfigDict(extra="forbid")
     case_id: str = Field(min_length=1)
     scores: ReviewScores
+    derivations: list[Derivation] = Field(
+        default_factory=list,
+        description="One derivation for every masked slot («E<n>») of this case, derived blind (no expected value is given). "
+        "The count is per case: a file with many assertions needs as many derivations.",
+    )
     confidence: int = Field(
         default=0,
         ge=0,

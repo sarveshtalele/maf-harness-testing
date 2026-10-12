@@ -122,8 +122,8 @@ def test_reviewer_prompt_has_full_target_method_for_large_file(tmp_path):
         ]
     }
     asyncio.run(review_generated_tests(Host(), state, candidate, cases, 1))
-    assert "MARK_END" in prompts[0]["target_source"]
-    assert "authoritative complete implementation" in prompts[0]["assignment"]
+    assert "MARK_END" in prompts[0]["target_source"]["Item.java setPrice"]
+    assert "authoritative" in prompts[0]["assignment"]
 
 
 def test_bare_symbol_targets_resolve_to_their_defining_file(tmp_path):
@@ -142,3 +142,57 @@ def test_bare_symbol_targets_resolve_to_their_defining_file(tmp_path):
     py = extract_target_sources(tmp_path, ["DependencyGraph.get_reverse_deps"], files)
     assert "app/page.tsx :: ConnectorCards" in tsx and "return a;" in tsx
     assert "graph.py :: DependencyGraph" in py and "get_reverse_deps" in py
+
+
+def test_class_method_target_emits_the_method_and_its_self_callees_only(tmp_path):
+    from maf_test_harness.repo.analyzer import extract_target_sources
+
+    (tmp_path / "big.py").write_text(
+        "class Big:\n"
+        "    def __init__(self):\n"
+        "        self.rows = []\n"
+        "\n"
+        "    def helper(self, x):\n"
+        "        return x * 2\n"
+        "\n"
+        "    def build(self):\n"
+        "        return [self.helper(r) for r in self.rows]\n"
+        "\n"
+        "    def unrelated(self):\n"
+        "        return 'never shown for Big.build'\n",
+        encoding="utf-8",
+    )
+    text = extract_target_sources(tmp_path, ["Big.build"], ["big.py"])
+    assert "def build(self):" in text and "def helper(self, x):" in text
+    assert "unrelated" not in text and "__init__" not in text
+    assert "class Big:" in text  # header kept so the block still parses as Python
+    whole = extract_target_sources(tmp_path, ["Big"], ["big.py"])
+    assert "def unrelated(self):" in whole  # a bare class name still means the whole class
+
+
+def test_review_sources_send_each_target_once_and_always_its_method_body(tmp_path):
+    from maf_test_harness.workflow_steps.test_review import TARGET_BUDGET, _review_sources
+
+    (tmp_path / "big.py").write_text(
+        "class Big:\n    def build(self):\n        return self.helper()\n\n    def helper(self):\n        return 1\n",
+        encoding="utf-8",
+    )
+    cases = [{"id": "c1", "target": "Big.build"}, {"id": "c2", "target": "Big.build"}]
+    texts, oversized = _review_sources(tmp_path, cases, ["big.py"])
+    assert list(texts) == ["Big.build"] and oversized == set()
+    assert "def build(self):" in texts["Big.build"] and "def helper(self):" in texts["Big.build"]
+    assert TARGET_BUDGET >= 24_000
+
+
+def test_an_oversized_method_is_sent_as_its_body_and_flagged(tmp_path):
+    from maf_test_harness.workflow_steps.test_review import TARGET_BUDGET, _review_sources
+
+    filler = "".join(f"        x{i} = {i}  # pad\n" for i in range(TARGET_BUDGET // 20))
+    (tmp_path / "huge.py").write_text(
+        f"class Huge:\n    def build(self):\n{filler}        return self.helper()\n\n    def helper(self):\n        return 1\n",
+        encoding="utf-8",
+    )
+    texts, oversized = _review_sources(tmp_path, [{"id": "c1", "target": "Huge.build"}], ["huge.py"])
+    assert oversized == {"Huge.build"}
+    assert "def build(self):" in texts["Huge.build"]
+    assert "def helper(self):" not in texts["Huge.build"]  # callees omitted when the body alone is too large

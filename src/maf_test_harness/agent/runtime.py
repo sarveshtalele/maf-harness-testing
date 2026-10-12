@@ -415,8 +415,8 @@ class MAFHarnessRuntime:
         self._primed = {}
         self._run_counts: dict[str, int] = {}
         self._last_response: dict[
-            str, dict[str, Any]
-        ] = {}  # stage -> {path, result, hit}: awaiting host validation
+            tuple[str, str | None], dict[str, Any]
+        ] = {}  # (stage, role) -> {path, result, hit}: awaiting host validation
         self.recorder: TraceRecorder | None = None  # set by the workflow host; None = no trace file
         self._trace_context: dict[str, Any] = {}
         # Reviewed, hash-pinned scripts the agent may call through MAF run_skill_script (model tier only).
@@ -999,17 +999,19 @@ class MAFHarnessRuntime:
         response_format: Any | None = None,
         companions: tuple[str, ...] | list[str] = (),
         temperature: float = 0.0,
+        role: str | None = None,
     ) -> dict:
         skills = self._trusted_skills(stage, [skill_name, *companions], state)
         companions = tuple(skills[1:])
         cache_path = self._response_cache_path(stage, skills, persona, prompt, response_format, temperature)
-        self._last_response.pop(stage, None)
+        key = (stage, role)
+        self._last_response.pop(key, None)
         if cache_path is not None and cache_path.is_file():
             try:
                 cached = json.loads(cache_path.read_text(encoding="utf-8"))
                 if isinstance(cached, dict) and cached.get("status") == "completed":
                     digest = hashlib.sha256(prompt.encode()).hexdigest()
-                    self._last_response[stage] = {"path": cache_path, "result": cached, "hit": True}
+                    self._last_response[key] = {"path": cache_path, "result": cached, "hit": True}
                     self._trace_context = {"stage": stage, "phase": "structured"}
                     self._emit(
                         "cache_hit",
@@ -1130,7 +1132,7 @@ class MAFHarnessRuntime:
             return data
         outcome = {"status": "completed", "artifact": data}
         if cache_path is not None:
-            self._last_response[stage] = {"path": cache_path, "result": outcome, "hit": False}
+            self._last_response[key] = {"path": cache_path, "result": outcome, "hit": False}
         return outcome
 
     def _response_cache_path(
@@ -1159,13 +1161,13 @@ class MAFHarnessRuntime:
         )
         return root / f"{hashlib.sha256(material.encode()).hexdigest()}.json"
 
-    def settle_response_cache(self, stage: str, validated: bool) -> None:
+    def settle_response_cache(self, stage: str, validated: bool, role: str | None = None) -> None:
         """Called by the host after its own validation of the stage's last answer.
 
         Accepted fresh answers are stored; a rejected answer is never stored and a rejected cached one is deleted.
         Cache failures never fail a run.
         """
-        entry = self._last_response.pop(stage, None)
+        entry = self._last_response.pop((stage, role), None)
         if entry is None:
             return
         try:
