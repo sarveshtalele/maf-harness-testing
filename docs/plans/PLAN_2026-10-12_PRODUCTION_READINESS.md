@@ -14,11 +14,11 @@ The QA report for `requirement-analysis-skill` (commit `3eae93ae5b5f`) showed 13
 
 ## 1. Accuracy and confidence (backend)
 
-- [ ] **1.1** Add regression fixtures for CTL-001 and CTL-003 to the accuracy-gate tests. They are scripted transport with the real source, and each must be rejected before execution.
-- [ ] **1.2** Source-backed expected-value verification in `workflow_steps/test_review.py`. For each assertion literal, the reviewer must show the derivation from `target_source`. A missing or contradicted derivation caps the score.
-- [ ] **1.3** Deterministic checks where safe, for example collection-length and literal-count expectations against fixture data the test builds itself. A failed check caps the score.
+- [x] **1.1** (4bfa40c) Add regression fixtures for CTL-001 and CTL-003 to the accuracy-gate tests. They are scripted transport with the real source, and each must be rejected before execution.
+- [x] **1.2** (4bfa40c) Source-backed expected-value verification in `workflow_steps/test_review.py`. For each assertion literal, the reviewer must show the derivation from `target_source`. A missing or contradicted derivation caps the score.
+- [x] **1.3** (4bfa40c) Deterministic checks where safe, for example collection-length and literal-count expectations against fixture data the test builds itself. A failed check caps the score.
 - [ ] **1.4** Confidence agent for **test planning** and **test design**: a separate reviewer persona with its own prompt, editable in the UI (Agent prompts).
-- [ ] **1.5** Gate at **95** (95 to 100 required) before evaluation and generation. Apply it to plan, design and generated-test review. It stays configurable, and it is shown in the UI and the report.
+- [~] **1.5** (runtime resolver and 95 test gate merged; planning and design gates in progress) Gate at **95** (95 to 100 required) before evaluation and generation. Apply it to plan, design and generated-test review. It stays configurable, and it is shown in the UI and the report.
 - [ ] **1.6** Full confidence traceability. Every score records:
   - the control ID and case or plan area;
   - the rubric points;
@@ -28,15 +28,15 @@ The QA report for `requirement-analysis-skill` (commit `3eae93ae5b5f`) showed 13
   - the round number.
 
   It is shown in the UI and the report, and exported.
-- [ ] **1.7** The report separates **source-review accepted** from **execution passed**. "Verified" never implies runtime correctness.
+- [x] **1.7** (4bfa40c) The report separates **source-review accepted** from **execution passed**. "Verified" never implies runtime correctness.
 
 ## 2. UI: pages instead of pop-ups, clean template
 
-- [ ] **2.1** A shared page template: header (title, ID, breadcrumbs, back), metadata strip, sections, actions. Every detail view and output renders through it.
-- [ ] **2.2** The expand arrow (⤢) opens a dedicated page, not a modal. Record pages show ID and **Description** (renamed from "text").
-- [ ] **2.3** Report flow: Objective, Recommended frameworks and the other sections become collapsible subsections, expanded on demand rather than all at once.
-- [ ] **2.4** The UI never shows raw Markdown. The QA report and execution logs render as structured UI, and Markdown or JSON are offered as downloads.
-- [ ] **2.5** Fix text and element collisions (overlap or clipping) on every page at 1366, 1024 and 390 px, in light and dark themes, including Windows font metrics.
+- [x] **2.1** (7d56fcc) A shared page template: header (title, ID, breadcrumbs, back), metadata strip, sections, actions. Every detail view and output renders through it.
+- [x] **2.2** (7d56fcc) The expand arrow (⤢) opens a dedicated page, not a modal. Record pages show ID and **Description** (renamed from "text").
+- [x] **2.3** (7d56fcc) Report flow: Objective, Recommended frameworks and the other sections become collapsible subsections, expanded on demand rather than all at once.
+- [x] **2.4** (7d56fcc) The UI never shows raw Markdown. The QA report and execution logs render as structured UI, and Markdown or JSON are offered as downloads.
+- [x] **2.5** (7d56fcc) Fix text and element collisions (overlap or clipping) on every page at 1366, 1024 and 390 px, in light and dark themes, including Windows font metrics.
 
 ## 3. MCP
 
@@ -45,11 +45,11 @@ The QA report for `requirement-analysis-skill` (commit `3eae93ae5b5f`) showed 13
 
 ## 4. Full project review (Opus, read-only), then fixes
 
-- [ ] **4.1** Backend workflow and accuracy pipeline review.
-- [ ] **4.2** Security review: API, auth, CORS and CSP, secrets, MCP, skills, subprocess, path traversal, Electron.
-- [ ] **4.3** Frontend UI/UX, accessibility and consistency review.
-- [ ] **4.4** Desktop, packaging, CI and documentation consistency review.
-- [ ] **4.5** Fix every confirmed finding (Haiku), with Sonnet review.
+- [x] **4.1** (review) Backend workflow and accuracy pipeline review.
+- [x] **4.2** (review) Security review: API, auth, CORS and CSP, secrets, MCP, skills, subprocess, path traversal, Electron.
+- [x] **4.3** (review) Frontend UI/UX, accessibility and consistency review.
+- [x] **4.4** (review) Desktop, packaging, CI and documentation consistency review.
+- [~] **4.5** (backend, desktop/CI/docs and most security fixes merged (e17c897, 7bbc54d); F1, F4, F11, F13, F22 in progress) Fix every confirmed finding (Haiku), with Sonnet review.
 - [ ] **4.6** Final Opus review of the merged result against this checklist.
 
 ## 5. Developer documentation

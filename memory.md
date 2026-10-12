@@ -539,3 +539,14 @@ Format: `YYYY-MM-DD HH:MM | BEFORE|AFTER | actor | action | scope/risk or result
   - Inline SVG icons on the nav, tabs and page headers, with no dependency.
   - A "Collapse sidebar" toggle with aria-expanded and aria-controls turns the sidebar into a 64px rail with focus tooltips.
   - A pre-hydration script in layout.tsx sets data-sidebar and data-theme on <html>, so the page does not flash.
+- 2026-10-12 | AFTER | Opus | production-readiness wave 1:
+  - Reviews: 4 Opus reviews, 134 findings, stored outside the repo in `.watch/review-2026-10-12/`.
+  - Merged, each Haiku-implemented and Sonnet-reviewed:
+    - desktop/CI/docs (7bbc54d): orphan reaping, SHA-pinned actions, release gated on main and CI, check_all.py, 6-file version check;
+    - accuracy core (4bfa40c): blind derivation, deterministic D1/D2 checks that a proven derivation can lift, reviewer skill, "source-review accepted", review_miss;
+    - backend and security fixes (e17c897): runtime gate resolver (95-100), env sanitising, path allowlist, no-follow reads, --run-python restricted, stop zombie fix;
+    - UI pages (7d56fcc): App Router routes, DetailPage template, no pop-ups except ConfirmDialog, structured QA report, Markdown/JSON as downloads.
+  - Lessons:
+    - the Playwright fixture server needs the same scripted-derivation hook as pytest;
+    - fake keys in tests must be split for the secrets scan;
+    - Windows trims trailing dots in file names.
