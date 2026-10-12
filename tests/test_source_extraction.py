@@ -142,3 +142,29 @@ def test_bare_symbol_targets_resolve_to_their_defining_file(tmp_path):
     py = extract_target_sources(tmp_path, ["DependencyGraph.get_reverse_deps"], files)
     assert "app/page.tsx :: ConnectorCards" in tsx and "return a;" in tsx
     assert "graph.py :: DependencyGraph" in py and "get_reverse_deps" in py
+
+
+def test_class_method_target_emits_the_method_and_its_self_callees_only(tmp_path):
+    from maf_test_harness.repo.analyzer import extract_target_sources
+
+    (tmp_path / "big.py").write_text(
+        "class Big:\n"
+        "    def __init__(self):\n"
+        "        self.rows = []\n"
+        "\n"
+        "    def helper(self, x):\n"
+        "        return x * 2\n"
+        "\n"
+        "    def build(self):\n"
+        "        return [self.helper(r) for r in self.rows]\n"
+        "\n"
+        "    def unrelated(self):\n"
+        "        return 'never shown for Big.build'\n",
+        encoding="utf-8",
+    )
+    text = extract_target_sources(tmp_path, ["Big.build"], ["big.py"])
+    assert "def build(self):" in text and "def helper(self, x):" in text
+    assert "unrelated" not in text and "__init__" not in text
+    assert "class Big:" in text  # header kept so the block still parses as Python
+    whole = extract_target_sources(tmp_path, ["Big"], ["big.py"])
+    assert "def unrelated(self):" in whole  # a bare class name still means the whole class

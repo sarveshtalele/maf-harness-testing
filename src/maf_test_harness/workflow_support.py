@@ -166,6 +166,7 @@ def _compact_design(design: dict[str, Any]) -> dict[str, Any]:
                     "steps": case.get("steps", []),
                     "expected_result": case.get("expected_result"),
                     "traceability_links": case.get("traceability_links", []),
+                    "control_ids": case.get("control_ids", []),
                 }
             )
     return {"cases": cases, "gaps_report": design.get("gaps_report", {})}

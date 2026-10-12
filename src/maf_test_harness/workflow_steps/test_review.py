@@ -3,6 +3,7 @@
 import re
 
 from ..agent.personas import chief_architect_persona
+from ..agent.runtime import AgentOutputError
 from ..llm.prompts import generation_prompt
 from ..models import TestReviewDraft
 from ..qa.confidence import (
@@ -41,7 +42,8 @@ def _own_block_present(text: str, target: str) -> bool:
     resolved = resolve_target(target)
     if resolved is None or resolved.kind == "route":
         return True
-    names = {resolved.symbol, resolved.owner} - {""}
+    names = {resolved.symbol, resolved.owner, f"{resolved.owner}.{resolved.symbol}"} - {"."}
+    names.discard("")
     return any(re.search(rf" :: {re.escape(name)} \(lines ", text) for name in names)
 
 
@@ -96,6 +98,9 @@ async def review_generated_tests(host, state, candidate, cases, batch, partial_o
         "target_source": target_source,  # per case ID: the complete implementation of that case's target
         "repository_evidence": source,
         "citation_rule": "source_files must cite existing repository implementation files supporting your assessment. Do not cite newly generated tests; their code is supplied separately under generated_source.",
+        "revision_feedback": state.get("feedback", {}).get(
+            "test_generation"
+        ),  # heal rounds: execution evidence
         "output_contract": TestReviewDraft.model_json_schema(),
         "json_rules": {"single_complete_object": True, "markdown_fences": False},
     }
@@ -139,7 +144,7 @@ async def review_generated_tests(host, state, candidate, cases, batch, partial_o
                             f"Reviewer cited unavailable source: {path}. Cite existing implementation paths from repository_evidence, not generated test paths."
                         )
             break
-        except ValueError as exc:
+        except (ValueError, AgentOutputError) as exc:
             repair = str(exc)
             host.audit(
                 "test_reviewer_contract_repair",

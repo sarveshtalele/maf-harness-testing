@@ -87,7 +87,7 @@ class GenerationSteps:
                 "evidence": state.get("evidence"),
                 "batch_size": TEST_GENERATION_BATCH_SIZE,
                 "review_threshold": TEST_REVIEW_MIN_CONFIDENCE,
-                "quality_policy": "strict-source-invocation-reviewed-v3",
+                "quality_policy": "strict-source-invocation-reviewed-v4",
                 "skills": {
                     name: (self.skills_root / name / "SKILL.md").read_text(encoding="utf-8")
                     for name in skills_for("test_generation", state).all
@@ -98,6 +98,9 @@ class GenerationSteps:
         if cache.get("signature") != signature:
             cache.clear()
             cache.update(signature=signature, batches={})
+            state[
+                "generation_rounds"
+            ] = {}  # round counts (temperature, response cache) belong to one signature
         state["routes"] = await asyncio.to_thread(
             extract_routes, self.run_dir / "repo", state["artifacts"]["repo_analysis"].get("source_files", [])
         )
@@ -402,8 +405,10 @@ class GenerationSteps:
                             "Generated batch does not implement all approved case IDs: "
                             + ", ".join(validation["uncovered_case_ids"])
                         )
-                    collisions = (accepted_paths | {f["path"] for f in kept_files}) & {
-                        item["path"] for item in candidate["files"]
+                    # Case-insensitive: tests/test_A.py and tests/test_a.py overwrite each other on Windows and macOS.
+                    taken = {p.casefold() for p in accepted_paths | {f["path"] for f in kept_files}}
+                    collisions = {
+                        item["path"] for item in candidate["files"] if item["path"].casefold() in taken
                     }
                     if collisions:
                         raise ValueError(
@@ -412,7 +417,6 @@ class GenerationSteps:
                         )
                     await self._build_gate(candidate, batch_index)
                     carried.update({i: f for f in candidate["files"] for i in f["case_ids"]})
-                    self._settle_response_cache("test_generation", True)  # accepted: cache this model answer
                     # The source-backed reviewer needs application code; a no-repo greenfield run has none yet.
                     candidate["case_reviews"] = (
                         []
@@ -431,6 +435,8 @@ class GenerationSteps:
                         for r in candidate["case_reviews"]
                         if not review_accepted(r, TEST_REVIEW_MIN_CONFIDENCE)
                     }
+                    # The model answer is cached only once the review accepts it (a rejected answer must not replay).
+                    self._settle_response_cache("test_generation", not rejected_ids)
                     if rejected_ids:
                         # Last attempt: verified cases keep their files and reviews; only the rejected IDs fail and
                         # go to the accuracy rounds (or stay generation_failed when the gate is off).
@@ -445,7 +451,6 @@ class GenerationSteps:
                         candidate["case_reviews"] = [
                             r for r in candidate["case_reviews"] if r["case_id"] not in rejected_ids
                         ]
-                        self._settle_response_cache("test_generation", False)
                         failures.append(
                             {
                                 "batch": batch_index,

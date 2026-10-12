@@ -101,10 +101,16 @@ def write_generated(
     for old in previous or []:
         (workspace / old).unlink(missing_ok=True)
     written = []
+    seen: dict[str, str] = {}
     for item in files:
         target = workspace / item["path"]
         if not target.resolve().is_relative_to(workspace):
             raise ValueError(f"Generated path escapes the workspace: {item['path']}")
+        clash = seen.setdefault(item["path"].casefold(), item["path"])
+        if clash != item["path"]:
+            raise ValueError(
+                f"Generated paths differ only by case and would overwrite each other: {clash}, {item['path']}"
+            )
         if repo is not None and (repo / item["path"]).exists():
             raise ValueError(f"Generated file would overwrite repository file: {item['path']}")
         target.parent.mkdir(parents=True, exist_ok=True)

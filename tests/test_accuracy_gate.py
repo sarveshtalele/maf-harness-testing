@@ -611,3 +611,60 @@ def test_correct_expectations_are_accepted_before_and_after_the_fix(
 ):
     result = ctl_review(tmp_path, source_name=source_name, source=source, test_text=test_text, target=target)
     assert review_accepted(result, 80), result["caps"]
+
+
+def test_malformed_reviewer_output_is_repaired_not_escaped(tmp_path):
+    """AgentOutputError (truncated or invalid reviewer JSON) takes the same repair path as a contract error."""
+    from maf_test_harness.agent.runtime import AgentOutputError
+
+    candidate, cases = review_fixture(tmp_path)
+    host = ReviewHost(tmp_path, FULL_MARKS)
+    calls = {"n": 0}
+    real_call = host._call_model
+
+    async def flaky(**kwargs):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise AgentOutputError("reviewer returned truncated JSON")
+        return await real_call(**kwargs)
+
+    host._call_model = flaky
+    (result,) = asyncio.run(review_generated_tests(host, REVIEW_STATE, candidate, cases, 1))
+    assert calls["n"] == 2 and review_accepted(result, 80)
+
+
+def test_generated_case_settles_the_response_cache_only_after_review(tmp_path, monkeypatch):
+    """A model answer the reviewer rejects must not be replayed from the response cache."""
+    monkeypatch.setattr(generation_steps, "TEST_GENERATION_BATCH_SIZE", 1)
+    monkeypatch.setattr(generation_steps, "TEST_GENERATION_MAX_ATTEMPTS", 2)
+    monkeypatch.setattr(generation_steps, "REQUIRE_FULL_ACCURACY", False)
+
+    class Settling(CountingProvider):
+        settled: list = []
+
+        def settle_response_cache(self, stage, validated):
+            self.settled.append((stage, validated))
+
+    provider = Settling({"TC-1": 1})  # first answer does not invoke the target, the second does
+    host, state = counting_host(tmp_path, provider, ids=("TC-1",))
+    asyncio.run(host._generate_tests_batched(state))
+    assert provider.settled == [("test_generation", False), ("test_generation", True)]
+
+
+def test_control_ids_survive_into_the_generator_design(tmp_path):
+    from maf_test_harness.workflow_support import _compact_design
+
+    design = {"positive_tests": [{"id": "TC-1", "target": "service.add", "control_ids": ["CTL-001"]}]}
+    (case,) = _compact_design(design)["cases"]
+    assert case["control_ids"] == ["CTL-001"]
+
+
+def test_write_generated_refuses_names_that_differ_only_by_case(tmp_path):
+    from maf_test_harness.envs.execution import write_generated
+
+    files = [
+        {"path": "tests/test_A.py", "content": "x = 1\n"},
+        {"path": "tests/test_a.py", "content": "x = 2\n"},
+    ]
+    with pytest.raises(ValueError, match="differ only by case"):
+        write_generated(tmp_path / "workspace", files)

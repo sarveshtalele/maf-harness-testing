@@ -3,6 +3,7 @@
 import os
 
 from ..agent.personas import chief_architect_persona
+from ..agent.runtime import AgentOutputError
 from ..llm.prompts import build_prompt
 from ..models import DesignReviewDraft
 from ..qa.report import design_cases
@@ -104,7 +105,7 @@ async def review_design_cases(host, state, cases, batch_index):
             if len(ids) != len(set(ids)) or set(ids) != {str(c["id"]) for c in cases}:
                 raise ValueError("Review every supplied case ID exactly once, without inventing IDs.")
             break
-        except ValueError as exc:
+        except (ValueError, AgentOutputError) as exc:
             repair = str(exc)[:600]
             host.audit(
                 "design_reviewer_contract_repair",
