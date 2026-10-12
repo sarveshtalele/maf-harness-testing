@@ -32,7 +32,7 @@ export function EmptyState({ title, children, icon }: { title: string; children?
 
 /** A collapsible subsection: h2 > button[aria-expanded][aria-controls]. Children are created only after the first open. */
 export type SectionProps = { id?: string; className?: string; title: string; count?: number; summary?: ReactNode; actions?: ReactNode; defaultOpen?: boolean; open?: boolean; onToggle?: (open: boolean) => void; expandHref?: string; children: ReactNode | (() => ReactNode) };
-export function Section({ id, className, title, count, summary, actions, defaultOpen = false, open: controlled, onToggle, expandHref, children }: SectionProps) {
+export function Section({ id, className, title, count, summary, actions, defaultOpen = false, open: controlled, onToggle, expandHref, children, tag: Tag = 'h2' }: SectionProps & { tag?: 'h2' | 'h3' }) {
   const [inner, setInner] = useState(defaultOpen);
   const isOpen = controlled ?? inner;
   const [loaded, setLoaded] = useState(isOpen);
@@ -40,16 +40,22 @@ export function Section({ id, className, title, count, summary, actions, default
   useEffect(() => { if (isOpen) setLoaded(true); }, [isOpen]);
   const toggle = () => { if (controlled === undefined) setInner(!isOpen); onToggle?.(!isOpen); };
   return <section className={`section${className ? ` ${className}` : ''}`} id={id}>
-    <h2 className="section-heading">
+    <Tag className="section-heading">
       <button type="button" aria-expanded={isOpen} aria-controls={bodyId} onClick={toggle}><span className="section-chevron" aria-hidden="true">{isOpen ? '▾' : '▸'}</span><span className="section-title">{title}</span>{count !== undefined && <span className="section-count">{count}</span>}</button>
       {expandHref && <Link className="section-expand" href={expandHref} aria-label={`Open ${title} as a page`} title={`Open ${title} as a page`}>⤢</Link>}
-    </h2>
+    </Tag>
     {(summary || actions) && <div className="section-summary">{summary}{actions && <div className="section-actions">{actions}</div>}</div>}
     <div id={bodyId} className="section-body" hidden={!isOpen}>{loaded && (typeof children === 'function' ? children() : children)}</div>
   </section>;
 }
 
 export type Crumb = { label: string; href?: string };
+/** Client-side download of one value as JSON (a Blob of that value only, not the whole stage). */
+export function JsonDownload({ value, filename, label: name = 'JSON' }: { value: unknown; filename: string; label?: string }) {
+  const href = useMemo(() => URL.createObjectURL(new Blob([JSON.stringify(value, null, 2)], { type: 'application/json' })), [value]);
+  useEffect(() => () => URL.revokeObjectURL(href), [href]);
+  return <a className="button small" href={href} download={filename}>{name} ↓</a>;
+}
 export type Download = { label: string; href: string };
 export type SectionSpec = { id: string; title: string; count?: number; summary?: ReactNode; defaultOpen?: boolean; expandHref?: string; render: () => ReactNode };
 export type Meta = { label: string; value: ReactNode };
@@ -67,7 +73,7 @@ export function DetailPage({ breadcrumbs, eyebrow, title, id, status, meta, acti
   const setAll = (value: boolean) => setOpen(Object.fromEntries(specs.map(spec => [spec.id, value])));
   const last = (breadcrumbs?.length ?? 0) - 1;
   return <article className="detail-page">
-    {breadcrumbs && breadcrumbs.length > 0 && <nav aria-label="Breadcrumb" className="crumbs"><ol>{breadcrumbs.map((crumb, i) => <li key={`${crumb.label}:${i}`}>{crumb.href && i < last ? <Link href={crumb.href}>{crumb.label}</Link> : <span aria-current={i === last ? 'page' : undefined}>{crumb.label}</span>}</li>)}</ol></nav>}
+    {breadcrumbs && breadcrumbs.length > 0 && <nav aria-label="Breadcrumb" className="crumbs"><ol>{breadcrumbs.map((crumb, i) => <li key={`${crumb.label}:${i}`} title={crumb.label}>{crumb.href && i < last ? <Link href={crumb.href} title={crumb.label}>{crumb.label}</Link> : <span aria-current={i === last ? 'page' : undefined} title={crumb.label}>{crumb.label}</span>}</li>)}</ol></nav>}
     <header className="page-hero">
       <div className="page-hero-text">
         {eyebrow && <span className="eyebrow">{eyebrow}</span>}
@@ -81,7 +87,7 @@ export function DetailPage({ breadcrumbs, eyebrow, title, id, status, meta, acti
     {notices}
     {children}
     {specs.length > 1 && <div className="section-tools"><button type="button" className="small" onClick={() => setAll(true)}>Expand all</button><button type="button" className="small" onClick={() => setAll(false)}>Collapse all</button></div>}
-    {specs.map(spec => <Section key={spec.id} id={spec.id} title={spec.title} count={spec.count} summary={spec.summary} expandHref={spec.expandHref} open={isOpen(spec)} onToggle={value => setOpen(current => ({ ...current, [spec.id]: value }))}>{spec.render}</Section>)}
+    {specs.map(spec => <Section key={spec.id} tag={level === 1 ? 'h2' : 'h3'} id={spec.id} title={spec.title} count={spec.count} summary={spec.summary} expandHref={spec.expandHref} open={isOpen(spec)} onToggle={value => setOpen(current => ({ ...current, [spec.id]: value }))}>{spec.render}</Section>)}
   </article>;
 }
 

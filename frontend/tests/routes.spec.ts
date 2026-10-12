@@ -26,11 +26,29 @@ const run = {
       test_execution: {
         verdict: 'FAIL', markdown: '',
         qa_report: {
-          verdict: 'FAIL', execution_status: 'completed', adapter: 'pytest', generated_verdict: 'FAIL', case_status_counts: { passed: 0, failed: 1 },
-          cases: [{ id: 'TC-1', title: 'adds two numbers', level: 'unit', status: 'failed', message: 'assert 3 == 4', file: 'tests/test_add.py', priority: 'P1', confidence: 100 }],
-          requirement_coverage: [{ state: 'passed', category: 'functional', actor: 'Developer', text: 'Add two numbers' }],
-          baseline_regression: [], updates: { generated_test_files_to_update: [{ case_id: 'TC-1', classification: 'test expectation', action: 'Never weaken the assertion.', file: 'tests/test_add.py', line: 2 }], repository_files_to_review: [] },
-          warnings: ['Coverage is static.'], limitations: [], unmapped_results: [], source_intake: {}, runtime_coverage: {}, skill_checks: [],
+          verdict: 'FAIL', execution_status: 'completed', adapter: 'pytest', generated_verdict: 'FAIL',
+          repository: { name: 'acme/very-long-repository-name-for-wrapping-tests', url: LONG_REPO, commit: '0123456789abcdef0123456789abcdef01234567' },
+          case_status_counts: { passed: 0, failed: 1 },
+          verification: { verified: 1, total: 2, threshold: 80, min_confidence: 90, enforced: true },
+          cases: [{ id: 'TC-1', control_ids: ['CTL-001'], title: 'adds two numbers', level: 'unit', status: 'failed', message: 'assert 3 == 4', file: 'tests/test_add.py', priority: 'P1', confidence: 100, actor: 'Developer' }],
+          test_cases: [{ group: 'positive', sno: 1, id: 'TC-1', requirement_ids: ['REQ-1'], title: 'adds two numbers', description: 'adds', steps: ['Call add(1, 2)'], expected_result: '3', priority: 'P1', level: 'unit', actor: 'Developer', target: 'service.add', preconditions: ['Module imported'], data_notes: '', traceability_links: [{ type: 'requirement', id: 'REQ-1' }] }],
+          traceability: [{ control_id: 'CTL-001', requirement_id: 'REQ-1', plan_area_id: 'PLN-1', plan_area_name: 'Adder', case_ids: ['TC-1'], test_files: ['tests/test_add.py'], generation: 'passed', execution: 'failed', final_status: 'failed', failed_at: 'execution', reason: 'assert 3 == 4' }],
+          traceability_summary: { controls: 1, final_status: { failed: 1 }, failed_at: { execution: 1 } },
+          requirement_coverage: [{ id: 'REQ-1', state: 'failing', requirement_state: 'new', category: 'functional', actor: 'Developer', text: 'Add two numbers' }, { id: 'REQ-2', state: 'passed', requirement_state: 'new', category: 'functional', actor: 'Developer', text: 'Subtract two numbers' }],
+          requirement_state_counts: { new: 2, pre_existing_witness: 0, excluded: 0, unexplained: 0 },
+          requirement_status_counts: { failing: 1, passed: 1 },
+          baseline_regression: [{ scope: 'unit', verdict: 'PASS', tests: 2, reason: 'existing suite', cases: [] }],
+          source_intake: {}, runtime_coverage: { line: 'not_measured' },
+          failures: [{ id: 'TC-1', title: 'adds two numbers', level: 'unit', status: 'failed', message: 'assert 3 == 4', file: 'tests/test_add.py' }],
+          unmapped_results: ['tests/test_legacy.py::test_old'],
+          skill_checks: { 'contract-1': { skill: 'generic-test-generator', passed: true, output: 'ok' } },
+          updates: {
+            generated_test_files_to_update: [{ file: 'tests/test_add.py', lines: [2], case: 'adds two numbers', classification: 'test expectation', detail: 'Expectation contradicts source', action: 'Never weaken the assertion.' }],
+            repository_files_to_review: [{ file: 'service.py', line: 4, case: 'adds two numbers', classification: 'application', detail: 'add returns a wrong sum' }],
+            requirements_needing_tests: [{ requirement: 'Add two numbers', state: 'failing', source_files_to_cover: ['service.py'] }],
+            environment_actions: [{ action: 'Install pytest 8.x in the isolated environment.' }],
+          },
+          warnings: ['Coverage is static.'], limitations: ['Local-process execution is not a security sandbox.'],
         },
       },
     },
@@ -78,6 +96,12 @@ async function rawOutputIssues(page: Page): Promise<string[]> {
       if (/^\s*[[{]/.test(text) && /"\w+"\s*:|\[\s*\]|\{\s*\}/.test(text)) issues.push(`JSON in <pre>: ${text.slice(0, 40)}`);
       if (/^#{1,6} /m.test(text) || /^\|.*\|$/m.test(text)) issues.push(`Markdown in <pre>: ${text.slice(0, 40)}`);
     }
+    // Inline code and paragraphs must not hold a whole JSON object or Markdown document either.
+    for (const el of document.querySelectorAll('code, p')) {
+      const text = el.textContent || '';
+      if (text.length > 80 && /^\s*\{[\s\S]*"\w+"\s*:/.test(text)) issues.push(`JSON in <${el.tagName.toLowerCase()}>: ${text.slice(0, 40)}`);
+      if (text.length > 80 && /(^|\n)#{1,6} \S/.test(text) && /\n\|/.test(text)) issues.push(`Markdown in <${el.tagName.toLowerCase()}>: ${text.slice(0, 40)}`);
+    }
     if (/Raw JSON/.test(document.body.innerText)) issues.push('"Raw JSON" is shown');
     return issues;
   });
@@ -110,14 +134,16 @@ test('one smoke per new route renders its page without raw output or errors', as
   const errors: string[] = []; page.on('pageerror', error => errors.push(error.message));
   for (const [path, heading] of RUN_ROUTES) {
     await page.goto(path);
-    const title = page.getByRole('heading', { name: heading }).first();
+    const title = page.getByRole('heading', { name: heading, exact: typeof heading === 'string' });
+    await expect(title, `${path} heading`).toHaveCount(1);
     await expect(title, `${path} heading`).toBeVisible();
     expect(await rawOutputIssues(page), `${path} raw output`).toEqual([]);
     await expect(page.getByRole('columnheader', { name: 'Text', exact: true }), `${path} "Text" header`).toHaveCount(0);
   }
   for (const path of ['/runs', '/runs/new', '/prompts', '/settings', '/marketplace']) {
     await page.goto(path);
-    await expect(page.locator('h1').first(), `${path} h1`).toBeVisible();
+    await expect(page.locator('h1'), `${path} h1`).toHaveCount(1);
+    await expect(page.locator('h1'), `${path} h1`).toBeVisible();
     expect(await rawOutputIssues(page), `${path} raw output`).toEqual([]);
   }
   expect(errors).toEqual([]);
@@ -131,7 +157,7 @@ test('the expand arrow opens the section as its own page, and Back returns', asy
   await expect(page).toHaveURL(/\/runs\/rich\/artifacts\/test_planning\/objective$/);
   await expect(page.locator('.page-id')).toHaveText('test_planning.objective');
   await expect(page.getByRole('heading', { level: 1, name: 'Objective' })).toBeVisible();
-  await expect(page.getByText('Verify the adder.', { exact: false }).first()).toBeVisible();
+  await expect(page.getByText('Verify the adder.', { exact: true })).toHaveCount(1);
   await page.goBack();
   await expect(page).toHaveURL(/\/runs\/rich\/artifacts\/test_planning$/);
   await expect(page.getByRole('heading', { level: 1, name: 'Test Planning' })).toBeVisible();
@@ -139,8 +165,22 @@ test('the expand arrow opens the section as its own page, and Back returns', asy
 
 test('the test-design requirement table names its description column "Description"', async ({ page }) => {
   await page.goto('/runs/rich/artifacts/requirements/requirements');
-  await expect(page.getByRole('columnheader', { name: 'Description' }).first()).toBeVisible();
+  await expect(page.getByRole('columnheader', { name: 'Description' })).toHaveCount(1);
   await expect(page.getByRole('columnheader', { name: 'Text', exact: true })).toHaveCount(0);
+});
+
+test('the QA report renders every section of the Markdown export', async ({ page }) => {
+  await page.goto('/runs/rich/qa');
+  for (const title of ['Verdict and case counts', 'Evidence scope', 'End-to-end traceability', 'Case results', 'Test cases', 'Requirement states', 'Requirement traceability', 'Why tests failed & what to improve', 'Skill contract checks', 'Improvement worklist', 'Review vs execution', 'Executed tests not mapped to an approved case', 'Warnings & limitations', 'Step reports']) {
+    await expect(page.getByRole('button', { name: title }), `section ${title}`).toHaveCount(1);
+  }
+  await expect(page.getByText('source-review accepted 1/2 cases', { exact: false })).toBeVisible();
+  await page.getByRole('button', { name: 'End-to-end traceability' }).click();
+  await expect(page.getByRole('region', { name: 'End-to-end traceability' }).getByRole('cell', { name: 'CTL-001' })).toBeVisible();
+  await expect(page.getByRole('region', { name: 'Generated test files to update' })).toBeVisible();
+  await expect(page.getByRole('region', { name: 'Repository source files to review' })).toBeVisible();
+  await expect(page.getByRole('region', { name: 'Requirements that still need a passing test' })).toBeVisible();
+  await expect(page.getByText('Install pytest 8.x', { exact: false })).toBeVisible();
 });
 
 test('requirement states read as passed execution; review acceptance is source-review accepted', async ({ page }) => {
@@ -177,9 +217,53 @@ for (const width of [390, 1024]) {
     await page.setViewportSize({ width, height: 844 });
     for (const [path] of RUN_ROUTES) {
       await page.goto(path);
-      await expect(page.locator('h1, h2').first()).toBeVisible();
+      await expect(page.locator('h1')).toHaveCount(1);
       const overflow = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
       expect(overflow, `${path} at ${width}px`).toBeLessThanOrEqual(1);
     }
   });
 }
+
+test('section page shows its content once and downloads that section only', async ({ page }) => {
+  await page.goto('/runs/rich/artifacts/test_planning/objective');
+  await expect(page.getByText('Verify the adder.', { exact: true })).toHaveCount(1);
+  await expect(page.getByText('Contents', { exact: true })).toHaveCount(0);
+  const download = page.waitForEvent('download');
+  await page.getByRole('link', { name: 'Section JSON ↓' }).click();
+  expect((await download).suggestedFilename()).toBe('test_planning-objective.json');
+});
+
+test('redirects: logs tab, marketplace MCP, skill detail, unknown tab and a hostile id', async ({ page }) => {
+  await page.goto('/?run=rich&tab=Logs');
+  await expect(page).toHaveURL(/\/runs\/rich\/logs/);
+  await page.goto('/?page=marketplace&tab=mcp');
+  await expect(page).toHaveURL(/\/marketplace\?.*tab=mcp/);
+  await page.goto('/?page=skills&skill=demo-skill');
+  await expect(page).toHaveURL(/\/marketplace\?.*skill=demo-skill/);
+  await page.goto('/?run=rich&tab=Nope');
+  await expect(page).toHaveURL(/\/runs\/rich/);
+  await page.goto('/?run=..%2Fsecret&tab=Logs');
+  await expect(page).not.toHaveURL(/secret/);
+  await expect(page).toHaveURL(/\/runs(\?|$)/);
+});
+
+test('the sidebar fills the viewport height after the page scrolls', async ({ page }) => {
+  await page.setViewportSize({ width: 1366, height: 500 });
+  await page.goto('/runs/rich/qa');
+  await page.getByRole('button', { name: 'Expand all' }).click();
+  await page.evaluate(() => window.scrollTo(0, document.documentElement.scrollHeight));
+  await expect.poll(() => page.evaluate(() => window.scrollY)).toBeGreaterThan(100);
+  const box = await page.locator('.sidebar').boundingBox();
+  expect(box!.y).toBe(0);
+  expect(Math.round(box!.height)).toBe(500);
+});
+
+test('at 390px the stage stepper and tab bar are single scrollable rows', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto('/runs/rich');
+  await expect(page.locator('.stage-current')).toBeVisible();
+  const tops = await page.locator('.stage-progress li').evaluateAll(items => new Set(items.map(item => Math.round(item.getBoundingClientRect().top))).size);
+  expect(tops).toBe(1);
+  const tabTops = await page.getByRole('navigation', { name: 'Run views' }).getByRole('link').evaluateAll(links => new Set(links.map(link => Math.round(link.getBoundingClientRect().top))).size);
+  expect(tabTops).toBe(1);
+});

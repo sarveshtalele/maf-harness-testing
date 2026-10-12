@@ -1,17 +1,17 @@
 'use client';
 import Link from 'next/link';
-import { useParams } from 'next/navigation';
+import { useParams, usePathname, useRouter, useSearchParams } from 'next/navigation';
 import { useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react';
 import { api, artifacts, download, label, record, rows, text, type Row, type Run } from '@/lib/harness';
 import { parseReport, type Report } from '@/lib/report';
-import { DetailPage, EmptyState, Exports, Fields, Metrics, Section, StatusBadge, Table, renderValue, recordHref, useRunId, type Column, type SectionSpec } from '../page';
+import { DetailPage, EmptyState, Exports, Fields, JsonDownload, Metrics, Section, StatusBadge, Table, renderValue, recordHref, useRunId, type Column, type SectionSpec } from '../page';
 import { Panel, usePreference, ResizeHandle } from '../data';
 import { useRun, STAGES } from '../run-shell';
 import Prompts from '../prompts';
 import Icon from '../icons';
 import { CaseTable, EventFeed, ReportBlocks, VerdictBanner, findRecord, runName } from './shared';
 
-const base = (id: string) => `/runs/${encodeURIComponent(id)}`;
+export const base = (id: string) => `/runs/${encodeURIComponent(id)}`;
 const isPlainObject = (value: unknown): value is Row => !!value && typeof value === 'object' && !Array.isArray(value);
 const isCaseKey = (key: string) => key.endsWith('_tests');
 /** "positive_tests" is captioned "Positive cases". */
@@ -173,9 +173,8 @@ export function SectionView() {
   const crumbs = [{ label: 'Runs', href: '/runs' }, { label: runName(run, id), href: base(id) }, { label: 'Artifacts', href: `${base(id)}/artifacts` }, { label: label(stage), href: `${base(id)}/artifacts/${encodeURIComponent(stage)}` }, { label: label(section) }];
   if (value === undefined) return <DetailPage breadcrumbs={crumbs} title={label(section)} id={`${stage}.${section}`} children={<EmptyState title="Section not found">This stage has no section named {section}.</EmptyState>} />;
   return <DetailPage breadcrumbs={crumbs} eyebrow={`${label(stage)} · section`} title={label(section)} id={`${stage}.${section}`} status={undefined}
-    meta={[{ label: 'Stage', value: label(stage) }, { label: 'Contents', value: describe(value) }]}
-    downloads={[{ label: 'JSON', href: download(id, stage, 'json') }]}>
-    <p className="page-description">{typeof value === 'string' ? value.split(/\n+/)[0] : `Section ${label(section)} of ${label(stage)}.`}</p>
+    meta={[{ label: 'Stage', value: label(stage) }, ...(typeof value === 'string' ? [] : [{ label: 'Contents', value: describe(value) }])]}
+    actions={<JsonDownload value={value} filename={`${stage}-${section}.json`} label="Section JSON" />}>
     {isCaseKey(section) ? <CaseTable cases={rows(value)} requirements={record(data.requirements)} caption={`${label(section)} cases`} /> : <SectionBody value={value} keyName={section} />}
   </DetailPage>;
 }
@@ -233,56 +232,7 @@ export function TestFileView() {
 
 // ---------- QA report and steps ----------
 
-export function QaView() {
-  const { id, run } = useRun();
-  const execution = record(artifacts(run).test_execution); const qa = record(execution.qa_report);
-  if (!Object.keys(qa).length) return <DetailPage level={2} title="QA report" eyebrow="Saved execution verdict" children={<EmptyState title="Your results will appear here" icon={<Icon name="shield" />}>Approve execution to produce case results, requirement coverage and failure evidence.</EmptyState>} />;
-  const updates = record(qa.updates);
-  const failures = rows(qa.cases).filter(c => ['failed', 'error', 'not_executed'].includes(text(c.status)));
-  const actions = [...rows(updates.generated_test_files_to_update), ...rows(updates.repository_files_to_review)];
-  const caseColumns: Column[] = [
-    { key: 'id', label: 'Test case ID', width: '170px', render: row => <span className="cell-id">{text(row.id)}</span> }, { key: 'title', label: 'Title' }, { key: 'level', label: 'Level', width: '100px' },
-    { key: 'priority', label: 'Priority', width: '90px' }, { key: 'status', label: 'Status', width: '130px', render: row => <StatusBadge value={row.status} /> }, { key: 'file', label: 'File' }, { key: 'confidence', label: 'Confidence', width: '110px' },
-  ];
-  const requirementColumns: Column[] = [{ key: 'state', label: 'State', width: '120px', render: row => <StatusBadge value={row.state} /> }, { key: 'category', label: 'Category', width: '120px' }, { key: 'actor', label: 'Actor', width: '120px' }, { key: 'text', label: 'Description' }];
-  const worklistColumns: Column[] = [{ key: 'classification', label: 'Classification', width: '150px' }, { key: 'file', label: 'File' }, { key: 'case', label: 'Case', width: '150px' }, { key: 'detail', label: 'Detail' }, { key: 'action', label: 'Action' }];
-  const sections: SectionSpec[] = [
-    { id: 'verdict', title: 'Verdict and case counts', defaultOpen: true, render: () => <>
-      <VerdictBanner name={qa.verdict} meta={<>Execution: {text(qa.execution_status)} · Runner: {text(qa.adapter)}</>} label="Saved execution verdict" />
-      <Metrics values={record(qa.case_status_counts)} />
-      <p className="field-help">This verdict does not certify the complete application. Inconclusive is never a pass.</p>
-    </> },
-    { id: 'failures', title: 'Why tests failed & what to improve', count: failures.length, defaultOpen: true, render: () => <>
-      <p className="field-help">Observed output and recommendations from the saved QA report. A failing assertion needs review of both application behavior and the test expectation.</p>
-      {failures.length ? <div className="failure-cards">{failures.map((c, i) => {
-        const related = actions.filter(a => a.case_id === c.id);
-        return <article className="failure-card" key={text(c.id) || i}><header><div><span className="eyebrow">{text(c.id)} · {label(c.level)}</span><h3>{text(c.title)}</h3></div><StatusBadge value={c.status} /></header><code className="failure-location">{text(c.file || 'No generated file recorded')}</code><div className="failure-reason"><b>Observed failure</b><p className="failure-message">{text(c.message || 'No failure output was recorded. This case did not execute; inspect the execution logs and environment status.')}</p></div><div className="failure-next"><span aria-hidden="true">↗</span><div><b>Recommended next step</b>{related.length ? related.map((a, n) => <div key={n}><StatusBadge value={a.classification} tone="" /><p>{text(a.action)}</p><small>{text(a.file)}{a.lines ? ` · lines ${text(a.lines)}` : a.line ? `:${text(a.line)}` : ''}</small></div>) : <p>Inspect this case’s output and the execution logs. Confirm the environment and reproduce the behavior before changing the application or its test.</p>}</div></div></article>;
-      })}</div> : <div className="success-note"><span aria-hidden="true">✓</span><div><b>No failed cases in the saved QA report</b><p>Review requirement coverage and warnings before treating this run as complete coverage.</p></div></div>}
-    </> },
-    { id: 'steps', title: 'Step reports', render: () => <StepList runId={id} /> },
-    { id: 'cases', title: 'Case results', count: rows(qa.cases).length, render: () => <Table caption="Case results" columns={caseColumns} rows={rows(qa.cases)} searchable rowHref={row => recordHref(id, 'case', text(row.id))} /> },
-    { id: 'scope', title: 'Repository evidence scope', render: () => <>
-      <p>Generated suite: <StatusBadge value={qa.generated_verdict || qa.verdict} />. This verdict does not certify the complete application.</p>
-      <Fields data={{ source_intake: qa.source_intake, runtime_coverage: qa.runtime_coverage }} />
-      <Table caption="Baseline regression scopes" columns={[{ key: 'scope', label: 'Scope', render: row => label(row.scope) }, { key: 'verdict', label: 'Verdict', render: row => <StatusBadge value={row.verdict} /> }, { key: 'tests', label: 'Tests' }, { key: 'reason', label: 'Reason' }]} rows={rows(qa.baseline_regression)} />
-      {rows(qa.baseline_regression).map((scope, i) => <Section key={i} title={`${label(scope.scope)} · ${text(scope.verdict)}`} defaultOpen={false}><Table caption={`${label(scope.scope)} cases`} columns={[{ key: 'classname', label: 'Class' }, { key: 'name', label: 'Name' }, { key: 'status', label: 'Status', render: row => <StatusBadge value={row.status} /> }, { key: 'message', label: 'Message' }]} rows={rows(scope.cases)} searchable /></Section>)}
-    </> },
-    { id: 'traceability', title: 'Requirement traceability', count: rows(qa.requirement_coverage).length, render: () => <>
-      <p>Links between requirements and generated tests. This is not measured line, branch or complete behavior coverage. A requirement counts as passed only when its linked tests passed execution. Source-review acceptance is not execution.</p>
-      <Table caption="Requirement traceability" columns={requirementColumns} rows={rows(qa.requirement_coverage)} searchable />
-    </> },
-    { id: 'worklist', title: 'Improvement worklist', count: actions.length, render: () => <Table caption="Improvement worklist" columns={worklistColumns} rows={[...actions, ...rows(updates.requirements_needing_tests), ...rows(updates.environment_actions)]} searchable /> },
-    { id: 'limits', title: 'Warnings & limitations', render: () => <Fields data={{ warnings: qa.warnings, limitations: qa.limitations, unmapped_results: qa.unmapped_results }} /> },
-    { id: 'checks', title: 'Skill contract checks', render: () => <SectionBody value={qa.skill_checks} keyName="skill_checks" /> },
-  ];
-  return <DetailPage level={2} eyebrow="Saved execution verdict" title="QA report" status={qa.verdict}
-    meta={[{ label: 'Execution', value: text(qa.execution_status) }, { label: 'Runner', value: text(qa.adapter) }, { label: 'Generated suite', value: <StatusBadge value={qa.generated_verdict || qa.verdict} /> }]}
-    downloads={[{ label: 'Markdown', href: download(id, 'qa', 'md') }, { label: 'JSON', href: download(id, 'qa', 'json') }]}
-    notices={<>{qa.verdict === 'INCONCLUSIVE' && <p className="notice bad">Tests did not produce sufficient execution evidence. Inconclusive is never a pass.</p>}{run.actions.includes('revise') && run.pending?.stage === 'test_execution' && <p className="notice">Use the Review tab to regenerate failing tests. New source and execution require approval again.</p>}</>}
-    sections={sections} />;
-}
-
-function StepList({ runId }: { runId: string }) {
+export function StepList({ runId }: { runId: string }) {
   const [steps, setSteps] = useState<Row[] | null>(null);
   const [error, setError] = useState('');
   useEffect(() => {
@@ -301,14 +251,19 @@ export function StepView() {
   const [report, setReport] = useState<Report | null>(null);
   const [status, setStatus] = useState('');
   const [error, setError] = useState('');
+  // The step list is read once for the status badge; the report is read once per step (no refetch on busy flips).
+  useEffect(() => {
+    const controller = new AbortController();
+    void api<{ steps: Row[] }>(`runs/${encodeURIComponent(id)}/download?kind=step&format=json`, undefined, controller.signal).then(r => setStatus(text(rows(r.steps).find(s => s.name === step)?.status || ''))).catch(() => undefined);
+    return () => controller.abort();
+  }, [id, step]);
   useEffect(() => {
     const controller = new AbortController();
     setReport(null); setError('');
     const source = `${download(id, 'step', 'md')}&name=${encodeURIComponent(step)}`;
     void fetch(source, { cache: 'no-store', signal: controller.signal }).then(r => (r.ok ? r.text() : Promise.reject(new Error('Step report unavailable.')))).then(body => setReport(parseReport(body))).catch(e => { if (!controller.signal.aborted) setError((e as Error).message); });
-    void api<{ steps: Row[] }>(`runs/${encodeURIComponent(id)}/download?kind=step&format=json`, undefined, controller.signal).then(r => setStatus(text(rows(r.steps).find(s => s.name === step)?.status || ''))).catch(() => undefined);
     return () => controller.abort();
-  }, [id, step, run.busy]);
+  }, [id, step]);
   const crumbs = [{ label: 'Runs', href: '/runs' }, { label: runName(run, id), href: base(id) }, { label: 'QA report', href: `${base(id)}/qa` }, { label: step }];
   if (error) return <DetailPage breadcrumbs={crumbs} title="Step report" id={step} children={<p className="notice bad" role="alert">{error}</p>} />;
   if (!report) return <DetailPage breadcrumbs={crumbs} title="Step report" id={step} children={<p className="empty-inline" role="status">Loading report…</p>} />;
@@ -348,13 +303,12 @@ export function EvidenceView() {
   const { files, error, truncated } = useEvidenceFiles(id, run.busy);
   const [kind, setKind] = useState('');
   const [search, setSearch] = useState('');
-  const [selected, setSelected] = useState('');
-  useEffect(() => { setSelected(new URLSearchParams(location.search).get('file') || ''); }, []);
+  const router = useRouter(); const pathname = usePathname(); const selected = useSearchParams().get('file') || '';
   const available = files.filter(f => f.kind !== 'log');
   const shown = available.filter(f => (!kind || f.kind === kind) && f.path.toLowerCase().includes(search.toLowerCase()));
   const file = shown.find(f => f.id === selected) || shown.find(f => f.kind === 'report') || shown[0];
   const url = file ? `/api/harness/runs/${encodeURIComponent(id)}/evidence/${file.id}` : '';
-  const pick = (value: string) => { setSelected(value); try { history.replaceState(history.state, '', `${location.pathname}?file=${encodeURIComponent(value)}`); } catch { /* keep going */ } };
+  const pick = (value: string) => router.replace(`${pathname}?file=${encodeURIComponent(value)}`, { scroll: false });
   return <DetailPage level={2} eyebrow="Browser evidence" title="Test reports" children={<>
     <p>Open saved Playwright reports, inspect screenshots and download traces.</p>
     {error && <p className="notice bad" role="alert">{error}</p>}
@@ -407,7 +361,10 @@ export function LogFileView() {
     setContent(null); setError('');
     void api<TextFile>(`runs/${encodeURIComponent(id)}/evidence/${encodeURIComponent(fileId)}`, undefined, controller.signal).then(setContent).catch(e => { if (!controller.signal.aborted) setError((e as Error).message); });
     return () => controller.abort();
-  }, [id, fileId, run.busy]);
+  }, [id, fileId]);
+  const debouncedQuery = useDebounced(query, 300);
+  const [limit, setLimit] = useState(LOG_WINDOW);
+  useEffect(() => { setLimit(LOG_WINDOW); }, [debouncedQuery, fileId]);
   const crumbs = [{ label: 'Runs', href: '/runs' }, { label: runName(run, id), href: base(id) }, { label: 'Logs', href: `${base(id)}/logs` }, { label: meta?.name || 'Log' }];
   const title = meta?.name || 'Log file';
   const download_ = `/api/harness/runs/${encodeURIComponent(id)}/evidence/${encodeURIComponent(fileId)}?download=1`;
@@ -417,17 +374,28 @@ export function LogFileView() {
     return content.text.split('\n').filter(Boolean).map((line, i) => { try { const v = JSON.parse(line); return isPlain(v) ? { ...v, line: i + 1 } : { line: i + 1, message: String(v) }; } catch { return { line: i + 1, message: line }; } });
   }, [content, structured]);
   const lines = useMemo(() => (content ? content.text.replace(/\u001b\[[0-9;]*m/g, '').split('\n').map((line, i) => ({ line, i })) : []), [content]);
+  const matchingLines = useMemo(() => lines.filter(r => !debouncedQuery || r.line.toLowerCase().includes(debouncedQuery.toLowerCase())), [lines, debouncedQuery]);
   if (error) return <DetailPage breadcrumbs={crumbs} title={title} id={fileId} children={<p className="notice bad" role="alert">{error}</p>} />;
   return <DetailPage breadcrumbs={crumbs} eyebrow="Log file" title={title} id={meta?.path || fileId} meta={meta ? [{ label: 'Size', value: `${(meta.bytes / 1024).toFixed(1)} KB` }] : undefined} downloads={[{ label: 'Raw file', href: download_ }]}>
     {!content ? <p className="empty-inline" role="status">Loading output…</p> : structured ? <>
-      <p className="field-help">{events.length} entries. Each row opens to its fields.</p>
-      <EventFeed events={events} />
+      <p className="field-help">{events.length} entries{events.length > limit ? `; showing the first ${limit}` : ''}. Each row opens to its fields.</p>
+      <EventFeed events={events.slice(0, limit)} />
+      {events.length > limit && <button type="button" onClick={() => setLimit(value => value + LOG_WINDOW)}>Show {Math.min(LOG_WINDOW, events.length - limit)} more</button>}
     </> : <>
       {content.truncated && <p className="notice">Showing the first 512 KB. Download the raw file for the full log.</p>}
       <label>Find in output<input type="search" value={query} onChange={e => setQuery(e.target.value)} placeholder="Search errors, test names or paths…" /></label>
-      <div className="log-output" role="region" aria-label="Log output" tabIndex={0}>{lines.filter(r => !query || r.line.toLowerCase().includes(query.toLowerCase())).map(({ line, i }) => <div className={/\b(ERROR|FAILED|Traceback|Exception)\b|"ok": false|"exit_code": [1-9]/.test(line) ? 'log-error' : ''} key={i}><span>{i + 1}</span><code>{line || ' '}</code></div>)}</div>
+      <div className="log-output" role="region" aria-label="Log output" tabIndex={0}>{matchingLines.slice(0, limit).map(({ line, i }) => <div className={/\b(ERROR|FAILED|Traceback|Exception)\b|"ok": false|"exit_code": [1-9]/.test(line) ? 'log-error' : ''} key={i}><span>{i + 1}</span><code>{line || ' '}</code></div>)}</div>
+      {matchingLines.length > limit && <button type="button" onClick={() => setLimit(value => value + LOG_WINDOW)}>Show {Math.min(LOG_WINDOW, matchingLines.length - limit)} more lines</button>}
     </>}
   </DetailPage>;
+}
+/** Log and event views show this many rows at first; "Show more" adds the next window. */
+const LOG_WINDOW = 1000;
+/** A value that settles after `delay` ms without change: keeps search from re-rendering large logs on every key. */
+function useDebounced<T>(value: T, delay: number): T {
+  const [settled, setSettled] = useState(value);
+  useEffect(() => { const timer = setTimeout(() => setSettled(value), delay); return () => clearTimeout(timer); }, [value, delay]);
+  return settled;
 }
 const isPlain = (value: unknown): value is Row => !!value && typeof value === 'object' && !Array.isArray(value);
 
@@ -454,6 +422,7 @@ export function AuditView() {
     sections={[
       { id: 'events', title: 'Approval & activity events', count: events.length, defaultOpen: true, render: () => <>
         <div className="filters" role="group" aria-label="Filter events"><FilterChips label="Event" value={event} set={setEvent} options={eventOptions} /><FilterChips label="Stage" value={stage} set={setStage} options={stageOptions} /></div>
+        {filtered.length > 100 && <p className="field-help">Showing the last 100 of {filtered.length} events.</p>}
         <EventFeed events={filtered.slice().reverse().slice(0, 100)} />
       </> },
       { id: 'search', title: 'Search all audit records', count: filtered.length, render: () => <Table caption="Audit records" columns={[{ key: 'at', label: 'At', width: '200px' }, { key: 'event', label: 'Event' }, { key: 'stage', label: 'Stage', width: '150px' }, { key: 'decision', label: 'Decision', width: '120px' }, { key: 'request_id', label: 'Request ID', width: '170px', render: row => <span className="cell-id">{text(row.request_id)}</span> }]} rows={filtered} searchable /> },

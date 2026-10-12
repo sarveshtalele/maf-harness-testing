@@ -105,7 +105,6 @@ test('complete browser workflow, layouts, evidence, downloads and stale gates', 
   await expect(page.getByRole('heading', { level: 1, name: 'Repo Analysis', exact: true })).toBeVisible();
   await tab(page, 'QA report').click();
   await expect(page.getByText('PASS', { exact: true }).first()).toBeVisible();
-  await page.getByRole('button', { name: 'Repository evidence scope', exact: true }).click();
   await expect(page.getByText('not_measured', { exact: true }).first()).toBeVisible();
   await page.screenshot({ path: testInfo.outputPath('qa-evidence-scope.png'), fullPage: true });
   await tab(page, 'Test reports').click();

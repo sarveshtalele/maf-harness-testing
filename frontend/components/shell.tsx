@@ -76,11 +76,11 @@ export default function Shell({ children }: { children: ReactNode }) {
     document.getElementById('main-content')?.focus({ preventScroll: true });
   }, [pathname]);
 
-  const value = useMemo<Shell>(() => ({ runs, config, serviceBusy, connectionError, refresh: () => refresh() }), [runs, config, serviceBusy, connectionError, refresh]);
+  const value = useMemo<Shell>(() => ({ runs, config, serviceBusy, connectionError, refresh }), [runs, config, serviceBusy, connectionError, refresh]);
   const style = { '--sidebar-width': `${Math.max(190, Math.min(340, Number(sidebar) || 236))}px` } as CSSProperties;
   const navLink = (item: (typeof NAV)[number]) => {
     const active = pathname === item.match || pathname.startsWith(`${item.match}/`);
-    return <Link key={item.name} href={item.href} className={active ? 'active' : ''} data-label={item.name} aria-current={active ? 'page' : undefined}><Icon name={item.icon} /><span className="nav-label rail-hide">{item.name}{item.name === 'Runs' && <> <small>{runs.length}</small></>}</span></Link>;
+    return <Link key={item.name} href={item.href} className={active ? 'active' : ''} data-label={item.name} aria-current={active ? 'page' : undefined}><Icon name={item.icon} /><span className="nav-label rail-hide">{item.name}{item.name === 'Runs' && <>{' '}<small className="nav-count">{runs.length}</small></>}</span></Link>;
   };
   return <ShellContext.Provider value={value}><div className={`app-shell${moving ? ' moving' : ''}`} style={style}>
     <aside className="sidebar"><div className="sidebar-top"><Link className="brand" href="/runs" data-label="Agentic QE Platform"><span className="brand-mark">QE</span><span className="rail-hide">Agentic QE Platform<small>Repository testing</small></span></Link><button className="sidebar-toggle" aria-label="Collapse sidebar" aria-expanded={!collapsed} aria-controls="main-navigation" data-label={collapsed ? 'Expand sidebar' : 'Collapse sidebar'} onClick={toggleSidebar}><Icon name={collapsed ? 'panelOpen' : 'panelClose'} /></button></div>

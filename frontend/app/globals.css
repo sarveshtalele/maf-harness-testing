@@ -318,3 +318,27 @@ nav a.active{background:var(--primary);color:var(--on-primary)}
 .sidebar nav a{width:auto;padding:8px 12px}
 .sidebar nav a .icon{flex:none}
 html[data-sidebar=collapsed] .sidebar nav a{width:44px;height:44px;padding:0 12px;justify-content:flex-start}
+
+/* ---- Links: one colour family for both themes; visited links match (tokens) ---- */
+:root{--link:#1d4ed8;--link-hover:#1e3a8a}
+:root[data-theme=dark]{--link:#9ec5ff;--link-hover:#c7dcff}
+a{color:var(--link);text-underline-offset:2px}
+a:hover{color:var(--link-hover)}
+a:visited{color:var(--link)}
+.run-hero-name a{color:inherit;font-weight:700;text-decoration:none}
+.run-hero-name a:hover{text-decoration:underline}
+.nav-count{margin-left:4px!important}
+
+/* ---- Breadcrumbs: each crumb truncates (full label in its title attribute) ---- */
+.crumbs li{max-width:16rem;min-width:0;overflow:hidden}
+.crumbs li>a,.crumbs li>span{display:inline-block;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;vertical-align:bottom}
+
+/* ---- Stage stepper and tab bar at phone width: one scrollable row each (no stacked rows) ---- */
+.stage-current{display:none;margin:0 0 6px;font-size:13px;color:var(--text)}
+@media (max-width:700px){
+  .stage-current{display:block}
+  .stage-progress{flex-direction:row;overflow-x:auto;flex-wrap:nowrap;scroll-snap-type:x proximity}
+  .stage-progress li{flex:0 0 96px;min-width:96px;scroll-snap-align:start}
+  .tabs{flex-wrap:nowrap;overflow-x:auto;padding-right:28px;-webkit-mask-image:linear-gradient(to right,#000 86%,transparent);mask-image:linear-gradient(to right,#000 86%,transparent)}
+  .tabs a{flex:0 0 auto}
+}

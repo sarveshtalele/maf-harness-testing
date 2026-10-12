@@ -2,7 +2,7 @@ import { test, expect } from '@playwright/test';
 
 const card = (name: string, extra: Record<string, unknown>) => ({
   name, description: `${name} description`, role: 'Companion', primary_stages: [], purpose: `${name} purpose`, instructions: '# T', resources: ['SKILL.md'],
-  metadata: {}, reviewed_scripts: {}, sha256: 'abc', valid: true, locked: false, errors: [], warnings: [], provenance: {}, executions: [], stages: ['test_generation'], kind: 'model', ...extra,
+  metadata: {}, reviewed_scripts: {}, sha256: 'abc', tree_sha256: `tree-${name}`, valid: true, locked: false, errors: [], warnings: [], provenance: {}, executions: [], stages: ['test_generation'], kind: 'model', ...extra,
 });
 
 test('skill cards show trust badges and stages; import and approve use the plugin API', async ({ page }) => {

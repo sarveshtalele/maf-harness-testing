@@ -1,5 +1,7 @@
 'use client';
 import { useEffect, useState } from 'react';
+import Link from 'next/link';
+import { useSearchParams } from 'next/navigation';
 import { api, label, rows, text, type Row } from '@/lib/harness';
 import { ConfirmDialog, Fields, Metrics, StatusBadge, Table } from './page';
 import Markdown from './markdown';
@@ -13,12 +15,11 @@ export default function Skills() {
   const [catalog, setCatalog] = useState<{ skills: Skill[]; upstream: Row } | null>(null);
   const [error, setError] = useState('');
   const [search, setSearch] = useState('');
-  const [selected, setSelected] = useState('');
+  const selected = useSearchParams().get('skill') || '';
   const [notice, setNotice] = useState('');
   const [approving, setApproving] = useState<Skill | null>(null);
   const reload = (signal?: AbortSignal) => api<{ skills: Skill[]; upstream: Row }>('skills', undefined, signal).then(setCatalog).catch(e => { if (!signal?.aborted) setError(e.message); });
   useEffect(() => {
-    setSelected(new URLSearchParams(location.search).get('skill') || '');
     const controller = new AbortController();
     void reload(controller.signal);
     return () => controller.abort();
@@ -37,6 +38,7 @@ export default function Skills() {
   };
   // The approval names the hash the user reviewed; the backend refuses it if the skill changed since then.
   const approveSkill = async (skill: Skill) => {
+    if (!skill.tree_sha256) return; // the dialog disables Approve without the reviewed hash
     setApproving(null); setError(''); setNotice('');
     try { await api(`skills/${encodeURIComponent(skill.name)}/approve`, { tree_sha256: skill.tree_sha256 }); setNotice(`${skill.name} approved.`); await reload(); }
     catch (e) {
@@ -52,7 +54,7 @@ export default function Skills() {
   const skills = catalog?.skills || [];
   const visible = skills.filter(s => `${s.name} ${s.description} ${s.role} ${s.primary_stages.join(' ')}`.toLowerCase().includes(search.toLowerCase()));
   const skill = skills.find(s => s.name === selected);
-  if (selected && catalog) return <><a className="button small" href="/marketplace">← All agent skills</a>{skill ? <article className="skill-document">
+  if (selected && catalog) return <><Link className="button small" href="/marketplace">← All agent skills</Link>{skill ? <article className="skill-document">
     <header><span className="eyebrow">Agent skill · {skill.role}</span><h2>{label(skill.name.replaceAll('-', ' '))}</h2><p>{skill.description}</p><div className="skill-tags"><Badge value={skill.valid ? 'Valid package' : 'Integrity error'} />{trustBadge(skill)}{skill.primary_stages.map(stage => <Badge key={stage} value={stage} />)}</div></header>
     <section><h2>Recorded execution by run and step</h2><Table caption={`${skill.name} recorded executions`} rows={rows(skill.executions)} searchable empty="No recorded executions." /><p>Package loading and script execution are different events. Historical adapter calls have no script execution record.</p></section>
     <Markdown text={skill.instructions} />
@@ -73,13 +75,15 @@ export default function Skills() {
         {!!skill.stages?.length && <div className="skill-tags" aria-label={`${skill.name} stages`}>{skill.stages.map(stage => <Badge key={stage} value={label(stage)} />)}</div>}
         {skill.purpose && <p className="field-help">{skill.purpose}</p>}
         {!skill.verified && !skill.approved && <button className="small" onClick={() => setApproving(skill)}>Approve {skill.name}</button>}
-        <a className="button small" href={`/marketplace?skill=${encodeURIComponent(skill.name)}`}>View skill details →</a>
+        <Link className="button small" href={`/marketplace?skill=${encodeURIComponent(skill.name)}`}>View skill details →</Link>
       </article>)}</div>
       <p className="field-help">Availability does not mean every skill runs on every repository. Companion skills are selected from repository facts and the approved test design.</p>
     </>}
-    <ConfirmDialog open={approving !== null} title={`Approve ${approving?.name ?? 'skill'}?`} confirmLabel="Approve" onConfirm={() => { if (approving) void approveSkill(approving); }} onClose={() => setApproving(null)}>
+    <ConfirmDialog open={approving !== null} title={`Approve ${approving?.name ?? 'skill'}?`} confirmLabel="Approve" disabled={!approving?.tree_sha256} onConfirm={() => { if (approving) void approveSkill(approving); }} onClose={() => setApproving(null)}>
       <p>It is not covered by the repository lock. Approving lets agents load its instructions and allows its scripts to run on this machine. Any later file change revokes the approval.</p>
-      <p>You are approving the reviewed package hash <code title={approving?.tree_sha256}>{approving?.tree_sha256 ? approving.tree_sha256.slice(0, 12) : 'not provided'}</code>.</p>
+      {approving?.tree_sha256
+        ? <p>You are approving the reviewed package hash <code title={approving.tree_sha256}>{approving.tree_sha256.slice(0, 12)}</code>.</p>
+        : <p className="notice bad" role="alert">The reviewed hash is unavailable, so this approval cannot be sent. <button type="button" onClick={() => { setApproving(null); void reload(); }}>Reload the list</button></p>}
     </ConfirmDialog>
   </>;
 }

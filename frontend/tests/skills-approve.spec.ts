@@ -32,3 +32,45 @@ test('approve sends the reviewed tree hash and shows a changed skill refusal wit
   await expect(page.locator('.notice.bad')).toContainText('changed since it was reviewed');
   await expect.poll(() => listings).toBeGreaterThan(before);
 });
+
+test('approval succeeds with the reviewed hash and reports the approved skill', async ({ page }) => {
+  const posts: Record<string, unknown>[] = [];
+  let approved = false;
+  await page.route('**/api/harness/**', route => {
+    const path = new URL(route.request().url()).pathname.replace('/api/harness/', '');
+    if (route.request().method() === 'POST' && path === 'skills/demo-skill/approve') {
+      posts.push(route.request().postDataJSON());
+      approved = true;
+      return route.fulfill({ json: { name: 'demo-skill', approved: true } });
+    }
+    if (path === 'skills') return route.fulfill({ json: { skills: [{ ...skill, approved, verified: false }], upstream: {} } });
+    if (path === 'config') return route.fulfill({ json: { model: 'm', base_url: 'u', key_configured: true, daily: { used: 0, remaining: 1, limit: 1 }, stages: ['requirements'], personas: {} } });
+    if (path === 'runs') return route.fulfill({ json: { runs: [], busy: false } });
+    return route.fulfill({ json: {} });
+  });
+  await page.goto('/marketplace');
+  await page.getByRole('button', { name: 'Approve demo-skill' }).click();
+  await page.getByRole('dialog', { name: 'Approve demo-skill?' }).getByRole('button', { name: 'Approve', exact: true }).click();
+  await expect.poll(() => posts).toEqual([{ tree_sha256: HASH }]);
+  await expect(page.locator('.notice[role=status]')).toContainText('demo-skill approved.');
+});
+
+test('without a reviewed hash the dialog says so, disables Approve and posts nothing', async ({ page }) => {
+  const posts: unknown[] = [];
+  const { tree_sha256: _omit, ...unhashed } = skill;
+  void _omit;
+  await page.route('**/api/harness/**', route => {
+    const path = new URL(route.request().url()).pathname.replace('/api/harness/', '');
+    if (route.request().method() === 'POST') { posts.push(route.request().postDataJSON()); return route.fulfill({ json: {} }); }
+    if (path === 'skills') return route.fulfill({ json: { skills: [unhashed], upstream: {} } });
+    if (path === 'config') return route.fulfill({ json: { model: 'm', base_url: 'u', key_configured: true, daily: { used: 0, remaining: 1, limit: 1 }, stages: ['requirements'], personas: {} } });
+    if (path === 'runs') return route.fulfill({ json: { runs: [], busy: false } });
+    return route.fulfill({ json: {} });
+  });
+  await page.goto('/marketplace');
+  await page.getByRole('button', { name: 'Approve demo-skill' }).click();
+  const dialog = page.getByRole('dialog', { name: 'Approve demo-skill?' });
+  await expect(dialog).toContainText('hash is unavailable');
+  await expect(dialog.getByRole('button', { name: 'Approve', exact: true })).toBeDisabled();
+  expect(posts).toEqual([]);
+});

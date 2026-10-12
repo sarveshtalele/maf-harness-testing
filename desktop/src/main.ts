@@ -124,7 +124,7 @@ async function boot(): Promise<{ apiPort: number; uiPort: number }> {
     throw new Error('backend did not start; see logs in ' + path.join(dataDir, 'logs'));
   });
   const fe = pm.start(ui, [token]);
-  await waitForHttp(`http://127.0.0.1:${uiPort}/`, 200, 90_000, () => alive(fe));
+  await waitForHttp(`http://127.0.0.1:${uiPort}/runs`, 200, 90_000, () => alive(fe));
   await waitForHttp(`http://127.0.0.1:${uiPort}/api/harness/config`, 200, 30_000);
 
   const origin = `http://127.0.0.1:${uiPort}`;

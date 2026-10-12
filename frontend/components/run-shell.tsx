@@ -30,6 +30,10 @@ export const useRun = () => { const value = useContext(RunContext); if (!value) 
 /** Shared run header, stage stepper, notices and tab navigation. Deep pages (sections, records, files) get a compact header. */
 export default function RunLayout({ id, children }: { id: string; children: ReactNode }) {
   const shell = useShell();
+  // Stable callbacks and refs only: a change of shell state must not restart the run poll (item 10).
+  const refreshShell = shell.refresh;
+  const serviceBusyRef = useRef(false);
+  serviceBusyRef.current = shell.serviceBusy;
   const router = useRouter();
   const pathname = usePathname();
   const [run, setRun] = useState<Run | null>(null);
@@ -40,6 +44,7 @@ export default function RunLayout({ id, children }: { id: string; children: Reac
   const [renameOpen, setRenameOpen] = useState(false);
   const [renameValue, setRenameValue] = useState('');
   const [rerunStage, setRerunStage] = useState<string | null>(null);
+  const [rerunError, setRerunError] = useState('');
   const [selectedStage, setSelectedStage] = useState('');
   const validId = RUN_ID.test(id);
   const busyRef = useRef(false);
@@ -55,18 +60,18 @@ export default function RunLayout({ id, children }: { id: string; children: Reac
     const controller = new AbortController(); let timer: ReturnType<typeof setTimeout>;
     const poll = async () => {
       try { await load(controller.signal); } catch (e) { if (!controller.signal.aborted) setLoadError(e as Error); }
-      if (!controller.signal.aborted) timer = setTimeout(poll, busyRef.current || shell.serviceBusy ? POLL_BUSY_MS : POLL_IDLE_MS);
+      if (!controller.signal.aborted) timer = setTimeout(poll, busyRef.current || serviceBusyRef.current ? POLL_BUSY_MS : POLL_IDLE_MS);
     };
     void poll(); return () => { controller.abort(); clearTimeout(timer); };
-  }, [load, validId, shell.serviceBusy]);
+  }, [load, validId]);
 
   const reload = useCallback(async () => { try { await load(); } catch (e) { setLoadError(e as Error); } }, [load]);
   const act = useCallback(async (path: string, body: Row) => {
     setSending(true); setError('');
-    try { const result = await api<Row>(path, body); await reload(); await shell.refresh(); return result; }
+    try { const result = await api<Row>(path, body); await reload(); await refreshShell(); return result; }
     catch (e) { setError((e as Error).message); return undefined; }
     finally { setSending(false); }
-  }, [reload, shell]);
+  }, [reload, refreshShell]);
 
   const value = useMemo<RunValue | null>(() => (run ? { id, run, sending, act, reload, setError: setError } : null), [id, run, sending, act, reload]);
   const title = run ? runTitle(run.state.run_name, run.state.repo_url, id) : id;
@@ -98,10 +103,16 @@ export default function RunLayout({ id, children }: { id: string; children: Reac
 
   const confirmStop = async () => { setStopOpen(false); await act(`runs/${encodeURIComponent(id)}/stop`, {}); };
   const confirmRename = async () => { setRenameOpen(false); await act(`runs/${encodeURIComponent(id)}/rename`, { run_name: renameValue }); };
+  // Errors stay inside the dialog so the user can read them and choose another step (item 11).
   const confirmRerun = async () => {
     if (!rerunStage) return;
-    const result = await act(`runs/${encodeURIComponent(id)}/rerun`, { stage: rerunStage, request_id: run.pending?.id || null });
-    if (result) { setRerunStage(null); router.push(base); }
+    setSending(true); setRerunError('');
+    try {
+      await api<Row>(`runs/${encodeURIComponent(id)}/rerun`, { stage: rerunStage, request_id: run.pending?.id || null });
+      await reload(); await refreshShell();
+      setRerunStage(null); router.push(base);
+    } catch (e) { setRerunError((e as Error).message); }
+    finally { setSending(false); }
   };
 
   return <RunContext.Provider value={value}><RunScope.Provider value={id}>
@@ -116,11 +127,12 @@ export default function RunLayout({ id, children }: { id: string; children: Reac
         {run.busy && run.status !== 'stopping' && <button className="danger-button" disabled={sending} onClick={() => setStopOpen(true)}>Stop run</button>}
         <button disabled={sending || run.busy || run.service_busy} onClick={() => { setRenameValue(typeof run.state.run_name === 'string' ? run.state.run_name : ''); setRenameOpen(true); }}>Rename run</button>
         <button disabled={sending || run.service_busy} onClick={() => void act(`runs/${encodeURIComponent(id)}/reconnect`, {})}>Reconnect</button>
-        <button disabled={sending || run.service_busy} onClick={() => setRerunStage(selectedStage || active || 'repo_analysis')}>Rerun from step <Icon name="plus" /></button>
+        <button disabled={sending || run.service_busy} onClick={() => { setRerunError(''); setRerunStage(selectedStage || active || 'repo_analysis'); }}>Rerun from step <Icon name="plus" /></button>
       </div>
     </section>
     {tabLevel && <>
       <div className="run-completion"><span>Workflow progress · {percent}%</span><progress aria-label="Workflow completion" max={100} value={percent} /><small>Approved stage milestones; test verdict is reported separately.</small></div>
+      <p className="stage-current">Current stage: <strong>{label(active)}</strong></p>
       <ol className="stage-progress" aria-label="Workflow stages">{stages.map((s, i) => <li key={s}><Link href={`${base}/artifacts/${encodeURIComponent(s)}`} aria-label={`View ${label(s)} evidence`} aria-current={selectedStage === s ? 'true' : undefined} onClick={() => setSelectedStage(s)} className={`${active === s ? 'current' : ''} ${failedStage === s ? 'failed' : record(run.state.approved)[s] ? 'done' : ''}`}><span aria-hidden="true">{failedStage === s ? '!' : record(run.state.approved)[s] ? '✓' : i + 1}</span><small>{label(s)}</small>{etaOf(s).predicted_s != null ? <small>{etaOf(s).status === 'done' ? 'took ' : '~'}{minutes(Number(etaOf(s).predicted_s))}</small> : null}</Link></li>)}</ol>
       {finish ? <p className="muted">Estimated completion ~{new Date(String(finish)).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })} (≈{minutes(Number(record(record(run.progress).eta).total_remaining_s))} left)</p> : null}
     </>}
@@ -146,6 +158,7 @@ export default function RunLayout({ id, children }: { id: string; children: Reac
       <input id="rename-run-input" maxLength={80} value={renameValue} onChange={e => setRenameValue(e.target.value)} />
     </ConfirmDialog>
     <ConfirmDialog open={rerunStage !== null} title="Rerun from a step" confirmLabel={`Rerun ${label(rerunStage)}`} busy={sending} disabled={run.service_busy} onConfirm={() => void confirmRerun()} onClose={() => setRerunStage(null)}>
+      {rerunError && <p className="notice bad" role="alert">{rerunError}</p>}
       <p>Previous evidence is retained in the run’s attempts folder. This step and all later approvals are reset. Clone, installation and execution still require their normal review gates.</p>
       <div className="step-picker" role="group" aria-label="Step to rerun">{stages.map((stage, index, all) => <button type="button" key={stage} aria-pressed={rerunStage === stage} disabled={sending || run.service_busy || all.slice(0, index).some(s => !record(run.state.approved)[s])} onClick={() => setRerunStage(stage)}>{label(stage)}</button>)}</div>
     </ConfirmDialog>
