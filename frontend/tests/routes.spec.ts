@@ -208,7 +208,7 @@ test('old ?run= and ?page= URLs redirect to the new routes', async ({ page }) =>
   await page.goto('/?page=prompts');
   await expect(page).toHaveURL(/\/prompts/);
   await page.goto('/?page=marketplace');
-  await expect(page).toHaveURL(/\/marketplace/);
+  await expect(page).toHaveURL(/\/marketplace\/skills(\?.*)?$/);
   await expect(page.getByRole('heading', { level: 1, name: 'Marketplace' })).toBeVisible();
 });
 
@@ -237,9 +237,11 @@ test('redirects: logs tab, marketplace MCP, skill detail, unknown tab and a host
   await page.goto('/?run=rich&tab=Logs');
   await expect(page).toHaveURL(/\/runs\/rich\/logs/);
   await page.goto('/?page=marketplace&tab=mcp');
-  await expect(page).toHaveURL(/\/marketplace\?.*tab=mcp/);
+  await expect(page).toHaveURL(/\/marketplace\/mcp(\?.*)?$/);
   await page.goto('/?page=skills&skill=demo-skill');
-  await expect(page).toHaveURL(/\/marketplace\?.*skill=demo-skill/);
+  await expect(page).toHaveURL(/\/marketplace\/skills\/demo-skill(\?.*)?$/);
+  await page.goto('/marketplace?tab=mcp');
+  await expect(page).toHaveURL(/\/marketplace\/mcp(\?.*)?$/);
   await page.goto('/?run=rich&tab=Nope');
   await expect(page).toHaveURL(/\/runs\/rich/);
   await page.goto('/?run=..%2Fsecret&tab=Logs');

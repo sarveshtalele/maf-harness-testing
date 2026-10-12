@@ -1,6 +1,6 @@
 'use client';
 import Link from 'next/link';
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { api, apiDelete, desktop, label, type Tone } from '@/lib/harness';
 import { ConfirmDialog, EmptyState } from './page';
 import Icon from './icons';
@@ -66,7 +66,7 @@ function ServerCard({ server: s, budget, onDelete }: { server: Server; budget: B
     <code className="mcp-code">{commandLine(s)}</code>
     {s.problems?.map(p => <p key={p} className="mp-warn"><span className="badge warn">Fix before enabling</span> {p}</p>)}
     <p className="field-help">Stages: {s.stages.length ? s.stages.map(st => label(st)).join(', ') : 'none'}</p>
-    <p className="field-help">{names.length} tools · {approved} always allow · {asks} ask · {names.length - approved - asks} blocked</p>
+    <p className="field-help">{names.length} {names.length === 1 ? 'tool' : 'tools'} · {approved} always allow · {asks} ask · {names.length - approved - asks} blocked</p>
     {!s.discovered_tools.length && <p className="field-help">No tools yet. Run Test connection to discover them.</p>}
     {!!names.length && <ul className="mp-tools">{names.slice(0, 6).map(n => <li key={n}><code>{n}</code></li>)}{names.length > 6 && <li className="field-help">+{names.length - 6} more</li>}</ul>}
     {over.map(st => <p key={st} className="mp-warn"><span className="badge warn">Over budget</span> Stage {label(st)}: {budget[st].tools} MCP tools, max {budget[st].max}.</p>)}
@@ -83,24 +83,27 @@ export default function McpServers() {
   const [notice, setNotice] = useState<{ ok: boolean; text: string } | null>(null);
   const [target, setTarget] = useState('');
   const [busy, setBusy] = useState(false);
+  const addRef = useRef<HTMLAnchorElement>(null);
   // Other pages leave a short notice in the URL (?deleted=name, ?added=count); read it once after mount.
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const deleted = params.get('deleted'); const added = params.get('added');
     if (!deleted && !added) return;
+    if (deleted) addRef.current?.focus(); // the card is gone: focus moves to Add MCP server
     setNotice({ ok: true, text: deleted ? `${deleted} deleted.` : `${added} MCP server${added === '1' ? '' : 's'} added. ${added === '1' ? 'It starts' : 'They start'} disabled until you enable ${added === '1' ? 'it' : 'them'}.` });
     history.replaceState(null, '', '/marketplace/mcp');
   }, []);
   const remove = async () => {
     setBusy(true);
-    try { await removeServer(target); setTarget(''); setNotice({ ok: true, text: `${target} deleted.` }); await load(); }
+    const name = target;
+    try { await removeServer(name); setTarget(''); setNotice({ ok: true, text: `${name} deleted.` }); await load(); addRef.current?.focus(); }
     catch (e) { setTarget(''); setNotice({ ok: false, text: (e as Error).message }); }
     finally { setBusy(false); }
   };
   const budget: Budget = data?.stage_budget ?? {};
   const servers = data?.servers ?? [];
   return <>
-    <div className="page-header"><div><h2><Icon name="plug" />MCP servers</h2><p>Give the agents extra tools from MCP servers (Jira, Playwright, others). Servers start disabled. Approved tools run automatically, tools that need approval wait for a person, and blocked tools are hidden. Output from a server is untrusted evidence.</p></div><Link className="button primary" href="/marketplace/mcp/new">Add MCP server</Link></div>
+    <div className="page-header"><div><h2><Icon name="plug" />MCP servers</h2><p>Give the agents extra tools from MCP servers (Jira, Playwright, others). Servers start disabled. Approved tools run automatically, tools that need approval wait for a person, and blocked tools are hidden. Output from a server is untrusted evidence.</p></div><Link ref={addRef} className="button primary" href="/marketplace/mcp/new">Add MCP server</Link></div>
     <BudgetNotices budget={budget} />
     {notice && <p role="status" className={notice.ok ? '' : 'bad'}>{notice.text}</p>}
     {error && <p role="alert" className="bad">{error}</p>}

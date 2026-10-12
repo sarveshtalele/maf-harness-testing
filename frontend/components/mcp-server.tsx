@@ -166,7 +166,7 @@ function ServerEditor({ server, budget, stages, load }: { server: Server; budget
 
   const footer = <footer className="mcp-footer" aria-label="Tool summary and saving">
     <div className="mcp-footer-text">
-      <strong aria-live="polite">{names.length} tools · {t.a} always allow · {t.h} ask · {t.b} blocked</strong>
+      <strong aria-live="polite">{names.length} {names.length === 1 ? 'tool' : 'tools'} · {t.a} always allow · {t.h} ask · {t.b} blocked</strong>
       {needed.map(st => <span key={st} className="mp-warn"><span className="badge warn">Over budget</span> Stage {label(st)}: {budget[st].tools} MCP tools, max {budget[st].max}; servers beyond the budget are skipped (saved state).</span>)}
       {liveTooMany && <span className="mp-warn"><span className="badge warn">Budget</span> {t.a + t.h} tools can run here; a stage allows at most {MAX_TOOLS_PER_STAGE} MCP tools across all servers.</span>}
       <span className={dirty ? 'bad' : ''}>{dirty ? 'Unsaved changes' : 'All changes saved'}</span>

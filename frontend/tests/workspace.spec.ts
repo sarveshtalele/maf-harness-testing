@@ -248,7 +248,7 @@ test('mouse resizing persists and project skill cards show real package details'
   await expect(page.locator('.skill-card')).toHaveCount(1);
   await expect(page.getByText('Upstream library provenance', { exact: true })).toHaveCount(0);
   await page.getByRole('link', { name: 'View skill details →', exact: true }).click();
-  await expect(page).toHaveURL(/skill=playwright-test-generator/);
+  await expect(page).toHaveURL(/\/marketplace\/skills\/playwright-test-generator$/);
   await expect(page.locator('.markdown-document h2').first()).toContainText('Playwright');
   // SKILL.md keeps numbered steps; code samples and tables live in references/ (progressive disclosure).
   await expect(page.locator('.markdown-document ol li').first()).not.toBeEmpty();
