@@ -1,15 +1,129 @@
 """Entry point of the bundled desktop backend (``maf-backend``).
 
 Serves the loopback API exactly like ``python -m maf_test_harness.ui.api`` (``--port``, ``HARNESS_API_TOKEN``),
-plus ``--self-check`` for CI: verify bundled resources and lint the skills, no network, then exit.
+plus ``--self-check`` for CI: verify bundled resources, lint the skills, audit the skill scripts' imports and run one
+bundled skill script end to end, no network, then exit. ``--run-python`` makes the executable act as a Python
+interpreter for ``paths.python_argv()``: the frozen app's ``sys.executable`` is this program, not Python.
 """
 
 from __future__ import annotations
 
+import ast
+import builtins
+import importlib.util
+import json
 import multiprocessing
+import runpy
 import sys
+import tempfile
+import traceback
+from pathlib import Path
 
 from maf_test_harness import paths
+
+PYTHON_FLAGS = {"-B", "-E", "-I", "-O", "-OO", "-S", "-s", "-u"}
+
+
+def run_python(argv: list[str]) -> int:
+    """``python`` for ``[maf-backend, --run-python, ...]``: ``[-I] [-B] (-c code | -m module | script) [arg ...]``."""
+    isolated = False
+    while argv and argv[0].startswith("-") and argv[0] not in {"-c", "-m"}:
+        flag, rest = argv[0], argv[1:]
+        if flag == "-I":
+            isolated = True
+        elif flag == "-B":
+            sys.dont_write_bytecode = True
+        elif flag == "-X" and rest:  # the harness passes -X pycache_prefix=<dir> for approved plugin code
+            if rest[0].startswith("pycache_prefix="):
+                sys.pycache_prefix = rest[0].partition("=")[2]
+            rest = rest[1:]
+        elif flag == "--check-hash-based-pycs" and rest:
+            rest = rest[1:]
+        elif flag not in PYTHON_FLAGS:
+            print(f"maf-backend --run-python: unsupported option {flag!r}", file=sys.stderr)
+            return 2
+        argv = rest
+    if not argv or (argv[0] in {"-c", "-m"} and len(argv) < 2):
+        print(
+            "usage: maf-backend --run-python [-I] [-B] (-c code | -m module | script) [arg ...]",
+            file=sys.stderr,
+        )
+        return 2
+    head, tail = argv[0], argv[1:]
+    if head not in {"-c", "-m"} and not Path(head).is_file():
+        print(f"can't open file '{head}': [Errno 2] No such file or directory", file=sys.stderr)
+        return 2
+    try:
+        if head == "-c":
+            sys.argv = ["-c", *tail[1:]]
+            if not isolated:
+                sys.path.insert(0, "")
+            exec(compile(tail[0], "<string>", "exec"), {"__name__": "__main__", "__builtins__": builtins})
+        elif head == "-m":
+            sys.argv = [tail[0], *tail[1:]]
+            if not isolated:
+                sys.path.insert(0, "")
+            runpy.run_module(tail[0], run_name="__main__", alter_sys=True)
+        else:
+            sys.argv = [head, *tail]
+            if not isolated:  # like CPython: the script's own folder comes first on sys.path (not with -I)
+                sys.path.insert(0, str(Path(head).resolve().parent))
+            runpy.run_path(head, run_name="__main__")
+    except SystemExit as exc:
+        if exc.code is None:
+            return 0
+        if isinstance(exc.code, int):
+            return exc.code
+        print(exc.code, file=sys.stderr)
+        return 1
+    except KeyboardInterrupt:
+        return 130
+    except Exception:
+        traceback.print_exc()
+        return 1
+    return 0
+
+
+def _script_imports(script: Path) -> set[str]:
+    """Top-level modules a skill script imports, without relative imports and its own sibling modules."""
+    names: set[str] = set()
+    for node in ast.walk(ast.parse(script.read_text(encoding="utf-8"), filename=str(script))):
+        if isinstance(node, ast.Import):
+            names.update(alias.name.partition(".")[0] for alias in node.names)
+        elif isinstance(node, ast.ImportFrom) and node.level == 0 and node.module:
+            names.add(node.module.partition(".")[0])
+    return names - {p.stem for p in script.parent.iterdir()}
+
+
+def _unresolved_skill_imports() -> list[str]:
+    problems = []
+    for script in sorted(paths.skills_dir().glob("*/scripts/**/*.py")):
+        for name in sorted(_script_imports(script)):
+            try:
+                found = importlib.util.find_spec(name) is not None
+            except (ImportError, ValueError):
+                found = False
+            if not found:
+                problems.append(f"{script.relative_to(paths.skills_dir()).as_posix()}: import {name}")
+    return problems
+
+
+def _run_bundled_skill(work: Path) -> dict:
+    """Run the reverse-engineering host script through the same runner the host uses (allow-list and hash checks)."""
+    from maf_test_harness.skills.scripts import HarnessScriptRunner
+
+    repo = work / "repo"
+    repo.mkdir()
+    (repo / "app.py").write_text("def add(a, b):\n    return a + b\n", encoding="utf-8")
+    request = {"root": str(repo), "source_files": ["app.py"]}
+    runner = HarnessScriptRunner(paths.skills_dir(), tiers=("host",))
+    return runner.run(
+        "reverse-engineering",
+        "scripts/analyze.py",
+        ["--request", "input/request.json", "--output", "output.json"],
+        files={"request.json": json.dumps(request)},
+        output_json="output.json",
+    )
 
 
 def self_check() -> int:
@@ -31,13 +145,27 @@ def self_check() -> int:
         return 1
     from maf_test_harness import cli
 
-    code = cli.main(["lint-skills"])
-    print(f"self-check {'OK' if not code else 'FAILED'} (resources: {paths.resource_root()})", flush=True)
-    return int(bool(code))
+    lint = cli.main(["lint-skills"])
+    imports = _unresolved_skill_imports()
+    if imports:
+        print(
+            "self-check FAILED, skill script imports unavailable in this runtime:\n  " + "\n  ".join(imports),
+            file=sys.stderr,
+        )
+        return 1
+    with tempfile.TemporaryDirectory(prefix="maf-self-check-") as tmp:
+        outcome = _run_bundled_skill(Path(tmp))
+    if outcome["exit_code"] != 0 or not isinstance(outcome.get("data"), dict):
+        print(f"self-check FAILED, bundled skill script did not run:\n{outcome['stderr']}", file=sys.stderr)
+        return 1
+    print(f"self-check {'OK' if not lint else 'FAILED'} (resources: {paths.resource_root()})", flush=True)
+    return int(bool(lint))
 
 
 def main(argv: list[str] | None = None) -> int:
     argv = sys.argv[1:] if argv is None else argv
+    if argv[:1] == ["--run-python"]:
+        return run_python(argv[1:])
     if "--self-check" in argv:
         return self_check()
     from maf_test_harness.ui import api

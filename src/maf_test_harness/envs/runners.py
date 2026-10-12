@@ -17,11 +17,11 @@ from dataclasses import asdict, dataclass, field, replace
 from itertools import takewhile
 from pathlib import Path, PurePosixPath
 
-from .. import errors
+from .. import errors, paths
 from ..repo.analyzer import declared_dependencies
 from ..repo.stack import REQUIRED_TOOLS, StackProfile
 from ..skills.contracts import PYTHON_PROJECT_FILES, python_import_roots
-from . import platform_compat
+from . import platform_compat, toolchains
 from .execution import EXPORT_SKIP_DIRS, read_junit_cases, run_command
 from .regression import maven_regression_steps
 
@@ -240,6 +240,22 @@ def generated_groups(
     return groups
 
 
+NO_PYTHON_MESSAGE = "Python 3.x is required to run Python tests; install it from python.org, then retry"
+
+
+def _create_venv_argv() -> list[str]:
+    """The command that builds the venv. Never a bare "python3"/"python": on Windows those can resolve to the Python
+    Install Manager's App Execution Alias, which silently downloads an interpreter over the network instead of
+    erroring. The running interpreter is used, except in the frozen app, where it is the backend: a real Python on
+    this machine is used instead (apply_toolchains swaps in the one the environment plan provisioned, if any)."""
+    if not paths.is_frozen():
+        return [sys.executable, "-m", "venv", VENV_DIR]
+    if found := toolchains.find("python", "3"):
+        return [str(found.home), "-m", "venv", VENV_DIR]
+    fail = f"raise SystemExit({NO_PYTHON_MESSAGE!r})"
+    return [*paths.python_argv(), "-c", fail]  # the step fails and reports the message
+
+
 def setup_steps(
     eco: str,
     ws: Path,
@@ -268,10 +284,7 @@ def setup_steps(
         pip_cmd = [venv_py, "-m", "pip", "install", "--disable-pip-version-check", "-q"]
         if not env_ready:
             steps += [
-                # sys.executable (the interpreter already running the harness), never a bare "python3"/"python":
-                # on Windows those names can resolve to the Python Install Manager's App Execution Alias, which
-                # silently downloads and installs a whole interpreter over the network instead of erroring.
-                Step("create-venv", [sys.executable, "-m", "venv", VENV_DIR], "setup", timeout=timeout),
+                Step("create-venv", _create_venv_argv(), "setup", timeout=timeout),
                 Step("install-pytest", [*pip_cmd, "pytest"], "setup", env=pip, timeout=timeout),
             ]
             if (ws / "requirements.txt").is_file():

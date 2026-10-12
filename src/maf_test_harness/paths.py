@@ -22,6 +22,15 @@ def is_frozen() -> bool:
     return bool(getattr(sys, "frozen", False))
 
 
+def python_argv() -> list[str]:
+    """Argv prefix that runs Python scripts, ``-m`` modules or ``-c`` code on this runtime.
+
+    In the frozen desktop app ``sys.executable`` is the bundled ``maf-backend`` executable, not an interpreter, so
+    the ``--run-python`` switch makes it act as one (see ``desktop_backend.run_python``). Computed per call.
+    """
+    return [sys.executable, "--run-python"] if is_frozen() else [sys.executable]
+
+
 def resource_root() -> Path:
     env = _env_path("HARNESS_RESOURCE_ROOT")
     if env:

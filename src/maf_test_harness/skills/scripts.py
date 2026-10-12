@@ -17,7 +17,6 @@ from __future__ import annotations
 import hashlib
 import json
 import shutil
-import sys
 import tempfile
 import time
 from collections.abc import Callable
@@ -26,17 +25,27 @@ from typing import Any
 
 from agent_framework import Content, SkillsProvider
 
+from .. import paths
 from ..envs.execution import run_command
 from .registry import discover_skills, reviewed_scripts
 from .trust import trust
 
 SCRIPT_TIMEOUT_SECONDS = 30
 MAX_OUTPUT_CHARS = 20_000
-INTERPRETERS = {".py": [sys.executable], ".js": ["node"]}
+INTERPRETERS = {".py", ".js"}  # suffixes that run through an interpreter, see _interpreter()
 
 
 class ScriptRefused(RuntimeError):
     pass
+
+
+def _interpreter(path: Path) -> list[str]:
+    """Argv prefix for a script, resolved per call: the frozen app runs Python through its own backend."""
+    if path.suffix == ".py":
+        return paths.python_argv()
+    if path.suffix == ".js":
+        return ["node"]
+    return [str(path)]
 
 
 class HarnessScriptRunner:
@@ -123,7 +132,7 @@ class HarnessScriptRunner:
         if output_json and "host" not in self.tiers:
             raise ScriptRefused("JSON artifact output is host-only.")
         path = self.check(skill, rel)
-        interpreter = INTERPRETERS.get(path.suffix, [str(path)])
+        interpreter = _interpreter(path)
         work = Path(tempfile.mkdtemp(prefix="skill-script-")).resolve()
         if skill in self.dirs and path.suffix == ".py":  # approved plugin code: isolated, no stray bytecode
             interpreter = [
