@@ -51,6 +51,7 @@ and only within their limits. The others are reported as guidance or need approv
 | `ENV-PY-008` | environment | auto_once | Interpreter or venv executable not found | recreate-venv |
 | `ENV-PY-009` | environment | auto | Installed packages are mutually incompatible | fix-conflicts |
 | `ENV-PY-010` | environment | auto_once | Test client needs an extra package | add-test-dependency |
+| `ENV-PY-011` | environment | manual | No Python interpreter for the isolated environment | (install Python 3 from python.org, then retry) |
 | `ENV-JAVA-001` | environment | ask | JDK version does not match the project | provision-jdk |
 | `ENV-JAVA-002` | environment | ask | JAVA_HOME missing or not a JDK | provision-jdk |
 | `ENV-JAVA-003` | infra | auto_once | Maven/Gradle could not resolve dependencies | retry-update, configure-mirror |

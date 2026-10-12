@@ -24,6 +24,7 @@ from ..skills.contracts import PYTHON_PROJECT_FILES, python_import_roots
 from . import platform_compat, toolchains
 from .execution import EXPORT_SKIP_DIRS, read_junit_cases, run_command
 from .regression import maven_regression_steps
+from .spec import detect_spec, version_tuple
 
 REPORT_DIR = ".harness-reports"
 VENV_DIR = ".harness-venv"
@@ -240,20 +241,42 @@ def generated_groups(
     return groups
 
 
-NO_PYTHON_MESSAGE = "Python 3.x is required to run Python tests; install it from python.org, then retry"
+NO_PYTHON_MESSAGE = "Python {} is required to run Python tests; install it from python.org, then retry"
 
 
-def _create_venv_argv() -> list[str]:
-    """The command that builds the venv. Never a bare "python3"/"python": on Windows those can resolve to the Python
-    Install Manager's App Execution Alias, which silently downloads an interpreter over the network instead of
-    erroring. The running interpreter is used, except in the frozen app, where it is the backend: a real Python on
-    this machine is used instead (apply_toolchains swaps in the one the environment plan provisioned, if any)."""
+def _create_venv_step(ws: Path, timeout: float, python_override: str | None = None) -> Step:
+    """The step that builds the venv, with the interpreter that does it."""
     if not paths.is_frozen():
-        return [sys.executable, "-m", "venv", VENV_DIR]
-    if found := toolchains.find("python", "3"):
-        return [str(found.home), "-m", "venv", VENV_DIR]
-    fail = f"raise SystemExit({NO_PYTHON_MESSAGE!r})"
-    return [*paths.python_argv(), "-c", fail]  # the step fails and reports the message
+        # sys.executable (the interpreter already running the harness), never a bare "python3"/"python":
+        # on Windows those names can resolve to the Python Install Manager's App Execution Alias, which
+        # silently downloads and installs a whole interpreter over the network instead of erroring.
+        return Step("create-venv", [sys.executable, "-m", "venv", VENV_DIR], "setup", timeout=timeout)
+    # Frozen: sys.executable is the backend. Use the newest real Python that satisfies the project's requirement
+    # (the same one the environment plan computes); apply_toolchains swaps in the provisioned one when there is one.
+    req = next(
+        (r for r in detect_spec(ws, "python", python_override).requirements if r.kind == "python"), None
+    )
+    usable = [
+        t
+        for t in toolchains.DETECTORS["python"]()
+        if toolchains.satisfies(
+            "python",
+            t.version,
+            req.version if req else "3",
+            req.exact if req else False,
+            req.specifier if req else "",
+        )
+    ]
+    if usable:
+        newest = max(usable, key=lambda t: version_tuple(t.version))
+        return Step("create-venv", [str(newest.home), "-m", "venv", VENV_DIR], "setup", timeout=timeout)
+    message = NO_PYTHON_MESSAGE.format(req.specifier if req and req.specifier else "3.x")
+    return Step(
+        "python-missing",
+        [*paths.python_argv(), "-c", f"raise SystemExit({message!r})"],
+        "setup",
+        timeout=timeout,
+    )
 
 
 def setup_steps(
@@ -267,6 +290,7 @@ def setup_steps(
     env_ready: bool = False,
     extra_requirements: list[str] | None = None,
     extra_packages: list[str] | None = None,
+    python_override: str | None = None,
 ) -> list[Step]:
     """Dependency installation into an ISOLATED location (venv / project node_modules / cache-dir repositories).
 
@@ -284,7 +308,7 @@ def setup_steps(
         pip_cmd = [venv_py, "-m", "pip", "install", "--disable-pip-version-check", "-q"]
         if not env_ready:
             steps += [
-                Step("create-venv", _create_venv_argv(), "setup", timeout=timeout),
+                _create_venv_step(ws, timeout, python_override),
                 Step("install-pytest", [*pip_cmd, "pytest"], "setup", env=pip, timeout=timeout),
             ]
             if (ws / "requirements.txt").is_file():

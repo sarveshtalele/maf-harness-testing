@@ -1,14 +1,16 @@
 """The frozen desktop backend acts as Python for skill scripts, hooks and venv creation (see paths.python_argv)."""
 
 import json
+import subprocess
 import sys
 import textwrap
 from pathlib import Path
 
 import pytest
 
-from maf_test_harness import desktop_backend, paths
+from maf_test_harness import desktop_backend, errors, paths
 from maf_test_harness.envs import runners, toolchains
+from maf_test_harness.envs.execution import run_command
 from maf_test_harness.envs.toolchains import Toolchain
 from maf_test_harness.hooks import config
 from maf_test_harness.skills import scripts
@@ -21,6 +23,16 @@ PROBE = textwrap.dedent(
     pathlib.Path(__file__).with_name("out.json").write_text(json.dumps(data), encoding="utf-8")
     """
 )
+
+
+SHIM = "import sys; from maf_test_harness import desktop_backend as d; sys.exit(d.main(sys.argv[1:]))"
+
+
+@pytest.fixture(autouse=True)
+def _fresh_python_scan():
+    toolchains._scan_pythons.cache_clear()
+    yield
+    toolchains._scan_pythons.cache_clear()
 
 
 @pytest.fixture
@@ -162,10 +174,187 @@ def test_frozen_create_venv_uses_a_detected_python(monkeypatch, tmp_path):
 def test_frozen_create_venv_fails_clearly_without_a_python(monkeypatch, tmp_path, capsys):
     _freeze(monkeypatch)
     monkeypatch.setitem(toolchains.DETECTORS, "python", list)
-    argv = runners.setup_steps("python", tmp_path, str(tmp_path / "cache"), 60)[0].argv
-    assert argv[:3] == [sys.executable, "--run-python", "-c"]
-    assert desktop_backend.run_python(argv[2:]) == 1
-    assert runners.NO_PYTHON_MESSAGE in capsys.readouterr().err
+    step = runners.setup_steps("python", tmp_path, str(tmp_path / "cache"), 60)[0]
+    assert step.name == "python-missing"
+    assert step.argv[:3] == [sys.executable, "--run-python", "-c"]
+    assert desktop_backend.run_python(step.argv[2:]) == 1
+    assert runners.NO_PYTHON_MESSAGE.format("3.x") in capsys.readouterr().err
+
+
+def test_missing_python_step_is_classified_with_its_remedy(monkeypatch, tmp_path):
+    """The real failing step, run through the real backend, is diagnosed as ENV-PY-011 with the install remedy."""
+    _freeze(monkeypatch)
+    monkeypatch.setitem(toolchains.DETECTORS, "python", list)
+    step = runners.setup_steps("python", tmp_path, str(tmp_path / "cache"), 60)[0]
+    monkeypatch.setattr(sys, "frozen", False, raising=False)  # run the subprocess as plain Python below
+    result = run_command(
+        [sys.executable, "-c", SHIM, *step.argv[1:]],
+        tmp_path,
+        tmp_path / "logs",
+        timeout=60,
+        env={"PYTHONPATH": str(REPO / "src")},
+    )
+    assert result["exit_code"] == 1
+    text = (tmp_path / "logs" / "stderr.log").read_text(encoding="utf-8")
+    diagnosis = errors.classify(text, "python")[0]
+    assert diagnosis.code == "ENV-PY-011"
+    assert "python.org" in diagnosis.hint and "retry" in diagnosis.hint
+
+
+def test_frozen_create_venv_uses_the_newest_python_that_satisfies_the_project(monkeypatch, tmp_path):
+    _freeze(monkeypatch)
+    found = [
+        Toolchain("python", "3.12.4", Path("/opt/py312/bin/python3"), "system"),
+        Toolchain("python", "3.11.2", Path("/opt/py311a/bin/python3"), "system"),
+        Toolchain("python", "3.11.9", Path("/opt/py311b/bin/python3"), "system"),
+    ]
+    monkeypatch.setitem(toolchains.DETECTORS, "python", lambda: found)
+    (tmp_path / ".python-version").write_text("3.11\n", encoding="utf-8")
+    assert (
+        runners.setup_steps("python", tmp_path, str(tmp_path / "c"), 60)[0].argv[0]
+        == "/opt/py311b/bin/python3"
+    )
+    (tmp_path / ".python-version").unlink()
+    assert (
+        runners.setup_steps("python", tmp_path, str(tmp_path / "c"), 60)[0].argv[0]
+        == "/opt/py312/bin/python3"
+    )
+
+
+def test_frozen_create_venv_names_the_required_version_when_none_satisfies(monkeypatch, tmp_path):
+    _freeze(monkeypatch)
+    monkeypatch.setitem(
+        toolchains.DETECTORS, "python", lambda: [Toolchain("python", "3.12.4", Path("/p"), "system")]
+    )
+    (tmp_path / ".python-version").write_text("3.11\n", encoding="utf-8")
+    step = runners.setup_steps("python", tmp_path, str(tmp_path / "c"), 60)[0]
+    assert step.name == "python-missing"
+    assert "Python ==3.11 is required to run Python tests" in step.argv[-1]
+
+
+def test_python_scan_is_cached_per_process(monkeypatch):
+    calls = []
+    monkeypatch.setattr(toolchains, "_probe_python", lambda argv: calls.append(argv))
+    monkeypatch.setattr(toolchains.shutil, "which", lambda name: f"/opt/{name}")
+    toolchains.detect_pythons()
+    first = len(calls)
+    assert first > 0
+    toolchains.detect_pythons()
+    assert len(calls) == first
+
+
+def test_windows_store_aliases_are_never_executed(monkeypatch):
+    alias = r"C:\Users\me\AppData\Local\Microsoft\WindowsApps\python3.exe"
+    launcher = r"C:\Windows\py.exe"
+    ran, asked = [], []
+
+    def spy(argv, **kwargs):  # the py launcher may run; the WindowsApps alias must never be executed
+        ran.append(argv)
+        if any("windowsapps" in str(arg).lower() for arg in argv):
+            raise AssertionError(f"executed alias {argv}")
+        return subprocess.CompletedProcess(argv, 1, "", "")
+
+    def which(name):
+        asked.append(name)
+        return launcher if name == "py" else alias
+
+    monkeypatch.setattr(toolchains.platform_compat, "IS_WINDOWS", True)
+    monkeypatch.setattr(toolchains.shutil, "which", which)
+    monkeypatch.setattr(toolchains.subprocess, "run", spy)
+    _freeze(monkeypatch)
+    assert toolchains.detect_pythons() == []
+    assert all(not any("WindowsApps" in str(a) for a in argv) for argv in ran)
+    assert "python3" not in asked and "python" not in asked  # bare names are never probed on Windows
+
+
+def test_frozen_bare_names_are_probed_only_off_windows(monkeypatch):
+    asked = []
+    monkeypatch.setattr(toolchains, "_probe_python", lambda argv: None)
+    monkeypatch.setattr(toolchains.shutil, "which", lambda name: asked.append(name))
+    _freeze(monkeypatch)
+    monkeypatch.setattr(toolchains.platform_compat, "IS_WINDOWS", False)
+    toolchains.detect_pythons()
+    assert "python3" in asked and "python" in asked
+    asked.clear()
+    toolchains._scan_pythons.cache_clear()
+    monkeypatch.setattr(toolchains.platform_compat, "IS_WINDOWS", True)
+    toolchains.detect_pythons()
+    assert "python3" not in asked and "python" not in asked
+
+
+def test_frozen_runner_argv_round_trips_non_ascii_through_run_command(tmp_path):
+    work = tmp_path / "work"
+    (work / "input").mkdir(parents=True)
+    (work / "input" / "request.json").write_text('{"name": "h\u00e9llo"}', encoding="utf-8")
+    script = tmp_path / "tool" / "echo.py"
+    script.parent.mkdir()
+    script.write_text(
+        "import json, sys\nfrom pathlib import Path\n"
+        "request = json.loads(Path('input/request.json').read_text(encoding='utf-8'))\n"
+        "print(request['name'], '\u2713', sys.argv[1:])\n",
+        encoding="utf-8",
+    )
+    argv = [sys.executable, "-c", SHIM, "--run-python", str(script), "--request", "input/request.json"]
+    result = run_command(argv, work, tmp_path / "logs", timeout=60, env={"PYTHONPATH": str(REPO / "src")})
+    assert result["exit_code"] == 0, (tmp_path / "logs" / "stderr.log").read_text(encoding="utf-8")
+    out = (tmp_path / "logs" / "stdout.log").read_text(encoding="utf-8")
+    assert "h\u00e9llo \u2713" in out and "--request" in out
+
+
+def test_run_python_passes_pycache_prefix_and_hash_check_options(tmp_path, interpreter_state):
+    script = tmp_path / "tool" / "flags.py"
+    script.parent.mkdir()
+    prefix = tmp_path / "pycache"
+    script.write_text(
+        "import json, pathlib, sys\n"
+        "data = {'prefix': sys.pycache_prefix, 'argv': sys.argv}\n"
+        "pathlib.Path(__file__).with_name('flags.json').write_text(json.dumps(data), encoding='utf-8')\n",
+        encoding="utf-8",
+    )
+    code = desktop_backend.main(
+        [
+            "--run-python",
+            "-X",
+            f"pycache_prefix={prefix}",
+            "--check-hash-based-pycs",
+            "always",
+            str(script),
+            "arg",
+        ]
+    )
+    assert code == 0
+    seen = json.loads((script.parent / "flags.json").read_text(encoding="utf-8"))
+    assert seen == {"prefix": str(prefix), "argv": [str(script), "arg"]}
+
+
+def test_self_check_audit_only_counts_module_level_imports(monkeypatch, tmp_path):
+    scripts_dir = tmp_path / "skills" / "demo" / "scripts"
+    scripts_dir.mkdir(parents=True)
+    (scripts_dir / "tool.py").write_text(
+        "import json\n"
+        "try:\n    import yaml\nexcept ImportError:\n    yaml = None\n"
+        "try:\n    import no_such_guarded_module\nexcept (ValueError, ModuleNotFoundError):\n    pass\n"
+        "def run():\n    import no_such_function_only_module\n"
+        "try:\n    import no_such_unguarded_module\nexcept ValueError:\n    pass\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(paths, "skills_dir", lambda: tmp_path / "skills")
+    assert desktop_backend._unresolved_skill_imports() == [
+        "demo/scripts/tool.py: import no_such_unguarded_module"
+    ]
+
+
+def test_self_check_prints_the_lint_line_even_when_the_import_audit_fails(monkeypatch, capsys):
+    from maf_test_harness import cli
+
+    monkeypatch.setattr(cli, "main", lambda argv: 0)
+    monkeypatch.setattr(
+        desktop_backend, "_unresolved_skill_imports", lambda: ["demo/scripts/x.py: import nope"]
+    )
+    assert desktop_backend.self_check() == 1
+    captured = capsys.readouterr()
+    assert "lint-skills OK" in captured.out
+    assert "demo/scripts/x.py: import nope" in captured.err
 
 
 def test_source_create_venv_uses_the_running_interpreter(tmp_path, monkeypatch):

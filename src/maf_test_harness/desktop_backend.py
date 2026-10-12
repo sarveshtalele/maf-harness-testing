@@ -17,6 +17,7 @@ import runpy
 import sys
 import tempfile
 import traceback
+from collections.abc import Iterable, Iterator
 from pathlib import Path
 
 from maf_test_harness import paths
@@ -84,13 +85,47 @@ def run_python(argv: list[str]) -> int:
     return 0
 
 
+GUARDED_IMPORT_ERRORS = {"ImportError", "ModuleNotFoundError"}
+
+
+def _caught_names(node: ast.expr | None) -> set[str]:
+    targets = node.elts if isinstance(node, ast.Tuple) else [node]
+    return {
+        t.id if isinstance(t, ast.Name) else t.attr
+        for t in targets
+        if isinstance(t, (ast.Name, ast.Attribute))
+    }
+
+
+def _module_level_imports(nodes: Iterable[ast.AST]) -> Iterator[ast.Import | ast.ImportFrom]:
+    """Imports that run when the script is loaded: not inside functions, and not inside a try that catches ImportError
+    (an optional dependency the script copes without)."""
+    for node in nodes:
+        if isinstance(node, (ast.Import, ast.ImportFrom)):
+            yield node
+        elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)):
+            continue
+        elif isinstance(node, ast.Try):
+            guarded = any(
+                h.type is None or _caught_names(h.type) & GUARDED_IMPORT_ERRORS for h in node.handlers
+            )
+            parts = [node.orelse, node.finalbody, *(h.body for h in node.handlers)]
+            if not guarded:
+                parts.append(node.body)
+            for part in parts:
+                yield from _module_level_imports(part)
+        else:
+            yield from _module_level_imports(ast.iter_child_nodes(node))
+
+
 def _script_imports(script: Path) -> set[str]:
-    """Top-level modules a skill script imports, without relative imports and its own sibling modules."""
+    """Top-level modules a skill script needs at load time, without relative imports and its own sibling modules."""
+    tree = ast.parse(script.read_text(encoding="utf-8"), filename=str(script))
     names: set[str] = set()
-    for node in ast.walk(ast.parse(script.read_text(encoding="utf-8"), filename=str(script))):
+    for node in _module_level_imports(tree.body):
         if isinstance(node, ast.Import):
             names.update(alias.name.partition(".")[0] for alias in node.names)
-        elif isinstance(node, ast.ImportFrom) and node.level == 0 and node.module:
+        elif node.level == 0 and node.module:
             names.add(node.module.partition(".")[0])
     return names - {p.stem for p in script.parent.iterdir()}
 
@@ -146,20 +181,22 @@ def self_check() -> int:
     from maf_test_harness import cli
 
     lint = cli.main(["lint-skills"])
+    print(f"lint-skills {'OK' if not lint else 'FAILED'}", flush=True)
+    failed = bool(lint)
     imports = _unresolved_skill_imports()
     if imports:
         print(
             "self-check FAILED, skill script imports unavailable in this runtime:\n  " + "\n  ".join(imports),
             file=sys.stderr,
         )
-        return 1
+        failed = True
     with tempfile.TemporaryDirectory(prefix="maf-self-check-") as tmp:
         outcome = _run_bundled_skill(Path(tmp))
     if outcome["exit_code"] != 0 or not isinstance(outcome.get("data"), dict):
         print(f"self-check FAILED, bundled skill script did not run:\n{outcome['stderr']}", file=sys.stderr)
-        return 1
-    print(f"self-check {'OK' if not lint else 'FAILED'} (resources: {paths.resource_root()})", flush=True)
-    return int(bool(lint))
+        failed = True
+    print(f"self-check {'FAILED' if failed else 'OK'} (resources: {paths.resource_root()})", flush=True)
+    return int(failed)
 
 
 def main(argv: list[str] | None = None) -> int:
