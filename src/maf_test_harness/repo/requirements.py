@@ -10,12 +10,15 @@ NO_DECLARATIONS_MARKER = "NO_SUPPORTED_DECLARATIONS"
 
 
 def requirements_from_facts(analysis: dict, app_name: str, knowledge: str = "") -> dict:
+    """Component requirements from declaration facts, preceded by the product requirements (tier product) that
+    ``analysis["product_requirements"]`` carries (repo/product_requirements.py, quotes verified by the host)."""
     facts = analysis.get("facts", [])
-    if not facts:
+    product = list(analysis.get("product_requirements") or [])
+    if not facts and not product:
         raise ValueError(
             f"{NO_DECLARATIONS_MARKER}: No supported callable declarations were found. Requirements cannot be invented. Review source coverage and provide documented behavior or support for this language before retrying."
         )
-    requirements = []
+    requirements = list(product)
     gaps = list(analysis.get("gaps", []))
     selected = sorted(facts, key=lambda f: (f["source_file"], f["line"], f["symbol"]))
     for fact in selected:
@@ -70,10 +73,12 @@ def requirements_from_facts(analysis: dict, app_name: str, knowledge: str = "") 
         for start in range(0, len(items), 30):
             batch = RequirementsDraft.model_validate({**draft, "requirements": items[start : start + 30]})
             batches.append({"component": component, "requirements": len(batch.requirements)})
+    components_count = len(requirements) - len(product)
     draft["intake"] = {
         "discovered_declarations": len(facts),
-        "represented_declarations": len(requirements),
-        "declaration_intake_percent": round(100 * len(requirements) / len(facts), 2),
+        "represented_declarations": components_count,
+        "product_requirements": len(product),
+        "declaration_intake_percent": round(100 * components_count / len(facts), 2) if facts else 0.0,
         "represented_source_files": len({f["source_file"] for f in facts}),
         "source_inventory": analysis.get("coverage", {}),
         "batches": batches,

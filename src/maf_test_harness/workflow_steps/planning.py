@@ -24,9 +24,11 @@ from ..models import (
 )
 from ..qa.confidence import ConfidenceReviewerUnavailable
 from ..qa.controls import add_plan_controls, case_controls, plan_controls
+from ..qa.oracles import check_oracles, file_reader, oracle_repair_message, tier_of
 from ..qa.quality import existing_requirement_witnesses, existing_test_evidence
 from ..qa.report import design_cases
 from ..repo.analyzer import build_repository_evidence
+from ..repo.product_requirements import extract_product_requirements, product_doc_evidence, verify_quotes
 from ..repo.stack import detect_stack
 from ..repo.testability import retarget_cases, testability_for_targets
 from ..run_options import restrict_levels
@@ -184,6 +186,10 @@ class PlanningSteps:
         if stage == "requirements" and state.get("requirements_mode", "model") == "deterministic":
             repo = state["artifacts"]["repo_analysis"]
             analysis = dict(repo.get("reverse_engineering", {}))
+            # Product requirements come from the repository's own documents and CLI help (host-extracted, quoted).
+            analysis["product_requirements"] = await asyncio.to_thread(
+                extract_product_requirements, self.run_dir / "repo", repo.get("tracked_files", [])
+            )
             draft = await asyncio.to_thread(
                 execute_host_skill,
                 self.run_dir,
@@ -237,6 +243,9 @@ class PlanningSteps:
             response_format = RequirementsDraft
             assignment = (
                 "Reverse engineer a compact set of observable testable requirements from the repository. "
+                "List PRODUCT requirements first (tier product): what the README, SKILL.md, docs, references and CLI help "
+                "promise to users, each with evidence_quotes copied verbatim (file, line, quote) from the supplied "
+                "documents. Then COMPONENT requirements (tier component) for callable-level behaviour. "
                 "Infer routine details from evidence; put uncertainty in assumptions/gaps rather than asking the user."
             )
             upstream: dict[str, Any] = {}
@@ -255,7 +264,10 @@ class PlanningSteps:
             upstream = {"requirements": _compact_requirements(requirements_source)}
             if requirements_source.get("analysis_mode") == "deterministic":
                 upstream["requirements"]["requirements"] = [
-                    {key: item.get(key) for key in ("id", "source_files", "source_symbol", "source_line")}
+                    {
+                        key: item.get(key)
+                        for key in ("id", "tier", "source_files", "source_symbol", "source_line")
+                    }
                     for item in upstream["requirements"]["requirements"]
                 ]
         elif stage == "test_design":
@@ -311,6 +323,9 @@ class PlanningSteps:
                         "user_repository_context_unverified": state.get("repo_knowledge", ""),
                     },
                     "repository_evidence": state.get("evidence", "")
+                    + product_doc_evidence(
+                        self.run_dir / "repo", state["artifacts"]["repo_analysis"].get("tracked_files", [])
+                    )
                     if stage == "requirements"
                     else build_repository_evidence(
                         self.run_dir / "repo",
@@ -564,6 +579,8 @@ class PlanningSteps:
                 else set(re.findall(r"--- FILE: (.*?) ---", state.get("evidence", "")))
             )
             for requirement in validated["requirements"]:
+                if tier_of(requirement) == "product":
+                    continue  # a product requirement is checked by its quotes, below
                 unknown = set(requirement["source_files"]) - evidence_paths
                 if unknown:
                     raise ValueError(f"Requirement cites files not supplied as evidence: {sorted(unknown)}")
@@ -585,6 +602,11 @@ class PlanningSteps:
                         check_evidence(child)
 
             check_evidence(requirements)
+            # Product quotes must be verbatim in their file; an unverified one demotes the requirement to gap.
+            requirements["gaps"] = [
+                *requirements["gaps"],
+                *verify_quotes(requirements["requirement_model"]["requirements"], root),
+            ]
             if self.stages != CORE_STAGES:  # deterministic preview of the isolated-environment install plan
                 stack = await asyncio.to_thread(detect_stack, self.run_dir / "repo")
                 requirements["environment_plan"] = await asyncio.to_thread(
@@ -632,6 +654,20 @@ class PlanningSteps:
                 allowed_levels=_allowed_levels(state),
                 case_budget=case_budget(state),
             )
+            greenfield = state.get("run_mode") == "greenfield"
+            # Quotes come from repository files, or (greenfield) from the user-supplied documents only.
+            documents = "\n".join(
+                str(section.get("text") or "")
+                for section in (state.get("spec_intake") or {}).get("sections", [])
+            )
+            problems = check_oracles(
+                design_cases(design),
+                file_reader(self.run_dir / "repo"),
+                documents if greenfield else "",
+                derived_allowed=not greenfield,
+            )
+            if problems:
+                raise ValueError(oracle_repair_message(problems))
             if requirements_source is None and design["gaps_report"].get("budget_trimmed"):
                 self.audit(
                     "design_cases_trimmed",

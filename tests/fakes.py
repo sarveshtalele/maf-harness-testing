@@ -10,6 +10,28 @@ def clone_fixture(url, destination):
     (destination / "service.py").write_text("def add(a, b):\n    return a + b\n", encoding="utf-8")
 
 
+# The fixture clone's service.py contains "return a + b": a verbatim implementation quote (kind derived).
+SCRIPTED_ORACLE = {
+    "kind": "derived",
+    "source": {"file": "service.py", "line": 2, "quote": "return a + b"},
+    "relation": None,
+}
+
+
+def scripted_oracle(state):
+    """Derived from the clone's service.py; greenfield runs have no source, so they quote the approved requirement
+    evidence as a specified oracle (the host accepts approved evidence for specified kinds)."""
+    if state.get("run_mode") == "greenfield":
+        section = state["spec_intake"]["sections"][0]
+        quote = " ".join(str(section["text"]).split())[:60]
+        return {
+            "kind": "specified",
+            "source": {"file": "spec.md", "line": 1, "quote": quote},
+            "relation": None,
+        }
+    return dict(SCRIPTED_ORACLE)
+
+
 FULL_MARKS = {
     "source_and_api_match": 25,
     "assertion_checks_real_behavior": 30,
@@ -214,6 +236,8 @@ class ScriptedStageRuntime:
                             "source_files": ["service.py"],
                             "category": "functional",
                             "actor": "Developer",
+                            "tier": "component",
+                            "evidence_quotes": [],
                         }
                     ],
                     "acceptance_criteria": [],
@@ -259,10 +283,18 @@ class ScriptedStageRuntime:
                 "preconditions": [],
                 "data_notes": "1 and 2",
                 "expected_result": "add(1, 2) returns 3",
+                "oracle": scripted_oracle(state),
                 "steps": ["Call add(1, 2)", "Compare with 3"],
                 "traceability_links": [{"type": "requirement", "id": req}],
             }
-            negative = [{**c, "traceability_links": case["traceability_links"]} for c in self.extra_cases]
+            negative = [
+                {
+                    **c,
+                    "oracle": c.get("oracle", scripted_oracle(state)),
+                    "traceability_links": case["traceability_links"],
+                }
+                for c in self.extra_cases
+            ]
             return {
                 "status": "completed",
                 "artifact": {

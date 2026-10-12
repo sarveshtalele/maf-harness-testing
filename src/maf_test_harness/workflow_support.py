@@ -5,6 +5,7 @@ import json
 import re
 from typing import Any
 
+from .qa.oracles import is_gap, tier_of
 from .settings import (
     CASES_PER_REQUIREMENT,
     GENERATION_BATCH_SIZE,
@@ -138,7 +139,11 @@ def _compact_requirements(source: dict[str, Any]) -> dict[str, Any]:
         "app_name": source.get("app_name"),
         "summary": source.get("summary", ""),
         "actors": source.get("actors", []),
-        "requirements": model.get("requirements", []),
+        # Product requirements (what the repository promises) come first; the order is otherwise unchanged.
+        # Gap requirements (host-demoted, unverified evidence) need no cases and are not offered as trace targets.
+        "requirements": sorted(
+            (r for r in model.get("requirements", []) if not is_gap(r)), key=lambda r: tier_of(r) != "product"
+        ),
         "validation_rules": model.get("validation_rules", []),
         "acceptance_criteria": model.get("acceptance_criteria", []),
         "api_contracts": source.get("api_contracts", []),

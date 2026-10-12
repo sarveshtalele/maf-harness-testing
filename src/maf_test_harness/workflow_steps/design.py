@@ -4,6 +4,7 @@ from collections import defaultdict
 from pathlib import PurePosixPath
 
 from ..envs.platform_compat import raise_if_cancelled
+from ..qa.oracles import is_gap
 from ..workflow_support import case_budget, digest
 
 SECTIONS = ("positive", "negative", "boundary", "validation", "contract")
@@ -18,6 +19,8 @@ def requirement_batches(requirements, size=DESIGN_BATCH_SIZE, pack=False):
     """Requirement subsets per component (``pack``: small components share a batch up to ``size``)."""
     groups = defaultdict(list)
     for requirement in requirements["requirement_model"]["requirements"]:
+        if is_gap(requirement):
+            continue  # demoted by the host: listed as a gap, never a case target
         groups[str(PurePosixPath(requirement["source_files"][0]).parent)].append(requirement)
     chunks: list[tuple[str, list]] = []
     if pack:

@@ -14,6 +14,7 @@ from ..envs.platform_compat import raise_if_cancelled
 from ..llm.prompts import generation_prompt
 from ..models import GeneratedFilesDraft
 from ..qa.confidence import ConfidenceReviewerUnavailable, review_accepted, verification_note
+from ..qa.oracles import is_gap
 from ..qa.quality import (
     existing_requirement_witnesses,
     existing_test_evidence,
@@ -692,7 +693,12 @@ class GenerationSteps:
         requirements = (
             (requirements_source or arts["requirements"]).get("requirement_model", {}).get("requirements", [])
         )
-        uncovered = design["gaps_report"]["uncovered_requirements"]
+        gap_ids = {
+            str(r["id"])
+            for r in arts["requirements"].get("requirement_model", {}).get("requirements", [])
+            if is_gap(r)
+        }
+        uncovered = [rid for rid in design["gaps_report"]["uncovered_requirements"] if rid not in gap_ids]
         try:
             root = self.run_dir / "repo"
         except Exception:  # bare host without a run dir

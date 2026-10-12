@@ -24,6 +24,7 @@ from urllib.parse import urlsplit
 import jsonschema
 import yaml
 
+from ..qa.oracles import is_gap, oracle_repair_message, oracle_shape_problems
 from .config import SKILL_NAMES
 
 _NAMESPACE = uuid.NAMESPACE_URL
@@ -184,6 +185,13 @@ def finalize_discovered_requirements(document: dict[str, Any], repo_url: str) ->
                 "source_files": _clean_paths(item.get("source_files"), "inferred requirement"),
                 "category": item.get("category", "functional"),
                 "actor": actor,
+                # Tier and quotes are host-checked (repo/product_requirements.verify_quotes); status starts verified.
+                "tier": item.get("tier") if item.get("tier") in ("product", "component") else "component",
+                "evidence_quotes": [
+                    {"file": str(q["file"]), "line": int(q.get("line") or 0), "quote": str(q["quote"])}
+                    for q in item.get("evidence_quotes") or []
+                ],
+                "status": "verified",
                 **(
                     {"source_symbol": item["source_symbol"], "source_line": item.get("source_line", 0)}
                     if item.get("source_symbol")
@@ -441,6 +449,9 @@ def finalize_design(
     }
     seen_test_ids: set[str] = set()
     tests: list[dict[str, Any]] = []
+    oracle_problems: list[str] = []
+    # Greenfield runs have no repository source, so derived oracles are unavailable there.
+    derived_allowed = not normalized_repo_url.startswith("greenfield:")
     for section in _SECTIONS:
         key = f"{section}_tests"
         cases = result.get(key)
@@ -492,11 +503,16 @@ def finalize_design(
                     unsupported = set(map(str, case["expected_status_codes"])) - documented
                     if unsupported:
                         raise ValueError(f"unsupported contract status codes: {sorted(unsupported)}")
+            # Every case states its expected-value source; the host verifies the quote or relation afterwards.
+            # Problems are collected across all cases and raised together (see below).
+            oracle_problems.extend(oracle_shape_problems(case, derived_allowed))
             case["id"] = _case_id(section, case, normalized_repo_url)
             if case["id"] in seen_test_ids:
                 raise ValueError("duplicate test content creates duplicate stable ID")
             seen_test_ids.add(case["id"])
             tests.append(case)
+    if oracle_problems:
+        raise ValueError(oracle_repair_message(oracle_problems))
     trimmed = _trim_to_budget(result, tests, by_id, case_budget) if case_budget else []
     if trimmed:
         tests = [case for case in tests if case["id"] not in set(trimmed)]
@@ -560,10 +576,14 @@ def finalize_design(
         gaps["budget_trimmed"] = {"case_ids": trimmed, "reason": f"case budget {case_budget} per requirement"}
     gaps.setdefault("missing_validations", [])
     gaps.setdefault("incomplete_requirements", [])
-    gaps["uncovered_requirements"] = sorted(key for key, value in requirement_links.items() if not value)
+    # Gap requirements (unverified evidence, see repo/product_requirements.verify_quotes) need no case.
+    gap_ids = {key for key, item in by_id.items() if is_gap(item)}
+    gaps["uncovered_requirements"] = sorted(
+        key for key, value in requirement_links.items() if not value and key not in gap_ids
+    )
     gaps["uncovered_validations"] = sorted(key for key, value in validation_links.items() if not value)
     gaps["coverage_gaps"] = sorted(
-        [f"requirement:{key}" for key, value in requirement_links.items() if not value]
+        [f"requirement:{key}" for key, value in requirement_links.items() if not value and key not in gap_ids]
         + [f"validation:{key}" for key, value in validation_links.items() if not value]
         + [f"api_contract:{key}" for key, value in api_links.items() if not value]
     )
