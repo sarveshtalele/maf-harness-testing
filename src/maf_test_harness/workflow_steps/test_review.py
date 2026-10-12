@@ -6,7 +6,7 @@ caps the case. A verified derivation that disagrees with the asserted literal is
 revealed; only a confirmed disagreement caps the case (40). Reviewer mistakes are charged to the reviewer.
 """
 
-from ..agent.personas import chief_architect_persona
+from ..agent.personas import stack_expertise
 from ..agent.runtime import AgentOutputError
 from ..llm.prompts import generation_prompt
 from ..models import DerivationRecheckDraft, TestReviewDraft
@@ -22,9 +22,11 @@ from ..qa.confidence import (
     verification_note,
 )
 from ..qa.derivation import deterministic_findings, mask_expected_literals
+from ..qa.ledger import append_score
 from ..repo.analyzer import build_repository_evidence, extract_target_sources
-from ..settings import test_review_threshold
+from ..settings import REQUIRE_FULL_ACCURACY, test_review_threshold
 from ..workflow_support import MODEL_REPAIR_ATTEMPTS
+from .greenfield import has_no_code
 
 TARGET_BUDGET = 28_000  # the old 24k shared budget plus a modest margin; method bodies are always sent
 DERIVATION_RETRIES = 2  # format repairs the reviewer gets before the host applies its derivation caps
@@ -114,7 +116,7 @@ def _format_problems(reviews, slots, case_target, target_texts, candidate, maske
 
 
 async def _recheck_mismatches(
-    host, *, state, reviews, slots, case_target, target_texts, candidate, masked_files, persona, batch
+    host, *, state, reviews, slots, case_target, target_texts, candidate, masked_files, persona, batch, calls
 ):
     """Re-ask once for verified derivations that disagree with the literal, with the literal revealed."""
     flagged: dict[str, str] = {}
@@ -178,6 +180,7 @@ async def _recheck_mismatches(
             persist=host.save,
             response_format=DerivationRecheckDraft,
         )
+        calls.append(result)
         if result.get("status") != "completed":
             raise ValueError("Derivation re-check did not complete.")
         answers = DerivationRecheckDraft.model_validate(result["artifact"]).model_dump()["derivations"]
@@ -228,8 +231,9 @@ async def review_generated_tests(host, state, candidate, cases, batch, partial_o
     )
     # Blind derivation: each assertion's right-hand literal is masked as «E<n>» and the expected values are withheld.
     masked_files, slots = mask_expected_literals(candidate["files"])
+    # The reviewer's editable persona (PERSONAS["test_reviewer"]) is prepended by the model call; this is the detected stack.
     persona = (
-        chief_architect_persona(
+        stack_expertise(
             state.get("stack"),
             state["artifacts"].get("repo_analysis", {}).get("languages"),
             state["artifacts"].get("repo_analysis", {}).get("frameworks", ()),
@@ -263,6 +267,7 @@ async def review_generated_tests(host, state, candidate, cases, batch, partial_o
     repair = None
     contract_attempts = 0
     format_retries = 0
+    calls: list[dict] = []  # every reviewer call behind this batch's scores, for the confidence ledger
     while True:
         contract_attempts += 1
         try:
@@ -278,6 +283,7 @@ async def review_generated_tests(host, state, candidate, cases, batch, partial_o
                 persist=host.save,
                 response_format=TestReviewDraft,
             )
+            calls.append(result)
             if result.get("status") != "completed":
                 raise ValueError("Independent test reviewer did not produce a completed review.")
             reviews = TestReviewDraft.model_validate(result["artifact"]).model_dump()["reviews"]
@@ -341,6 +347,7 @@ async def review_generated_tests(host, state, candidate, cases, batch, partial_o
         masked_files=masked_files,
         persona=persona,
         batch=batch,
+        calls=calls,
     )
     scored = []
     for review in reviews:
@@ -388,6 +395,32 @@ async def review_generated_tests(host, state, candidate, cases, batch, partial_o
             )
         )
     reviews = scored
+    threshold = test_review_threshold(state)
+    gate = "hard" if REQUIRE_FULL_ACCURACY and not has_no_code(state) else "advisory"
+    case_controls = {str(c["id"]): c.get("control_ids") or [] for c in cases}
+    for review in reviews:
+        append_score(
+            host.run_dir,
+            kind="test",
+            subject_id=review["case_id"],
+            control_ids=case_controls.get(review["case_id"], []),
+            batch=batch,
+            scored={
+                "scores": review["scores"],
+                "points": review["model_score"],
+                "caps": review["caps"],
+                "notes": review["notes"],
+                "confidence": review["confidence"],
+                "verdict": review["verdict"],
+                "reason": review["reason"],
+                "accepted": review_accepted(review, threshold),
+                "derivations": review.get("derivations", []),
+                "evidence": [{"quote": path, "verified": True} for path in review["source_files"]],
+            },
+            threshold=threshold,
+            calls=calls,
+            gate=gate,
+        )
     rejected = [r for r in reviews if not review_accepted(r, test_review_threshold(state))]
     host.audit("test_reviewer_result", stage="test_generation", batch=batch, reviews=reviews)
     state.setdefault("test_reviews", []).append({"batch": batch, "reviews": reviews})

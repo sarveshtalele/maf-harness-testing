@@ -4,7 +4,7 @@
 
 ## Key files
 - `planning.py`: `PlanningSteps.model(stage, state, ctx)` generic model-stage runner; `planning_batches.py`: `planning_is_batched`, `merge_plans`.
-- `design.py`: `design_tests_batched`, `requirement_batches` (component-batched, packs small components). `design_review.py`: `enabled`, `min_confidence`, `flagged`, `repair_feedback`, `apply_design_reviews`.
+- `design.py`: `design_tests_batched`, `requirement_batches` (component-batched, packs small components). `design_review.py`: confidence reviewer of design cases (rubric 30/25/25/20, caps, quote check, hard gate): `review_design_cases`, `score_case`, `weak_cases`, `gate_message`, `apply_design_reviews`. `plan_review.py`: confidence reviewer of PLN areas (rubric 40/30/30, caps, hard gate): `review_plan_areas`, `score_area`, `weak_areas`. Both repair inside `_model_artifact` up to `MODEL_REPAIR_ATTEMPTS`, then raise `Confidence gate: test planning|test design ...` when `HARNESS_REQUIRE_FULL_ACCURACY` is on (gate off: advisory).
 - `generation.py` `GenerationSteps`: batched generate -> gates -> review; `test_review.py`: independent reviewer of generated cases.
 - `execution.py` `ExecutionSteps`: `plan_environment` (install approval) and `plan_execution` (run approval).
 - `greenfield.py`: `is_greenfield`, `has_no_code`, `GreenfieldSteps`, `SCAFFOLDS`. `rerun.py` `RerunSteps`: replay a stage, keeping evidence under `attempts/<id>`.

@@ -8,6 +8,7 @@ from pathlib import Path
 
 CATEGORIES = (
     ("accuracy_gate", r"^Accuracy gate:"),
+    ("confidence_gate", r"^Confidence gate:"),
     ("review_rejected", r"Independent test review"),
     ("import", r"cannot work: the apparent repository|ModuleNotFoundError|No module named|import '"),
     ("syntax", r"source is invalid|was never closed|SyntaxError|NameError"),

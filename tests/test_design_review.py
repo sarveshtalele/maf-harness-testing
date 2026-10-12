@@ -1,9 +1,10 @@
 import json
 from pathlib import Path
 
-from fakes import ScriptedStageRuntime, clone_fixture, design_review_response
+from fakes import FULL_DESIGN, ScriptedStageRuntime, clone_fixture, design_review_response
 
 from maf_test_harness.agent.personas import chief_architect_persona
+from maf_test_harness.qa import ledger
 from maf_test_harness.ui.runtime_service import RuntimeService
 from maf_test_harness.workflow import Harness
 
@@ -20,9 +21,9 @@ def test_persona_contains_only_detected_stack_and_is_byte_stable():
 
 
 class DesignReviewRuntime(ScriptedStageRuntime):
-    def __init__(self, score):
+    def __init__(self, scores=None, verdict="approved", quote=None):
         super().__init__()
-        self.score = score
+        self.kwargs = dict(scores=scores, verdict=verdict, quote=quote)
         self.reviews = 0
         self.design_prompts = []
 
@@ -32,16 +33,21 @@ class DesignReviewRuntime(ScriptedStageRuntime):
             self.reviews += 1
             return design_review_response(
                 kwargs,
-                confidence=self.score,
-                verdict="approved" if self.score >= 60 else "revise",
-                reason="ok" if self.score >= 60 else "Target is wrong.",
+                reason="Target is wrong." if self.kwargs["verdict"] == "revise" else "ok",
+                **self.kwargs,
             )
         if stage == "test_design":
             self.design_prompts.append(kwargs["prompt"])
         return await super().run_stage(stage=stage, state=state, **kwargs)
 
 
-def run_design(tmp_path, monkeypatch, runtime, confidence_thresholds=None):
+def gate_error(h) -> str:
+    """The hard stop of the design stage (a pending error), or "" when design reached its review."""
+    pending = h.view.get("pending") or {}
+    return str(pending.get("error") or "") if pending.get("kind") == "error" else ""
+
+
+def run_design(tmp_path, monkeypatch, runtime):
     import maf_test_harness.workflow as wf
 
     monkeypatch.setattr(wf, "clone_repository", clone_fixture)
@@ -50,44 +56,72 @@ def run_design(tmp_path, monkeypatch, runtime, confidence_thresholds=None):
     )
     svc = RuntimeService()
     try:
-        svc.submit(
-            h.start("https://github.com/acme/demo", confidence_thresholds=confidence_thresholds)
-        ).result(10)
+        svc.submit(h.start("https://github.com/acme/demo")).result(10)
         while h.view["pending"]["stage"] != "test_design":
             svc.submit(h.respond(h.view["pending"]["id"], {"decision": "approve"})).result(30)
-        return h.state["artifacts"]["test_design"]
+        return h
     finally:
         svc.close()
 
 
-def test_approved_case_gets_confidence(tmp_path, monkeypatch):
-    runtime = DesignReviewRuntime(97)  # 97 clears the default hard gate (95): no repair pass
-    design = run_design(tmp_path, monkeypatch, runtime)
+def test_full_rubric_passes_the_gate_and_is_recorded(tmp_path, monkeypatch):
+    runtime = DesignReviewRuntime()
+    h = run_design(tmp_path, monkeypatch, runtime)
+    design = h.state["artifacts"]["test_design"]
     case = design["positive_tests"][0]
-    assert (case["confidence"], case["reviewer_verdict"]) == (97, "approved")
+    assert (case["confidence"], case["reviewer_verdict"]) == (100, "approved")
     assert design["design_reviews"][0]["case_id"] == case["id"]
     assert runtime.reviews == 1 and len(runtime.design_prompts) == 1
+    entry = next(e for e in ledger.entries(tmp_path) if e["kind"] == "design")
+    assert (entry["subject_id"], entry["accepted"], entry["threshold"], entry["gate"]) == (
+        case["id"],
+        True,
+        95,
+        "hard",
+    )
+    assert entry["prompt_record_id"] and entry["prompt_sha256"] and entry["model"] is not None
+    assert entry["control_ids"] == case["control_ids"]
 
 
-def test_a_per_run_design_gate_is_effective(tmp_path, monkeypatch):
-    """97 passes the default 95 gate but not a run that asked for 99: the architect's review repairs the case."""
-    runtime = DesignReviewRuntime(97)
-    run_design(tmp_path, monkeypatch, runtime, confidence_thresholds={"design": 99})
-    assert len(runtime.design_prompts) == 2 and runtime.reviews == 2
+def test_points_below_the_gate_repair_then_block_generation(tmp_path, monkeypatch):
+    low = {**FULL_DESIGN, "source_proven": 20}  # 90 points, below the default 95 gate
+    runtime = DesignReviewRuntime(scores=low)
+    h = run_design(tmp_path, monkeypatch, runtime)
+    assert gate_error(h).startswith("Confidence gate: test design 1 of 1 cases")
+    assert runtime.reviews == 3 and len(runtime.design_prompts) == 3  # three attempts, then the hard stop
+    assert "confidence 90" in json.loads(runtime.design_prompts[1])["repair_feedback"]
+    design_rounds = [e["round"] for e in ledger.entries(tmp_path) if e["kind"] == "design"]
+    assert design_rounds == [1, 2, 3]  # every review pass is a score; the rounds count them
 
 
-def test_low_confidence_repairs_once_with_reason_then_marks(tmp_path, monkeypatch):
-    runtime = DesignReviewRuntime(30)
-    design = run_design(tmp_path, monkeypatch, runtime)
-    assert len(runtime.design_prompts) == 2 and runtime.reviews == 2  # one repair, then keep and mark
-    assert "Target is wrong." in json.loads(runtime.design_prompts[1])["repair_feedback"]
-    case = design["positive_tests"][0]
-    assert case["confidence"] == 30 and case["reviewer_verdict"] == "revise"
-    assert case["reviewer_reason"] == "Target is wrong."
+def test_revise_verdict_caps_at_79_and_reject_at_zero(tmp_path, monkeypatch):
+    runtime = DesignReviewRuntime(verdict="revise")
+    assert gate_error(run_design(tmp_path, monkeypatch, runtime)).startswith("Confidence gate: test design")
+    entry = [e for e in ledger.entries(tmp_path) if e["kind"] == "design"][-1]
+    assert entry["confidence"] == 79 and entry["caps"][0]["rule"] == "verdict_revise"
+    assert entry["accepted"] is False
+
+
+def test_unverified_numeric_expectation_is_capped_at_60(tmp_path, monkeypatch):
+    runtime = DesignReviewRuntime(quote="this line is not in the target source")
+    assert gate_error(run_design(tmp_path, monkeypatch, runtime)).startswith("Confidence gate: test design")
+    last = [e for e in ledger.entries(tmp_path) if e["kind"] == "design"][-1]
+    assert {c["rule"]: c["cap"] for c in last["caps"]}.get("numeric_expected_unverified") == 60
+    assert last["confidence"] == 60
+
+
+def test_per_run_threshold_above_the_rubric_blocks(tmp_path, monkeypatch):
+    runtime = DesignReviewRuntime()  # 100 points
+    monkeypatch.setattr(
+        "maf_test_harness.workflow_steps.design_review.min_confidence", lambda state=None: 101
+    )
+    assert gate_error(run_design(tmp_path, monkeypatch, runtime)).startswith("Confidence gate: test design")
 
 
 def test_disabled_by_env(tmp_path, monkeypatch):
     monkeypatch.setenv("HARNESS_DESIGN_REVIEW", "0")
-    runtime = DesignReviewRuntime(10)
-    design = run_design(tmp_path, monkeypatch, runtime)
-    assert runtime.reviews == 0 and "confidence" not in design["positive_tests"][0]
+    runtime = DesignReviewRuntime()
+    h = run_design(tmp_path, monkeypatch, runtime)
+    assert (
+        runtime.reviews == 0 and "confidence" not in h.state["artifacts"]["test_design"]["positive_tests"][0]
+    )
