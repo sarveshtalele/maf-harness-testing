@@ -50,7 +50,9 @@ def build_id():
     return digest.hexdigest()[:16]
 
 
-STATE_FILE = ROOT / ".maf-harness" / "launcher.json"
+# One state file per launcher (launcher-<pid>.json), so a second instance never overwrites or unlinks another's record.
+STATE_DIR = ROOT / ".maf-harness"
+LEGACY_STATE_FILE = "launcher.json"  # written by launchers before per-pid files; still cleaned up once
 API_MODULE = "maf_test_harness.ui.api"
 # Next.js retitles its server process, so the recorded entry path alone cannot verify an orphaned frontend.
 NEXT_TITLE = "next-server"
@@ -113,6 +115,15 @@ def tree_commands(pid):
     return [(int(r[0]), r[2]) for r in rows if len(r) == 3 and r[1] == str(pid)]
 
 
+def state_file():
+    return STATE_DIR / f"launcher-{os.getpid()}.json"
+
+
+def _taskkill(pid, force):
+    args = ["taskkill", "/PID", str(pid), "/T"] + (["/F"] if force else [])
+    subprocess.run(args, check=False, capture_output=True, timeout=10)
+
+
 def terminate_tree(pid):
     if os.name == "nt":
         subprocess.run(
@@ -135,15 +146,15 @@ def terminate_tree(pid):
 
 
 def stop_children(processes, grace=5):
-    """Stop every child tree: SIGTERM each process group (POSIX) or taskkill /T /F (Windows), then force-kill what
-    is left after `grace` seconds. Groups are killed even when their leader already exited, so a grandchild such as
-    next-server cannot outlive the launcher."""
+    """Stop every child tree: SIGTERM each process group (POSIX) or `taskkill /T` (Windows, graceful), then force-kill
+    what is left after `grace` seconds (SIGKILL the group, or `taskkill /T /F`). Groups are killed even when their
+    leader already exited, so a grandchild such as next-server cannot outlive the launcher."""
     from maf_test_harness.envs.platform_compat import kill_process_tree
 
     for process in reversed(processes):
         if os.name == "nt":
             if process.poll() is None:
-                kill_process_tree(process)
+                _taskkill(process.pid, force=False)
         else:
             try:
                 os.killpg(process.pid, signal.SIGTERM)
@@ -156,7 +167,10 @@ def stop_children(processes, grace=5):
         except subprocess.TimeoutExpired:
             pass
     for process in processes:
-        if os.name != "nt" or process.poll() is None:
+        if os.name == "nt":
+            if process.poll() is None:
+                _taskkill(process.pid, force=True)
+        else:
             try:
                 kill_process_tree(process)
             except OSError:
@@ -196,8 +210,9 @@ def install_stop_handlers(on_close, windows=os.name == "nt"):
 
 
 def write_state(children):
-    STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
-    tmp = STATE_FILE.with_suffix(".tmp")
+    STATE_DIR.mkdir(parents=True, exist_ok=True)
+    target = state_file()
+    tmp = target.with_suffix(".tmp")
     payload = {
         "launcher_pid": os.getpid(),
         "children": children,
@@ -205,39 +220,49 @@ def write_state(children):
         "build_id": build_id(),
     }
     tmp.write_text(json.dumps(payload, indent=2), encoding="utf-8")
-    os.replace(tmp, STATE_FILE)
+    os.replace(tmp, target)
+
+
+def _orphan_state_files():
+    files = sorted(STATE_DIR.glob("launcher-*.json")) if STATE_DIR.is_dir() else []
+    legacy = STATE_DIR / LEGACY_STATE_FILE
+    return files + ([legacy] if legacy.is_file() else [])
 
 
 def clean_orphans():
     """Stop children a hard-killed launcher left behind. Only a process that is alive, still holds its
-    recorded port and whose command line carries our marker is touched; unverifiable ones are skipped."""
-    try:
-        state = json.loads(STATE_FILE.read_text(encoding="utf-8"))
-        launcher = int(state["launcher_pid"])
-        children = list(state["children"])
-    except (OSError, ValueError, KeyError, TypeError):
-        return
-    if launcher != os.getpid() and pid_alive(launcher):
-        owner = command_line(launcher)
-        if owner is None or "start_ui" in owner:
-            # A live launcher owns these. An unreadable command line (a transient lookup failure on Windows) is
-            # unverifiable, so its children are never treated as orphans.
-            return
-    for child in children:
-        try:
-            pid, port, markers = int(child["pid"]), int(child["port"]), child["marker"]
-            markers = [markers] if isinstance(markers, str) else [str(m) for m in markers]
-        except (KeyError, ValueError, TypeError):
+    recorded port and whose command line carries our marker is touched; unverifiable ones are skipped.
+    Each dead launcher's own state file is removed; a live launcher's file (and our own) is never touched."""
+    for path in _orphan_state_files():
+        if path == state_file():
             continue
-        members = tree_commands(pid)
-        if any(m in cmd for _, cmd in members for m in markers) and not port_available(port):
-            for target in [m for m, _ in members] if os.name == "nt" else [pid]:
-                terminate_tree(target)
-            print(
-                f"Stopped orphaned {child.get('name', 'service')} (pid {pid}, port {port}) from a previous launch.",
-                flush=True,
-            )
-    STATE_FILE.unlink(missing_ok=True)
+        try:
+            state = json.loads(path.read_text(encoding="utf-8"))
+            launcher = int(state["launcher_pid"])
+            children = list(state["children"])
+        except (OSError, ValueError, KeyError, TypeError):
+            continue
+        if launcher != os.getpid() and pid_alive(launcher):
+            owner = command_line(launcher)
+            if owner is None or "start_ui" in owner:
+                # A live launcher owns these. An unreadable command line (a transient lookup failure on Windows) is
+                # unverifiable, so its children are never treated as orphans.
+                continue
+        for child in children:
+            try:
+                pid, port, markers = int(child["pid"]), int(child["port"]), child["marker"]
+                markers = [markers] if isinstance(markers, str) else [str(m) for m in markers]
+            except (KeyError, ValueError, TypeError):
+                continue
+            members = tree_commands(pid)
+            if any(m in cmd for _, cmd in members for m in markers) and not port_available(port):
+                for target in [m for m, _ in members] if os.name == "nt" else [pid]:
+                    terminate_tree(target)
+                print(
+                    f"Stopped orphaned {child.get('name', 'service')} (pid {pid}, port {port}) from a previous launch.",
+                    flush=True,
+                )
+        path.unlink(missing_ok=True)
 
 
 def running_application(port, expected_build=None):
@@ -531,7 +556,7 @@ def main():
             worker.join(timeout=5)
         log.close()
         if tracked:
-            STATE_FILE.unlink(missing_ok=True)
+            state_file().unlink(missing_ok=True)
         for signum, handler in previous_handlers.items():
             signal.signal(signum, handler)
         if console_handler:

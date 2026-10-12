@@ -13,9 +13,11 @@ import builtins
 import importlib.util
 import json
 import multiprocessing
+import os
 import runpy
 import sys
 import tempfile
+import threading
 import time
 import traceback
 import unicodedata
@@ -506,12 +508,28 @@ def self_check() -> int:
     return int(failed)
 
 
+def _exit_when_stdin_closes() -> None:
+    """Parent-death signal: the Electron shell holds this process's stdin pipe, so EOF means the shell is gone."""
+
+    def watch() -> None:
+        try:
+            sys.stdin.buffer.read()
+        except (OSError, ValueError, AttributeError):
+            pass
+        os._exit(0)
+
+    threading.Thread(target=watch, name="parent-stdin-watch", daemon=True).start()
+
+
 def main(argv: list[str] | None = None) -> int:
     argv = sys.argv[1:] if argv is None else argv
     if argv[:1] == ["--run-python"]:
         return run_python(argv[1:])
     if "--self-check" in argv:
         return self_check()
+    # Opt-in (set by the desktop shell only): a terminal or CI launch must not exit on an EOF of its stdin.
+    if os.environ.get("HARNESS_EXIT_ON_STDIN_EOF") == "1":
+        _exit_when_stdin_closes()
     from maf_test_harness.ui import api
 
     sys.argv = [sys.argv[0], *argv]

@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import argparse
 import os
+import platform
 import shlex
 import shutil
 import subprocess
@@ -82,6 +83,20 @@ def stage_frontend(standalone: Path) -> Path:
     return STAGED_FRONTEND
 
 
+MACHINE_ARCH = {"x86_64": "x64", "amd64": "x64", "arm64": "arm64", "aarch64": "arm64"}
+
+
+def arch_mismatch(arch: str, machine: str) -> str | None:
+    """Error text when --arch names a CPU other than this machine's (the bundled Python backend is native code)."""
+    actual = MACHINE_ARCH.get(machine.lower())
+    if actual == arch:
+        return None
+    return (
+        f"--arch {arch} does not match this machine ({machine}, {actual or 'unknown arch'}): the PyInstaller backend "
+        "is native code, so build each architecture on its own runner"
+    )
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
@@ -89,6 +104,8 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument("--dry-run", action="store_true", help="print the commands without running them")
     args = parser.parse_args(argv)
+    if args.arch and (problem := arch_mismatch(args.arch, platform.machine())):
+        parser.error(problem)
     for step in plan(args.arch):
         env = " ".join(f"{k}={v}" for k, v in step["env"].items())
         cwd = step["cwd"].relative_to(ROOT).as_posix() or "."

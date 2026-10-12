@@ -257,9 +257,11 @@ def _launcher():
 def _state(module, tmp_path, monkeypatch, launcher_pid=111, cmd="node /x/next/dist/bin/next start"):
     import json
 
-    monkeypatch.setattr(module, "STATE_FILE", tmp_path / "launcher.json")
+    monkeypatch.setattr(module, "STATE_DIR", tmp_path)
     child = {"name": "frontend", "pid": 222, "port": 3000, "marker": "next/dist/bin/next"}
-    module.STATE_FILE.write_text(json.dumps({"launcher_pid": launcher_pid, "children": [child]}))
+    (tmp_path / "launcher-111.json").write_text(
+        json.dumps({"launcher_pid": launcher_pid, "children": [child]})
+    )
     killed = []
     monkeypatch.setattr(module, "pid_alive", lambda pid: pid == 222)
     monkeypatch.setattr(module, "command_line", lambda pid: cmd if pid == 222 else None)
@@ -274,9 +276,10 @@ def test_orphaned_child_of_dead_launcher_is_terminated(tmp_path, monkeypatch, ca
     module = _launcher()
     killed = _state(module, tmp_path, monkeypatch, cmd=cmd)
     child = {"name": "frontend", "pid": 222, "port": 3000, "marker": ["next/dist/bin/next", "next-server"]}
-    module.STATE_FILE.write_text(__import__("json").dumps({"launcher_pid": 111, "children": [child]}))
+    state = module.STATE_DIR / "launcher-111.json"
+    state.write_text(__import__("json").dumps({"launcher_pid": 111, "children": [child]}))
     module.clean_orphans()
-    assert killed == [222] and not module.STATE_FILE.exists()
+    assert killed == [222] and not state.exists()
     assert "orphaned frontend" in capsys.readouterr().out
 
 
@@ -330,7 +333,7 @@ spec.loader.exec_module(launcher)
 launcher.node_runtime = lambda: sys.executable
 launcher.frontend_command = lambda node, mode, port=None: [node, str(fakes / "fake_ui.py"), "--port", str(port)]
 launcher.API_MODULE = "fake_api"
-launcher.STATE_FILE = state
+launcher.STATE_DIR = state
 sys.argv = ["start_ui.py", "--production", "--port", sys.argv[4], "--api-port", sys.argv[5]]
 sys.exit(launcher.main())
 """
@@ -351,7 +354,7 @@ def test_signal_to_launcher_stops_both_child_trees(tmp_path, signum):
         with socket.socket() as probe:
             probe.bind(("127.0.0.1", 0))
             ports.append(probe.getsockname()[1])
-    state = tmp_path / "launcher.json"
+    state = tmp_path / "state"
     env = {
         **os.environ,
         "PYTHONPATH": str(tmp_path),
@@ -385,7 +388,7 @@ def test_signal_to_launcher_stops_both_child_trees(tmp_path, signum):
     while time.monotonic() < deadline and any(launcher.pid_alive(pid) for pid in pids):
         time.sleep(0.1)
     assert not [pid for pid in pids if launcher.pid_alive(pid)], "launcher left child processes running"
-    assert all(launcher.port_available(port) for port in ports) and not state.exists()
+    assert all(launcher.port_available(port) for port in ports) and not list(state.glob("launcher-*.json"))
 
 
 def test_windows_console_close_stops_children_before_the_process_ends(monkeypatch):

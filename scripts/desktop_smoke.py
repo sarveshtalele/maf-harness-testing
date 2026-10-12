@@ -3,8 +3,9 @@
 uv run python scripts/desktop_smoke.py [--installer PATH] [--timeout SECONDS] [--output PATH]
 
 Windows: silent per-machine MSI install (msiexec /i ... /qn) into Program Files, run the app with its install folder
-write-protected for this user (icacls), restore the ACL, then silent uninstall (msiexec /x) and check the app is gone.
-Needs administrator rights, which the GitHub Windows runners have.
+write-protected for this user (icacls), restore the ACL, then silent uninstall (msiexec /x) and check the install folder
+is gone. Any leftover backend or UI process after the app exits fails the run, and so does msiexec exit code 3010 on
+uninstall (a locked file: the uninstall did not finish). Needs administrator rights, which the GitHub Windows runners have.
 
 The app runs with AGENTIC_QE_SMOKE=1 in a fresh profile and prints
 "AGENTIC_QE_SMOKE OK backend=<port> ui=<port>" before quitting with exit code 0. The check passes only when that line
@@ -25,6 +26,7 @@ import stat
 import subprocess
 import sys
 import tempfile
+import time
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -88,7 +90,9 @@ def smoke_env(base: dict[str, str] | None = None) -> dict[str, str]:
     return {**(dict(os.environ) if base is None else base), "AGENTIC_QE_SMOKE": "1"}
 
 
-MSI_SUCCESS = (0, 3010)  # 3010: success, reboot required (the smoke does not reboot)
+MSI_SUCCESS = (0, 3010)  # install: 3010 = success, reboot required (the smoke does not reboot)
+UNINSTALL_SUCCESS = (0,)  # uninstall: 3010 means a file was still locked, so the removal is not complete
+LEFTOVER_WAIT = 10  # seconds the app's children get to exit after the app itself
 ERROR_INSTALL_ALREADY_RUNNING = 1618
 ICACLS_TIMEOUT = 120
 
@@ -235,14 +239,55 @@ def msi_failure_reason(run: Run, action: str) -> str:
     return f"msiexec {action} exited with code {run.returncode}"
 
 
-def windows_uninstall(installer: Path, exe: Path, log: Path) -> None:
-    """Silent msiexec uninstall of the package this run installed; fails unless the app executable is gone."""
+def leftover_processes(system: str) -> list[str]:
+    """Backend or UI server processes still running (one line each). Empty when the app left none behind."""
+    if system == "Windows":
+        script = (
+            "Get-CimInstance Win32_Process | Where-Object { $_.Name -eq 'maf-backend.exe' -or "
+            "$_.CommandLine -like '*frontend*server.js*' } | "
+            'ForEach-Object { "$($_.ProcessId) $($_.Name)" }'
+        )
+        done = subprocess.run(
+            ["powershell", "-NoProfile", "-Command", script],
+            capture_output=True,
+            text=True,
+            timeout=60,
+            check=False,
+        )
+        return [line.strip() for line in done.stdout.splitlines() if line.strip()]
+    found: list[str] = []
+    for pattern in ("maf-backend", "frontend/server.js"):
+        done = subprocess.run(
+            ["pgrep", "-fl", pattern], capture_output=True, text=True, timeout=30, check=False
+        )
+        found += [line.strip() for line in done.stdout.splitlines() if line.strip()]
+    return found
+
+
+def assert_no_leftovers(system: str) -> None:
+    """After the app exited, its backend and UI server must be gone too (they are stopped by the app's quit path)."""
+    left = leftover_processes(system)
+    deadline = time.monotonic() + LEFTOVER_WAIT
+    while left and time.monotonic() < deadline:
+        time.sleep(0.5)
+        left = leftover_processes(system)
+    if left:
+        raise SmokeError("app services outlived the app: " + "; ".join(left))
+
+
+def windows_uninstall(installer: Path, install_dir: Path, log: Path) -> None:
+    """Silent msiexec uninstall of the package this run installed; fails unless the install folder is gone."""
     done = _run(windows_uninstall_argv(installer, log), smoke_env(), INSTALL_TIMEOUT)
-    if done.timed_out or done.returncode not in MSI_SUCCESS:
-        raise SmokeError(msi_failure_reason(done, "uninstall"), read_log_tail(log))
-    if exe.exists():
+    if not done.timed_out and done.returncode == 3010:
         raise SmokeError(
-            f"msiexec uninstall reported success but {exe.name} is still present", read_log_tail(log)
+            "msiexec uninstall returned 3010 (reboot required): a file was still locked, so the uninstall is incomplete",
+            read_log_tail(log),
+        )
+    if done.timed_out or done.returncode not in UNINSTALL_SUCCESS:
+        raise SmokeError(msi_failure_reason(done, "uninstall"), read_log_tail(log))
+    if install_dir.exists():
+        raise SmokeError(
+            f"msiexec uninstall reported success but {install_dir} is still present", read_log_tail(log)
         )
 
 
@@ -298,11 +343,12 @@ def smoke_windows(installer: Path, timeout: int) -> Run:
                 f"{exe.name} not found after install in {install_dir}", read_log_tail(install_log)
             )
         result = _launch_locked(exe, install_dir, user, timeout)
+        assert_no_leftovers("Windows")
     except Exception as err:  # kept, so the uninstall below cannot hide the real failure
         failure = err
     if installed:
         try:
-            windows_uninstall(installer, windows_app_exe(install_dir), uninstall_log)
+            windows_uninstall(installer, install_dir, uninstall_log)
         except SmokeError as err:
             if failure is None:
                 failure = err
@@ -340,7 +386,9 @@ def smoke_macos(installer: Path, timeout: int) -> Run:
         finally:
             subprocess.run(mac_detach_argv(mount), capture_output=True, timeout=120, check=False)
         subprocess.run(mac_xattr_argv(app), capture_output=True, check=False)
-        return _run(launch_argv("Darwin", mac_binary(app)), smoke_env(), timeout)
+        run = _run(launch_argv("Darwin", mac_binary(app)), smoke_env(), timeout)
+        assert_no_leftovers("Darwin")
+        return run
     finally:
         shutil.rmtree(work, ignore_errors=True)
 
@@ -349,7 +397,9 @@ def smoke_linux(installer: Path, timeout: int) -> Run:
     if not (os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY")):
         raise SmokeError("no display; run under xvfb-run -a on a headless Linux host")
     installer.chmod(installer.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
-    return _run(launch_argv("Linux", installer), smoke_env(), timeout)
+    run = _run(launch_argv("Linux", installer), smoke_env(), timeout)
+    assert_no_leftovers("Linux")
+    return run
 
 
 RUNNERS = {"Windows": smoke_windows, "Darwin": smoke_macos, "Linux": smoke_linux}
