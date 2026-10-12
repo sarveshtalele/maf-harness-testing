@@ -12,6 +12,14 @@ const config: NextConfig = {
       { key: 'X-Frame-Options', value: 'SAMEORIGIN' },
     ] }];
   },
-  ...(process.env.DESKTOP_BUILD === '1' ? { output: 'standalone' as const, outputFileTracingRoot: path.resolve(__dirname) } : {}),
+  // Desktop bundle: installed under Program Files, read-only for standard users, so the server must never write
+  // .next/cache there. The app uses no next/image and no ISR (checked by tests/test_desktop_next_cache.py); these two
+  // options only switch off the image optimizer's disk cache and ISR flush to disk.
+  ...(process.env.DESKTOP_BUILD === '1' ? {
+    output: 'standalone' as const,
+    outputFileTracingRoot: path.resolve(__dirname),
+    images: { maximumDiskCacheSize: 0 },
+    experimental: { isrFlushToDisk: false },
+  } : {}),
 };
 export default config;

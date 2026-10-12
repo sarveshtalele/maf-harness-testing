@@ -18,11 +18,12 @@ def _touch(directory: Path, *names: str) -> None:
 def test_find_installer_windows_and_linux(tmp_path):
     _touch(
         tmp_path,
-        "Agentic-QE-1.0.3-win-x64.exe",
+        "Agentic-QE-1.0.3-win-x64.msi",
+        "Agentic-QE-1.0.3-win-x64.exe",  # the retired NSIS build is never picked up
         "Agentic-QE-1.0.3-linux-x86_64.AppImage",
         "builder-debug.yml",
     )
-    assert ds.find_installer("Windows", "AMD64", tmp_path).name == "Agentic-QE-1.0.3-win-x64.exe"
+    assert ds.find_installer("Windows", "AMD64", tmp_path).name == "Agentic-QE-1.0.3-win-x64.msi"
     assert ds.find_installer("Linux", "x86_64", tmp_path).name == "Agentic-QE-1.0.3-linux-x86_64.AppImage"
 
 
@@ -35,7 +36,7 @@ def test_find_installer_macos_prefers_host_arch(tmp_path):
 def test_find_installer_rejects_missing_and_ambiguous(tmp_path):
     with pytest.raises(FileNotFoundError, match="found: none"):
         ds.find_installer("Windows", "AMD64", tmp_path)
-    _touch(tmp_path, "Agentic-QE-1.0.2-win-x64.exe", "Agentic-QE-1.0.3-win-x64.exe")
+    _touch(tmp_path, "Agentic-QE-1.0.2-win-x64.msi", "Agentic-QE-1.0.3-win-x64.msi")
     with pytest.raises(FileNotFoundError, match="pass --installer"):
         ds.find_installer("Windows", "AMD64", tmp_path)
 
@@ -45,21 +46,113 @@ def test_unknown_os_has_no_installer():
         ds.installer_pattern("FreeBSD")
 
 
-def test_windows_install_command_puts_d_last_and_unquoted(tmp_path):
-    target = Path("C:/aqe-smoke-abc")
-    argv = ds.windows_install_argv(Path("Agentic-QE-1.0.3-win-x64.exe"), target)
-    assert argv[1:] == ["/S", f"/D={target}"]
-    assert " " not in argv[-1]
+def test_windows_install_command_is_a_silent_per_machine_msi_with_no_directory_override():
+    log = Path("C:/aqe-smoke-abc/msi-install.log")
+    argv = ds.windows_install_argv(Path("Agentic-QE-1.0.3-win-x64.msi"), log)
+    assert argv == ["msiexec", "/i", "Agentic-QE-1.0.3-win-x64.msi", "/qn", "/norestart", "/l*v", str(log)]
+    assert not any(
+        arg.startswith("APPLICATIONFOLDER") for arg in argv
+    )  # the default Program Files folder is used
 
 
-def test_windows_candidates_and_taskkill(tmp_path):
-    target = tmp_path / "t"
-    local = tmp_path / "local"
-    assert ds.windows_app_candidates(target, local) == [
-        target / "Agentic QE.exe",
-        local / "Programs" / "Agentic QE" / "Agentic QE.exe",
+def test_windows_icacls_lock_and_restore_argv_target_only_this_user():
+    install_dir = Path("C:/Program Files/Agentic QE")
+    assert ds.windows_lock_argv(install_dir, "runneradmin") == [
+        "icacls",
+        str(install_dir),
+        "/deny",
+        "runneradmin:(OI)(CI)(WD,AD,WEA,WA)",
     ]
+    assert ds.windows_unlock_argv(install_dir, "runneradmin") == [
+        "icacls",
+        str(install_dir),
+        "/remove:d",
+        "runneradmin",
+    ]
+
+
+def test_msi_1618_says_another_installation_is_in_progress():
+    text = ds.msi_failure_reason(ds.Run(1618, ""), "install")
+    assert "1618" in text and "another installation is in progress" in text
+    assert "exited with code 1603" in ds.msi_failure_reason(ds.Run(1603, ""), "uninstall")
+    assert "did not finish" in ds.msi_failure_reason(ds.Run(None, "", timed_out=True), "install")
+
+
+def test_second_failure_is_added_to_the_first_error_not_substituted():
+    first = ds.SmokeError("app exited with code 3", "app output")
+    ds._note_second_failure(first, ds.SmokeError("msiexec uninstall exited with code 1603", "log tail"))
+    assert str(first) == "app exited with code 3"
+    assert first.output.startswith("app output\nAlso: msiexec uninstall exited with code 1603")
+    assert first.output.endswith("log tail")
+
+
+def test_smoke_windows_locks_then_restores_before_uninstall_and_keeps_the_launch_error(tmp_path, monkeypatch):
+    program_files = tmp_path / "pf"
+    program_files.mkdir()
+    monkeypatch.setenv("PROGRAMFILES", str(program_files))
+    monkeypatch.setenv("USERNAME", "tester")
+    work = tmp_path / "work"
+    monkeypatch.setattr(ds, "temp_dir_without_spaces", lambda: work)
+    work.mkdir()
+    calls: list[list[str]] = []
+
+    def fake_run(argv, env, timeout):
+        calls.append(argv)
+        if argv[:2] == ["msiexec", "/i"]:
+            (program_files / "Agentic QE").mkdir()
+            (program_files / "Agentic QE" / "Agentic QE.exe").write_bytes(b"")
+            return ds.Run(0, "")
+        if argv[0] == "icacls":
+            return ds.Run(0, "")
+        if argv[:2] == ["msiexec", "/x"]:
+            return ds.Run(1603, "")
+        raise ds.SmokeError("launch broke", "launch output")
+
+    monkeypatch.setattr(ds, "_run", fake_run)
+    with pytest.raises(ds.SmokeError) as raised:
+        ds.smoke_windows(Path("Agentic-QE-1.0.3-win-x64.msi"), 10)
+    assert str(raised.value) == "launch broke"  # the first error is the one reported
+    assert "Also: msiexec uninstall exited with code 1603" in raised.value.output
+    deny = next(a for a in calls if a[0] == "icacls" and "/deny" in a)
+    restore = next(a for a in calls if a[0] == "icacls" and "/remove:d" in a)
+    assert (
+        calls.index(deny)
+        < calls.index(restore)
+        < next(i for i, a in enumerate(calls) if a[:2] == ["msiexec", "/x"])
+    )
+
+
+def test_windows_uninstall_command_removes_the_same_package():
+    installer = Path("Agentic-QE-1.0.3-win-x64.msi")
+    log = Path("msi-uninstall.log")
+    assert ds.windows_uninstall_argv(installer, log) == [
+        "msiexec",
+        "/x",
+        str(installer),
+        "/qn",
+        "/norestart",
+        "/l*v",
+        str(log),
+    ]
+
+
+def test_windows_app_exe_and_taskkill(tmp_path):
+    assert ds.windows_app_exe(tmp_path / "app") == tmp_path / "app" / "Agentic QE.exe"
     assert ds.windows_taskkill_argv(42) == ["taskkill", "/PID", "42", "/T", "/F"]
+    assert ds.MSI_SUCCESS == (0, 3010)  # 3010 = installed, reboot pending
+
+
+def test_read_log_tail_decodes_windows_installer_utf16_and_utf8(tmp_path):
+    utf16 = tmp_path / "install.log"
+    utf16.write_bytes("MSI (c) start\r\nError 1603: fatal\r\n".encode("utf-16"))  # with BOM
+    text = ds.read_log_tail(utf16)
+    assert "Error 1603: fatal" in text and text.startswith("msiexec log install.log")
+    plain = tmp_path / "plain.log"
+    plain.write_bytes(b"line one\nline two\n")  # bytes: write_text would make CRLF on Windows
+    assert ds.read_log_tail(plain, limit=9).endswith("line two\n")
+    assert ds.read_log_tail(tmp_path / "missing.log") == ""
+    (tmp_path / "empty.log").write_bytes(b"")
+    assert ds.read_log_tail(tmp_path / "empty.log") == ""
 
 
 def test_temp_root_avoids_spaces():

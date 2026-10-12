@@ -26,7 +26,7 @@ Download the installer for your system from the [latest release](https://github.
 
 | Your system | File to download |
 |---|---|
-| Windows | `Agentic-QE-<version>-win-x64.exe` |
+| Windows | `Agentic-QE-<version>-win-x64.msi` |
 | macOS, Apple silicon (M1 or later) | `Agentic-QE-<version>-mac-arm64.dmg` |
 | macOS, Intel | `Agentic-QE-<version>-mac-x64.dmg` |
 | Linux | `Agentic-QE-<version>-linux-x86_64.AppImage` |
@@ -36,10 +36,10 @@ The installers are **unsigned**. Your operating system will warn you the first t
 ```mermaid
 flowchart TD
   A["Open the latest release on GitHub"] --> B{"Which system?"}
-  B -->|Windows| C["Run the .exe installer"]
+  B -->|Windows| C["Double-click the .msi and approve the administrator prompt"]
   B -->|macOS| D["Open the .dmg and copy the app to Applications"]
   B -->|Linux| E["Make the .AppImage executable and run it"]
-  C --> F["Windows: More info, then Run anyway"]
+  C --> F["Windows: More info, then Run anyway, if SmartScreen warns"]
   D --> G["Privacy & Security: Open Anyway, or the xattr command"]
   E --> H["Run with FUSE 2, or use --appimage-extract-and-run"]
   F --> I["Open Configuration and add your model API key"]
@@ -49,8 +49,12 @@ flowchart TD
 
 ### First launch on Windows
 
-1. Run the `.exe` installer.
-2. SmartScreen shows "Windows protected your PC". Choose **More info**, then **Run anyway**.
+1. Double-click the `.msi` file.
+2. Windows asks for administrator approval (User Account Control). The app installs for all users into `C:\Program Files\Agentic QE`, where standard users cannot modify it. UAC may show **Unknown publisher**, because the build is unsigned.
+3. SmartScreen may still show "Windows protected your PC", because the build is unsigned. Choose **More info**, then **Run anyway**. The MSI installs the app in Program Files, where standard users cannot modify it, and supports managed deployment. Code signing is still what proves who published the app, and these builds are not signed yet.
+4. If you installed the older per-user `.exe` build, uninstall it first: **Settings**, **Apps**, then **Agentic QE**, then **Uninstall**. The two builds install to different locations, so keeping both gives you two copies of the app. Your runs, settings and API key are kept, because they live in your user profile, not in the install folder.
+
+**For IT:** deploy silently from an administrator prompt with `msiexec /i Agentic-QE-<version>-win-x64.msi /qn`. Each new version upgrades the installed one in place, because the MSI keeps a fixed upgrade code.
 
 ### First launch on macOS
 
@@ -169,7 +173,7 @@ Help, then **Check for updates** opens the Releases page. The app does not updat
 ## Uninstall the app
 
 1. Remove the app the normal way for your system:
-   - Windows: **Settings**, **Apps**, then **Agentic QE**, then **Uninstall**.
+   - Windows: **Settings**, **Apps**, then **Agentic QE**, then **Uninstall** (or `msiexec /x Agentic-QE-<version>-win-x64.msi` as an administrator).
    - macOS: drag **Agentic QE** from **Applications** to the Trash.
    - Linux: delete the `.AppImage` file.
 2. To remove your runs, settings and logs, also delete the data folder. Deleting it removes saved runs and the encrypted key file.

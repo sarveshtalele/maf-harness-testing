@@ -75,7 +75,7 @@ jobs:
           name: desktop-${{ matrix.os }}
           # installers only: unpacked app folders and builder-debug.yml would collide across runners
           path: |
-            desktop/release/*.exe
+            desktop/release/*.msi
             desktop/release/*.dmg
             desktop/release/*.AppImage
           if-no-files-found: error

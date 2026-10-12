@@ -2,9 +2,9 @@
 
 uv run python scripts/desktop_smoke.py [--installer PATH] [--timeout SECONDS] [--output PATH]
 
-Windows: silent NSIS install into a temp dir (or the per-user folder if the installer ignores /D), then run the app.
-macOS: mount the DMG read-only, copy "Agentic QE.app" to a temp dir, clear quarantine, run its binary.
-Linux: run the AppImage with --appimage-extract-and-run (CI wraps this in xvfb-run -a).
+Windows: silent per-machine MSI install (msiexec /i ... /qn) into Program Files, run the app with its install folder
+write-protected for this user (icacls), restore the ACL, then silent uninstall (msiexec /x) and check the app is gone.
+Needs administrator rights, which the GitHub Windows runners have.
 
 The app runs with AGENTIC_QE_SMOKE=1 in a fresh profile and prints
 "AGENTIC_QE_SMOKE OK backend=<port> ui=<port>" before quitting with exit code 0. The check passes only when that line
@@ -14,6 +14,8 @@ is present and the exit code is 0. The captured output is printed either way.
 from __future__ import annotations
 
 import argparse
+import contextlib
+import getpass
 import os
 import platform
 import re
@@ -23,7 +25,6 @@ import stat
 import subprocess
 import sys
 import tempfile
-import time
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -32,7 +33,6 @@ RELEASE_DIR = ROOT / "desktop" / "release"
 APP_NAME = "Agentic QE"
 DEFAULT_TIMEOUT = 180
 INSTALL_TIMEOUT = 300
-UNINSTALL_WAIT = 60
 OK_RE = re.compile(r"^AGENTIC_QE_SMOKE OK backend=(\d+) ui=(\d+)\r?$", re.MULTILINE)
 MACHINE_TO_ARCH = {"arm64": "arm64", "aarch64": "arm64", "x86_64": "x64", "amd64": "x64", "AMD64": "x64"}
 
@@ -58,7 +58,7 @@ class Run:
 def installer_pattern(system: str) -> str:
     """Glob for the electron-builder artifact (productName "Agentic QE", artifactName in electron-builder.yml)."""
     patterns = {
-        "Windows": "Agentic-QE-*-win-x64.exe",
+        "Windows": "Agentic-QE-*-win-x64.msi",
         "Darwin": "Agentic-QE-*-mac-*.dmg",
         "Linux": "Agentic-QE-*-linux-*.AppImage",  # electron-builder writes x86_64 or x64 here
     }
@@ -88,14 +88,41 @@ def smoke_env(base: dict[str, str] | None = None) -> dict[str, str]:
     return {**(dict(os.environ) if base is None else base), "AGENTIC_QE_SMOKE": "1"}
 
 
-def windows_install_argv(installer: Path, target: Path) -> list[str]:
-    # NSIS wants /D last, unquoted, and the path must not contain spaces (see temp_root).
-    return [str(installer), "/S", f"/D={target}"]
+MSI_SUCCESS = (0, 3010)  # 3010: success, reboot required (the smoke does not reboot)
+ERROR_INSTALL_ALREADY_RUNNING = 1618
+ICACLS_TIMEOUT = 120
 
 
-def windows_app_candidates(target: Path, local_appdata: Path) -> list[Path]:
-    """Where the installed exe may be: the requested dir, or the per-user default if /D was ignored."""
-    return [target / f"{APP_NAME}.exe", local_appdata / "Programs" / APP_NAME / f"{APP_NAME}.exe"]
+def windows_install_argv(installer: Path, log: Path) -> list[str]:
+    # Per-machine MSI with no property override: it installs to the default Program Files\<product> folder, the place
+    # a real user gets. Needs administrator rights (GitHub Windows runners are administrators).
+    return ["msiexec", "/i", str(installer), "/qn", "/norestart", "/l*v", str(log)]
+
+
+def windows_uninstall_argv(installer: Path, log: Path) -> list[str]:
+    return ["msiexec", "/x", str(installer), "/qn", "/norestart", "/l*v", str(log)]
+
+
+def windows_lock_argv(install_dir: Path, user: str) -> list[str]:
+    """Deny this user every write under the install dir, creating files and folders included.
+
+    Explicit data-write rights only: the generic (W) also carries SYNCHRONIZE, and denying that makes Windows refuse
+    to start the executable at all (WinError 5).
+    """
+    return ["icacls", str(install_dir), "/deny", f"{user}:(OI)(CI)(WD,AD,WEA,WA)"]
+
+
+def windows_unlock_argv(install_dir: Path, user: str) -> list[str]:
+    """Remove only the deny entries for this user, which is what windows_lock_argv added."""
+    return ["icacls", str(install_dir), "/remove:d", user]
+
+
+def windows_user() -> str:
+    return os.environ.get("USERNAME") or getpass.getuser()
+
+
+def windows_app_exe(install_dir: Path) -> Path:
+    return install_dir / f"{APP_NAME}.exe"
 
 
 def windows_taskkill_argv(pid: int) -> list[str]:
@@ -126,7 +153,7 @@ def launch_argv(system: str, path: Path) -> list[str]:
 
 
 def temp_root(tmp: str, system_drive: str) -> str:
-    """NSIS /D cannot take a path with spaces; fall back to the system drive root when the temp dir has one."""
+    """Logs go in a path without spaces, so msiexec log arguments need no quoting; else the system drive root."""
     return tmp if " " not in tmp else system_drive + os.sep
 
 
@@ -181,57 +208,110 @@ def _run(argv: list[str], env: dict[str, str], timeout: int) -> Run:
 # ---- per-OS runs --------------------------------------------------------------------------------------------------
 
 
-def windows_local_appdata() -> Path:
-    return Path(os.environ.get("LOCALAPPDATA") or Path.home() / "AppData" / "Local")
-
-
 def temp_dir_without_spaces() -> Path:
     base = temp_root(tempfile.gettempdir(), os.environ.get("SYSTEMDRIVE", "C:"))
     return Path(tempfile.mkdtemp(prefix="aqe-smoke-", dir=base))
 
 
-def windows_uninstall(install_dir: Path) -> None:
-    """Silent uninstall of what this run installed. NSIS uninstallers return before the work is done, so wait for it."""
-    uninstaller = install_dir / f"Uninstall {APP_NAME}.exe"
-    if not uninstaller.is_file():
-        return
+def read_log_tail(path: Path, limit: int = 4000) -> str:
+    """Last part of an msiexec verbose log. Windows Installer writes UTF-16 logs (with a BOM); UTF-8 is the fallback."""
     try:
-        subprocess.run(
-            [str(uninstaller), "/S"],
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            timeout=INSTALL_TIMEOUT,
-            check=False,
+        raw = path.read_bytes()
+    except OSError:
+        return ""
+    text = (
+        raw.decode("utf-16", "replace")
+        if raw[:2] in (b"\xff\xfe", b"\xfe\xff")
+        else raw.decode("utf-8", "replace")
+    )
+    return f"msiexec log {path.name} (last {limit} characters):\n{text[-limit:]}" if text.strip() else ""
+
+
+def msi_failure_reason(run: Run, action: str) -> str:
+    if run.timed_out:
+        return f"msiexec {action} did not finish within {INSTALL_TIMEOUT} s"
+    if run.returncode == ERROR_INSTALL_ALREADY_RUNNING:
+        return f"msiexec {action} failed with 1618: another installation is in progress; finish or cancel it and retry"
+    return f"msiexec {action} exited with code {run.returncode}"
+
+
+def windows_uninstall(installer: Path, exe: Path, log: Path) -> None:
+    """Silent msiexec uninstall of the package this run installed; fails unless the app executable is gone."""
+    done = _run(windows_uninstall_argv(installer, log), smoke_env(), INSTALL_TIMEOUT)
+    if done.timed_out or done.returncode not in MSI_SUCCESS:
+        raise SmokeError(msi_failure_reason(done, "uninstall"), read_log_tail(log))
+    if exe.exists():
+        raise SmokeError(
+            f"msiexec uninstall reported success but {exe.name} is still present", read_log_tail(log)
         )
-    except subprocess.TimeoutExpired:
-        pass
-    deadline = time.monotonic() + UNINSTALL_WAIT
-    while (install_dir / f"{APP_NAME}.exe").exists() and time.monotonic() < deadline:
-        time.sleep(1)
+
+
+def _icacls(argv: list[str], action: str) -> None:
+    done = _run(argv, smoke_env(), ICACLS_TIMEOUT)
+    if done.timed_out or done.returncode != 0:
+        raise SmokeError(f"icacls {action} exited with code {done.returncode}", done.output)
+
+
+def _launch_locked(exe: Path, install_dir: Path, user: str, timeout: int) -> Run:
+    """Run the app with the install dir write-protected for this user, and restore its ACL before returning."""
+    try:
+        _icacls(windows_lock_argv(install_dir, user), "deny")
+        run = _run(launch_argv("Windows", exe), smoke_env(), timeout)
+    except BaseException:
+        # The first error is the one reported. A failed restore here shows up again as an uninstall problem.
+        with contextlib.suppress(SmokeError, OSError):
+            _icacls(windows_unlock_argv(install_dir, user), "restore")
+        raise
+    _icacls(windows_unlock_argv(install_dir, user), "restore")
+    return run
+
+
+def _note_second_failure(first: Exception, second: SmokeError) -> None:
+    """Keep the first error as the reported failure, and add the second one to its output."""
+    note = f"Also: {second}" + (f"\n{second.output}" if second.output else "")
+    if isinstance(first, SmokeError):
+        first.output = "\n".join(part for part in (first.output, note) if part)
+    else:
+        first.add_note(note)
 
 
 def smoke_windows(installer: Path, timeout: int) -> Run:
-    local = windows_local_appdata()
-    per_user = local / "Programs" / APP_NAME
-    if per_user.exists():
-        # Some oneClick NSIS builds ignore /D and install per user; never overwrite a real install.
-        raise SmokeError(f"{per_user} already exists; refusing to install over it")
-    target = temp_dir_without_spaces()
+    install_dir = Path(os.environ.get("PROGRAMFILES") or r"C:\Program Files") / APP_NAME
+    if install_dir.exists():
+        # The MSI upgrades any install with the same UpgradeCode in place; never replace a real install on this machine.
+        raise SmokeError(f"{install_dir} already exists; refusing to install over it")
+    work = temp_dir_without_spaces()
+    install_log = work / "msi-install.log"
+    uninstall_log = work / "msi-uninstall.log"
+    user = windows_user()
+    installed = False
+    result: Run | None = None
+    failure: Exception | None = None
     try:
-        install = _run(windows_install_argv(installer, target), smoke_env(), INSTALL_TIMEOUT)
-        if install.timed_out or install.returncode != 0:
-            raise SmokeError(f"installer exited with code {install.returncode}", install.output)
-        exe = next((p for p in windows_app_candidates(target, local) if p.is_file()), None)
-        if exe is None:
+        install = _run(windows_install_argv(installer, install_log), smoke_env(), INSTALL_TIMEOUT)
+        if install.timed_out or install.returncode not in MSI_SUCCESS:
+            raise SmokeError(msi_failure_reason(install, "install"), read_log_tail(install_log))
+        installed = True
+        exe = windows_app_exe(install_dir)
+        if not exe.is_file():
             raise SmokeError(
-                f"{APP_NAME}.exe not found after install (checked {target} and {per_user})", install.output
+                f"{exe.name} not found after install in {install_dir}", read_log_tail(install_log)
             )
+        result = _launch_locked(exe, install_dir, user, timeout)
+    except Exception as err:  # kept, so the uninstall below cannot hide the real failure
+        failure = err
+    if installed:
         try:
-            return _run(launch_argv("Windows", exe), smoke_env(), timeout)
-        finally:
-            windows_uninstall(exe.parent)
-    finally:
-        shutil.rmtree(target, ignore_errors=True)
+            windows_uninstall(installer, windows_app_exe(install_dir), uninstall_log)
+        except SmokeError as err:
+            if failure is None:
+                failure = err
+            else:
+                _note_second_failure(failure, err)
+    shutil.rmtree(work, ignore_errors=True)
+    if failure is not None:
+        raise failure
+    return result
 
 
 def smoke_macos(installer: Path, timeout: int) -> Run:

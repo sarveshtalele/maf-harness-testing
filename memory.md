@@ -532,3 +532,6 @@ Format: `YYYY-MM-DD HH:MM | BEFORE|AFTER | actor | action | scope/risk or result
   - An AST guard test bans new sys.executable or bare python argv.
   - The self-check runs the host skill scripts on sample Python/JS/Java/.NET/Go/mixed/empty repos in every installer.
   - v1.0.5 cut.
+- 2026-10-12 | AFTER | Opus | Windows installer is now a per-machine MSI (electron-builder msi, WiX 4); v1.0.5 shipped the last NSIS .exe.
+  - Fixed upgradeCode 277538a5-b263-410a-b2b4-23a1670e4974 (never change). win.icon is required, or WiX fails with LGHT0094.
+  - The CI smoke installs to Program Files and denies write access to the install dir (icacls WD,AD,WEA,WA; generic (W) includes SYNCHRONIZE and blocks the exe launch), then launches and uninstalls. Next writes no disk cache in the desktop build.

@@ -40,6 +40,10 @@ xattr -dr com.apple.quarantine "/Applications/Agentic QE.app"
 
 Only do this for installers downloaded from the team's own draft or published releases.
 
+## Windows MSI
+
+The Windows installer is an MSI built by electron-builder (WiX), per machine, into Program Files. Its `upgradeCode` in `desktop/electron-builder.yml` is fixed for the life of the product, so each new version upgrades the installed one in place. Never change it, or users get a second, parallel installation. The build is unsigned, so UAC shows "Unknown publisher". Users of the older per-user `.exe` build must uninstall it first, because the two install locations differ; their runs, settings and API key stay in the user profile. The release notes should say so and give the silent command `msiexec /i Agentic-QE-<version>-win-x64.msi /qn`.
+
 ## Owner settings checklist
 
 These settings live in the GitHub UI and cannot be set from the repository. The repository owner must click through them once, and recheck after any org change.

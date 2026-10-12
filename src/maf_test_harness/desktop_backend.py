@@ -32,6 +32,8 @@ PYTHON_FLAGS = {"-B", "-E", "-I", "-O", "-OO", "-S", "-s", "-u"}
 def run_python(argv: list[str]) -> int:
     """``python`` for ``[maf-backend, --run-python, ...]``: ``[-I] [-B] (-c code | -m module | script) [arg ...]``."""
     isolated = False
+    # Always: the bundled scripts live in the read-only install dir (Program Files), so no __pycache__ may be written there.
+    sys.dont_write_bytecode = True
     while argv and argv[0].startswith("-") and argv[0] not in {"-c", "-m"}:
         flag, rest = argv[0], argv[1:]
         if flag == "-I":

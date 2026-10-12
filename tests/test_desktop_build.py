@@ -55,3 +55,17 @@ def test_stage_frontend_renames_node_modules_to_deps(tmp_path, monkeypatch):
     staged = build_desktop.stage_frontend(standalone)
     assert sorted(p.name for p in staged.iterdir()) == [".next", "deps", "server.js"]
     assert (staged / "deps" / "next").is_dir() and (standalone / "node_modules").is_dir()
+
+
+def test_msi_target_has_a_windows_icon():
+    """electron-builder's MSI shortcuts reference the product icon; without win.icon WiX fails with LGHT0094."""
+    import re
+    import struct
+
+    config = (REPO / "desktop" / "electron-builder.yml").read_text(encoding="utf-8")
+    assert "target: msi" in config
+    icon = re.search(r"(?m)^win:\n(?:  .*\n)*?  icon: (\S+)", config)
+    assert icon, "win.icon is required by the MSI target"
+    data = (REPO / "desktop" / icon.group(1)).read_bytes()
+    reserved, kind, count = struct.unpack("<HHH", data[:6])
+    assert (reserved, kind) == (0, 1) and count >= 1  # a real .ico header
