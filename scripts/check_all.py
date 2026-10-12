@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import argparse
 import os
+import socket
 import subprocess
 import sys
 import time
@@ -38,9 +39,18 @@ def _pythonpath() -> str:
     return os.pathsep.join(part for part in parts if part)
 
 
+def _free_port() -> str:
+    """A free local port, so parallel checkouts running Playwright never collide."""
+    with socket.socket() as probe:
+        probe.bind(("127.0.0.1", 0))
+        return str(probe.getsockname()[1])
+
+
 def steps() -> list[Step]:
     py_env = {"PYTHONPATH": _pythonpath()}
     ui_env = {
+        "PW_API_PORT": os.environ.get("PW_API_PORT") or _free_port(),
+        "PW_UI_PORT": os.environ.get("PW_UI_PORT") or _free_port(),
         "OPENAI_API_KEY": os.environ.get("OPENAI_API_KEY", "dummy-key-for-ui-tests"),
         "HARNESS_TEST_PYTHON": PY,
         "PYTHONPATH": _pythonpath(),

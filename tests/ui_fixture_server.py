@@ -101,7 +101,9 @@ try { parent.document.body.dataset.reportEscaped='yes'; } catch { document.body.
 with tempfile.TemporaryDirectory(prefix="maf-ui-browser-") as directory:
     os.environ["HARNESS_USAGE_DIR"] = str(Path(directory) / "usage")
     api = BrowserAPI(Path(directory) / "runs", requirements_mode="model", runtime_factory=BrowserRuntime)
-    server = module.make_server(api, os.environ["HARNESS_API_TOKEN"], 8876)
+    server = module.make_server(
+        api, os.environ["HARNESS_API_TOKEN"], int(os.environ.get("PW_API_PORT", "8876"))
+    )
     try:
         server.serve_forever()
     finally:
