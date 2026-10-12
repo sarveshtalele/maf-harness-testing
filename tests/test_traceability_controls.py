@@ -433,3 +433,29 @@ def test_case_reasons_in_the_trace_are_redacted(monkeypatch):
     )
     (row,) = trace_matrix(state)
     assert "hunter2" not in str(row["cases"]) and "login with ***" in row["cases"][0]["reason"]
+
+
+def test_failed_step_comes_from_the_worst_outcome_not_a_milder_one():
+    # TC-1 errored while running; TC-2 never ran because the environment failed. The control is an error at
+    # test_execution, not "failed at environment_setup".
+    cases = [_case("TC-1", "REQ-1"), _case("TC-2", "REQ-1")]
+    files = [_test_file("TC-1", "a"), _test_file("TC-2", "b")]
+    execution = {"status": "failed", "cases": [_result("a", "error", "boom")]}
+    state = _state(
+        [_req("REQ-1", "src/a.py")],
+        [AREA],
+        cases,
+        files,
+        execution=execution,
+        environment={"status": "failed", "reason": "pip install failed", "steps": []},
+    )
+    (row,) = trace_matrix(state)
+    assert row["final_status"] == "error" and row["failed_at"] == "test_execution"
+
+
+def test_symbol_match_is_on_whole_words_only():
+    reqs = {"requirement_model": {"requirements": [_req("REQ-1", "src/none.py", "run")]}}
+    plan = {"areas": [{**AREA, "name": "A", "scenarios": ["jobs are running in the queue"]}]}
+    assert assign_controls(reqs, plan)[0]["plan_area_id"] == "PLN-00"
+    plan["areas"][0]["scenarios"] = ["call run to start it"]
+    assert assign_controls(reqs, plan)[0]["plan_area_id"] == "PLN-01"
