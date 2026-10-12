@@ -23,6 +23,7 @@ from ..qa.confidence import (
     rubric_score,
 )
 from ..qa.ledger import append_score
+from ..qa.oracles import counts_as_verified
 from ..qa.report import design_cases
 from ..repo.analyzer import extract_target_sources
 from ..settings import design_review_enabled, full_accuracy, review_threshold
@@ -87,12 +88,10 @@ def score_case(review: dict, case: dict, source: str, threshold: int, evidence: 
     scores = {dimension: int(review["scores"][dimension]) for dimension in DESIGN_RUBRIC}
     quote = str(review.get("source_quote") or "")
     quote_ok = quote_verified(quote, source) or quote_verified(quote, evidence)
-    # The case's oracle (qa/oracles.py, host-verified) is the other evidence of the expected value. Characterization
-    # is current behaviour only, so only the reviewer's source quote can make it derivable.
+    # expected_derivable always needs the reviewer's own verbatim source_quote; a verified oracle does not waive it.
     oracle = case.get("oracle") if isinstance(case.get("oracle"), dict) else {}
     kind = oracle.get("kind")
-    oracle_ok = oracle.get("verified") is True and kind != "characterization"
-    derivable = bool(str(review.get("derivation") or "").strip()) and (quote_ok or oracle_ok)
+    derivable = bool(str(review.get("derivation") or "").strip()) and quote_ok
     findings: list[dict] = []
     if not derivable:
         scores["expected_derivable"] = 0
@@ -110,6 +109,14 @@ def score_case(review: dict, case: dict, source: str, threshold: int, evidence: 
                 "rule": "characterization",
                 "cap": None,
                 "reason": "Characterization: the expected value records current behaviour and is never verified.",
+            }
+        )
+    elif not counts_as_verified(case):
+        findings.append(
+            {
+                "rule": "oracle_unverified",
+                "cap": None,
+                "reason": f"The {kind or 'missing'} oracle is not host-verified (its quote or relation did not check).",
             }
         )
     target = str(case.get("target") or "")

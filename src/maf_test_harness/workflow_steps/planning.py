@@ -24,7 +24,7 @@ from ..models import (
 )
 from ..qa.confidence import ConfidenceReviewerUnavailable
 from ..qa.controls import add_plan_controls, case_controls, plan_controls
-from ..qa.oracles import check_oracles, file_reader, tier_of
+from ..qa.oracles import check_oracles, file_reader, oracle_repair_message, tier_of
 from ..qa.quality import existing_requirement_witnesses, existing_test_evidence
 from ..qa.report import design_cases
 from ..repo.analyzer import build_repository_evidence
@@ -654,16 +654,20 @@ class PlanningSteps:
                 allowed_levels=_allowed_levels(state),
                 case_budget=case_budget(state),
             )
-            approved = requirements_source or state["artifacts"]["requirements"]
+            greenfield = state.get("run_mode") == "greenfield"
+            # Quotes come from repository files, or (greenfield) from the user-supplied documents only.
+            documents = "\n".join(
+                str(section.get("text") or "")
+                for section in (state.get("spec_intake") or {}).get("sections", [])
+            )
             problems = check_oracles(
                 design_cases(design),
                 file_reader(self.run_dir / "repo"),
-                design_review.requirement_evidence(
-                    approved, {r["id"] for r in approved["requirement_model"]["requirements"]}
-                ),
+                documents if greenfield else "",
+                derived_allowed=not greenfield,
             )
             if problems:
-                raise ValueError("Test oracle check failed: " + "; ".join(problems)[:1500])
+                raise ValueError(oracle_repair_message(problems))
             if requirements_source is None and design["gaps_report"].get("budget_trimmed"):
                 self.audit(
                     "design_cases_trimmed",

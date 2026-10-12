@@ -22,10 +22,11 @@ def scripted_oracle(state):
     """Derived from the clone's service.py; greenfield runs have no source, so they quote the approved requirement
     evidence as a specified oracle (the host accepts approved evidence for specified kinds)."""
     if state.get("run_mode") == "greenfield":
-        requirement = state["artifacts"]["requirements"]["requirement_model"]["requirements"][0]
+        section = state["spec_intake"]["sections"][0]
+        quote = " ".join(str(section["text"]).split())[:60]
         return {
             "kind": "specified",
-            "source": {"file": "spec.md", "line": 1, "quote": requirement["evidence"][:200]},
+            "source": {"file": "spec.md", "line": 1, "quote": quote},
             "relation": None,
         }
     return dict(SCRIPTED_ORACLE)
