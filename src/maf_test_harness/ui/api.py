@@ -13,7 +13,7 @@ import traceback
 from datetime import UTC, datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from threading import RLock
+from threading import Event, RLock
 from urllib.parse import parse_qs, unquote, urlsplit
 from uuid import uuid4
 
@@ -505,7 +505,23 @@ class LocalAPI(EvidenceAPI, SettingsAPI, McpAPI):
                 mark("stopped", pending=None)
                 self.operation_log(key, "stopped by user; retained saved evidence")
 
-            mark("stopping")
+            # Cancel first: the loop stops at its next cancel point even if the status write is still queued.
+            self.service.cancel_event.set()
+            if self.host and self.host.run_dir == self.run_path(key):
+                # The live host's view/state are mutated on the runtime loop; writing them from this thread
+                # could raise "dictionary changed size during iteration" inside json.dumps.
+                applied = Event()
+
+                def mark_on_loop():
+                    try:
+                        mark("stopping")
+                    finally:
+                        applied.set()
+
+                self.service.loop.call_soon_threadsafe(mark_on_loop)
+                applied.wait(5)  # the loop is free within this window; the status is then visible to the UI
+            else:
+                mark("stopping")
             self.job = self.service.stop_active(stopped)
             return {"id": key}
 

@@ -307,3 +307,38 @@ def _pickled(value):
     elif isinstance(value, list):
         for item in value:
             yield from _pickled(item)
+
+
+def test_stop_request_sets_cancel_then_writes_status_on_the_runtime_thread(api):
+    """Stop from the HTTP thread must not touch the live host's state; the status write runs on the loop."""
+    entered, release = threading.Event(), threading.Event()
+
+    class Slow(ScriptedStageRuntime):
+        async def run_stage(self, **kwargs):
+            entered.set()
+            try:
+                await asyncio.sleep(30)
+            except asyncio.CancelledError:
+                await asyncio.to_thread(release.wait, 15)
+                raise
+
+    key = stage_in_flight(api, None, Slow)
+    assert entered.wait(10)
+    host = api.host
+    writes = []
+    original_save = host.save
+
+    def spy_save():
+        if host.view.get("status") == "stopping":
+            writes.append((threading.current_thread().name, api.service.cancel_event.is_set()))
+        original_save()
+
+    host.save = spy_save
+    api.stop_run(key)
+    deadline = time.monotonic() + 10
+    while not writes and time.monotonic() < deadline:
+        time.sleep(0.01)
+    assert writes == [("maf-runtime", True)]
+    release.set()
+    wait(api)
+    assert api.read(key)["status"] == "stopped" and not api.errors
