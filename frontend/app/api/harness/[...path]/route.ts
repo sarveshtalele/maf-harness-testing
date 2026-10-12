@@ -1,4 +1,5 @@
 import { NextRequest } from 'next/server';
+import { hasSession, isCrossSite } from '../../../../lib/session';
 
 export const dynamic = 'force-dynamic';
 const segments = /^[A-Za-z0-9_.-]+$/;
@@ -8,8 +9,18 @@ async function proxy(request: NextRequest, context: { params: Promise<{ path: st
   const origin = request.headers.get('origin');
   const host = request.headers.get('host') || '';
   const reportAsset = request.method === 'GET' && path[0] === 'runs' && path[2] === 'evidence' && path.length >= 5;
-  if (!/^(localhost|127\.0\.0\.1):\d+$/.test(host) || (origin && origin !== `http://${host}` && !(reportAsset && origin === 'null')))
+  // A sandboxed report frame has an opaque origin: its browser sends no cookie and no Referer for the files it fetches
+  // (Origin null, cross-site, cors/empty). Those GETs of a run's report files are accepted without the cookie, as before
+  // F1; the run id (48 random bits) is the only key. Residual risk: report files stay readable with the run id alone.
+  const fromReport = reportAsset && origin === 'null'
+    && request.headers.get('sec-fetch-mode') === 'cors' && request.headers.get('sec-fetch-dest') === 'empty';
+  if (!/^(localhost|127\.0\.0\.1):\d+$/.test(host) || (origin && origin !== `http://${host}` && !fromReport))
     return Response.json({ error: 'Only the local UI can access the harness.' }, { status: 403 });
+  if (isCrossSite(request) && !fromReport) return Response.json({ error: 'Cross-site requests are not allowed.' }, { status: 403 });
+  // Every other request needs the session cookie: a local process without it gets nothing.
+  if (!fromReport && !hasSession(request)) {
+    return Response.json({ error: 'Open the app from the launcher (start-windows.cmd / start-macos.command / start-linux.sh), or use the link it printed.' }, { status: 401 });
+  }
   if (!path.every(part => segments.test(part) && part !== '.' && part !== '..'))
     return Response.json({ error: 'Invalid path.' }, { status: 400 });
   const token = process.env.HARNESS_API_TOKEN;
