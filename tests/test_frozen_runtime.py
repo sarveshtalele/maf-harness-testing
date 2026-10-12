@@ -210,14 +210,12 @@ def test_frozen_create_venv_uses_the_newest_python_that_satisfies_the_project(mo
     ]
     monkeypatch.setitem(toolchains.DETECTORS, "python", lambda: found)
     (tmp_path / ".python-version").write_text("3.11\n", encoding="utf-8")
-    assert (
-        runners.setup_steps("python", tmp_path, str(tmp_path / "c"), 60)[0].argv[0]
-        == "/opt/py311b/bin/python3"
+    assert runners.setup_steps("python", tmp_path, str(tmp_path / "c"), 60)[0].argv[0] == str(
+        Path("/opt/py311b/bin/python3")
     )
     (tmp_path / ".python-version").unlink()
-    assert (
-        runners.setup_steps("python", tmp_path, str(tmp_path / "c"), 60)[0].argv[0]
-        == "/opt/py312/bin/python3"
+    assert runners.setup_steps("python", tmp_path, str(tmp_path / "c"), 60)[0].argv[0] == str(
+        Path("/opt/py312/bin/python3")
     )
 
 
@@ -422,4 +420,4 @@ def test_retry_after_a_missing_python_finds_the_install_the_project_requires(mon
     available["python3.11"] = "3.11.9"  # installed after the failed attempt
     step = runners.setup_steps("python", tmp_path, str(tmp_path / "c"), 60)[0]  # the retry
     assert step.name == "create-venv"
-    assert step.argv[0] == "/opt/python3.11/bin/python3.11"
+    assert step.argv[0] == str(Path("/opt/python3.11/bin/python3.11"))

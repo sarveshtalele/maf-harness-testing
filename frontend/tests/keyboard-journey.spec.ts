@@ -41,6 +41,7 @@ test('keyboard-only journey: skip link, New run with Enter, dialogs close on Esc
   // Delete dialog from the run list: Escape returns focus to Delete.
   await page.getByRole('navigation', { name: 'Main navigation' }).getByRole('button', { name: /^Runs\b/ }).click();
   const remove = page.getByRole('button', { name: `Delete run ${id}`, exact: true });
+  await expect(remove).toBeEnabled({ timeout: 60000 }); // disabled while the run is still busy on slow runners
   await remove.focus();
   await page.keyboard.press('Enter');
   await expect(page.getByRole('dialog', { name: 'Delete this run?' })).toBeVisible();
