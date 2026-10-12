@@ -41,11 +41,34 @@ _ENVIRONMENT_CATEGORIES = frozenset({"environment", "infra"})
 
 
 def oracle_kind(case: dict[str, Any]) -> str:
-    """The design case's oracle kind; empty when the case predates oracles (read defensively)."""
-    return str(case.get("oracle") or "").strip().lower()
+    """The design case's oracle kind; empty when the case predates oracles (read defensively).
+
+    ``oracle`` is either the kind string or a dict ``{kind, source, relation, verified}``."""
+    raw = case.get("oracle")
+    if isinstance(raw, dict):
+        raw = raw.get("kind")
+    return str(raw or "").strip().lower()
+
+
+def oracle_verified(case: dict[str, Any]) -> bool:
+    """The host-verified flag of a dict-shaped oracle; False for older string or missing oracles."""
+    raw = case.get("oracle")
+    return isinstance(raw, dict) and bool(raw.get("verified"))
+
+
+def is_characterization(case: dict[str, Any]) -> bool:
+    return oracle_kind(case) == "characterization"
+
+
+def counts_as_verified(case: dict[str, Any]) -> bool:
+    """Verified oracle, never characterization (current behaviour is not verified)."""
+    return oracle_verified(case) and not is_characterization(case)
 
 
 def documented_quote(case: dict[str, Any]) -> str:
+    raw = case.get("oracle")
+    if isinstance(raw, dict) and raw.get("quote"):
+        return " ".join(str(raw["quote"]).split())
     for key in QUOTE_KEYS:
         value = " ".join(str(case.get(key) or "").split())
         if value:
@@ -136,7 +159,7 @@ def triage_cases(cases: list[dict[str, Any]], ecosystem: str | None = None) -> l
             continue
         result = classify_failure(
             str(case["message"]),
-            oracle=str(case.get("oracle") or "").strip().lower(),
+            oracle=oracle_kind(case),
             quote=str(case.get("oracle_quote") or ""),
             ecosystem=ecosystem,
         )

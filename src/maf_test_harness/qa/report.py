@@ -18,7 +18,16 @@ from ..settings import TEST_REVIEW_MIN_CONFIDENCE, design_review_enabled
 from .controls import case_controls, plan_controls, summarize_trace, summary_text, trace_rows
 from .coverage import not_measured, summarize
 from .triage import build_updates
-from .verification import documented_quote, is_verified, summarize_triage, triage_cases
+from .verification import (
+    counts_as_verified,
+    documented_quote,
+    is_characterization,
+    is_verified,
+    oracle_kind,
+    oracle_verified,
+    summarize_triage,
+    triage_cases,
+)
 
 # Assertion-failure signatures of the common runners: "AssertionError", pytest's "assert a == b" rewrite, and
 # "expected X got Y" / "expected X but was Y" messages. A bare word "assert" in a traceback or a name does not count.
@@ -305,7 +314,8 @@ def build_qa_report(
                 "control_ids": case_controls(case, controls),
                 # Design-case oracle fields are read defensively: runs made before they existed carry none.
                 "tier": case.get("tier"),
-                "oracle": case.get("oracle"),
+                "oracle": oracle_kind(case) or None,
+                "oracle_verified": oracle_verified(case),
                 "oracle_quote": documented_quote(case),
             }
         )
@@ -327,8 +337,11 @@ def build_qa_report(
             and row["status"] in {"failed", "error"}
             and bool(_ASSERTION_MISMATCH.search(row["message"] or ""))
         )
-        row["verified"] = is_verified(source_review, row["status"])
+        # Characterization is current behaviour: never verified, and never counted in the verified or passed totals.
+        row["verified"] = is_verified(source_review, row["status"]) and not is_characterization(case)
     adapter = str((execution or {}).get("adapter") or "")
+    # Characterization is current behaviour: no verified, review or passed counts.
+    scored_cases = [c for c in cases if c.get("oracle") != "characterization"]
     triage_rows = triage_cases(cases, adapter.split("-")[0] or None)
     triage_by_case = {r["case_id"]: r for r in triage_rows}
     for row in cases:
@@ -479,19 +492,22 @@ def build_qa_report(
         "verification": generation.get("verification_summary"),
         "review_vs_execution": review_vs_execution(cases),
         "verification_counts": {
-            "review_accepted": sum(c["source_review"] == "accepted" for c in cases),
-            "execution_passed": sum(c["status"] == "passed" for c in cases),
-            "verified": sum(bool(c.get("verified")) for c in cases),
+            "review_accepted": sum(c["source_review"] == "accepted" for c in scored_cases),
+            "execution_passed": sum(c["status"] == "passed" for c in scored_cases),
+            "verified": sum(bool(c.get("verified")) for c in scored_cases),
+            "characterization": len(cases) - len(scored_cases),
         },
         "triage": triage_rows,
         "triage_summary": summarize_triage(triage_rows),
         "case_verification": {
             row["case_id"]: {
+                "characterization": row.get("oracle") == "characterization",
                 "source_review": row["source_review"],
                 "confidence": row["confidence"],
                 "execution": row["execution"],
                 "review_miss": row["review_miss"],
-                "verified": is_verified(row["source_review"], row["execution"]),
+                "verified": is_verified(row["source_review"], row["execution"])
+                and row.get("oracle") != "characterization",
             }
             for row in review_vs_execution(cases)
         },
@@ -560,7 +576,7 @@ BEHAVIOUR_SECTIONS = (
     ),
     (
         "characterization",
-        "Characterization",
+        "Characterization (current behaviour only)",
         "Current behaviour only. These cases describe what the code does today and are never reported as verified.",
     ),
 )
@@ -571,7 +587,7 @@ def behaviour_sections(cases: list[dict[str, Any]]) -> list[dict[str, Any]]:
     columns; ``verified`` (review accepted AND execution passed) is always False for characterization cases."""
     buckets: dict[str, list[dict[str, Any]]] = {kind: [] for kind, _, _ in BEHAVIOUR_SECTIONS}
     for case in sorted(cases, key=lambda c: c["id"]):
-        if str(case.get("oracle") or "").lower() == "characterization":
+        if oracle_kind(case) == "characterization":
             kind = "characterization"
         elif str(case.get("tier") or "").lower() == "product":
             kind = "product"
@@ -646,23 +662,62 @@ def failure_split(
     return split
 
 
+ORACLE_KINDS = ("specified", "derived", "metamorphic", "golden", "property", "characterization")
+
+
+def _tier(value: Any) -> str:
+    text = str(value or "component").strip().lower()
+    return text if text in {"product", "component"} else "component"
+
+
 def oracle_summary(design: dict[str, Any], requirements: dict[str, Any]) -> dict[str, Any]:
-    """Counts by oracle kind and tier. Uses qa.oracles.oracle_summary when that module exists; otherwise a local
-    fallback that reads ``oracle`` and ``tier`` defensively (older design cases carry neither)."""
+    """Oracle and tier counts. Uses qa.oracles.oracle_summary when that module exists.
+
+    # TODO(qa.oracles): once task-oracle is merged, qa/oracles.py provides oracle_summary; this fallback is then only the
+    # pre-merge path. The keys below match that module: total_cases, by_kind, verified_cases, characterization_cases,
+    # requirements_by_tier, cases_by_tier and product_requirements {total, with_cases, without_cases, gap}.
+    """
     try:
         from . import oracles
     except ImportError:
         oracles = None
     if oracles is not None and hasattr(oracles, "oracle_summary"):
         return oracles.oracle_summary(design, requirements)
-    by_oracle: dict[str, int] = {}
-    by_tier: dict[str, int] = {}
-    for case in design_cases(design):
-        oracle_kind = str(case.get("oracle") or "missing")
-        tier = str(case.get("tier") or "component")
-        by_oracle[oracle_kind] = by_oracle.get(oracle_kind, 0) + 1
-        by_tier[tier] = by_tier.get(tier, 0) + 1
-    return {"by_oracle": dict(sorted(by_oracle.items())), "by_tier": dict(sorted(by_tier.items()))}
+    model = (requirements or {}).get("requirement_model") or {}
+    reqs = [r for r in model.get("requirements") or [] if isinstance(r, dict) and r.get("id")]
+    tier_of_req = {str(r["id"]): _tier(r.get("tier")) for r in reqs}
+    cases = design_cases(design)
+    by_kind = dict.fromkeys((*ORACLE_KINDS, "missing"), 0)
+    cases_by_req: dict[str, int] = {}
+    cases_by_tier = {"product": 0, "component": 0}
+    for case in cases:
+        by_kind[oracle_kind(case) or "missing"] = by_kind.get(oracle_kind(case) or "missing", 0) + 1
+        linked = case_requirement_ids(case, requirements)
+        for rid in linked:
+            cases_by_req[rid] = cases_by_req.get(rid, 0) + 1
+        tier = (
+            _tier(case.get("tier"))
+            if case.get("tier")
+            else _tier(next((tier_of_req[r] for r in linked if r in tier_of_req), None))
+        )
+        cases_by_tier[tier] += 1
+    product = [r for r in reqs if tier_of_req[str(r["id"])] == "product"]
+    with_cases = sum(1 for r in product if cases_by_req.get(str(r["id"])))
+    requirements_by_tier = {"product": len(product), "component": len(reqs) - len(product)}
+    return {
+        "total_cases": len(cases),
+        "by_kind": by_kind,
+        "verified_cases": sum(counts_as_verified(c) for c in cases),
+        "characterization_cases": sorted(c["id"] for c in cases if oracle_kind(c) == "characterization"),
+        "requirements_by_tier": requirements_by_tier,
+        "cases_by_tier": cases_by_tier,
+        "product_requirements": {
+            "total": len(product),
+            "with_cases": with_cases,
+            "without_cases": len(product) - with_cases,
+            "gap": sum(1 for r in product if str(r.get("status") or "") == "gap"),
+        },
+    }
 
 
 def _behaviour_markdown(report: dict[str, Any]) -> list[str]:

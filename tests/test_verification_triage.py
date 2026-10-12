@@ -140,7 +140,12 @@ def test_report_carries_triage_per_case_and_separate_verification_counts():
     assert case["triage"]["classification"] == PRODUCT_DEFECT
     assert case["tier"] == "product" and case["oracle"] == "specified"
     assert case["verified"] is False  # failed execution is never verified
-    assert qa["verification_counts"] == {"review_accepted": 1, "execution_passed": 0, "verified": 0}
+    assert qa["verification_counts"] == {
+        "review_accepted": 1,
+        "execution_passed": 0,
+        "verified": 0,
+        "characterization": 0,
+    }
     assert qa["triage_summary"][PRODUCT_DEFECT] == 1
     assert qa["case_verification"]["TC-1"]["verified"] is False
 
@@ -149,7 +154,12 @@ def test_passing_and_accepted_case_is_verified_and_not_triaged():
     qa = _report(_design(oracle="derived"), status="passed", message="")
     case = qa["cases"][0]
     assert case["triage"] is None and case["verified"] is True
-    assert qa["verification_counts"] == {"review_accepted": 1, "execution_passed": 1, "verified": 1}
+    assert qa["verification_counts"] == {
+        "review_accepted": 1,
+        "execution_passed": 1,
+        "verified": 1,
+        "characterization": 0,
+    }
 
 
 def test_review_rejected_pass_is_not_verified():
@@ -361,12 +371,129 @@ def test_auto_repaired_test_defects_are_listed_once_they_pass():
     assert qa["failure_split"]["test_defects"]["still_failing"] == []
 
 
-def test_oracle_summary_falls_back_to_counts_when_the_oracle_module_is_absent():
+def test_oracle_summary_without_oracle_fields_counts_every_case_as_missing():
     design = {
-        "positive_tests": [{"id": "TC-1", "oracle": "specified", "tier": "product"}],
+        "positive_tests": [{"id": "TC-1", "tier": "product"}],
         "negative_tests": [{"id": "TC-2"}],
         "traceability_matrix": {},
     }
     summary = oracle_summary(design, {})
-    assert summary["by_oracle"] == {"missing": 1, "specified": 1}
-    assert summary["by_tier"] == {"component": 1, "product": 1}
+    assert summary["total_cases"] == 2 and summary["by_kind"]["missing"] == 2
+    assert summary["verified_cases"] == 0 and summary["characterization_cases"] == []
+
+
+def test_dict_shaped_oracle_is_read_and_its_verified_flag_counts():
+    from maf_test_harness.qa.verification import counts_as_verified, oracle_kind
+
+    case = {
+        "id": "TC-9",
+        "oracle": {"kind": "specified", "source": "README.md:4", "verified": True, "quote": DOC},
+    }
+    assert oracle_kind(case) == "specified"
+    assert counts_as_verified(case) is True
+    assert documented_quote(case) == " ".join(DOC.split())
+    characterization = {"id": "TC-8", "oracle": {"kind": "characterization", "verified": True}}
+    assert counts_as_verified(characterization) is False
+
+
+def test_characterization_is_excluded_from_verified_and_passed_counts_and_listed_apart():
+    design = {
+        "positive_tests": [
+            {
+                "id": "TC-1",
+                "title": "documented",
+                "type": "positive",
+                "traceability_links": [],
+                "oracle": {"kind": "specified", "verified": True},
+            },
+            {
+                "id": "TC-2",
+                "title": "today",
+                "type": "positive",
+                "traceability_links": [],
+                "oracle": {"kind": "characterization", "verified": True},
+            },
+        ],
+        "traceability_matrix": {},
+    }
+    gen = {
+        "files": [{"path": "tests/test_x.py", "content": "x", "case_ids": ["TC-1", "TC-2"]}],
+        "case_reviews": [
+            {"case_id": cid, "verdict": "supported", "confidence": 97, "reason": "r"}
+            for cid in ("TC-1", "TC-2")
+        ],
+    }
+    execution = {
+        "status": "passed",
+        "adapter": "python-pytest",
+        "cases": [
+            {
+                "name": f"test_{cid}",
+                "classname": "tests.test_x",
+                "status": "passed",
+                "message": "",
+                "file": "tests/test_x.py",
+            }
+            for cid in ("TC-1", "TC-2")
+        ],
+    }
+    qa = build_qa_report(
+        repo={"source_files": []}, requirements={}, design=design, generation=gen, execution=execution
+    )
+    assert qa["verification_counts"] == {
+        "review_accepted": 1,
+        "execution_passed": 1,
+        "verified": 1,
+        "characterization": 1,
+    }
+    assert qa["case_verification"]["TC-2"]["verified"] is False
+    characterization = qa["behaviour"][2]
+    assert characterization["title"] == "Characterization (current behaviour only)"
+    assert [c["case_id"] for c in characterization["cases"]] == ["TC-2"]
+    assert "### Characterization (current behaviour only)" in render_markdown(qa)
+
+
+def test_oracle_summary_fallback_uses_the_qa_oracles_keys():
+    requirements = {
+        "requirement_model": {
+            "requirements": [
+                {"id": "REQ-1", "tier": "product", "status": "gap"},
+                {"id": "REQ-2", "tier": "product"},
+                {"id": "REQ-3"},
+            ],
+            "acceptance_criteria": [],
+        }
+    }
+    design = {
+        "positive_tests": [
+            {
+                "id": "TC-1",
+                "traceability_links": [{"type": "requirement", "id": "REQ-2"}],
+                "oracle": {"kind": "specified", "verified": True},
+            },
+            {
+                "id": "TC-2",
+                "traceability_links": [{"type": "requirement", "id": "REQ-3"}],
+                "oracle": {"kind": "characterization", "verified": True},
+            },
+        ],
+        "negative_tests": [{"id": "TC-3", "traceability_links": [{"type": "requirement", "id": "REQ-3"}]}],
+        "traceability_matrix": {},
+    }
+    summary = oracle_summary(design, requirements)
+    assert summary["total_cases"] == 3
+    assert set(summary["by_kind"]) == {
+        "specified",
+        "derived",
+        "metamorphic",
+        "golden",
+        "property",
+        "characterization",
+        "missing",
+    }
+    assert summary["by_kind"]["specified"] == 1 and summary["by_kind"]["missing"] == 1
+    assert summary["verified_cases"] == 1
+    assert summary["characterization_cases"] == ["TC-2"]
+    assert summary["requirements_by_tier"] == {"product": 2, "component": 1}
+    assert summary["cases_by_tier"] == {"product": 1, "component": 2}
+    assert summary["product_requirements"] == {"total": 2, "with_cases": 1, "without_cases": 1, "gap": 1}
