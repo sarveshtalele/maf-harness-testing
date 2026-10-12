@@ -1,7 +1,7 @@
 """The frozen desktop backend acts as Python for skill scripts, hooks and venv creation (see paths.python_argv)."""
 
 import json
-import subprocess
+import os
 import sys
 import textwrap
 from pathlib import Path
@@ -150,7 +150,7 @@ def _homes(found):
 
 
 def test_detection_registers_the_running_interpreter_only_when_it_is_python(monkeypatch):
-    monkeypatch.setattr(toolchains.shutil, "which", lambda name: sys.executable)
+    monkeypatch.setattr(toolchains.shutil, "which", lambda name, path=None: sys.executable)
     assert Path(sys.executable).resolve() in _homes(toolchains.detect_pythons())
     _freeze(monkeypatch)  # the frozen executable is the backend: it is never a Python toolchain
     assert Path(sys.executable).resolve() not in _homes(toolchains.detect_pythons())
@@ -158,7 +158,7 @@ def test_detection_registers_the_running_interpreter_only_when_it_is_python(monk
 
 def test_frozen_detection_skips_candidates_that_do_not_run(monkeypatch):
     _freeze(monkeypatch)
-    monkeypatch.setattr(toolchains.shutil, "which", lambda name: "/nonexistent/bin/python3")
+    monkeypatch.setattr(toolchains.shutil, "which", lambda name, path=None: "/nonexistent/bin/python3")
     assert toolchains.detect_pythons() == []
 
 
@@ -238,7 +238,7 @@ def test_python_scan_is_cached_per_process(monkeypatch):
         return ("3.12.4", argv[0])
 
     monkeypatch.setattr(toolchains, "_probe_python", probe)
-    monkeypatch.setattr(toolchains.shutil, "which", lambda name: f"/opt/{name}")
+    monkeypatch.setattr(toolchains.shutil, "which", lambda name, path=None: f"/opt/{name}")
     toolchains.detect_pythons()
     first = len(calls)
     assert first > 0
@@ -246,43 +246,75 @@ def test_python_scan_is_cached_per_process(monkeypatch):
     assert len(calls) == first
 
 
-def test_windows_store_aliases_are_never_executed(monkeypatch):
-    alias = r"C:\Users\me\AppData\Local\Microsoft\WindowsApps\python3.exe"
-    launcher = r"C:\Windows\py.exe"
-    ran, asked = [], []
-
-    def spy(argv, **kwargs):  # the py launcher may run; the WindowsApps alias must never be executed
-        ran.append(argv)
-        if any("windowsapps" in str(arg).lower() for arg in argv):
-            raise AssertionError(f"executed alias {argv}")
-        return subprocess.CompletedProcess(argv, 1, "", "")
-
-    def which(name):
-        asked.append(name)
-        return launcher if name == "py" else alias
-
+def _windows_path(monkeypatch, path_dirs: list[str]) -> None:
+    """Windows PATH rules (";" separator, drive letters) on any host."""
     monkeypatch.setattr(toolchains.platform_compat, "IS_WINDOWS", True)
+    monkeypatch.setattr(os, "pathsep", ";")
+    monkeypatch.setenv("PATH", ";".join(path_dirs))
+
+
+def _windows_fs(monkeypatch, files: set[str], path_dirs: list[str], searches: list):
+    """Pretend Windows: ``which`` finds ``name.exe`` only in the files given, searching the ``path`` it is passed."""
+    _windows_path(monkeypatch, path_dirs)
+
+    def which(name, path=None):
+        searches.append((name, path))
+        for directory in (path if path is not None else os.environ["PATH"]).split(os.pathsep):
+            candidate = f"{directory}\\{name}.exe"
+            if candidate in files:
+                return candidate
+        return None
+
     monkeypatch.setattr(toolchains.shutil, "which", which)
-    monkeypatch.setattr(toolchains.subprocess, "run", spy)
+
+
+ALIAS_DIR = r"C:\Users\me\AppData\Local\Microsoft\WindowsApps"
+REAL_DIR = r"C:\Python312"
+
+
+def test_frozen_windows_finds_a_real_python_exe_and_never_runs_the_store_alias(monkeypatch):
+    files = {rf"{ALIAS_DIR}\python.exe", rf"{REAL_DIR}\python.exe"}
+    searches, probed = [], []
+    _windows_fs(monkeypatch, files, [ALIAS_DIR, REAL_DIR], searches)  # the alias comes first on PATH
+
+    def probe(argv):
+        probed.append(argv[0])
+        assert "windowsapps" not in argv[0].lower(), f"executed the Store alias: {argv}"
+        return ("3.12.4", argv[0])
+
+    monkeypatch.setattr(toolchains, "_probe_python", probe)
+    _freeze(monkeypatch)
+    assert [str(t.home) for t in toolchains.detect_pythons()] == [rf"{REAL_DIR}\python.exe"]
+    assert probed == [rf"{REAL_DIR}\python.exe"]
+    assert all("windowsapps" not in (path or "").lower() for _, path in searches)
+
+
+def test_frozen_windows_alias_only_means_no_python_and_nothing_is_probed(monkeypatch):
+    files = {rf"{ALIAS_DIR}\python.exe", rf"{ALIAS_DIR}\python3.exe"}
+    searches, probed = [], []
+    _windows_fs(monkeypatch, files, [ALIAS_DIR], searches)
+    monkeypatch.setattr(toolchains, "_probe_python", lambda argv: probed.append(argv) or None)
     _freeze(monkeypatch)
     assert toolchains.detect_pythons() == []
-    assert all(not any("WindowsApps" in str(a) for a in argv) for argv in ran)
-    assert "python3" not in asked and "python" not in asked  # bare names are never probed on Windows
+    assert probed == []
+    assert searches and all("windowsapps" not in (path or "").lower() for _, path in searches)
 
 
-def test_frozen_bare_names_are_probed_only_off_windows(monkeypatch):
+def test_frozen_bare_names_are_searched_on_every_os_and_windows_store_folders_are_removed(monkeypatch):
     asked = []
     monkeypatch.setattr(toolchains, "_probe_python", lambda argv: None)
-    monkeypatch.setattr(toolchains.shutil, "which", lambda name: asked.append(name))
+    monkeypatch.setattr(toolchains.shutil, "which", lambda name, path=None: asked.append((name, path)))
     _freeze(monkeypatch)
     monkeypatch.setattr(toolchains.platform_compat, "IS_WINDOWS", False)
     toolchains.detect_pythons()
-    assert "python3" in asked and "python" in asked
+    assert ("python3", None) in asked and ("python", None) in asked  # POSIX: the normal PATH
     asked.clear()
     toolchains.clear_python_scan()
-    monkeypatch.setattr(toolchains.platform_compat, "IS_WINDOWS", True)
+    _windows_path(monkeypatch, [ALIAS_DIR, REAL_DIR])
     toolchains.detect_pythons()
-    assert "python3" not in asked and "python" not in asked
+    names = {name for name, _ in asked}
+    assert {"python3", "python"} <= names
+    assert all(path is not None and "windowsapps" not in path.lower() for _, path in asked)
 
 
 def test_frozen_runner_argv_round_trips_non_ascii_through_run_command(tmp_path):
@@ -391,7 +423,9 @@ def _fake_interpreters(monkeypatch, available: dict[str, str]):
     """Interpreters that exist only while the test puts them in ``available`` (name -> version)."""
     monkeypatch.setattr(toolchains.platform_compat, "IS_WINDOWS", False)
     monkeypatch.setattr(
-        toolchains.shutil, "which", lambda name: f"/opt/{name}/bin/{name}" if name in available else None
+        toolchains.shutil,
+        "which",
+        lambda name, path=None: f"/opt/{name}/bin/{name}" if name in available else None,
     )
 
     def probe(argv):

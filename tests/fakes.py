@@ -2,6 +2,7 @@
 
 import json
 import sys
+from pathlib import Path
 
 
 def clone_fixture(url, destination):
@@ -211,3 +212,17 @@ def local_env_plan(stack, root, cache_dir, timeout=900, needs=None, **kwargs):
             }
         ],
     }
+
+
+def children_import_this_checkout(monkeypatch) -> None:
+    """Skill-script children get only BASIC_ENV, so without this they import whatever maf_test_harness is installed."""
+    from maf_test_harness.skills import scripts
+
+    src = str(Path(__file__).resolve().parents[1] / "src")
+    real_run_command = scripts.run_command
+
+    def run(argv, cwd, output_dir, **kwargs):
+        kwargs["env"] = {**(kwargs.get("env") or {}), "PYTHONPATH": src}
+        return real_run_command(argv, cwd, output_dir, **kwargs)
+
+    monkeypatch.setattr(scripts, "run_command", run)

@@ -11,6 +11,9 @@ import sys
 import tempfile
 from pathlib import Path
 
+import pytest
+from fakes import children_import_this_checkout
+
 from maf_test_harness import desktop_backend, paths
 from maf_test_harness.envs.execution import run_command
 from maf_test_harness.skills.scripts import HarnessScriptRunner
@@ -27,13 +30,16 @@ class ShimRunner:
         self.base = base
 
     def run(self, skill, rel, args=None, *, files=None, output_json=None):
-        path = self.runner.check(skill, rel)
+        path = self.runner.check(skill, rel)  # allow-list and hash checks, as HarnessScriptRunner.run
+        args = self.runner._clean_args(args)  # the same argument rules the host applies
         work = Path(tempfile.mkdtemp(dir=self.base)).resolve()
         for name, content in (files or {}).items():
             target = work / "input" / name
             target.parent.mkdir(parents=True, exist_ok=True)
             target.write_text(content, encoding="utf-8")
         argv = [sys.executable, "-c", SHIM, "--run-python", str(path), *(args or [])]
+        # run_command keeps BASIC_ENV (PATH, SYSTEMROOT, TEMP, ...) from os.environ, as the host does; PYTHONPATH makes the
+        # child import this checkout when the package is not installed.
         result = run_command(argv, work, work / "logs", timeout=60, env={"PYTHONPATH": str(REPO / "src")})
         data = None
         if output_json and result["exit_code"] == 0:
@@ -44,6 +50,11 @@ class ShimRunner:
             "stderr": (work / "logs" / "stderr.log").read_text(encoding="utf-8", errors="replace"),
             "data": data,
         }
+
+
+@pytest.fixture(autouse=True)
+def _children(monkeypatch):
+    children_import_this_checkout(monkeypatch)
 
 
 def _smoke(run, base: Path) -> list[str]:
@@ -83,3 +94,40 @@ def test_validate_design_loads_its_imports(tmp_path):
     )
     assert completed.returncode == 0, completed.stderr
     assert "--repo-url" in completed.stdout
+
+
+def test_a_run_that_raises_is_recorded_and_the_rest_still_run(tmp_path):
+    runner = HarnessScriptRunner(paths.skills_dir(), tiers=("host", "model"))
+    calls = []
+
+    def flaky(skill, rel, args=None, **kwargs):
+        calls.append((skill, rel))
+        if skill == "reverse-engineering" and "python repo" in json.dumps(kwargs.get("files", {})):
+            raise RuntimeError("boom")
+        return runner.run(skill, rel, args, **kwargs)
+
+    problems = desktop_backend.run_skill_smoke(tmp_path, flaky, lambda line: None)
+    assert len(problems) == 1 and "boom" in problems[0]
+    assert len(calls) == 2 * len(desktop_backend.SAMPLE_REPOS) + 4 - 1  # all runs except the skipped analysis
+
+
+def test_self_check_always_prints_its_verdict_even_if_a_step_raises(monkeypatch, capsys):
+    def broken():
+        raise RuntimeError("step exploded")
+
+    monkeypatch.setattr(desktop_backend, "_self_check_steps", broken)
+    assert desktop_backend.self_check() == 1
+    captured = capsys.readouterr()
+    assert "self-check FAILED" in captured.out
+    assert "step exploded" in captured.err
+
+
+def test_console_output_with_non_ascii_text_cannot_crash_the_report(monkeypatch, capsys):
+    import io
+
+    legacy = io.TextIOWrapper(io.BytesIO(), encoding="cp1252", errors="strict")
+    monkeypatch.setattr(sys, "stdout", legacy)
+    monkeypatch.setattr(sys, "stderr", legacy)
+    desktop_backend._console_safe()
+    print("módulo ✓ 漢字")  # would raise UnicodeEncodeError on a strict cp1252 console
+    legacy.flush()

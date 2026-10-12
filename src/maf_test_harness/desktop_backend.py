@@ -20,9 +20,11 @@ import time
 import traceback
 import unicodedata
 from collections.abc import Callable, Iterable, Iterator
+from dataclasses import dataclass
 from pathlib import Path
 
 from maf_test_harness import paths
+from maf_test_harness.repo.requirements import NO_DECLARATIONS_MARKER
 
 PYTHON_FLAGS = {"-B", "-E", "-I", "-O", "-OO", "-S", "-s", "-u"}
 
@@ -166,7 +168,7 @@ def _run_bundled_skill(work: Path) -> dict:
 SMOKE_ARGS = ["--request", "input/request.json", "--output", "output.json"]
 # Small repositories for each stack, a monorepo and an empty one. Names are NFC; one folder has a space and one file a
 # non-ASCII name, the Windows path cases. Declarations are heuristic outside Python, which the scripts report as gaps.
-SAMPLE_REPOS: dict[str, dict[str, str]] = {
+SAMPLE_FILES: dict[str, dict[str, str]] = {
     "python repo": {
         "pyproject.toml": '[project]\nname = "sample"\nversion = "0.1.0"\n',
         "src/sample/__init__.py": "",
@@ -200,6 +202,23 @@ SAMPLE_REPOS: dict[str, dict[str, str]] = {
         "svc/src/main/java/Svc.java": "public class Svc {\n    public static int size() {\n        return 0;\n    }\n}\n",
     },
     "empty repo": {},
+}
+
+
+@dataclass(frozen=True)
+class SampleRepo:
+    files: dict[str, str]
+    expect_facts: bool  # False: the repository has no declarations, so requirement-analysis must refuse it
+
+
+SAMPLE_REPOS: dict[str, SampleRepo] = {
+    "python repo": SampleRepo(SAMPLE_FILES["python repo"], expect_facts=True),
+    "js ts repo": SampleRepo(SAMPLE_FILES["js ts repo"], expect_facts=True),
+    "java repo": SampleRepo(SAMPLE_FILES["java repo"], expect_facts=True),
+    "dotnet repo": SampleRepo(SAMPLE_FILES["dotnet repo"], expect_facts=True),
+    "go repo": SampleRepo(SAMPLE_FILES["go repo"], expect_facts=True),
+    "mixed monorepo": SampleRepo(SAMPLE_FILES["mixed monorepo"], expect_facts=True),
+    "empty repo": SampleRepo(SAMPLE_FILES["empty repo"], expect_facts=False),
 }
 
 # Minimal valid inputs for the validators, built from the contracts their assets declare (no network, no toolchains).
@@ -268,24 +287,28 @@ VALIDATOR_INPUTS: dict[str, dict[str, object]] = {
 SkillRun = Callable[..., dict]  # HarnessScriptRunner.run, or any runner with the same keyword interface
 
 
-def write_sample_repos(base: Path) -> dict[str, Path]:
-    repos = {}
-    for name, files in SAMPLE_REPOS.items():
-        root = base / unicodedata.normalize("NFC", name)
-        root.mkdir(parents=True, exist_ok=True)
-        for rel, text in files.items():
-            target = root / unicodedata.normalize("NFC", rel)
-            target.parent.mkdir(parents=True, exist_ok=True)
-            target.write_text(text, encoding="utf-8")
-        repos[name] = root
-    return repos
+def write_sample_repo(base: Path, name: str, files: dict[str, str]) -> Path:
+    root = base / unicodedata.normalize("NFC", name)
+    root.mkdir(parents=True, exist_ok=True)
+    for rel, text in files.items():
+        target = root / unicodedata.normalize("NFC", rel)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(text, encoding="utf-8")
+    return root
+
+
+def _tail(outcome: dict) -> str:
+    return (outcome.get("stderr") or outcome.get("stdout") or "")[
+        -400:
+    ] or f"exit code {outcome.get('exit_code')}"
 
 
 def run_skill_smoke(base: Path, run: SkillRun, report: Callable[[str], None]) -> list[str]:
     """Run the host analysis scripts on every sample repo, then each validator once, through ``run``.
 
-    Returns the problems found and reports one line per script and sample. Repositories with no declarations must be
-    refused by requirement-analysis (it never invents requirements), so that refusal is the expected outcome there.
+    Returns the problems found and reports one line per script and sample. Each sample states whether it must yield
+    declarations; a sample with none must be refused by requirement-analysis with NO_DECLARATIONS_MARKER. A run that
+    raises is recorded as a problem and the remaining runs still happen.
     """
     problems: list[str] = []
 
@@ -297,42 +320,60 @@ def run_skill_smoke(base: Path, run: SkillRun, report: Callable[[str], None]) ->
         if not ok:
             problems.append(f"{label}: {detail}")
 
-    for sample, root in write_sample_repos(base).items():
-        source_files = sorted(p.relative_to(root).as_posix() for p in root.rglob("*") if p.is_file())
-        label = f"reverse-engineering [{sample}]"
-        started = time.monotonic()
-        analysis = run(
-            "reverse-engineering",
-            "scripts/analyze.py",
-            SMOKE_ARGS,
-            files={"request.json": json.dumps({"root": str(root), "source_files": source_files})},
-            output_json="output.json",
-        )
-        facts = (analysis.get("data") or {}).get("facts")
-        ok = analysis["exit_code"] == 0 and isinstance(facts, list)
-        check(label, started, ok, analysis["stderr"][-400:] or "no JSON output")
-        if not ok:
-            continue
-        label = f"requirement-analysis [{sample}]"
-        if not facts:
-            label += " (refusal expected: no declarations)"
-        started = time.monotonic()
-        draft = run(
-            "requirement-analysis",
-            "scripts/analyze.py",
-            SMOKE_ARGS,
-            files={
-                "request.json": json.dumps(
-                    {"analysis": analysis["data"], "app_name": sample, "knowledge": ""}
+    def call(*args, **kwargs) -> dict:
+        try:
+            return run(*args, **kwargs)
+        except Exception as exc:  # recorded as a failed run; never aborts the self-check
+            return {"exit_code": None, "stdout": "", "stderr": f"{type(exc).__name__}: {exc}", "data": None}
+
+    for name, sample in SAMPLE_REPOS.items():
+        try:
+            root = write_sample_repo(base, name, sample.files)
+            source_files = sorted(p.relative_to(root).as_posix() for p in root.rglob("*") if p.is_file())
+            started = time.monotonic()
+            analysis = call(
+                "reverse-engineering",
+                "scripts/analyze.py",
+                SMOKE_ARGS,
+                files={"request.json": json.dumps({"root": str(root), "source_files": source_files})},
+                output_json="output.json",
+            )
+            facts = (analysis.get("data") or {}).get("facts")
+            ok = analysis["exit_code"] == 0 and isinstance(facts, list) and bool(facts) == sample.expect_facts
+            detail = (
+                _tail(analysis)
+                if analysis["exit_code"] != 0
+                else f"{len(facts or [])} facts, expected {sample.expect_facts}"
+            )
+            check(f"reverse-engineering [{name}]", started, ok, detail)
+            if not ok:
+                continue
+            label = f"requirement-analysis [{name}]" + (
+                "" if sample.expect_facts else " (refusal expected: no declarations)"
+            )
+            started = time.monotonic()
+            draft = call(
+                "requirement-analysis",
+                "scripts/analyze.py",
+                SMOKE_ARGS,
+                files={
+                    "request.json": json.dumps(
+                        {"analysis": analysis["data"], "app_name": name, "knowledge": ""}
+                    )
+                },
+                output_json="output.json",
+            )
+            if sample.expect_facts:
+                ok = draft["exit_code"] == 0 and isinstance(draft.get("data"), dict)
+            else:
+                ok = (
+                    draft["exit_code"] not in (0, None)
+                    and NO_DECLARATIONS_MARKER in draft["stderr"]
+                    and draft.get("data") is None
                 )
-            },
-            output_json="output.json",
-        )
-        if facts:
-            ok = draft["exit_code"] == 0 and isinstance(draft.get("data"), dict)
-        else:
-            ok = draft["exit_code"] != 0 and "No supported callable declarations" in draft["stderr"]
-        check(label, started, ok, draft["stderr"][-400:] or "no JSON output")
+            check(label, started, ok, _tail(draft))
+        except Exception as exc:  # the sample itself could not be written or analysed
+            check(f"sample [{name}]", time.monotonic(), False, f"{type(exc).__name__}: {exc}")
 
     inputs = VALIDATOR_INPUTS
     validators = [
@@ -369,18 +410,27 @@ def run_skill_smoke(base: Path, run: SkillRun, report: Callable[[str], None]) ->
             "--seed 42",
         ),
     ]
-    # validate_design.py is not in SKILLS.lock.json, so the host runner refuses it; it is checked by the test suite only.
+    # validate_design.py is not in SKILLS.lock.json, so the host runner refuses it; the test suite import-checks it.
     report("  SKIP test-design-generator/scripts/validate_design.py: not hash-locked in SKILLS.lock.json")
     for skill, rel, args, files, expected, mode in validators:
-        label = f"{rel} [{mode}]"
         started = time.monotonic()
-        outcome = run(skill, rel, args, files={k: json.dumps(v) for k, v in files.items()})
+        outcome = call(skill, rel, args, files={k: json.dumps(v) for k, v in files.items()})
         ok = outcome["exit_code"] == 0 and expected in outcome["stdout"]
-        check(label, started, ok, (outcome["stderr"] or outcome["stdout"])[-400:])
+        check(f"{rel} [{mode}]", started, ok, _tail(outcome))
     return problems
 
 
-def self_check() -> int:
+def _console_safe() -> None:
+    """Child stderr can carry non-ASCII text; a cp1252 Windows console must not crash the report on it."""
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            stream.reconfigure(encoding="utf-8", errors="replace")
+        except (AttributeError, ValueError):  # not a reconfigurable text stream
+            pass
+
+
+def _self_check_steps() -> bool:
+    """Every check; returns True when any failed. Each step reports its own failure, so the rest still run."""
     missing = [
         str(p)
         for p in (
@@ -396,35 +446,60 @@ def self_check() -> int:
         missing.append(str(step_reports.TEMPLATES / "00-summary.md"))
     if missing:
         print("self-check FAILED, missing bundled resources:\n  " + "\n  ".join(missing), file=sys.stderr)
-        return 1
+        return True
     from maf_test_harness import cli
 
-    lint = cli.main(["lint-skills"])
+    try:
+        lint = cli.main(["lint-skills"])
+    except Exception:
+        traceback.print_exc()
+        lint = 1
     print(f"lint-skills {'OK' if not lint else 'FAILED'}", flush=True)
     failed = bool(lint)
-    imports = _unresolved_skill_imports()
+    try:
+        imports = _unresolved_skill_imports()
+    except Exception:
+        traceback.print_exc()
+        imports = ["<import audit raised>"]
     if imports:
         print(
             "self-check FAILED, skill script imports unavailable in this runtime:\n  " + "\n  ".join(imports),
             file=sys.stderr,
         )
         failed = True
-    with tempfile.TemporaryDirectory(prefix="maf-self-check-") as tmp:
-        outcome = _run_bundled_skill(Path(tmp))
+    try:
+        with tempfile.TemporaryDirectory(prefix="maf-self-check-") as tmp:
+            outcome = _run_bundled_skill(Path(tmp))
+    except Exception as exc:
+        outcome = {"exit_code": None, "stderr": f"{type(exc).__name__}: {exc}", "data": None}
     if outcome["exit_code"] != 0 or not isinstance(outcome.get("data"), dict):
         print(f"self-check FAILED, bundled skill script did not run:\n{outcome['stderr']}", file=sys.stderr)
         failed = True
-    from maf_test_harness.skills.scripts import HarnessScriptRunner
+    try:
+        from maf_test_harness.skills.scripts import HarnessScriptRunner
 
-    runner = HarnessScriptRunner(paths.skills_dir(), tiers=("host", "model"))
-    started = time.monotonic()
-    print("skill smoke (sample repositories and validators):", flush=True)
-    with tempfile.TemporaryDirectory(prefix="maf-self-check-") as tmp:
-        smoke = run_skill_smoke(Path(tmp), runner.run, lambda line: print(line, flush=True))
-    if smoke:
-        print("self-check FAILED, skill smoke:\n  " + "\n  ".join(smoke), file=sys.stderr)
+        runner = HarnessScriptRunner(paths.skills_dir(), tiers=("host", "model"))
+        started = time.monotonic()
+        print("skill smoke (sample repositories and validators):", flush=True)
+        with tempfile.TemporaryDirectory(prefix="maf-self-check-") as tmp:
+            smoke = run_skill_smoke(Path(tmp), runner.run, lambda line: print(line, flush=True))
+        if smoke:
+            print("self-check FAILED, skill smoke:\n  " + "\n  ".join(smoke), file=sys.stderr)
+            failed = True
+        print(f"skill smoke {'FAILED' if smoke else 'OK'} in {time.monotonic() - started:.1f}s", flush=True)
+    except Exception:
+        traceback.print_exc()
         failed = True
-    print(f"skill smoke {'FAILED' if smoke else 'OK'} in {time.monotonic() - started:.1f}s", flush=True)
+    return failed
+
+
+def self_check() -> int:
+    _console_safe()
+    try:
+        failed = _self_check_steps()
+    except Exception:  # whatever went wrong, the verdict line below is always printed
+        traceback.print_exc()
+        failed = True
     print(f"self-check {'FAILED' if failed else 'OK'} (resources: {paths.resource_root()})", flush=True)
     return int(failed)
 

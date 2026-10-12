@@ -190,6 +190,16 @@ def _store_alias(path: str) -> bool:
     return any("\\windowsapps\\" in p.lower().replace("/", "\\") for p in (path, str(Path(path).resolve())))
 
 
+def _search_path() -> str | None:
+    """PATH with the WindowsApps folders removed on Windows, so a bare python/python3 finds a real python.exe
+    (even when the alias comes first on PATH) and never the Store alias. None elsewhere: the normal PATH."""
+    if not platform_compat.IS_WINDOWS:
+        return None
+    return os.pathsep.join(
+        p for p in os.environ.get("PATH", "").split(os.pathsep) if p and "windowsapps" not in p.lower()
+    )
+
+
 def _probe_python(argv: list[str]) -> tuple[str, str] | None:
     """(version, executable) of the interpreter ``argv`` starts; None when it does not run as Python 3."""
     if _store_alias(argv[0]):
@@ -237,13 +247,19 @@ def _scan_interpreters(frozen: bool) -> tuple[Toolchain, ...]:
     if not frozen:
         add(sys.executable, ".".join(map(str, sys.version_info[:3])))
     names = [f"python3.{minor}" for minor in range(8, 15)]
-    # Bare names only where they cannot be a Windows alias; on Windows the `py` launcher and versioned names cover it.
-    if frozen and not platform_compat.IS_WINDOWS:
+    if (
+        frozen
+    ):  # the frozen app's own name is no Python, so the bare names are searched too (WindowsApps excluded)
         names = ["python3", "python", *names]
+    search = _search_path()
     for name in names:
-        if (path := shutil.which(name)) and not _store_alias(path) and (probe := _probe_python([path])):
+        if (
+            (path := shutil.which(name, path=search))
+            and not _store_alias(path)
+            and (probe := _probe_python([path]))
+        ):
             add(path, probe[0])
-    if platform_compat.IS_WINDOWS and (py := shutil.which("py")) and not _store_alias(py):
+    if platform_compat.IS_WINDOWS and (py := shutil.which("py", path=search)) and not _store_alias(py):
         if probe := _probe_python([py, "-3"]):
             add(probe[1], probe[0])
         for line in _run([py, "-0p"]).splitlines():
