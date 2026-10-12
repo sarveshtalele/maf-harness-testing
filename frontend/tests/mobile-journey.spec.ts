@@ -60,7 +60,7 @@ test('review gates have no horizontal overflow at 390px', async ({ page, request
     await expect(tabButton).toHaveAttribute('aria-pressed', 'true');
     await expectNoHorizontalScroll(page, `tab ${tab}`);
   }
-  for (const pageName of ['Runs', 'New run', 'Agent skills', 'Configuration']) {
+  for (const pageName of ['Runs', 'New run', 'Marketplace', 'Configuration']) {
     const navButton = page.getByRole('navigation', { name: 'Main navigation' }).getByRole('button', { name: new RegExp(`^${pageName}\\b`) });
     await navButton.click();
     await expect(navButton).toHaveClass(/active/);
