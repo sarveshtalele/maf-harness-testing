@@ -14,18 +14,15 @@ Agentic QE Platform: a Next.js UI and a loopback Python API over a checkpointed 
 - Never bypass the skill lock (`skills/SKILLS.lock.json`), plugin approval, or the clone, install and run approval gates.
 - Ask before deleting files, rewriting user evidence, force-pushing or pushing to `main`.
 - After editing a locked skill file, refresh only its hash in `skills/SKILLS.lock.json`.
-- After adding, moving or removing a `.py` or `.ts` file, run `python scripts/gen_architecture.py`.
+- After adding, moving or removing a `.py` file under `src/`, `scripts/` or `skills/`, or a `.ts` file under `frontend/app`, `frontend/components` or `frontend/lib`, run `python scripts/gen_architecture.py`.
 
 ## Test commands
 
 ```bash
-uv sync --extra dev
-uv run pytest -q --ignore=tests/targets
-uv run ruff check src tests scripts && uv run ruff format --check src tests scripts
-uv run maf-harness lint-skills --strict
-python scripts/gen_architecture.py --check
-cd frontend && npm ci --include=dev && npm run typecheck && npm run build
-cd desktop && npm ci && npm test
+uv sync --locked --extra dev
+uv run python scripts/check_all.py      # the full merge gate; add --skip-ui or --skip-desktop to skip a group
 ```
+
+Single steps, when you need only one: `uv run pytest -q --ignore=tests/targets`, `uv run ruff check src tests scripts`, `uv run maf-harness lint-skills --strict`, `uv run python scripts/gen_architecture.py --check`. From the frontend: `cd frontend && npm ci --include=dev && npm run typecheck && npm run build`. From the desktop folder, which is `../desktop` when you start in `frontend/`: `cd ../desktop && npm ci && npm test`.
 
 Tests that bind local ports (launcher, Playwright) need a shell without sandbox restrictions.

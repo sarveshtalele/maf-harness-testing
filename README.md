@@ -174,7 +174,7 @@ git checkout -b feature/<short-name> develop
 
 **4. Add or adjust tests.** Put them next to the existing ones in `tests/` (or `frontend/tests/` for browser journeys, `desktop/src/*.test.ts` for the shell). Layers are in [docs/DEVELOPER_GUIDE.md](docs/DEVELOPER_GUIDE.md) section 6.
 
-**5. Update docs in the same commit.** If you change behaviour in an area, update its `CLAUDE.md` and the relevant `docs/*.md`. If you add, remove, move or re-wire a `.py` or `.ts` file, regenerate the map:
+**5. Update docs in the same commit.** If you change behaviour in an area, update its `CLAUDE.md` and the relevant `docs/*.md`. If you add, remove, move or re-wire a `.py` file under `src/`, `scripts/` or `skills/`, or a `.ts` file under `frontend/app`, `frontend/components` or `frontend/lib`, regenerate the map:
 
 ```bash
 uv run python scripts/gen_architecture.py
@@ -183,31 +183,11 @@ uv run python scripts/gen_architecture.py
 **6. Run the local checks.** Run them from the repository root.
 
 ```bash
-uv sync --python 3.12 --extra dev --extra e2e
-uv run ruff check src tests scripts
-uv run ruff format --check src tests scripts
-uv run maf-harness lint-skills --strict
-uv run pytest -q --ignore=tests/targets
-uv run python scripts/gen_architecture.py --check
-cd frontend
-npm run typecheck
-npm run build
-cd ..
-cd desktop
-npm test
-cd ..
+uv sync --locked --python 3.12 --extra dev --extra e2e
+uv run python scripts/check_all.py      # the full merge gate: lint, map, skills, pytest, frontend, desktop
 ```
 
-Run the browser tests when UI behaviour changes. They need the production build first, `PYTHONPATH` pointing at your `src` folder and a dummy key:
-
-```bash
-cd frontend
-npx playwright install chromium
-npm run build
-PYTHONPATH=<repo>/src OPENAI_API_KEY=dummy npm test
-```
-
-On Windows PowerShell: `$env:PYTHONPATH="<repo>\src"; $env:OPENAI_API_KEY="dummy"; npm test`. Tests that bind ports need to run outside a restrictive sandbox.
+`check_all.py` sets `PYTHONPATH` and a dummy `OPENAI_API_KEY` for the browser tests. Install the frontend and desktop dependencies first (`npm ci --include=dev` in `frontend/`, `npm ci` in `desktop/`), or skip those groups with `--skip-ui` or `--skip-desktop`. Tests that bind ports need to run outside a restrictive sandbox.
 
 If you change a locked skill file, refresh only its hash in `skills/SKILLS.lock.json` and rerun `lint-skills --strict`. See [docs/SKILL_PLUGINS.md](docs/SKILL_PLUGINS.md).
 
@@ -217,7 +197,7 @@ If you change a locked skill file, refresh only its hash in `skills/SKILLS.lock.
 <type>(<optional scope>): <imperative summary>
 ```
 
-Types: `feat`, `fix`, `docs`, `chore`, `test`, `refactor`, `ci`. Examples: `feat(evidence): resolve bare symbol targets`, `fix(ui): keep run table sorted`.
+Types: `feat`, `fix`, `docs`, `chore`, `test`, `refactor`, `ci`, `build`, `style`. Examples: `feat(evidence): resolve bare symbol targets`, `fix(ui): keep run table sorted`.
 
 **8. Push the branch and open a pull request into `develop`.**
 

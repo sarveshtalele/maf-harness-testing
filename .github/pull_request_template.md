@@ -15,19 +15,14 @@
 - [ ] test
 - [ ] refactor
 - [ ] ci
+- [ ] build
+- [ ] style
 
 ## Merge gate
 
 Contributors tick the items relevant to the change; the orchestrator runs the full merge gate before merge.
 
-- [ ] `uv run pytest -q --ignore=tests/targets` passes with 0 failures
-- [ ] `uv run ruff check src tests scripts` passes
-- [ ] `uv run ruff format --check src tests scripts` passes
-- [ ] `uv run python scripts/gen_architecture.py --check` passes (`docs/ARCHITECTURE_MAP.md` is current)
-- [ ] `uv run maf-harness lint-skills --strict` passes (skills or plugins changed)
-- [ ] Frontend: `npm run typecheck` and `npm run build` pass (frontend changed)
-- [ ] Playwright suite passes with `PYTHONPATH=<worktree>/src` and a dummy `OPENAI_API_KEY` (UI changed)
-- [ ] Desktop: `npm test` in `desktop/` passes (desktop changed)
+- [ ] `uv run python scripts/check_all.py` passes (ruff, architecture map, version files, skills lint, pytest, frontend typecheck/build/Playwright, desktop tests). If you skipped a group with `--skip-ui` or `--skip-desktop`, say why.
 - [ ] Cross-OS considered: Windows, macOS and Linux paths, subprocesses, encoding
 - [ ] Docs updated: the `CLAUDE.md` of each changed directory, plus `docs/` where behaviour changed
 - [ ] No secrets, `.env`, run evidence or `agent-framework.pdf` committed

@@ -233,3 +233,40 @@ def test_main_reports_setup_errors_as_failure(tmp_path, monkeypatch, capsys):
     monkeypatch.setattr(ds, "RELEASE_DIR", tmp_path)
     assert ds.main([]) == 1
     assert "desktop smoke: FAIL (no installer)" in capsys.readouterr().out
+
+
+def test_uninstall_3010_is_a_failure_not_a_success(tmp_path, monkeypatch):
+    install_dir = tmp_path / "Agentic QE"
+    log = tmp_path / "uninstall.log"
+    monkeypatch.setattr(ds, "_run", lambda argv, env, timeout: ds.Run(3010, ""))
+    with pytest.raises(ds.SmokeError, match="3010"):
+        ds.windows_uninstall(Path("x.msi"), install_dir, log)
+
+
+def test_uninstall_success_still_requires_the_install_folder_gone(tmp_path, monkeypatch):
+    install_dir = tmp_path / "Agentic QE"
+    install_dir.mkdir()
+    monkeypatch.setattr(ds, "_run", lambda argv, env, timeout: ds.Run(0, ""))
+    with pytest.raises(ds.SmokeError, match="still present"):
+        ds.windows_uninstall(Path("x.msi"), install_dir, tmp_path / "u.log")
+    install_dir.rmdir()
+    ds.windows_uninstall(Path("x.msi"), install_dir, tmp_path / "u.log")
+
+
+def test_leftover_services_fail_the_run(monkeypatch):
+    monkeypatch.setattr(ds, "leftover_processes", lambda system: ["4242 maf-backend.exe"])
+    monkeypatch.setattr(ds, "LEFTOVER_WAIT", 0)
+    with pytest.raises(ds.SmokeError, match="outlived the app: 4242 maf-backend.exe"):
+        ds.assert_no_leftovers("Windows")
+
+
+def test_no_leftover_services_pass(monkeypatch):
+    monkeypatch.setattr(ds, "leftover_processes", lambda system: [])
+    ds.assert_no_leftovers("Linux")
+
+
+def test_leftover_wait_gives_children_time_to_exit(monkeypatch):
+    seen = iter([["9 server.js"], ["9 server.js"], []])
+    monkeypatch.setattr(ds, "leftover_processes", lambda system: next(seen))
+    monkeypatch.setattr(ds.time, "sleep", lambda s: None)
+    ds.assert_no_leftovers("Darwin")

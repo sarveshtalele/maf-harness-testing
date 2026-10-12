@@ -96,32 +96,20 @@ uv run maf-harness verify-run .maf-harness/runs/<run-id>
 ### 1.5 Run the desktop shell in dev mode
 
 ```bash
+uv sync --locked --extra dev
 cd frontend
 npm ci --include=dev
-DESKTOP_BUILD=1 npm run build
-cd ..
-cd desktop
+npm run build          # no DESKTOP_BUILD: the shell falls back to `next start`
+cd ../desktop
 npm ci
-npm start
+npm start              # tsc, then electron .
 ```
 
-PowerShell (Windows):
-
-```powershell
-cd frontend
-npm ci --include=dev
-$env:DESKTOP_BUILD="1"; npm run build; Remove-Item Env:DESKTOP_BUILD
-cd ..\desktop
-npm ci
-npm start
-```
-
-`npm start` compiles the shell with `tsc` and then starts Electron. Packaging and the first-run notes for unsigned builds are in [DESKTOP.md](DESKTOP.md).
+PowerShell (Windows) runs the same commands; use `cd ..\desktop`. Do not set `DESKTOP_BUILD=1` for a dev run, because its standalone output needs static files that only `scripts/build_desktop.py` copies (see [DESKTOP.md](DESKTOP.md)). Packaging and the first-run notes for unsigned builds are in [DESKTOP.md](DESKTOP.md).
 
 ### 1.6 Run each test layer
 
-| Layer | Command |
-|---|---|
+| Full merge gate, in order (all layers below) | `uv run python scripts/check_all.py` (`--skip-ui`, `--skip-desktop` to skip a group) |
 | Python unit, component and workflow tests | `uv run pytest -q --ignore=tests/targets` |
 | One file or one test subset | `uv run pytest -q tests/test_triage.py -k remedy` |
 | Python lint | `uv run ruff check src tests scripts` |
@@ -163,7 +151,7 @@ $env:PYTHONPATH="<repo>\src"; $env:OPENAI_API_KEY="dummy"; npm test
 uv run python scripts/gen_architecture.py
 ```
 
-`gen_architecture.py --check` exits 1 when the file is stale. CI runs `--check` on Linux with Python 3.12, and `tests/test_architecture_map.py` also fails.
+`gen_architecture.py --check` exits 1 when the file is stale. The map covers `.py` files under `src/`, `scripts/` and `skills/`, and `.ts` files under `frontend/app`, `components` and `lib`; `desktop/src` is not mapped. CI runs `--check` on Linux with Python 3.12, and `tests/test_architecture_map.py` also fails.
 
 ### 1.8 Skill lint
 
@@ -186,7 +174,7 @@ Recipes for adding skills are in section 4.
 
 1. Branch from `develop`: `git checkout -b feature/<short-name> develop`.
 2. Make one logical change per commit. Use Conventional Commits (section 7).
-3. Run the checks in section 1.6, plus section 1.7 and section 1.8 when relevant.
+3. Run `uv run python scripts/check_all.py` (section 1.6). Section 1.7 and section 1.8 cover the map and the skill lock when they apply.
 4. Push the branch and open a pull request into `develop`.
 5. Wait for green checks: workflow `ci` (jobs `test` and `secrets-scan`) and workflow `Local UI compatibility` (job `local-ui`, from `ui.yml`). Desktop `npm test` runs in `ui.yml`; run it locally for desktop changes.
 6. Get a review. The repository owner sets up CODEOWNERS review rules; see [RELEASING.md](RELEASING.md). Security-sensitive changes (plugins, MCP, secrets, desktop) need extra care in review.
@@ -365,7 +353,7 @@ uv run python scripts/build_desktop.py                # PyInstaller backend, DES
 Each OS must be built on its own runner. Unsigned builds, first-run instructions and environment variables: [DESKTOP.md](DESKTOP.md). The shell itself: [desktop/CLAUDE.md](../desktop/CLAUDE.md).
 
 ### Release
-Cut `release/x.y` from `develop`, bump `pyproject.toml` and `frontend/package.json` to the same version (`python scripts/check_version.py` verifies), QA the installers, PR to `main`, tag `vX.Y.Z`; the tag starts the `desktop-release` workflow which makes a draft GitHub Release. Full procedure and owner checklist: [RELEASING.md](RELEASING.md). Add a dated entry to the "Core memory log" via the orchestrator (do not edit `memory.md` yourself).
+Bump the six version fields in one commit on `develop` (`python scripts/check_version.py` verifies them), merge `develop` into `main`, tag `vX.Y.Z`. The tag starts the `desktop-release` workflow, which requires the tag commit to be on `main`, runs `ci` and `ui`, builds the installers and makes a draft GitHub Release with checksums. Release candidates use `vX.Y.Z-rcN`. Full procedure and owner checklist: [RELEASING.md](RELEASING.md). Add a dated entry to the "Core memory log" via the orchestrator (do not edit `memory.md` yourself).
 
 ## 5. Debugging
 
@@ -415,7 +403,7 @@ Notes:
 - Playwright needs `PYTHONPATH=<worktree>/src` so the fixture server imports the code under test, and a dummy `OPENAI_API_KEY` (any non-empty value; the fixture server also marks the key as configured). The Python used is `HARNESS_TEST_PYTHON` or `../.venv`.
 - Tests that bind ports (launcher, Playwright) fail inside restrictive sandboxes; run them unsandboxed.
 - CI (`.github/workflows/ci.yml`, `ui.yml`) runs ubuntu/windows/macos; keep tests OS-neutral.
-- Pre-merge gate: full pytest 0 failures, ruff check+format, `lint-skills --strict`, `gen_architecture.py --check`, frontend `tsc` and `next build --webpack`, Playwright, desktop `npm test`.
+- Pre-merge gate: `uv run python scripts/check_all.py` (ruff check and format, architecture map, version files, `lint-skills --strict`, pytest with 0 failures, frontend typecheck, `next build --webpack` and Playwright, desktop `npm test`).
 
 ## 7. Coding conventions
 
@@ -426,7 +414,7 @@ Notes:
 - **Prompts:** language-neutral; language rules only in `LANGUAGE_RULES` and `skills/generic-test-generator/references/<lang>.md`; register section keys in `llm/prompts.py`.
 - **Skills:** hash-locked; after editing a locked file refresh its hash and run `lint-skills --strict`.
 - **Style:** ruff check and format (`pyproject.toml`), type hints on new public functions, small modules with a module docstring (the architecture map reads it), comments explain why.
-- **Git:** Conventional Commits (`feat`, `fix`, `docs`, `chore`, `test`, `refactor`, `ci`), one logical change per commit, PRs into `develop`; never push to `main`/`develop` directly (the orchestrator merge described in CLAUDE.md is the only exception). Agents work in worktrees and never stash or push.
+- **Git:** Conventional Commits (`feat`, `fix`, `docs`, `chore`, `test`, `refactor`, `ci`, `build`, `style`), one logical change per commit, PRs into `develop`; never push to `main`/`develop` directly (the orchestrator merge described in CLAUDE.md is the only exception). Agents work in worktrees and never stash or push.
 - **TypeScript versions differ on purpose:** `frontend/` pins TypeScript 7.0.2 (exact, in `package-lock.json`) with Next.js 16; `desktop/` uses TypeScript `^5.9.0` (locked to 5.x in its `package-lock.json`). The two packages are separate npm toolchains with separate lockfiles, so each keeps the compiler it was tested with. Do not align them without testing both.
 - **Request logging is silenced on purpose:** `ui/api.py` `Handler.log_message` is a no-op because URLs and feedback can contain sensitive repository information. There is no supported switch to turn request logs on. For a local debugging session, temporarily call `super().log_message` in that method and do not commit it. Service and launcher logs are unaffected (see section 5).
 - **Docs travel with code:** update the directory `CLAUDE.md`, this guide or the relevant `docs/*.md`, and regenerate the architecture map in the same commit. Dated reports and `docs/audit/` are historical: do not edit.

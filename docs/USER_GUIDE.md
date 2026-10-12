@@ -94,6 +94,14 @@ On macOS 15 (Sequoia) and later, right-click → **Open** no longer bypasses thi
    ./Agentic-QE-*-linux-x86_64.AppImage --appimage-extract-and-run
    ```
 
+3. On Ubuntu 23.10 and later, AppArmor can block the user namespaces that the app's sandbox needs. The app then exits with a `chrome-sandbox` error. Either ask an administrator to allow the sandbox for the app through an AppArmor profile, or start the app with `--no-sandbox`:
+
+   ```bash
+   ./Agentic-QE-*-linux-x86_64.AppImage --no-sandbox
+   ```
+
+   `--no-sandbox` removes one isolation layer of the app's window. Use it only on a machine you trust.
+
 ## Set your model API key
 
 1. Open the app and go to **Configuration**.
@@ -165,10 +173,19 @@ Test that a clone works from a terminal before you start a run.
 
 ## Update the app
 
-1. Open the [latest release](https://github.com/sarveshtalele/maf-harness-testing/releases/latest) and download the installer for your system.
-2. Install it over the old version. Your runs and settings stay in the data folder (see below).
+1. Close the app.
+2. Open the [latest release](https://github.com/sarveshtalele/maf-harness-testing/releases/latest) and download the installer for your system.
+3. Install it over the old version. Your runs and settings stay in the data folder (see below).
 
 Help, then **Check for updates** opens the Releases page. The app does not update itself.
+
+### Roll back to an older version
+
+- **Windows:** the installer refuses to install an older version over a newer one. Uninstall the current version first (**Settings**, **Apps**, **Agentic QE**, **Uninstall**), then run the older installer. Your runs, settings and API key are kept.
+- **macOS:** move the current `Agentic QE.app` out of Applications, then copy the older app in.
+- **Linux:** delete the current `.AppImage` and keep the older one.
+
+Runs created by a newer version are not guaranteed to open in an older one. Keep the newer installer until you have checked the older version.
 
 ## Uninstall the app
 

@@ -1,11 +1,12 @@
 # Agentic QE Platform — contributor guidance
 
-Branches: `develop` (default, integration), `main` (releases), `release/*`, `feature/*`; `main` README is the user guide (docs/RELEASING.md). Product: Agentic QE Platform. It is a Next.js UI plus a loopback Python HTTP API over the checkpointed Microsoft Agent Framework Harness, shipped both as a local launcher (Node.js 24, Python 3.12) and as an Electron desktop app (`desktop/`). It covers brownfield (repository) and greenfield (specs from documents or Jira Cloud) runs, and generates unit and integration tests. Plan: `docs/plans/PLAN_2026-10-10_DESKTOP_GREENFIELD.md`.
+Branches: `develop` (default, integration), `main` (releases), `release/*`, `feature/*`; `main` README is the user guide (docs/RELEASING.md). Product: Agentic QE Platform. It is a Next.js UI plus a loopback Python HTTP API over the checkpointed Microsoft Agent Framework Harness, shipped both as a local launcher (Node.js 24, Python 3.12) and as an Electron desktop app (`desktop/`). It covers brownfield (repository) and greenfield (specs from documents or Jira Cloud) runs, and generates unit and integration tests. Plan: `docs/plans/PLAN_2026-10-12_PRODUCTION_READINESS.md` (the 2026-10-10 desktop plan is historical).
 
 ## Commands
 
 ```bash
 uv sync --extra dev
+uv run python scripts/check_all.py      # the merge gate: everything below, in order (--skip-ui, --skip-desktop)
 ./start-macos.command                 # macOS; Windows: start-windows.cmd; Linux: bash start-linux.sh
 uv run maf-harness run https://github.com/owner/repo
 uv run maf-harness trace .maf-harness/runs/<run-id>
@@ -95,13 +96,7 @@ Every change must work on Windows, macOS and Linux; pathlib; explicit encoding="
   - The orchestrator creates them under the session scratchpad: `git worktree add -b task-<id> <scratchpad>/wt/task-<id> develop`. Never put them inside the repo `.claude/`, which the shell sandbox can't write.
   - Agents work only in their worktree, commit early and often, and never stash or push.
 - **Merging.** Only Opus merges, through `git merge-tree` + `commit-tree` into `develop` while a live run uses the main checkout, or a normal merge otherwise. It then pushes `develop`. `main` only moves for releases (see docs/RELEASING.md).
-- **Gate before merge.** All of these must pass:
-  - full pytest outside the sandbox (expect 0 failures);
-  - ruff check and format;
-  - `lint-skills --strict` and `gen_architecture.py --check`;
-  - frontend tsc and `next build --webpack`;
-  - Playwright with `PYTHONPATH=<worktree>/src` and a dummy `OPENAI_API_KEY`;
-  - desktop `npm test`.
+- **Gate before merge.** `uv run python scripts/check_all.py` must pass, run outside the sandbox. It runs ruff check and format, `gen_architecture.py --check`, `check_version.py`, `lint-skills --strict`, full pytest (0 failures expected), the frontend typecheck, `next build --webpack` and Playwright (with `PYTHONPATH` and a dummy `OPENAI_API_KEY`), and the desktop `npm test`. Use `--skip-ui` or `--skip-desktop` only when that area is untouched, and say so in the report.
 - **Memory.** `memory.md` is the project log. Before any significant decision or action, append a `BEFORE` line to its Action log: intent, scope, risk. After it, append an `AFTER` line: result, commit and verification. Dated "Core memory log" entries summarise each task or wave.
 
 ## Permissions (what Claude may and may not do here)

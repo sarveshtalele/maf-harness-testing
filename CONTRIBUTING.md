@@ -13,14 +13,13 @@ Read first:
 | Branch | Purpose | Merges into |
 |---|---|---|
 | `feature/*` | New work | `develop`, by pull request |
-| `release/x.y` | Cut from `develop` for QA | `main`, by pull request |
-| `hotfix/*` | Urgent fix, cut from `main` | `main`, by pull request, then back to `develop` |
 | `develop` | Integration branch and default branch | |
-| `main` | Released code only | Tagged `vX.Y.Z` |
+| `main` | Released code only; its README is the user guide | Tagged `vX.Y.Z` (see [RELEASING.md](docs/RELEASING.md)) |
+
+`release/x.y` and `hotfix/*` branches are not used today; releases are made from `develop` merged into `main`.
 
 - Do not push directly to `main` or `develop` (the orchestrator merge described in CLAUDE.md is the only exception).
 - Open pull requests into `develop`. The repository owner sets branch protection (see [RELEASING.md](docs/RELEASING.md)). On the current GitHub plan these rules may not be enforced by GitHub, so follow the rule anyway.
-- After a hotfix reaches `main`, merge `main` back into `develop`.
 
 ## Pull requests
 
@@ -42,35 +41,22 @@ Use Conventional Commits:
 <type>(<optional scope>): <imperative summary>
 ```
 
-Types: `feat`, `fix`, `docs`, `chore`, `test`, `refactor`, `ci`.
+Types: `feat`, `fix`, `docs`, `chore`, `test`, `refactor`, `ci`, `build`, `style`.
 
 Examples: `feat(evidence): resolve bare symbol targets`, `fix(ui): keep run table sorted`, `ci: pin checkout action`.
 
 ## Local checks
 
-Run these from the repository root before you open a pull request. The full list and the Playwright steps are in [docs/DEVELOPER_GUIDE.md](docs/DEVELOPER_GUIDE.md), section 1.6.
+Run the merge gate from the repository root before you open a pull request:
 
 ```bash
-uv sync --extra dev
-uv run ruff check src tests scripts
-uv run ruff format --check src tests scripts
-uv run maf-harness lint-skills --strict
-uv run pytest -q --ignore=tests/targets
-uv run python scripts/gen_architecture.py --check
-cd frontend
-npm ci --include=dev
-npm run typecheck
-npm run build
-cd ..
-cd desktop
-npm ci
-npm test
-cd ..
+uv sync --locked --extra dev
+uv run python scripts/check_all.py
 ```
 
-Run the Playwright tests when UI behaviour changes. Desktop `npm test` runs in `ui.yml`; run it locally when you change `desktop/`.
+`check_all.py` runs, in order: ruff check and format, the architecture map check, the version files check, `lint-skills --strict`, pytest, the frontend typecheck, build and Playwright tests, and the desktop shell tests. It prints a summary and exits non-zero if any step fails. Use `--skip-ui` or `--skip-desktop` only when that area is untouched. The frontend steps need `npm ci --include=dev` in `frontend/` and `npm ci` in `desktop/` first. Details are in [docs/DEVELOPER_GUIDE.md](docs/DEVELOPER_GUIDE.md), section 1.6.
 
-If you add, remove or move a `.py` or `.ts` file, regenerate the architecture map with `uv run python scripts/gen_architecture.py`. Never edit `docs/ARCHITECTURE_MAP.md` by hand.
+If you add, remove or move " + MAP_RULE + ", regenerate the architecture map with `uv run python scripts/gen_architecture.py`. Never edit `docs/ARCHITECTURE_MAP.md` by hand. `desktop/src` is not part of the map.
 
 ## Cross-OS rule
 
@@ -79,7 +65,7 @@ Every change must work on Windows, macOS and Linux.
 - Use `pathlib` and `encoding="utf-8"` explicitly.
 - Run subprocesses through `run_command` or `run_cancellable`, which use process groups. Never use `shell=True`.
 - Keep the launchers thin (`start-windows.cmd`, `start-macos.command`, `start-linux.sh`). They delegate to `scripts/start_ui.py`.
-- Node 24 is enforced by `engines`, `frontend/.npmrc` and `frontend/.nvmrc`. Python is `>=3.11` (`requires-python`); CI tests 3.11 and 3.12, and the launchers use 3.12.
+- Node 24 is enforced by `engines`, `.npmrc` (`engine-strict`) and `.nvmrc` in both `frontend/` and `desktop/`. Python is `>=3.11` (`requires-python`); CI tests 3.11 and 3.12, and the launchers use 3.12.
 
 ## Secrets and run evidence
 

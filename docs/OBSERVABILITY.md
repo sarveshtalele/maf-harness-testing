@@ -84,6 +84,8 @@ pip install opentelemetry-sdk opentelemetry-exporter-otlp   # not a hard depende
 export HARNESS_OTEL=console          # or: otlp, with OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4317
 ```
 
+Set these in the shell environment. The `.env` loader reads only `OPENAI_*`, `LLM_MODEL` and `HARNESS_*` names, so an `OTEL_*` entry in `.env` is ignored.
+
 The mode and outcome are stored in `state.telemetry` and shown under *Integrity checks*. Prompts, responses and tool arguments are never exported by the harness.
 
 ## 6. Verification
