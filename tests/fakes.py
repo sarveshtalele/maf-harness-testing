@@ -167,7 +167,12 @@ class ScriptedStageRuntime:
         files = []
         for case in prompt["approved_inputs"]["approved_cases"]:
             slug = "".join(ch if ch.isalnum() else "_" for ch in case["title"]).strip("_").lower()
-            body = self.test_body if case["title"] == "add returns sum" else "assert add(2, 2) == 5"
+            if case["title"] == "add returns sum":
+                body = self.test_body
+            elif case["title"].startswith("add returns sum"):
+                body = "assert add(1, 2) == 3"  # extra case from the browser fixture: always passes
+            else:
+                body = "assert add(2, 2) == 5"
             files.append(
                 {
                     "path": f"tests/test_{slug}.py",

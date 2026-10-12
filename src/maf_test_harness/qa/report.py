@@ -27,9 +27,41 @@ def design_cases(design: dict[str, Any]) -> list[dict[str, Any]]:
 CASE_COLUMNS = ("Sno", "Requirement ID", "Test Case ID", "Test Case Description", "Steps", "Expected Result")
 
 
-def case_table_rows(design: dict[str, Any]) -> list[dict[str, Any]]:
-    """The QA test-case table: one row per case, grouped by category; Sno restarts at 1 in each group.
+def _flat(value: Any) -> str:
+    """Single-line text for list items; None becomes an empty string."""
+    return " ".join(str(value if value is not None else "").split())
 
+
+def case_requirement_ids(case: dict[str, Any], requirements: dict[str, Any] | None = None) -> list[str]:
+    """Requirement IDs for one case, resolved the way the host does.
+
+    Direct ``requirement`` links first, then the parent requirement of each linked acceptance criterion (from the
+    requirements artifact). Only when neither exists, the raw link IDs (validation, api_contract) are used.
+    """
+    links = [link for link in case.get("traceability_links") or [] if isinstance(link, dict)]
+    model = (requirements or {}).get("requirement_model") or {}
+    parent_of = {
+        str(item.get("id")): str(item.get("requirement_id"))
+        for item in model.get("acceptance_criteria") or []
+        if isinstance(item, dict) and item.get("requirement_id")
+    }
+    ids = [str(link.get("id")) for link in links if link.get("type") == "requirement"]
+    ids += [
+        parent_of[str(link.get("id"))]
+        for link in links
+        if link.get("type") == "acceptance_criterion" and str(link.get("id")) in parent_of
+    ]
+    if not ids:
+        ids = [str(link.get("id")) for link in links]
+    return list(dict.fromkeys(item for item in ids if item and item != "None"))
+
+
+def case_table_rows(
+    design: dict[str, Any], requirements: dict[str, Any] | None = None
+) -> list[dict[str, Any]]:
+    """One row per case, grouped by category; Sno restarts at 1 in each group.
+
+    Carries every field a reviewer needs (priority, level, actor, target, preconditions, data notes, all links).
     Older runs without ``steps`` yield an empty list (rendered as a dash).
     """
     rows: list[dict[str, Any]] = []
@@ -39,25 +71,30 @@ def case_table_rows(design: dict[str, Any]) -> list[dict[str, Any]]:
                 {
                     "group": group,
                     "sno": sno,
-                    "requirement_id": ", ".join(
-                        dict.fromkeys(
-                            link["id"]
-                            for link in case.get("traceability_links") or []
-                            if link.get("type") == "requirement"
-                        )
-                    ),
+                    "requirement_ids": case_requirement_ids(case, requirements),
                     "id": case.get("id", ""),
                     "title": case.get("title", ""),
                     "description": case.get("description", ""),
+                    "priority": case.get("priority", ""),
+                    "level": case.get("level", ""),
+                    "actor": case.get("actor", ""),
+                    "target": case.get("target", ""),
+                    "preconditions": [str(item) for item in case.get("preconditions") or []],
+                    "data_notes": case.get("data_notes", ""),
                     "steps": [str(step) for step in case.get("steps") or []],
                     "expected_result": case.get("expected_result", ""),
+                    "links": [
+                        f"{link.get('type', '')}:{link.get('id', '')}"
+                        for link in case.get("traceability_links") or []
+                        if isinstance(link, dict)
+                    ],
                 }
             )
     return rows
 
 
 def render_case_table(rows: list[dict[str, Any]]) -> str:
-    """Markdown for the six-column table, one table per non-empty category, steps numbered inside the cell."""
+    """Markdown: one six-column table per non-empty category, then a details list for the remaining fields."""
     out: list[str] = []
     for group in SECTIONS:
         cases = [row for row in rows if row["group"] == group]
@@ -77,8 +114,17 @@ def render_case_table(rows: list[dict[str, Any]]) -> str:
                 title = f"{title} — {md_cell(description)}"
             steps = " ".join(f"{i}) {step}" for i, step in enumerate(row["steps"], 1))
             out.append(
-                f"| {row['sno']} | {md_cell(row['requirement_id']) or '—'} | {md_cell(row['id'])} | {title} "
+                f"| {row['sno']} | {md_cell(', '.join(row['requirement_ids'])) or '—'} | {md_cell(row['id'])} | {title} "
                 f"| {md_cell(steps) or '—'} | {md_cell(row['expected_result'])} |"
+            )
+        out += ["", f"**{group.title()} case details**", ""]
+        for row in cases:
+            out.append(
+                f"- {_flat(row['id'])}: priority {_flat(row['priority']) or '—'}, level {_flat(row['level']) or '—'}, "
+                f"actor {_flat(row['actor']) or '—'}, target {_flat(row['target']) or '—'}. "
+                f"Preconditions: {'; '.join(_flat(item) for item in row['preconditions']) or 'none'}. "
+                f"Data: {_flat(row['data_notes']) or 'none'}. "
+                f"Links: {', '.join(_flat(link) for link in row['links']) or 'none'}."
             )
     return "\n".join(out).lstrip("\n") or "_None._"
 
@@ -171,7 +217,7 @@ def build_qa_report(
             }
         )
     cases.sort(key=lambda c: (-(c.get("confidence") or 0), c["id"]))
-    test_cases = case_table_rows(design)
+    test_cases = case_table_rows(design, requirements)
     by_id = {c["id"]: c for c in cases}
     coverage = []
     for req in requirements.get("requirement_model", {}).get("requirements", []):

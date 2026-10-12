@@ -17,7 +17,14 @@ for (const { name, size } of viewports) {
       const labelBox = (await label.boundingBox())!;
       const inputBox = (await label.locator('input').boundingBox())!;
       // Text top: the rectangle of the label's own text node, not of the input inside it.
-      const textTop = await label.evaluate(el => { const range = document.createRange(); range.selectNodeContents(el.firstChild!); return range.getBoundingClientRect().top; });
+      const textTop = await label.evaluate(el => {
+        // First non-empty text node of the label, whatever element comes first.
+        const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT);
+        let node = walker.nextNode();
+        while (node && !(node.textContent || '').trim()) node = walker.nextNode();
+        const range = document.createRange(); range.selectNodeContents(node!);
+        return range.getBoundingClientRect().top;
+      });
       expect(inputBox.y - textTop, `input below label text ${i}`).toBeGreaterThanOrEqual(10);
       expect(labelBox.width, `label box width ${i}`).toBeGreaterThanOrEqual(40);
     }

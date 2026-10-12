@@ -224,7 +224,9 @@ def _design(a: dict, ctx: dict) -> tuple[dict, list[Check]]:
     confidences = [r["confidence"] for r in reviews.values() if isinstance(r.get("confidence"), int)]
     sections = {
         "inputs": _kv([("Requirements", ctx["requirements"]), ("Test plan areas", ctx["areas"])]),
-        "test_cases": render_case_table(case_table_rows(a)),
+        "test_cases": render_case_table(
+            case_table_rows(a, ctx["state"].get("artifacts", {}).get("requirements"))
+        ),
         "results": _kv(
             [(s, len(a.get(f"{s}_tests") or [])) for s in SECTIONS] + [("Total cases", len(cases))]
         )

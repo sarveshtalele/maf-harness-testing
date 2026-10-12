@@ -110,13 +110,26 @@ export function DataTable({ data, columns }: { data: Row[]; columns?: string[] }
 export const CASE_COLUMNS = ['Sno', 'Requirement ID', 'Test Case ID', 'Test Case Description', 'Steps', 'Expected Result'];
 const CASE_GROUPS = ['positive', 'negative', 'boundary', 'validation', 'contract'];
 
+// Mirrors qa/report.py case_requirement_ids: direct requirement links, then the parent requirement of each linked
+// acceptance criterion, and only when neither exists the raw link IDs (validation, api_contract).
+export function caseRequirementIds(item: Row, requirements?: Row): string[] {
+  const links = rows(item.traceability_links);
+  const parents = new Map(rows(record(record(requirements).requirement_model).acceptance_criteria).filter(c => c.requirement_id).map(c => [text(c.id), text(c.requirement_id)]));
+  let ids = links.filter(link => link.type === 'requirement').map(link => text(link.id));
+  ids = ids.concat(links.filter(link => link.type === 'acceptance_criterion' && parents.has(text(link.id))).map(link => parents.get(text(link.id)) as string));
+  if (!ids.length) ids = links.map(link => text(link.id));
+  return [...new Set(ids.filter(id => id && id !== '—' && id !== 'None'))];
+}
+
 // QA test-case table: the six columns in fixed order, one table per non-empty category, Sno restarts in each.
-// Steps are a numbered list inside the cell; older runs without steps show a dash.
-export function TestCaseTable({ design }: { design: Row }) {
+// Priority, level, actor and target sit under the description; "More" holds preconditions, data notes and every link.
+export function TestCaseTable({ design, requirements }: { design: Row; requirements?: Row }) {
   const groups = CASE_GROUPS.map(group => ({ group, cases: rows(design[`${group}_tests`]) })).filter(item => item.cases.length);
   if (!groups.length) return <p className="empty-inline">No test cases recorded.</p>;
   return <div className="case-table">{groups.map(({ group, cases }) => <section key={group}><h3 id={`case-table-${group}`}>{label(group)} cases <small className="muted">{cases.length}</small></h3><div className="table-scroll" tabIndex={0} role="region" aria-labelledby={`case-table-${group}`}><table aria-labelledby={`case-table-${group}`}><thead><tr>{CASE_COLUMNS.map(column => <th key={column} scope="col">{column}</th>)}</tr></thead><tbody>{cases.map((item, index) => {
     const title = text(item.title); const description = text(item.description); const steps = Array.isArray(item.steps) ? item.steps.map(step => text(step)) : [];
-    return <tr key={`${group}:${index}`}><td>{index + 1}</td><td>{rows(item.traceability_links).filter(link => link.type === 'requirement').map(link => text(link.id)).join(', ') || '—'}</td><td className="cell-id">{text(item.id)}</td><td><strong>{title}</strong>{description !== '—' && description !== title && <small className="muted">{description}</small>}</td><td>{steps.length ? <ol className="case-steps">{steps.map((step, i) => <li key={i}>{step}</li>)}</ol> : '—'}</td><td>{text(item.expected_result)}</td></tr>;
+    const preconditions = Array.isArray(item.preconditions) ? item.preconditions.map(value => text(value)) : [];
+    const links = rows(item.traceability_links).map(link => `${text(link.type)}:${text(link.id)}`);
+    return <tr key={`${group}:${index}`}><td>{index + 1}</td><td>{caseRequirementIds(item, requirements).join(', ') || '—'}</td><td className="cell-id">{text(item.id)}</td><td><strong>{title}</strong>{description !== '—' && description !== title && <small className="muted">{description}</small>}<small className="muted case-meta">{[item.priority, item.level, item.actor, item.target].map(value => text(value)).join(' · ')}</small><details className="case-more"><summary>More</summary><div><strong>Preconditions</strong>{preconditions.length ? <ul>{preconditions.map((value, i) => <li key={i}>{value}</li>)}</ul> : <span className="muted"> none</span>}</div><div><strong>Data notes</strong> <span>{text(item.data_notes === '' ? 'none' : item.data_notes)}</span></div><div><strong>Traceability links</strong> <span>{links.length ? links.join(', ') : 'none'}</span></div></details></td><td>{steps.length ? <ol className="case-steps">{steps.map((step, i) => <li key={i}>{step}</li>)}</ol> : '—'}</td><td>{text(item.expected_result)}</td></tr>;
   })}</tbody></table></div></section>)}</div>;
 }

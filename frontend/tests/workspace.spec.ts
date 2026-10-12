@@ -4,6 +4,13 @@ const CASE_HEADERS = ['Sno', 'Requirement ID', 'Test Case ID', 'Test Case Descri
 async function expectCaseTableHeaders(page: Page) {
   const headers = page.getByRole('table').filter({ has: page.getByRole('columnheader', { name: 'Test Case Description', exact: true }) }).first().getByRole('columnheader');
   await expect(headers).toHaveText(CASE_HEADERS);
+  // Real data: Sno restarts at 1 in the second category, steps are an ordered list, and the case linked only through
+  // an acceptance criterion shows its parent requirement (not a dash).
+  await expect(page.locator('.case-table section').nth(1).locator('tbody tr').first().locator('td').first()).toHaveText('1');
+  await expect(page.locator('.case-table ol.case-steps li').first()).toHaveText('Call add(1, 2)');
+  const criterionRow = page.locator('.case-table tbody tr').filter({ hasText: 'add returns sum for the criterion' });
+  await expect(criterionRow.locator('td').nth(1)).toHaveText(/^REQ-/);
+  await expect(criterionRow.locator('.case-meta')).toHaveText('P2 · unit · Developer · service.add');
 }
 
 test('complete browser workflow, layouts, evidence, downloads and stale gates', async ({ page, request }, testInfo) => {
@@ -69,7 +76,7 @@ test('complete browser workflow, layouts, evidence, downloads and stale gates', 
   await page.goto(`/?run=${key}&tab=Artifacts&stage=test_design`);
   await expectCaseTableHeaders(page);
   await page.setViewportSize({ width: 390, height: 844 });
-  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBeTruthy();
+  await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
   await page.setViewportSize({ width: 1280, height: 720 });
   await page.reload();
   await expect(page.getByRole('progressbar', { name: 'Workflow completion', exact: true })).toHaveAttribute('value', '100');
@@ -117,8 +124,8 @@ test('complete browser workflow, layouts, evidence, downloads and stale gates', 
   const review = page.locator('.panel').filter({ has: page.getByRole('button', { name: 'Independent test review', exact: true }) });
   await expect(review.getByRole('columnheader', { name: 'Confidence', exact: false })).toBeVisible();
   // host-computed confidence = rubric sum (the scripted reviewer gives full marks), not the model's self-reported 90
-  await expect(review.getByRole('cell', { name: '100', exact: true })).toBeVisible();
-  await expect(review.getByRole('cell', { name: 'Supported', exact: true })).toBeVisible();
+  await expect(review.getByRole('cell', { name: '100', exact: true }).first()).toBeVisible();
+  await expect(review.getByRole('cell', { name: 'Supported', exact: true }).first()).toBeVisible();
   await page.getByRole('button', { name: 'Dark appearance' }).click();
   const expandReview = page.getByRole('button', { name: 'Expand Independent test review', exact: true });
   await expect.poll(() => expandReview.evaluate(el => getComputedStyle(el).backgroundColor)).toBe('rgb(31, 31, 34)');

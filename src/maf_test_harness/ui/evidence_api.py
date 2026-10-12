@@ -20,18 +20,19 @@ from .evidence import MIMES, file_path, inventory
 from .presentation import public
 
 
-def render_test_design_markdown(design: dict) -> str:
-    """Test design export: the QA test-case table first (grouped by category), then the remaining design sections."""
-    rest = {key: value for key, value in design.items() if not key.endswith("_tests")}
+def render_test_design_markdown(design: dict, requirements: dict | None = None) -> str:
+    """Test design export: the QA case table with its details first, then the complete design record (no field dropped)."""
     return "\n".join(
         [
             "# test_design",
             "",
             "## Test cases",
             "",
-            render_case_table(case_table_rows(design)),
+            render_case_table(case_table_rows(design, requirements)),
             "",
-            json_to_markdown(rest),
+            "## Full design record",
+            "",
+            json_to_markdown(design),
         ]
     )
 
@@ -206,7 +207,7 @@ class EvidenceAPI:
             else:
                 data = artifacts.get(kind)
                 md = (
-                    render_test_design_markdown(data)
+                    render_test_design_markdown(data, artifacts.get("requirements"))
                     if kind == "test_design" and isinstance(data, dict)
                     else json_to_markdown(data, title=kind)
                 )

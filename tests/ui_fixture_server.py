@@ -31,7 +31,32 @@ class BrowserRuntime(ScriptedStageRuntime):
             await asyncio.sleep(30)
         if state["repo_url"].endswith("/failure"):
             self.test_body = "assert add(1, 2) == 4"
-        return await super().run_stage(stage=stage, state=state, **kwargs)
+        result = await super().run_stage(stage=stage, state=state, **kwargs)
+        # One acceptance criterion, and a negative case linked only through it: the QA table must show its parent requirement.
+        if stage == "requirements" and "artifact" in result:
+            result["artifact"]["acceptance_criteria"] = [
+                {"text": "add accepts two integers", "requirement_ref": 1, "source_files": ["service.py"]}
+            ]
+        if stage == "test_design" and "negative_tests" in result.get("artifact", {}):
+            criterion = state["artifacts"]["requirements"]["requirement_model"]["acceptance_criteria"][0][
+                "id"
+            ]
+            result["artifact"]["negative_tests"].append(
+                {
+                    "title": "add returns sum for the criterion",
+                    "priority": "P2",
+                    "level": "unit",
+                    "actor": "Developer",
+                    "target": "service.add",
+                    "description": "Integers from the criterion are summed.",
+                    "preconditions": ["service.py is importable"],
+                    "data_notes": "1 and 2",
+                    "expected_result": "add(1, 2) returns 3",
+                    "steps": ["Call add(1, 2)", "Compare with 3"],
+                    "traceability_links": [{"type": "acceptance_criterion", "id": criterion}],
+                }
+            )
+        return result
 
 
 class BrowserAPI(module.LocalAPI):

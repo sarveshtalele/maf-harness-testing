@@ -277,8 +277,8 @@ function Review({ run }: { run: Run }) {
     {p.kind === 'tool' && p.details.effects ? <div className="notice">{text(p.details.effects)}</div> : null}
     {p.kind === 'tool' && p.stage !== 'repo_analysis' && <p className="bad">Commands execute locally as your user. Review all commands and download sources before approval.</p>}
     {record(value).setup_guide ? <SetupGuide guide={record(record(value).setup_guide)} /> : null}
-    {p.kind === 'review' && p.stage === 'test_design' && <TestCaseTable design={record(value)} />}
-    <DataView value={Object.fromEntries(Object.entries(record(value)).filter(([key]) => key !== 'setup_guide' && !(p.kind === 'review' && p.stage === 'test_design' && key.endsWith('_tests'))))} />
+    {p.kind === 'review' && p.stage === 'test_design' && <TestCaseTable design={record(value)} requirements={record(artifacts(run).requirements)} />}
+    <DataView value={Object.fromEntries(Object.entries(record(value)).filter(([key]) => key !== 'setup_guide'))} />
     <details className="raw-json"><summary>Raw JSON</summary><pre>{JSON.stringify(value, null, 2)}</pre></details>
   </Panel>;
 }
@@ -292,7 +292,7 @@ function Decision({ run, sending, respond }: { run: Run; sending: boolean; respo
 }
 function Artifacts({ run, selectedStage = '', stageVisit = 0 }: { run: Run; selectedStage?: string; stageVisit?: number }) {
   const data = artifacts(run);
-  return <>{selectedStage && data[selectedStage] === undefined && <p className="notice">{label(selectedStage)} has no saved artifact yet. You can revisit this stage while the run continues.</p>}{!Object.keys(data).length && <p className="empty-inline">No artifacts yet.</p>}{stages.filter(s => data[s] !== undefined && (!selectedStage || s === selectedStage)).map(stage => <Panel key={stage} title={`${label(stage)} · revision ${text(record(run.state.revisions)[stage])}`} storageKey={`${run.id}:artifact:${stage}`} revealKey={selectedStage ? `${selectedStage}:${stageVisit}` : undefined} defaultOpen={!!selectedStage || stage === run.pending?.stage} actions={<ExportButtons id={run.id} kind={stage} />}>{stage === 'test_design' && <TestCaseTable design={record(data[stage])} />}<DataView value={stage === 'test_design' ? Object.fromEntries(Object.entries(record(data[stage])).filter(([key]) => !key.endsWith('_tests'))) : data[stage]} /><details className="raw-json"><summary>Raw JSON</summary><pre>{JSON.stringify(data[stage], null, 2)}</pre></details></Panel>)}</>;
+  return <>{selectedStage && data[selectedStage] === undefined && <p className="notice">{label(selectedStage)} has no saved artifact yet. You can revisit this stage while the run continues.</p>}{!Object.keys(data).length && <p className="empty-inline">No artifacts yet.</p>}{stages.filter(s => data[s] !== undefined && (!selectedStage || s === selectedStage)).map(stage => <Panel key={stage} title={`${label(stage)} · revision ${text(record(run.state.revisions)[stage])}`} storageKey={`${run.id}:artifact:${stage}`} revealKey={selectedStage ? `${selectedStage}:${stageVisit}` : undefined} defaultOpen={!!selectedStage || stage === run.pending?.stage} actions={<ExportButtons id={run.id} kind={stage} />}>{stage === 'test_design' && <TestCaseTable design={record(data[stage])} requirements={record(data.requirements)} />}<DataView value={data[stage]} /><details className="raw-json"><summary>Raw JSON</summary><pre>{JSON.stringify(data[stage], null, 2)}</pre></details></Panel>)}</>;
 }
 function Generated({ run }: { run: Run }) {
   const data = record(artifacts(run).test_generation); const files = rows(data.files); const validation = record(data.validation);
