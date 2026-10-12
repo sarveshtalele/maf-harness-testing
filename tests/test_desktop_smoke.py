@@ -148,7 +148,7 @@ def test_read_log_tail_decodes_windows_installer_utf16_and_utf8(tmp_path):
     text = ds.read_log_tail(utf16)
     assert "Error 1603: fatal" in text and text.startswith("msiexec log install.log")
     plain = tmp_path / "plain.log"
-    plain.write_text("line one\nline two\n", encoding="utf-8")
+    plain.write_bytes(b"line one\nline two\n")  # bytes: write_text would make CRLF on Windows
     assert ds.read_log_tail(plain, limit=9).endswith("line two\n")
     assert ds.read_log_tail(tmp_path / "missing.log") == ""
     (tmp_path / "empty.log").write_bytes(b"")
