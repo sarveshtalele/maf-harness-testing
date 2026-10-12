@@ -59,7 +59,7 @@ GitHub Releases page (`homepage` in `desktop/package.json`).
 ## Unsigned builds (internal distribution)
 
 - **macOS**: unsigned/not notarized, so macOS says *Apple could not verify "Agentic QE" is free of malware*. Drag the app to Applications, then either click **Open Anyway** in System Settings → Privacy & Security after the first blocked launch, or run `xattr -dr com.apple.quarantine "/Applications/Agentic QE.app"`. On macOS 15+ right-click > Open no longer bypasses Gatekeeper. Removing the prompt for everyone needs Developer ID signing + notarization (Apple Developer Program); see RELEASING.md.
-- **Windows**: the MSI installs per machine into Program Files and needs administrator approval. SmartScreen may still show "Windows protected your PC" because the build is unsigned; choose More info > Run anyway. The MSI gives a protected install and managed deployment (`msiexec /i <msi> /qn`); code signing is still what proves the publisher.
+- **Windows**: the MSI installs per machine into Program Files and needs administrator approval. SmartScreen may still show "Windows protected your PC" because the build is unsigned; choose More info > Run anyway. The MSI installs in Program Files, where standard users cannot modify it, and supports managed deployment (`msiexec /i <msi> /qn`). UAC shows "Unknown publisher" for the unsigned build; code signing is still what proves the publisher.
 - **Linux**: `chmod +x Agentic-QE-*.AppImage` then run it (needs FUSE 2, or `--appimage-extract-and-run`).
 
 ## Model and API key

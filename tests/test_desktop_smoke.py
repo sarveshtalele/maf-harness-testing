@@ -46,21 +46,80 @@ def test_unknown_os_has_no_installer():
         ds.installer_pattern("FreeBSD")
 
 
-def test_windows_install_command_is_a_silent_per_machine_msi_into_the_target():
-    target = Path("C:/aqe-smoke-abc/app")
+def test_windows_install_command_is_a_silent_per_machine_msi_with_no_directory_override():
     log = Path("C:/aqe-smoke-abc/msi-install.log")
-    argv = ds.windows_install_argv(Path("Agentic-QE-1.0.3-win-x64.msi"), target, log)
-    assert argv == [
-        "msiexec",
-        "/i",
-        "Agentic-QE-1.0.3-win-x64.msi",
-        "/qn",
-        "/norestart",
-        "/l*v",
-        str(log),
-        f"APPLICATIONFOLDER={target}",
+    argv = ds.windows_install_argv(Path("Agentic-QE-1.0.3-win-x64.msi"), log)
+    assert argv == ["msiexec", "/i", "Agentic-QE-1.0.3-win-x64.msi", "/qn", "/norestart", "/l*v", str(log)]
+    assert not any(
+        arg.startswith("APPLICATIONFOLDER") for arg in argv
+    )  # the default Program Files folder is used
+
+
+def test_windows_icacls_lock_and_restore_argv_target_only_this_user():
+    install_dir = Path("C:/Program Files/Agentic QE")
+    assert ds.windows_lock_argv(install_dir, "runneradmin") == [
+        "icacls",
+        str(install_dir),
+        "/deny",
+        "runneradmin:(OI)(CI)(W)",
     ]
-    assert " " not in argv[-1]  # the install dir must not need quoting
+    assert ds.windows_unlock_argv(install_dir, "runneradmin") == [
+        "icacls",
+        str(install_dir),
+        "/remove:d",
+        "runneradmin",
+    ]
+
+
+def test_msi_1618_says_another_installation_is_in_progress():
+    text = ds.msi_failure_reason(ds.Run(1618, ""), "install")
+    assert "1618" in text and "another installation is in progress" in text
+    assert "exited with code 1603" in ds.msi_failure_reason(ds.Run(1603, ""), "uninstall")
+    assert "did not finish" in ds.msi_failure_reason(ds.Run(None, "", timed_out=True), "install")
+
+
+def test_second_failure_is_added_to_the_first_error_not_substituted():
+    first = ds.SmokeError("app exited with code 3", "app output")
+    ds._note_second_failure(first, ds.SmokeError("msiexec uninstall exited with code 1603", "log tail"))
+    assert str(first) == "app exited with code 3"
+    assert first.output.startswith("app output\nAlso: msiexec uninstall exited with code 1603")
+    assert first.output.endswith("log tail")
+
+
+def test_smoke_windows_locks_then_restores_before_uninstall_and_keeps_the_launch_error(tmp_path, monkeypatch):
+    program_files = tmp_path / "pf"
+    program_files.mkdir()
+    monkeypatch.setenv("PROGRAMFILES", str(program_files))
+    monkeypatch.setenv("USERNAME", "tester")
+    work = tmp_path / "work"
+    monkeypatch.setattr(ds, "temp_dir_without_spaces", lambda: work)
+    work.mkdir()
+    calls: list[list[str]] = []
+
+    def fake_run(argv, env, timeout):
+        calls.append(argv)
+        if argv[:2] == ["msiexec", "/i"]:
+            (program_files / "Agentic QE").mkdir()
+            (program_files / "Agentic QE" / "Agentic QE.exe").write_bytes(b"")
+            return ds.Run(0, "")
+        if argv[0] == "icacls":
+            return ds.Run(0, "")
+        if argv[:2] == ["msiexec", "/x"]:
+            return ds.Run(1603, "")
+        raise ds.SmokeError("launch broke", "launch output")
+
+    monkeypatch.setattr(ds, "_run", fake_run)
+    with pytest.raises(ds.SmokeError) as raised:
+        ds.smoke_windows(Path("Agentic-QE-1.0.3-win-x64.msi"), 10)
+    assert str(raised.value) == "launch broke"  # the first error is the one reported
+    assert "Also: msiexec uninstall exited with code 1603" in raised.value.output
+    deny = next(a for a in calls if a[0] == "icacls" and "/deny" in a)
+    restore = next(a for a in calls if a[0] == "icacls" and "/remove:d" in a)
+    assert (
+        calls.index(deny)
+        < calls.index(restore)
+        < next(i for i, a in enumerate(calls) if a[:2] == ["msiexec", "/x"])
+    )
 
 
 def test_windows_uninstall_command_removes_the_same_package():

@@ -1,8 +1,13 @@
 """The installed app keeps its bundled resources read-only (Program Files, /Applications). Nothing may write there.
 
-The self-check runs the host skill scripts (reverse-engineering, validators) and the lint against a read-only copy of
-the skills and prompts, with HARNESS_RESOURCE_ROOT pointing at it. Python must neither fail on nor leave behind any
-bytecode inside the resource tree. Skipped where file modes do not restrict writes (Windows, root).
+The read-only tests below are POSIX-only: they rely on chmod to make the resource tree read-only, and they are skipped
+on Windows and when running as root (root ignores file modes). The self-check runs the host skill scripts
+(reverse-engineering, validators) and the lint against a read-only copy of the skills and prompts, with
+HARNESS_RESOURCE_ROOT pointing at it.
+
+Read-only trees do not prove that bytecode is switched off: CPython silently skips a .pyc write it cannot make. So the
+bytecode test uses a writable tree with bytecode switched ON before the frozen shim runs. That test fails if the
+``sys.dont_write_bytecode = True`` line in ``desktop_backend.run_python`` is removed.
 """
 
 import os
@@ -18,10 +23,10 @@ from maf_test_harness.skills import scripts
 
 REPO = Path(__file__).resolve().parents[1]
 POSIX = os.name != "nt" and hasattr(os, "geteuid")
-pytestmark = [
-    pytest.mark.skipif(not POSIX, reason="chmod read-only semantics are POSIX-only"),
-    pytest.mark.skipif(POSIX and os.geteuid() == 0, reason="root ignores file modes"),
-]
+posix_only = pytest.mark.skipif(
+    not POSIX or (hasattr(os, "geteuid") and os.geteuid() == 0),
+    reason="needs POSIX chmod semantics and a non-root user",
+)
 
 
 def _set_tree_writable(root: Path, writable: bool) -> None:
@@ -45,6 +50,7 @@ def read_only_resources(tmp_path):
         _set_tree_writable(resources, writable=True)
 
 
+@posix_only
 def test_self_check_passes_with_read_only_resources_and_writes_no_bytecode(
     read_only_resources, tmp_path, monkeypatch, capsys
 ):
@@ -69,6 +75,7 @@ def test_self_check_passes_with_read_only_resources_and_writes_no_bytecode(
     assert not list(read_only_resources.rglob("__pycache__"))
 
 
+@posix_only
 def test_frozen_shim_runs_a_read_only_bundled_script_without_writing_bytecode(
     read_only_resources, tmp_path, monkeypatch, capsys
 ):
@@ -86,4 +93,24 @@ def test_frozen_shim_runs_a_read_only_bundled_script_without_writing_bytecode(
 
     assert desktop_backend.main(["--run-python", str(script)]) == 0
     assert "VALUE 7" in capsys.readouterr().out
-    assert list(read_only_resources.rglob("__pycache__")) == []
+    assert not list(read_only_resources.rglob("__pycache__"))
+
+
+def test_frozen_shim_writes_no_bytecode_even_when_bytecode_is_enabled(tmp_path, monkeypatch, capsys):
+    """Writable tree, bytecode ON before the shim: the shim itself must switch bytecode off.
+
+    Without the shim's ``sys.dont_write_bytecode = True`` line, the sibling import writes __pycache__ into this folder.
+    """
+    bundled = tmp_path / "bundled"
+    bundled.mkdir()
+    (bundled / "sibling_bytecode_probe.py").write_text("VALUE = 11\n", encoding="utf-8")
+    script = bundled / "probe_bytecode.py"
+    script.write_text("import sibling_bytecode_probe as s\nprint('VALUE', s.VALUE)\n", encoding="utf-8")
+    monkeypatch.setattr(sys, "dont_write_bytecode", False)
+    monkeypatch.setattr(sys, "argv", list(sys.argv))
+    monkeypatch.setattr(sys, "path", list(sys.path))
+    monkeypatch.chdir(tmp_path)
+
+    assert desktop_backend.main(["--run-python", str(script)]) == 0
+    assert "VALUE 11" in capsys.readouterr().out
+    assert not list(bundled.rglob("__pycache__"))

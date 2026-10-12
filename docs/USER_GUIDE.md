@@ -50,9 +50,9 @@ flowchart TD
 ### First launch on Windows
 
 1. Double-click the `.msi` file.
-2. Windows asks for administrator approval (User Account Control). The app installs for all users into `C:\Program Files\Agentic QE`. Standard users cannot change that folder, so an administrator must approve the install.
-3. SmartScreen may still show "Windows protected your PC", because the build is unsigned. Choose **More info**, then **Run anyway**. The MSI gives a protected Program Files install and managed deployment. Code signing is still what proves who published the app, and these builds are not signed yet.
-4. If you installed the older per-user `.exe` build, uninstall it first: **Settings**, **Apps**, then **Agentic QE**, then **Uninstall**. The two builds install to different locations, so keeping both gives you two copies of the app.
+2. Windows asks for administrator approval (User Account Control). The app installs for all users into `C:\Program Files\Agentic QE`, where standard users cannot modify it. UAC may show **Unknown publisher**, because the build is unsigned.
+3. SmartScreen may still show "Windows protected your PC", because the build is unsigned. Choose **More info**, then **Run anyway**. The MSI installs the app in Program Files, where standard users cannot modify it, and supports managed deployment. Code signing is still what proves who published the app, and these builds are not signed yet.
+4. If you installed the older per-user `.exe` build, uninstall it first: **Settings**, **Apps**, then **Agentic QE**, then **Uninstall**. The two builds install to different locations, so keeping both gives you two copies of the app. Your runs, settings and API key are kept, because they live in your user profile, not in the install folder.
 
 **For IT:** deploy silently from an administrator prompt with `msiexec /i Agentic-QE-<version>-win-x64.msi /qn`. Each new version upgrades the installed one in place, because the MSI keeps a fixed upgrade code.
 
