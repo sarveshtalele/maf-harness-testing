@@ -117,7 +117,15 @@ def cache_root() -> Path:
 # ------------------------------------------------------------------------------------ local detection
 def _run(argv: list[str], timeout: float = 20) -> str:
     try:
-        proc = subprocess.run(argv, capture_output=True, text=True, timeout=timeout, check=False)
+        proc = subprocess.run(
+            argv,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=timeout,
+            check=False,
+        )
     except (OSError, subprocess.TimeoutExpired):
         return ""
     return (proc.stdout or "") + "\n" + (proc.stderr or "")
@@ -206,7 +214,13 @@ def _probe_python(argv: list[str]) -> tuple[str, str] | None:
         return None
     try:
         proc = subprocess.run(
-            [*argv, "-c", _PYTHON_PROBE], capture_output=True, text=True, timeout=_PROBE_TIMEOUT, check=False
+            [*argv, "-c", _PYTHON_PROBE],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=_PROBE_TIMEOUT,
+            check=False,
         )
     except (OSError, subprocess.TimeoutExpired):
         return None
