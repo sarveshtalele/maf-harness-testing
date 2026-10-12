@@ -10,8 +10,10 @@ from urllib.parse import urlsplit
 from .. import settings
 from ..agent import prompt_settings
 from ..agent.personas import PERSONAS
+from ..hooks.config import hook_status
 from ..llm.usage import DailyUsageLedger
 from ..settings import CASES_PER_REQUIREMENT
+from ..storage import prompt_log_records
 from ..workflow import STAGES
 from .presentation import public
 
@@ -58,6 +60,10 @@ def _friendly_error(exc: Exception, host: str) -> str:
 class SettingsAPI:
     model_probe = None  # tests inject a fake
 
+    def _prompt_records(self, key: str) -> list:
+        """The run's prompt log, de-duplicated by id; legacy records kept in run.json's state are included."""
+        return prompt_log_records(self.run_path(key))
+
     def prompts(self, key: str | None = None, record_id: str | None = None) -> dict:
         with self.lock:
             folder = self.run_path(key) if key else self.runs.parent
@@ -69,7 +75,7 @@ class SettingsAPI:
                     raise FileNotFoundError("Prompt record unavailable")
                 return public(json.loads(path.read_text(encoding="utf-8")))
             settings = prompt_settings.load(folder / "prompts.json")
-            records = self.read(key)["state"].get("prompt_records", []) if key else []
+            records = self._prompt_records(key) if key else []
             return public(
                 {
                     "settings": settings,
@@ -200,6 +206,7 @@ class SettingsAPI:
                 "run_directory": str(self.runs),
                 "service_log_directory": os.getenv("HARNESS_LOG_DIR") or str(self.runs.parent / "logs"),
                 "daily": DailyUsageLedger().snapshot(),
+                "hooks": hook_status(),
                 "stages": STAGES,
                 "personas": {
                     stage: {

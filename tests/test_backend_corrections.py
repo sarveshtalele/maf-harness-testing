@@ -368,3 +368,56 @@ def test_run_lock_held_by_another_process_fails_clearly_instead_of_blocking(tmp_
         with pytest.raises(RuntimeError, match="locked by another process"):
             with wf._run_lock(tmp_path):
                 pass
+
+
+def test_packaging_manifest_names_every_evidence_file_it_skipped(tmp_path):
+    import os
+    import zipfile
+
+    from maf_test_harness.qa.packaging import build_deliverable
+
+    run = tmp_path / "run"
+    attempt = run / "executions" / "attempt-1"
+    attempt.mkdir(parents=True)
+    (attempt / "report.html").write_text("<h1>ok</h1>", encoding="utf-8")
+    (attempt / "data.bin").write_bytes(b"\x00\x01")
+    (run / "executions" / "node_modules").mkdir()
+    (run / "executions" / "node_modules" / "keep.log").write_text("dep", encoding="utf-8")
+    (tmp_path / "outside.log").write_text("secret", encoding="utf-8")
+    state = {"artifacts": {"repo_analysis": {"repo_name": "demo"}}}
+    if os.name == "posix":
+        (attempt / "link.log").symlink_to(tmp_path / "outside.log")
+    target = build_deliverable(run, state)
+    with zipfile.ZipFile(target) as archive:
+        names = set(archive.namelist())
+        manifest = json.loads(archive.read("harness-report/evidence-manifest.json"))
+    reasons = {item["path"]: item["reason"] for item in manifest["skipped"]}
+    assert "harness-report/evidence/executions/attempt-1/report.html" in names
+    assert reasons["executions/attempt-1/data.bin"] == "file type is not packaged"
+    assert reasons["executions/node_modules/keep.log"] == "excluded folder"
+    assert all("secret" not in name for name in names)
+    assert manifest["included"] == 1
+    if os.name == "posix":
+        assert reasons["executions/attempt-1/link.log"] == "symbolic link"
+
+
+def test_evidence_behind_a_symlinked_parent_is_refused_on_posix(tmp_path):
+    import os
+
+    import pytest
+
+    from maf_test_harness.qa.packaging import _evidence_skip_reason
+
+    if os.name != "posix":
+        pytest.skip("parent-link check is POSIX only")
+    run = tmp_path.resolve()
+    folder = run / "executions"
+    real = tmp_path / "elsewhere"
+    real.mkdir()
+    (real / "trace.log").write_text("moved", encoding="utf-8")
+    folder.mkdir()
+    (folder / "linked").symlink_to(real, target_is_directory=True)
+    assert _evidence_skip_reason(folder / "linked" / "trace.log", run, folder) == (
+        "a parent folder is a symbolic link"
+    )
+    assert _evidence_skip_reason(folder / "linked", run, folder) == "symbolic link"

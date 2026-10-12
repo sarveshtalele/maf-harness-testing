@@ -224,3 +224,12 @@ def test_exhausted_quota_429_is_not_retried_but_a_rate_limit_is():
         body=None,
     )
     assert _is_transient_gateway_error(rate)
+
+
+def test_extract_json_object_prefers_the_fenced_block_over_a_later_object_in_prose() -> None:
+    text = '```json\n{"artifact": {"ok": true}}\n```\nSummary: {"note": "x", "more": {"deep": 1}}'
+    assert extract_json_object(text) == {"artifact": {"ok": True}}
+
+
+def test_extract_json_object_uses_outermost_braces_for_prose_wrapped_json() -> None:
+    assert extract_json_object('Here it is: {"a": {"b": [1, 2]}} thanks {') == {"a": {"b": [1, 2]}}

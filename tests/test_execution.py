@@ -134,3 +134,53 @@ def test_run_stop_kills_command_and_preserves_cancelled_result(tmp_path):
         assert json.loads((out / "result.json").read_text())["status"] == "cancelled"
     finally:
         service.close()
+
+
+def test_a_stop_whose_kill_wait_times_out_is_reported_as_cancelled_not_timeout(tmp_path, monkeypatch):
+    import threading
+
+    from maf_test_harness.envs.platform_compat import RUN_CANCEL
+
+    cancel = threading.Event()
+    real_popen = execution.subprocess.Popen
+
+    class SlowKill(real_popen):
+        def __init__(self, *args, **kwargs):
+            super().__init__(*args, **kwargs)
+            cancel.set()  # the stop arrives as soon as the command starts
+
+        def wait(self, timeout=None):
+            if timeout == 10:  # the bounded wait after the kill in the cancel branch
+                raise execution.subprocess.TimeoutExpired(self.args, timeout)
+            return super().wait(timeout)
+
+    monkeypatch.setattr(execution.subprocess, "Popen", SlowKill)
+    token = RUN_CANCEL.set(cancel)
+    try:
+        result = execution.run_command(
+            [sys.executable, "-c", "import time; time.sleep(30)"], tmp_path, tmp_path / "stopped"
+        )
+    finally:
+        RUN_CANCEL.reset(token)
+    assert result["status"] == "cancelled"
+
+
+def test_forwarded_proxy_settings_never_carry_credentials(tmp_path, monkeypatch):
+    monkeypatch.setenv("HTTPS_PROXY", "http://builder:s3cret@proxy.example.test:8080")
+    monkeypatch.setenv("HTTP_PROXY", "http://proxy.example.test:3128")
+    (tmp_path / "out").mkdir()
+    env = execution._child_env(tmp_path / "out", True, None)
+    assert env["HTTPS_PROXY"] == "http://proxy.example.test:8080"
+    assert env["HTTP_PROXY"] == "http://proxy.example.test:3128"
+    assert "s3cret" not in " ".join(env.values())
+
+
+def test_probe_env_exposes_no_secrets_and_uses_a_fake_home(tmp_path, monkeypatch):
+    from maf_test_harness.envs import platform_compat
+
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-live-should-not-leak")
+    monkeypatch.setenv("HARNESS_API_TOKEN", "t" * 40)
+    monkeypatch.setenv("GITHUB_TOKEN", "ghp_should_not_leak")
+    env = platform_compat.probe_env(tmp_path / "home")
+    assert not {"OPENAI_API_KEY", "HARNESS_API_TOKEN", "GITHUB_TOKEN"} & set(env)
+    assert env["HOME"] == str(tmp_path / "home") and env["PYTHONNOUSERSITE"] == "1"

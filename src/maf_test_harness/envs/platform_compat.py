@@ -178,6 +178,21 @@ def run_cancellable(argv, *, input=None, timeout: float, env=None):
         input = None  # already written; communicate() resumes the pending write on retry
 
 
+PROBE_ENV_KEYS = ("PATH", "SYSTEMROOT", "SYSTEMDRIVE", "LANG", "TMPDIR", "TEMP", "TMP")
+
+
+def probe_env(fake_home: Path) -> dict[str, str]:
+    """Environment for short inspection commands run by a workspace venv (pip list/check, import probes).
+
+    A dependency of the repository under test can ship code that runs whenever the venv interpreter starts (a .pth
+    file). Such code sees only these variables: no model keys, tokens, proxy credentials or real home directory.
+    """
+    env = {key: os.environ[key] for key in PROBE_ENV_KEYS if key in os.environ}
+    env.update(fake_home_env(fake_home))
+    env.update(PYTHONNOUSERSITE="1", PYTHONDONTWRITEBYTECODE="1", PYTHONUTF8="1", PYTHONIOENCODING="utf-8")
+    return env
+
+
 def fake_home_env(fake_home: Path) -> dict[str, str]:
     """Env overrides that redirect every OS's notion of 'home' to ``fake_home``, so the real user home
     directory (and any secrets under it) stays hidden from child processes on every platform.
@@ -185,7 +200,7 @@ def fake_home_env(fake_home: Path) -> dict[str, str]:
     POSIX tools read HOME. Windows tools read USERPROFILE (and often APPDATA/LOCALAPPDATA for caches and
     config) -- setting only HOME on Windows (as before) silently fails to hide the real profile.
     """
-    fake_home.mkdir(exist_ok=True)
+    fake_home.mkdir(parents=True, exist_ok=True)
     if IS_WINDOWS:
         appdata = fake_home / "AppData" / "Roaming"
         local = fake_home / "AppData" / "Local"

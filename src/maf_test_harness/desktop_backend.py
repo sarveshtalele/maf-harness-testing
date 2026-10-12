@@ -9,11 +9,11 @@ interpreter for ``paths.python_argv()``: the frozen app's ``sys.executable`` is 
 from __future__ import annotations
 
 import ast
-import builtins
 import importlib.util
 import json
 import multiprocessing
 import os
+import re
 import runpy
 import sys
 import tempfile
@@ -31,8 +31,32 @@ from maf_test_harness.repo.requirements import NO_DECLARATIONS_MARKER
 PYTHON_FLAGS = {"-B", "-E", "-I", "-O", "-OO", "-S", "-s", "-u"}
 
 
+_LITERAL_EXIT = re.compile(r"""raise SystemExit\((?P<q>['"])(?:(?!(?P=q))[^\\\n]|\\.)*(?P=q)\)""")
+
+
+def _hook_folders() -> list[Path]:
+    """The user's hook folders, passed by the harness that started this process (see hooks.config._hook_env)."""
+    return [
+        Path(item) for item in os.environ.get(paths.HOOK_FOLDERS_ENV, "").split(os.pathsep) if item.strip()
+    ]
+
+
+def _allowed_script(path: str) -> bool:
+    """Only scripts inside the bundled resources, the plugin folder or a user hook folder may run through this
+    executable (the folder of <user data>/.harness/hooks.json and of the hooks.json that configured the hook)."""
+    script = Path(path).resolve()
+    for root in (paths.resource_root(), paths.plugin_dir(), *_hook_folders()):
+        try:
+            if script.is_relative_to(root.resolve()):
+                return True
+        except OSError:
+            continue
+    return False
+
+
 def run_python(argv: list[str]) -> int:
-    """``python`` for ``[maf-backend, --run-python, ...]``: ``[-I] [-B] (-c code | -m module | script) [arg ...]``."""
+    """``python`` for ``[maf-backend, --run-python, ...]``: ``[-I] [-B] script [arg ...]``. Code given with -c or a module
+    given with -m is refused: any caller could otherwise run arbitrary code as this installed application."""
     isolated = False
     # Always: the bundled scripts live in the read-only install dir (Program Files), so no __pycache__ may be written there.
     sys.dont_write_bytecode = True
@@ -52,27 +76,31 @@ def run_python(argv: list[str]) -> int:
             print(f"maf-backend --run-python: unsupported option {flag!r}", file=sys.stderr)
             return 2
         argv = rest
-    if not argv or (argv[0] in {"-c", "-m"} and len(argv) < 2):
+    if not argv:
+        print("usage: maf-backend --run-python [-I] [-B] script [arg ...]", file=sys.stderr)
+        return 2
+    head, tail = argv[0], argv[1:]
+    if head == "-c" and not (tail and _LITERAL_EXIT.fullmatch(tail[0])):
+        # The only -c the harness sends is the "no Python installed" message: a literal SystemExit, nothing to execute.
+        print("maf-backend --run-python: -c is limited to a literal SystemExit message", file=sys.stderr)
+        return 2
+    if head == "-m":
+        print("maf-backend --run-python: -m is not available; run a script file", file=sys.stderr)
+        return 2
+    if head != "-c" and not _allowed_script(head):
         print(
-            "usage: maf-backend --run-python [-I] [-B] (-c code | -m module | script) [arg ...]",
+            f"maf-backend --run-python: {head!r} is outside the application, plugin and hook folders. A user hook script "
+            "must sit beside its hooks.json (in <user data>/.harness/); reference it by a relative name.",
             file=sys.stderr,
         )
         return 2
-    head, tail = argv[0], argv[1:]
-    if head not in {"-c", "-m"} and not Path(head).is_file():
+    if head != "-c" and not Path(head).is_file():
         print(f"can't open file '{head}': [Errno 2] No such file or directory", file=sys.stderr)
         return 2
     try:
         if head == "-c":
-            sys.argv = ["-c", *tail[1:]]
-            if not isolated:
-                sys.path.insert(0, "")
-            exec(compile(tail[0], "<string>", "exec"), {"__name__": "__main__", "__builtins__": builtins})
-        elif head == "-m":
-            sys.argv = [tail[0], *tail[1:]]
-            if not isolated:
-                sys.path.insert(0, "")
-            runpy.run_module(tail[0], run_name="__main__", alter_sys=True)
+            sys.argv = ["-c"]
+            exec(compile(tail[0], "<string>", "exec"), {"__name__": "__main__"})
         else:
             sys.argv = [head, *tail]
             if not isolated:  # like CPython: the script's own folder comes first on sys.path (not with -I)

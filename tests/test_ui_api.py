@@ -649,3 +649,98 @@ def test_http_model_test_route_passes_the_typed_values(local_api, monkeypatch):
     finally:
         server.shutdown()
         server.server_close()
+
+
+def test_rerun_drops_batch_caches_and_review_records_of_restarted_stages(local_api):
+    api = local_api
+    key = api.start({"repo_url": "https://github.com/acme/demo"})["id"]
+    wait(api)
+    for _ in range(10):
+        approve(api, key)
+    path = api.run_path(key) / "run.json"
+    view = json.loads(path.read_text(encoding="utf-8"))
+    view["state"].update(
+        accepted_planning_batches={"signature": "p", "batches": {"1": {}}},
+        accepted_design_batches={"signature": "d", "batches": {"1": {}}},
+        design_reviews={"1": {"verdict": "pass"}},
+        generation_rounds={"1": {}},
+    )
+    path.write_text(json.dumps(view), encoding="utf-8")
+    api.rerun(key, {"stage": "test_design", "request_id": None})
+    wait(api)
+    assert not api.errors
+    state = json.loads(path.read_text(encoding="utf-8"))[
+        "state"
+    ]  # the raw saved state, not the UI projection
+    assert "accepted_planning_batches" in state  # test_planning is before the rerun point
+    # The restarted stages ran again before the gate, so their records were rebuilt rather than replayed.
+    assert state.get("accepted_design_batches", {}).get("signature") != "d"
+    assert state.get("design_reviews") != {"1": {"verdict": "pass"}}
+    assert "generation_rounds" not in state or state["generation_rounds"] != {"1": {}}
+    path.write_text(
+        json.dumps({**json.loads(path.read_text(encoding="utf-8")), "pending": None}), encoding="utf-8"
+    )
+    run = api.read(key)
+    api.rerun(key, {"stage": "test_planning", "request_id": run["pending"]["id"] if run["pending"] else None})
+    wait(api)
+    assert "accepted_planning_batches" not in json.loads(path.read_text(encoding="utf-8"))["state"]
+
+
+def test_the_api_token_is_removed_from_the_environment_and_still_redacted(monkeypatch):
+    from maf_test_harness.hooks.builtin import redact
+    from maf_test_harness.ui import api as api_module
+
+    token = "k" * 40
+    monkeypatch.setenv("HARNESS_API_TOKEN", token)
+    assert api_module.take_api_token() == token
+    assert "HARNESS_API_TOKEN" not in os.environ
+    assert token not in redact(f"token={token}")[0]
+    assert api_module.take_api_token() is None
+
+
+def test_prompt_log_lives_beside_the_run_not_in_its_checkpointed_state(local_api):
+    api = local_api
+    key = api.start({"repo_url": "https://github.com/acme/demo"})["id"]
+    wait(api)
+    while (
+        api.read(key)["pending"]["stage"] != "requirements"
+    ):  # clone, then repo analysis: model calls start later
+        approve(api, key)
+    approve(api, key)  # the requirements stage has now made its model call
+    log = api.run_path(key) / "prompt_records.jsonl"
+    assert log.is_file() and log.read_text(encoding="utf-8").count("\n") >= 1
+    run = json.loads((api.run_path(key) / "run.json").read_text(encoding="utf-8"))
+    assert "prompt_records" not in run["state"]
+    records = api.prompts(key)["records"]
+    assert records and {"id", "stage", "sha256"} <= set(records[0])
+
+
+def test_legacy_prompt_records_seed_the_log_on_resume_and_are_listed_once(local_api):
+    from maf_test_harness.storage import append_prompt_record
+
+    api = local_api
+    key = api.start({"repo_url": "https://github.com/acme/demo"})["id"]
+    wait(api)
+    run_dir = api.run_path(key)
+
+    def record(identifier, stage):
+        return {
+            "id": identifier * 32,
+            "stage": stage,
+            "role": "stage_author",
+            "batch": None,
+            "sha256": "0" * 64,
+        }
+
+    legacy = [record("a", "requirements"), record("b", "planning")]
+    view = json.loads((run_dir / "run.json").read_text(encoding="utf-8"))
+    view.setdefault("state", {})["prompt_records"] = legacy  # a run saved before the log existed
+    (run_dir / "run.json").write_text(json.dumps(view), encoding="utf-8")
+    (run_dir / "prompt_records.jsonl").unlink(missing_ok=True)
+    assert [r["id"] for r in api.prompts(key)["records"]] == [legacy[0]["id"], legacy[1]["id"]]
+
+    append_prompt_record(run_dir, record("c", "design"))  # the resumed run's first model call seeds the log
+    append_prompt_record(run_dir, legacy[1])  # a retry that writes an earlier record again
+    lines = (run_dir / "prompt_records.jsonl").read_text(encoding="utf-8").splitlines()
+    assert [json.loads(line)["id"][0] for line in lines] == ["a", "b", "c", "b"]
+    assert [r["id"][0] for r in api.prompts(key)["records"]] == ["a", "b", "c"]

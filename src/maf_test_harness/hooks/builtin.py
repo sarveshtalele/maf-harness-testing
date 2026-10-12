@@ -40,6 +40,7 @@ _TOKENS = [
 # Basic credentials only where an authorization header or field names them; prose such as "Basic support" stays.
 _BASIC_AUTH = re.compile(r"""(?i)(authorization["']?\s*[:=]\s*["']?Basic\s+)[A-Za-z0-9+/=]{16,}""")
 _SECRET_ENV = (
+    "HARNESS_API_TOKEN",
     "OPENAI_API_KEY",
     "ANTHROPIC_API_KEY",
     "ANTHROPIC_AUTH_TOKEN",
@@ -49,9 +50,22 @@ _SECRET_ENV = (
 )
 
 
+_REGISTERED_SECRETS: set[str] = set()
+
+
+def register_secret(value: str) -> None:
+    """Redact a secret that was taken out of the environment (for example the API token, popped after reading)."""
+    if len(value) >= 8:
+        _REGISTERED_SECRETS.add(value)
+
+
 def redact(text: str, *, keyed: bool = True) -> tuple[str, int]:
     """Replace secret-looking strings (and the values of well-known secret environment variables) in ``text``."""
     count = 0
+    for value in _REGISTERED_SECRETS:
+        if value in text:
+            count += text.count(value)
+            text = text.replace(value, REDACTED)
     runtime_key = settings.current()["api_key"]  # a key entered in the UI never lives in os.environ
     if len(runtime_key) >= 8 and runtime_key in text:
         count += text.count(runtime_key)

@@ -128,7 +128,7 @@ def reach_provider(rt):
 
 
 def store(rt, path, artifact):
-    rt._last_response[("test_design", None)] = {
+    rt._last_response[("test_design", "stage_author")] = {
         "path": path,
         "result": {"status": "completed", "artifact": artifact},
         "hit": False,

@@ -241,3 +241,13 @@ def test_stage_budget_builtin_takes_options():
 
 def test_post_tool_event_constant_is_used_for_results():
     assert any(h.event == POST_TOOL for h in B.secret_redaction())
+
+
+def test_a_registered_secret_is_redacted_after_it_leaves_the_environment(monkeypatch):
+    monkeypatch.delenv("HARNESS_API_TOKEN", raising=False)
+    token = "api-token-" + "x" * 32
+    B.register_secret(token)
+    try:
+        assert token not in B.redact(f"curl -H 'X-Token: {token}'")[0]
+    finally:
+        B._REGISTERED_SECRETS.discard(token)

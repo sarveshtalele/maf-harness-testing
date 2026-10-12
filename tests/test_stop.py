@@ -307,3 +307,121 @@ def _pickled(value):
     elif isinstance(value, list):
         for item in value:
             yield from _pickled(item)
+
+
+def test_stop_request_sets_cancel_then_writes_status_on_the_runtime_thread(api):
+    """Stop from the HTTP thread must not touch the live host's state; the status write runs on the loop."""
+    entered, release = threading.Event(), threading.Event()
+
+    class Slow(ScriptedStageRuntime):
+        async def run_stage(self, **kwargs):
+            entered.set()
+            try:
+                await asyncio.sleep(30)
+            except asyncio.CancelledError:
+                await asyncio.to_thread(release.wait, 15)
+                raise
+
+    key = stage_in_flight(api, None, Slow)
+    assert entered.wait(10)
+    host = api.host
+    writes = []
+    original_save = host.save
+
+    def spy_save():
+        if host.view.get("status") == "stopping":
+            writes.append((threading.current_thread().name, api.service.cancel_event.is_set()))
+        original_save()
+
+    host.save = spy_save
+    api.stop_run(key)
+    deadline = time.monotonic() + 10
+    while not writes and time.monotonic() < deadline:
+        time.sleep(0.01)
+    assert writes == [("maf-runtime", True)]
+    release.set()
+    wait(api)
+    assert api.read(key)["status"] == "stopped" and not api.errors
+
+
+def test_a_task_that_ignores_cancel_past_the_timeout_stays_stopping_until_it_really_ends(monkeypatch):
+    import maf_test_harness.ui.runtime_service as runtime_service
+
+    monkeypatch.setattr(runtime_service, "STOP_WAIT_SECONDS", 0.3)
+    service = RuntimeService()
+    stopped, notes = [], []
+    cancels = []
+
+    async def stubborn():
+        deadline = time.monotonic() + 2.0
+        while time.monotonic() < deadline:  # swallows every cancellation until the deadline
+            try:
+                await asyncio.sleep(0.05)
+            except asyncio.CancelledError:
+                cancels.append(time.monotonic())
+
+    async def other():
+        return "never runs"
+
+    try:
+        service.submit(stubborn())
+        time.sleep(0.1)
+        stop = service.stop_active(lambda: stopped.append(1), lambda: notes.append("still finishing"))
+        time.sleep(0.6)  # past the shortened wait, while the task still runs
+        assert notes == ["still finishing"] and not stop.done()
+        assert stopped == [], "reported stopped while the task was still running"
+        with pytest.raises(RuntimeError, match="still finishing after Stop"):
+            service.submit(other())
+        service.cancel_again()  # a later Stop reaches the task again
+        stop.result(10)
+        assert stopped == [1] and len(cancels) >= 2
+        assert service.idle.wait(5)
+        assert service.submit(other()).result(5) == "never runs"
+    finally:
+        service.close()
+
+
+def test_work_is_accepted_again_once_the_stopped_task_has_ended(monkeypatch):
+    import maf_test_harness.ui.runtime_service as runtime_service
+
+    monkeypatch.setattr(runtime_service, "STOP_WAIT_SECONDS", 0.2)
+    service = RuntimeService()
+
+    async def stubborn():
+        for _ in range(60):
+            try:
+                await asyncio.sleep(0.05)
+            except asyncio.CancelledError:
+                pass
+
+    async def follow_up():
+        return "accepted"
+
+    try:
+        service.submit(stubborn())
+        time.sleep(0.1)
+        stop = service.stop_active(lambda: None)
+        stop.result(10)
+        assert service.submit(follow_up()).result(5) == "accepted"
+    finally:
+        service.close()
+
+
+def test_a_stop_that_arrives_before_the_work_starts_means_the_work_never_runs():
+    service = RuntimeService()
+    ran, stopped = [], []
+
+    async def work():
+        ran.append(1)
+
+    try:
+        service.loop.call_soon_threadsafe(time.sleep, 0.3)  # the loop is busy: the work has not started yet
+        service.submit(work())
+        service.stop_active(lambda: stopped.append(1)).result(10)
+        assert ran == [] and stopped == [1]
+        assert service.idle.wait(5)
+        assert (
+            service.submit(asyncio.sleep(0, "accepted")).result(5) == "accepted"
+        )  # new work starts afterwards
+    finally:
+        service.close()

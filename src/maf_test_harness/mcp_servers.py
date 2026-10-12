@@ -52,7 +52,7 @@ _SLUG = re.compile(r"[a-z][a-z0-9-]{0,31}")
 _ENV_KEY = re.compile(r"[A-Z][A-Z0-9_]{0,63}")
 _TOOL_NAME = re.compile(r"[A-Za-z0-9_.:-]{1,100}")
 # Variables that change how a process loads code, resolves hosts or trusts certificates; a secret field must never set them.
-_FORBIDDEN_PREFIXES = ("DYLD_", "LD_", "NODE_", "PYTHON", "NPM_CONFIG_")
+_FORBIDDEN_PREFIXES = ("DYLD_", "LD_", "NODE_", "PYTHON", "NPM_CONFIG_", "GIT_", "_JAVA")
 _FORBIDDEN_ENV = {
     "PATH",
     "PATHEXT",
@@ -63,6 +63,11 @@ _FORBIDDEN_ENV = {
     "PERL5LIB",
     "RUBYOPT",
     "JAVA_TOOL_OPTIONS",
+    "JDK_JAVA_OPTIONS",
+    "CLASSPATH",
+    "PERL5OPT",
+    "RUBYLIB",
+    "DOCKER_HOST",
     "SSL_CERT_FILE",
 }
 

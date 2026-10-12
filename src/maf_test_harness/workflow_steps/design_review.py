@@ -9,6 +9,7 @@ from ..models import DesignReviewDraft
 from ..qa.report import design_cases
 from ..repo.analyzer import extract_target_sources
 from ..repo.testability import testability_for_targets
+from ..settings import review_threshold
 from ..workflow_support import MODEL_REPAIR_ATTEMPTS
 
 
@@ -16,15 +17,13 @@ def enabled() -> bool:
     return os.getenv("HARNESS_DESIGN_REVIEW", "1").strip().lower() not in {"0", "false", "off", "no"}
 
 
-def min_confidence() -> int:
-    try:
-        return int(os.getenv("HARNESS_DESIGN_REVIEW_MIN_CONFIDENCE", "60"))
-    except ValueError:
-        return 60
+def min_confidence(state: dict | None = None) -> int:
+    return review_threshold("design", state)
 
 
-def flagged(reviews):
-    return [r for r in reviews if r["verdict"] == "reject" or r["confidence"] < min_confidence()]
+def flagged(reviews, state: dict | None = None):
+    gate = min_confidence(state)
+    return [r for r in reviews if r["verdict"] == "reject" or r["confidence"] < gate]
 
 
 def repair_feedback(reviews) -> str:

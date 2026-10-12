@@ -8,9 +8,10 @@ from __future__ import annotations
 import json
 import os
 import re
+import urllib.request
 from collections.abc import Callable
 from urllib.parse import quote
-from urllib.request import Request, urlopen
+from urllib.request import Request
 
 from .analyzer import validate_github_url
 
@@ -62,6 +63,16 @@ PY_FRAMEWORKS = (
 Fetcher = Callable[..., object]
 
 
+class _NoRedirect(urllib.request.HTTPRedirectHandler):
+    """A redirect is an error, never a second request: the token must not follow it to another host."""
+
+    def redirect_request(self, *args, **kwargs):
+        return None
+
+
+_OPENER = urllib.request.build_opener(_NoRedirect)
+
+
 def github_fetch(op: str, owner: str, repo: str, ref: str | None, path: str = ""):
     """Bounded GitHub REST reads. The token (if any) goes only to api.github.com and is never logged."""
     base = f"{API}/repos/{owner}/{repo}"
@@ -75,7 +86,7 @@ def github_fetch(op: str, owner: str, repo: str, ref: str | None, path: str = ""
     else:
         url = f"{base}/contents/{quote(path)}?ref={quote(ref or '', safe='')}"
         headers["Accept"] = "application/vnd.github.raw+json"
-    with urlopen(Request(url, headers=headers), timeout=TIMEOUT) as response:
+    with _OPENER.open(Request(url, headers=headers), timeout=TIMEOUT) as response:
         raw = response.read(2_000_000 if op == "tree" else FILE_LIMIT)
     if op == "file":
         return raw.decode("utf-8", "replace")

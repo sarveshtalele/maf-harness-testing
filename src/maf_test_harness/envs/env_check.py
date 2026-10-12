@@ -67,8 +67,11 @@ def installed_distributions(workspace: Path, timeout: float = 60) -> set[str] | 
             [str(python), "-m", "pip", "list", "--format=json", "--disable-pip-version-check"],
             capture_output=True,
             text=True,
+            encoding="utf-8",
+            errors="replace",
             timeout=timeout,
             check=False,
+            env=platform_compat.probe_env(Path(workspace) / VENV_DIR / "probe-home"),
         )
         return {normalize(item["name"]) for item in json.loads(proc.stdout)} if proc.returncode == 0 else None
     except (OSError, subprocess.TimeoutExpired, ValueError, KeyError, TypeError):
@@ -170,8 +173,11 @@ def dependency_problems(workspace: Path, timeout: float = 60) -> dict[str, list[
             [str(python), "-m", "pip", "check", "--disable-pip-version-check"],
             capture_output=True,
             text=True,
+            encoding="utf-8",
+            errors="replace",
             timeout=timeout,
             check=False,
+            env=platform_compat.probe_env(Path(workspace) / VENV_DIR / "probe-home"),
         )
     except (OSError, subprocess.TimeoutExpired):
         return {"conflicts": [], "unmet": []}

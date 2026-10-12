@@ -11,7 +11,7 @@ from pydantic import ValidationError
 
 from ..agent import prompt_settings
 from ..agent.personas import persona_instructions
-from ..agent.runtime import AgentOutputError, GatewayUnavailableError
+from ..agent.runtime import STAGE_AUTHOR, AgentOutputError, GatewayUnavailableError
 from ..envs.environment import build_environment_plan
 from ..envs.setup_guide import setup_guide
 from ..llm.prompts import build_prompt
@@ -40,6 +40,7 @@ from ..skills.contracts import (
     validate_generated_files,
 )
 from ..skills.host import execute_host_skill
+from ..storage import append_prompt_record
 from ..workflow_support import (
     CORE_STAGES,
     MODEL_REPAIR_ATTEMPTS,
@@ -80,14 +81,15 @@ class PlanningSteps:
             "user_prompt": prompt,
             "sha256": hashlib.sha256(prompt.encode()).hexdigest(),
         }
-        state.setdefault("prompt_records", []).append(
-            {k: record[k] for k in ("id", "stage", "role", "batch", "override_key", "sha256")}
+        append_prompt_record(
+            self.run_dir,
+            {k: record[k] for k in ("id", "stage", "role", "batch", "override_key", "sha256")},
         )
         atomic_json(folder / f"{identifier}.json", record)
         self.save()
         try:
             return await self.runtime.run_stage(
-                stage=stage, persona=persona, prompt=prompt, state=state, role=role, **kwargs
+                stage=stage, persona=persona, prompt=prompt, state=state, role=role or STAGE_AUTHOR, **kwargs
             )
         finally:
             record.update(state.get("model_instructions", {}).get(stage, {}))
@@ -433,7 +435,7 @@ class PlanningSteps:
                 reviews = await design_review.review_design_cases(
                     self, state, design_cases(artifact), prompt_batch or 0
                 )
-                weak = design_review.flagged(reviews)
+                weak = design_review.flagged(reviews, state)
                 if weak and not review_repaired and attempt < MODEL_REPAIR_ATTEMPTS:
                     review_repaired = True  # one reviewer-driven repair per batch, then keep and mark
                     self.audit("design_review_repair", stage=stage, batch=prompt_batch, cases=len(weak))

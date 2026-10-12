@@ -286,7 +286,7 @@ this is a private repo with no external consumers of the old paths, so there was
 | `tools/code_intel.py` | Central deterministic tools | `RepoContext`, `resolve_import`, `module_api`, `find_symbol`, `read_source`, `installed_packages`, `list_routes`, `probe_tools`, `static_gate` (all static gates for one file), `undefined_python_names` | One implementation serves the host pre-check, the auto-fixers and the agent tools; read-only and bounded |
 | `tools/autofix.py` | Mechanical repairs before any model retry | `fix_python` (missing stdlib/mock imports, unresolvable module path → the one repository module with that leaf), `fix_java` (JDK, unique repository class and JUnit imports, static assertion imports), `autofix_files` | Only fixes that cannot change what a test means; every fix is audited (`autofix` events, `state.tooling`) |
 | `tools/build_gate.py` | Compile/collect candidates in the prepared workspace | `try_build` (`pytest --collect-only` per file, `mvn test-compile`), `_maven_errors` (file:line + symbol detail, de-duplicated) | Runs only after the approved environment install; never runs test bodies; candidates and their classes are removed afterwards |
-| `hooks/` | Hooks | `HookEngine` (deny > ask > transform > allow, fail-closed), built-ins, `.harness/hooks.json` loader, `HookFunctionMiddleware` / `HookChatMiddleware` | Enforcing events: PreToolUse, PreModelCall, StageGate; see [HOOKS.md](HOOKS.md) |
+| `hooks/` | Hooks | `HookEngine` (deny > ask > transform > allow, fail-closed), built-ins, `hooks.json` loader (user data folder, never the working directory), `HookFunctionMiddleware` / `HookChatMiddleware` | Enforcing events: PreToolUse, PreModelCall, StageGate; see [HOOKS.md](HOOKS.md) |
 | `envs/recovery.py` | Bounded recovery | `choose` (allow-listed action for a diagnosed failure), `preview`; applied by `execute_setup` | Max 4 recoveries per run, once per recipe per step; see [AUTOMATION.md](AUTOMATION.md) |
 | `agent/diagnosis.py` | Diagnosis agent (opt-in) | `DiagnosisNote`, `diagnose`; runs through `MAFHarnessRuntime.run_tool_agent` | Read-only tools, advisory only |
 | `llm/prompts.py` | Prompt assembly | `build_prompt`, `generation_prompt`, `prefix_ratio` | Stable content first for the provider's prefix cache |
@@ -457,7 +457,7 @@ its own artifacts. Everything else is refused, and every run is recorded in `sta
 | An ecosystem | `repo.stack.detect_stack` (signals) → `repo.stack.REQUIRED_TOOLS` → `envs.environment.TOOLS/ISOLATION` → `envs.runners.setup_steps` and `build_plan` (+ a result parser) → tests in `test_stack_and_runners.py` |
 | A stage | add an `Executor` name to `workflow_support.STAGES`, a persona, and either a model stage (schema in `models.py`, skill in `skills/`, entry in `SKILL_NAMES`) or a host stage (`enter` branch) |
 | A skill | add it to `SELECTED` in `scripts/vendor_skills.py` (upstream) or create `skills/<name>/SKILL.md` (local), reference it in `skills.config.skills_for`, review any script and list it in `REVIEWED_SCRIPTS`; `maf-harness lint-skills` must pass |
-| A hook | add a built-in in `hooks/builtin.py` (register it in `build_builtins`), or a `.harness/hooks.json` entry; test with `tests/test_hooks*.py` ([HOOKS.md](HOOKS.md)) |
+| A hook | add a built-in in `hooks/builtin.py` (register it in `build_builtins`), or a `hooks.json` entry in the user data folder; test with `tests/test_hooks*.py` ([HOOKS.md](HOOKS.md)) |
 | A recovery recipe | add a builder in `envs/recovery.py` (`_BUILDERS`) for a recipe id that exists in `errors/playbook.py`; the code's autonomy must be `auto`/`auto_once`; test in `tests/test_env_recovery.py` |
 | An error code | add rules under `errors/classifiers/`, a code in `errors/taxonomy.py`, a recorded log in `tests/error_cases.py`; regenerate `docs/ERROR_PLAYBOOK.md` |
 | A typed tool | a handler `(ToolContext, args) -> ToolResult` and a `ToolSpec` with a JSON schema in `tools/`; register it in `tools/typed.py` and its stage list |
@@ -477,14 +477,14 @@ its own artifacts. Everything else is refused, and every run is recorded in `sta
 | `HARNESS_GENERATION_BATCH_SIZE` / `HARNESS_GENERATION_MAX_ATTEMPTS` | env | 3 / 3 | cases per model call (1-8) / repair attempts |
 | `HARNESS_CASES_PER_REQUIREMENT` | env | 2 (maximum 10) | default case budget per requirement; a run can override it |
 | `HARNESS_MAX_FAILED_BATCH_RATIO` | env | 0.5 | fail-soft threshold for generation batches |
-| `HARNESS_TEST_REVIEW_MIN_CONFIDENCE` | env | 80 (50-100) | host confidence a reviewed generated case needs to be accepted |
+| `HARNESS_TEST_REVIEW_MIN_CONFIDENCE` | env | 95 (hard gate, 95-100) | host confidence a reviewed generated case needs to be accepted; a run may override it (`confidence_thresholds.test`) |
 | `HARNESS_REQUIRE_FULL_ACCURACY` | env | 1 | full-accuracy gate before execution; `0` restores fail-soft partial execution |
 | `HARNESS_ACCURACY_ROUNDS` | env | 2 (0-5) | targeted regeneration rounds for cases that are not source-review accepted before the gate blocks |
 | `HARNESS_MAX_OUTPUT_TOKENS` | env | 16384 | per-response cap (not a workflow limit) |
 | `HARNESS_EXECUTION_TIMEOUT` | env | 900 s | per install/test command |
 | `HARNESS_MODEL_TIMEOUT_SECONDS` | env | 300 s | maximum duration of one model operation, then a retry gate |
 | `HARNESS_STRICT_ENV` | env | `on` | no later stage until every declared requirement is installed and consistent |
-| `HARNESS_DESIGN_REVIEW` / `HARNESS_DESIGN_REVIEW_MIN_CONFIDENCE` | env | `1` / 60 | advisory Chief Principal Architect review of design cases |
+| `HARNESS_DESIGN_REVIEW` / `HARNESS_DESIGN_REVIEW_MIN_CONFIDENCE` | env | `1` / 95 (hard gate, 95-100) | advisory Chief Principal Architect review of design cases; a run may override it (`confidence_thresholds.design`) |
 | `HARNESS_STAGE_MODELS` | env or runtime setting | unset | JSON `{stage: model}`; a runtime setting wins over the environment and `.env` |
 | `HARNESS_RESPONSE_CACHE` / `HARNESS_RESPONSE_CACHE_DIR` | env | `1` / `.maf-harness/cache/responses` | cache of accepted temperature-0 answers |
 | `HARNESS_PLUGIN_DIR` / `HARNESS_PLUGIN_APPROVALS` | env | `.maf-harness/plugins` / `~/.maf-harness/plugins.lock.json` | user skill packages and their approval record |
@@ -497,7 +497,7 @@ its own artifacts. Everything else is refused, and every run is recorded in `sta
 | `HARNESS_DIAGNOSIS_AGENT` / `HARNESS_SKILL_EVALUATORS` | env | `off` | opt-in diagnosis agent / skill validators as a design-stage tool |
 | `HARNESS_TOOLCHAIN_DIR` / `HARNESS_TOOLCHAIN_MIRROR` | env | `~/.maf-harness/toolchains` / — | where provisioned JDK/Maven/Gradle/.NET/Python live / a mirror serving the same download paths |
 | `HARNESS_OTEL` | env | `off` | `console` or `otlp` OpenTelemetry export (content never captured) |
-| `.harness/hooks.json`, `~/.maf-harness/hooks.json` | files | none | user hooks and built-in options ([HOOKS.md](HOOKS.md)) |
+| `<user data>/.harness/hooks.json`, `~/.maf-harness/hooks.json` | files | none | user hooks and built-in options; the working directory is never read ([HOOKS.md](HOOKS.md)) |
 
 ## 10. Current behaviours worth knowing
 

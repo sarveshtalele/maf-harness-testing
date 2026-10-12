@@ -41,7 +41,7 @@ class DesignReviewRuntime(ScriptedStageRuntime):
         return await super().run_stage(stage=stage, state=state, **kwargs)
 
 
-def run_design(tmp_path, monkeypatch, runtime):
+def run_design(tmp_path, monkeypatch, runtime, confidence_thresholds=None):
     import maf_test_harness.workflow as wf
 
     monkeypatch.setattr(wf, "clone_repository", clone_fixture)
@@ -50,7 +50,9 @@ def run_design(tmp_path, monkeypatch, runtime):
     )
     svc = RuntimeService()
     try:
-        svc.submit(h.start("https://github.com/acme/demo")).result(10)
+        svc.submit(
+            h.start("https://github.com/acme/demo", confidence_thresholds=confidence_thresholds)
+        ).result(10)
         while h.view["pending"]["stage"] != "test_design":
             svc.submit(h.respond(h.view["pending"]["id"], {"decision": "approve"})).result(30)
         return h.state["artifacts"]["test_design"]
@@ -59,12 +61,19 @@ def run_design(tmp_path, monkeypatch, runtime):
 
 
 def test_approved_case_gets_confidence(tmp_path, monkeypatch):
-    runtime = DesignReviewRuntime(88)
+    runtime = DesignReviewRuntime(97)  # 97 clears the default hard gate (95): no repair pass
     design = run_design(tmp_path, monkeypatch, runtime)
     case = design["positive_tests"][0]
-    assert (case["confidence"], case["reviewer_verdict"]) == (88, "approved")
+    assert (case["confidence"], case["reviewer_verdict"]) == (97, "approved")
     assert design["design_reviews"][0]["case_id"] == case["id"]
     assert runtime.reviews == 1 and len(runtime.design_prompts) == 1
+
+
+def test_a_per_run_design_gate_is_effective(tmp_path, monkeypatch):
+    """97 passes the default 95 gate but not a run that asked for 99: the architect's review repairs the case."""
+    runtime = DesignReviewRuntime(97)
+    run_design(tmp_path, monkeypatch, runtime, confidence_thresholds={"design": 99})
+    assert len(runtime.design_prompts) == 2 and runtime.reviews == 2
 
 
 def test_low_confidence_repairs_once_with_reason_then_marks(tmp_path, monkeypatch):

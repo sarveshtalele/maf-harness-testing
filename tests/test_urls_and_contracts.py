@@ -501,3 +501,104 @@ def test_local_app_url_helper_accepts_only_localhost_http_urls():
     assert not is_local_app_url("http://evil.example.com")
     assert not is_local_app_url("http://localhost.evil.com")
     assert not is_local_app_url("") and not is_local_app_url("ftp://localhost")
+
+
+def py_payload_for(path):
+    code = "# CASE_ID: TC-1\nimport calc\n\n\ndef test_add():\n    assert calc.add(1, 2) == 3\n"
+    return {"files": [{"path": path, "content": code, "case_ids": ["TC-1"]}]}
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        "-x/test_a.py",
+        "tests/-rf.py",
+        ".github/workflows/test_a.py",
+        ".harness-venv/lib/site-packages/test_a.py",
+        "tests/a&b.py",
+        "tests/a%PATH%.py",
+        "tests/a b.py",
+        "tests/test_a.yml",
+        "pytest.ini",
+        "tests/../test_a.py",
+    ],
+)
+def test_generated_paths_are_restricted_to_plain_test_source_files(path):
+    with pytest.raises(ValueError, match="unsafe generated path"):
+        validate_generated_files(py_payload_for(path), {"TC-1"})
+
+
+def test_plain_generated_test_paths_are_accepted():
+    assert validate_generated_files(py_payload_for("tests/unit/test_add-2.py"), {"TC-1"})
+
+
+_NATIVE_TESTS = {
+    ".rs": "// CASE_ID: TC-1\n#[test]\nfn test_add() {\n    assert_eq!(add(1, 2), 3);\n}\n",
+    ".swift": "// CASE_ID: TC-1\nfunc testAdd() {\n    XCTAssertEqual(add(1, 2), 3)\n}\n",
+    ".cpp": "// CASE_ID: TC-1\nTEST(Calc, Add) {\n  EXPECT_EQ(add(1, 2), 3);\n}\n",
+    ".cc": "// CASE_ID: TC-1\nTEST(Calc, Add) {\n  EXPECT_EQ(add(1, 2), 3);\n}\n",
+    ".c": "// CASE_ID: TC-1\nvoid test_add(void) {\n  assert(add(1, 2) == 3);\n}\n",
+    ".h": "// CASE_ID: TC-1\nTEST(Calc, Add) {\n  EXPECT_EQ(add(1, 2), 3);\n}\n",
+    ".hpp": "// CASE_ID: TC-1\nTEST(Calc, Add) {\n  EXPECT_EQ(add(1, 2), 3);\n}\n",
+    ".kts": "// CASE_ID: TC-1\n@Test\nfun addsNumbers() {\n    assertEquals(3, add(1, 2))\n}\n",
+    ".scala": '// CASE_ID: TC-1\nclass CalcSpec {\n  test("adds") {\n    assert(add(1, 2) == 3)\n  }\n}\n',
+}
+
+
+@pytest.mark.parametrize("suffix", sorted(_NATIVE_TESTS))
+def test_native_test_languages_are_accepted_as_generated_paths(suffix):
+    payload = {
+        "files": [{"path": f"tests/test_add{suffix}", "content": _NATIVE_TESTS[suffix], "case_ids": ["TC-1"]}]
+    }
+    assert validate_generated_files(payload, {"TC-1"})["covered_case_ids"] == ["TC-1"]
+
+
+@pytest.mark.parametrize("path", ["tests/test_add[1].py", "tests/test_add[case+1].py", "tests/a]b/test_c.py"])
+def test_brackets_and_plus_are_allowed_inside_a_name(path):
+    assert validate_generated_files(py_payload_for(path), {"TC-1"})
+
+
+@pytest.mark.parametrize(
+    "path", ["tests/[test_a].py", "tests/+test_a.py", "tests/]x/test_a.py", "[t]/test_a.py"]
+)
+def test_brackets_and_plus_are_rejected_as_the_first_character_of_a_segment(path):
+    with pytest.raises(ValueError, match="unsafe generated path"):
+        validate_generated_files(py_payload_for(path), {"TC-1"})
+
+
+def test_a_leading_dot_slash_is_normalised_and_written_back():
+    payload = py_payload_for("./tests/test_a.py")
+    validate_generated_files(payload, {"TC-1"})
+    assert payload["files"][0]["path"] == "tests/test_a.py"
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        "tests/con.py",
+        "tests/CON.test.py",
+        "tests/Nul.py",
+        "tests/aux/test_a.py",
+        "tests/COM1.py",
+        "tests/lpt9.py",
+    ],
+)
+def test_windows_reserved_device_names_are_rejected_with_any_extension(path):
+    with pytest.raises(ValueError, match="Windows reserved device name"):
+        validate_generated_files(py_payload_for(path), {"TC-1"})
+
+
+@pytest.mark.parametrize("path", ["tests/console_test.py", "tests/com10_test.py", "tests/nullable_test.py"])
+def test_names_that_only_start_like_a_reserved_name_are_accepted(path):
+    assert validate_generated_files(py_payload_for(path), {"TC-1"})
+
+
+@pytest.mark.parametrize("path", ["tests/dir./test_a.py", "tests/test_a.py.", "tests/dir/"])
+def test_segments_ending_in_a_dot_or_space_are_rejected(path):
+    with pytest.raises(ValueError, match="unsafe generated path"):
+        validate_generated_files(py_payload_for(path), {"TC-1"})
+
+
+def test_non_ascii_generated_paths_get_a_clear_message():
+    with pytest.raises(ValueError, match="non-ASCII characters are not allowed"):
+        validate_generated_files(py_payload_for("tests/m\u00f3dulo_test.py"), {"TC-1"})

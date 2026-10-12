@@ -17,6 +17,7 @@ from __future__ import annotations
 import csv
 import io
 import json
+import os
 import shlex
 import zipfile
 from pathlib import Path, PureWindowsPath
@@ -248,6 +249,35 @@ else:
 '''.replace("ALLOWED_ENV", repr(FORWARDED_ENV))
 
 
+EVIDENCE_SUFFIXES = frozenset(
+    {".html", ".png", ".jpg", ".webp", ".xml", ".json", ".css", ".js", ".woff2", ".md", ".txt", ".log"}
+)
+
+
+def _evidence_skip_reason(path: Path, run_dir: Path, folder: Path) -> str | None:
+    """Why an evidence file is not packaged, or None. On POSIX a symlink anywhere between the evidence folder and the
+    file refuses it, so a link planted in a run folder can never redirect the archive to another file."""
+    relative = path.relative_to(folder).parts
+    if any(part in EXPORT_SKIP_DIRS for part in relative):
+        return "excluded folder"
+    if path.is_symlink():
+        return "symbolic link"
+    if os.name == "posix" and any((folder / Path(*relative[:i])).is_symlink() for i in range(len(relative))):
+        return "a parent folder is a symbolic link"
+    try:
+        if not path.resolve().is_relative_to(run_dir):
+            return "resolves outside the run folder"
+        if not path.is_file():
+            return "not a regular file"
+        if path.stat().st_size > MAX_FILE_BYTES:
+            return f"larger than the {MAX_FILE_BYTES // (1024 * 1024)} MB limit"
+    except OSError as exc:
+        return f"unreadable: {exc.strerror or type(exc).__name__}"
+    if path.suffix.lower() not in EVIDENCE_SUFFIXES:
+        return "file type is not packaged"
+    return None
+
+
 def build_deliverable(run_dir: Path, state: dict, executions_dir: Path | None = None) -> Path:
     """Create ``deliverables/<repo>-with-tests-<run>.zip`` and return its path."""
     run_dir = Path(run_dir).resolve()
@@ -289,34 +319,31 @@ def build_deliverable(run_dir: Path, state: dict, executions_dir: Path | None = 
         archive.writestr(f"{REPORT_DIR}/RUN_TESTS.md", run_instructions(state))
         archive.writestr(f"{REPORT_DIR}/rerun.py", RERUN)
         archive.writestr(f"{REPORT_DIR}/rerun-plan.json", json.dumps(portable_plan(state, run_dir), indent=2))
+        skipped: list[
+            dict[str, str]
+        ] = []  # every evidence file left out, with the reason: never a silent skip
+        included = 0
         for folder in ROOTS:
             directory = run_dir / folder
             for path in sorted(directory.rglob("*")):
-                if (
-                    path.is_file()
-                    and not path.is_symlink()
-                    and path.resolve().is_relative_to(run_dir)
-                    and path.stat().st_size <= MAX_FILE_BYTES
-                    and not any(part in EXPORT_SKIP_DIRS for part in path.relative_to(directory).parts)
-                    and path.suffix.lower()
-                    in {
-                        ".html",
-                        ".png",
-                        ".jpg",
-                        ".webp",
-                        ".xml",
-                        ".json",
-                        ".css",
-                        ".js",
-                        ".woff2",
-                        ".md",
-                        ".txt",
-                        ".log",
-                    }
-                ):
-                    archive.writestr(
-                        f"{REPORT_DIR}/evidence/{path.relative_to(run_dir).as_posix()}", clean_content(path)
-                    )
+                if path.is_dir() and not path.is_symlink():
+                    continue
+                relative = path.relative_to(run_dir).as_posix()
+                reason = _evidence_skip_reason(path, run_dir, directory)
+                if reason:
+                    skipped.append({"path": relative, "reason": reason})
+                    continue
+                try:
+                    content = clean_content(path)
+                except (OSError, ValueError) as exc:  # replaced by a link, moved, or over a viewer limit
+                    skipped.append({"path": relative, "reason": f"unreadable: {exc}"[:200]})
+                    continue
+                included += 1
+                archive.writestr(f"{REPORT_DIR}/evidence/{relative}", content)
+        archive.writestr(
+            f"{REPORT_DIR}/evidence-manifest.json",
+            _json({"included": included, "skipped": skipped}),
+        )
         prompt_settings = run_dir / "prompts.json"
         if prompt_settings.is_file():
             archive.writestr(f"{REPORT_DIR}/prompts/settings.json", clean_content(prompt_settings))

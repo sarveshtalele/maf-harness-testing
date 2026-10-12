@@ -61,9 +61,10 @@ def test_probe_picks_httpx2_from_testclient_source(tmp_path, monkeypatch):
     src = tmp_path / "testclient.py"
     src.write_text("try:\n    import httpx2 as httpx\nexcept ModuleNotFoundError:\n    import httpx\n")
     monkeypatch.setattr(recovery.subprocess, "run", lambda *a, **k: SimpleNamespace(stdout=str(src)))
-    assert recovery.testclient_http_package("python") == "httpx2"
+    python = tmp_path / ".harness-venv" / "bin" / "python"  # absolute: the probe home lives beside this venv
+    assert recovery.testclient_http_package(python) == "httpx2"
     tooling = Step("install-test-tooling", ["py", "pip", "install", "httpx"], "setup")
     assert runners._tune_test_tooling(tooling, tmp_path).argv[-1] == "httpx2"
     src.write_text("import httpx\n")
-    assert recovery.testclient_http_package("python") == "httpx"
+    assert recovery.testclient_http_package(python) == "httpx"
     assert runners._tune_test_tooling(tooling, tmp_path).argv[-1] == "httpx"

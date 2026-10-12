@@ -106,6 +106,8 @@ from .workflow_support import (
 )
 
 RUN_LOCK_TIMEOUT = 5  # seconds; another process holding the run must not block this one forever
+# Run-level settings edited from the UI (ui/api.py set_case_budget / rename_run) that must survive gate resumes.
+RUN_OVERRIDE_KEYS = ("case_budget", "run_name", "confidence_thresholds")
 
 
 @contextmanager
@@ -171,7 +173,7 @@ class Harness(RerunSteps, ExecutionSteps, GenerationSteps, GreenfieldSteps, Plan
         self.run_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
         self.skills_root = skills_root.resolve()
         self.runtime = runtime
-        self._toolbox = HarnessToolbox(self._repo_context, self._build_files)
+        self._toolbox = HarnessToolbox(self._repo_context, self._agent_build)
         if AGENT_TOOLS and runtime is not None and getattr(runtime, "tool_provider", None) is None:
             runtime.tool_provider = self._stage_tools
         if runtime is not None and getattr(runtime, "recorder", None) is None:
@@ -236,6 +238,18 @@ class Harness(RerunSteps, ExecutionSteps, GenerationSteps, GreenfieldSteps, Plan
         self.workflow = builder.build()
         self._restored = False
 
+    def _agent_build(self, files: list[dict]) -> dict:
+        """Collection for the agent's try_build tool. Importing a draft runs the model's code, so only files the host
+        has already accepted, with identical content, are built; a draft is answered with a skip."""
+        accepted = {
+            f["path"]: f.get("content")
+            for batch in (self.state.get("accepted_generation_batches") or {}).get("batches", {}).values()
+            for f in batch.get("files", [])
+        }
+        if any(accepted.get(f.get("path")) is None or accepted[f["path"]] != f.get("content") for f in files):
+            return {"status": "skipped", "reason": "collection runs only on accepted files", "errors": []}
+        return self._build_files(files)
+
     def _stage_tools(self, stage: str) -> list:
         """Tools an agent gets for a stage: the central tools, plus (opt-in) the skill validators of its own skills."""
         tools = self._toolbox.tools_for(stage)
@@ -292,6 +306,7 @@ class Harness(RerunSteps, ExecutionSteps, GenerationSteps, GreenfieldSteps, Plan
         repo_knowledge: str = "",
         case_budget: int | None = None,
         run_name: str | None = None,
+        confidence_thresholds: dict | None = None,
         run_mode: str = "brownfield",
         test_types: list[str] | None = None,
         spec_sources: dict | None = None,
@@ -320,8 +335,9 @@ class Harness(RerunSteps, ExecutionSteps, GenerationSteps, GreenfieldSteps, Plan
             if docs:  # keep the originals with the run
                 inputs = self.run_dir / "spec_inputs"
                 inputs.mkdir(parents=True, exist_ok=True)
-                for doc in docs:
-                    (inputs / Path(doc["name"]).name).write_bytes(doc["content"])
+                for index, doc in enumerate(docs, 1):  # the index keeps duplicate names apart
+                    base = "".join(c if c.isalnum() or c in "._-" else "_" for c in Path(doc["name"]).name)
+                    (inputs / f"{index:03d}-{base[:120] or 'document'}").write_bytes(doc["content"])
             jira = jira or ((spec_sources or {}).get("jira") or None)
             if jira and jira_token:
                 jira = {**jira, "api_token": jira_token}
@@ -370,6 +386,7 @@ class Harness(RerunSteps, ExecutionSteps, GenerationSteps, GreenfieldSteps, Plan
             "launch_app": bool(start_app and not app_url),
             "app_component": app_component,
             **({"case_budget": {"per_requirement": case_budget}} if case_budget else {}),
+            **({"confidence_thresholds": dict(confidence_thresholds)} if confidence_thresholds else {}),
             "stages": self.stages,
             "artifacts": {},
             "revisions": {},
@@ -408,6 +425,7 @@ class Harness(RerunSteps, ExecutionSteps, GenerationSteps, GreenfieldSteps, Plan
                 raise PermissionError(f"Blocked by hook ({gate.source}): {gate.reason}")
             self.view = fresh
             self.state = pending["state"]
+            self._apply_run_overrides(self.state)  # before save(), which would otherwise write the stale copy
             self.state["active_stage"] = pending["stage"]
             self.view["status"] = "running"
             self.view["consumed"].append(request_id)
@@ -527,8 +545,17 @@ class Harness(RerunSteps, ExecutionSteps, GenerationSteps, GreenfieldSteps, Plan
             },
         )
 
+    def _apply_run_overrides(self, state: dict) -> None:
+        """UI edits to run-level keys live in run.json. The checkpointed request holds an older copy of state,
+        so the saved value wins on every gate response; otherwise "Revise design" would undo a budget change."""
+        saved = self.view.get("state") or {}
+        for key in RUN_OVERRIDE_KEYS:
+            if key in saved:
+                state[key] = saved[key]
+
     async def answer(self, stage, request, response, ctx):
         state = request["state"]
+        self._apply_run_overrides(state)
         self.state = state
         decision = response.get("decision")
         kind = request["kind"]

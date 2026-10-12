@@ -1,7 +1,7 @@
 """``.harness/hooks.json``: load, validate and compile user hooks (plus the built-ins) into a ``HookEngine``.
 
-Two files are read, user first, then project: ``~/.maf-harness/hooks.json`` and ``<working directory>/.harness/hooks.json``.
-The working directory is where the harness is started, never the repository under test: a cloned repository cannot
+Two files are read, user first, then project: ``~/.maf-harness/hooks.json`` and ``<user-data dir>/.harness/hooks.json``.
+Neither is taken from the working directory: a checkout the harness is started from, or a cloned repository, cannot
 install hooks. A malformed file is an error, not a warning: silently ignoring a broken safety hook would be worse.
 
 .. code-block:: json
@@ -19,6 +19,7 @@ install hooks. A malformed file is an error, not a warning: silently ignoring a 
 from __future__ import annotations
 
 import json
+import logging
 import os
 import re
 import shutil
@@ -33,7 +34,12 @@ from .events import EVENTS
 
 MODES = ("enforce", "evaluate_only")
 _ENTRY_KEYS = {"event", "matcher", "command", "python", "timeout", "name"}
-_TOP_KEYS = {"mode", "builtins", "hooks"}
+_TOP_KEYS = {
+    "mode",
+    "builtins",
+    "hooks",
+    "$comment",
+}  # "$comment": documentation in the shipped example, ignored
 MAX_TIMEOUT = 300
 
 
@@ -53,8 +59,40 @@ def config_paths(project_root: Path | None = None) -> list[Path]:
     """Config files in load order (later files win for ``mode`` and ``builtins``; ``hooks`` are concatenated)."""
     return [
         Path.home() / ".maf-harness" / "hooks.json",
-        (project_root or Path.cwd()) / ".harness" / "hooks.json",
+        (project_root or paths.user_data_root()) / ".harness" / "hooks.json",
     ]
+
+
+def _legacy_message(legacy: Path) -> str:
+    return (
+        f"{legacy} is ignored: hooks are read only from {paths.user_data_root() / '.harness' / 'hooks.json'} and "
+        "~/.maf-harness/hooks.json. Move the file to the first location to use it. A checkout the harness starts in "
+        "can contain hooks, so the working directory is never trusted."
+    )
+
+
+def legacy_hooks_file(cwd: Path | None = None) -> Path | None:
+    """A ``<cwd>/.harness/hooks.json`` from before hooks moved to the user data folder. It is not loaded, so when one
+    exists this returns it for the warning and the configuration API."""
+    candidate = (cwd or Path.cwd()) / ".harness" / "hooks.json"
+    try:
+        if not candidate.is_file():
+            return None
+        loaded = {path.resolve() for path in config_paths()}
+        return None if candidate.resolve() in loaded else candidate
+    except OSError:
+        return None
+
+
+def hook_status() -> dict[str, Any]:
+    """Where hooks are read from, and any legacy file that is ignored (for the configuration API)."""
+    legacy = legacy_hooks_file()
+    return {
+        "files": [str(path) for path in config_paths() if path.is_file()],
+        "project_file": str(paths.user_data_root() / ".harness" / "hooks.json"),
+        "legacy_file": str(legacy) if legacy else None,
+        "warning": _legacy_message(legacy) if legacy else None,
+    }
 
 
 def validate_entry(entry: Any, source: str, index: int) -> dict[str, Any]:
@@ -126,6 +164,8 @@ def parse_config(data: Any, source: str = "hooks.json") -> HookConfig:
 
 def load_config(paths: list[Path] | None = None) -> HookConfig:
     """Merge every existing config file; no file at all is a valid (built-ins only) configuration."""
+    if paths is None and (legacy := legacy_hooks_file()):
+        logging.getLogger(__name__).warning(_legacy_message(legacy))
     merged = HookConfig()
     for path in paths if paths is not None else config_paths():
         if not path.is_file():
@@ -142,14 +182,28 @@ def load_config(paths: list[Path] | None = None) -> HookConfig:
     return merged
 
 
+HOOK_FOLDERS_ENV = paths.HOOK_FOLDERS_ENV  # read by the frozen backend's --run-python (desktop_backend)
+
+
 def _resolve_argv(argv: list[str], entry: dict[str, Any]) -> list[str]:
-    """Absolute program path (a relative argv[0] is resolved against the config file, never the caller's cwd, which
-    Windows would otherwise use); ``python`` / ``python3`` mean the interpreter running the harness."""
+    """Absolute program path. A relative argv[0] or script is resolved against the config file that declared the hook,
+    never the caller's cwd (which Windows would otherwise use). ``python`` / ``python3`` mean the interpreter running
+    the harness."""
     program = argv[0]
+    base = Path(entry["_source"]).parent
     if program in {"python", "python3"}:
-        return [*paths.python_argv(), *argv[1:]]
+        rest = list(argv[1:])
+        if (
+            rest
+            and not rest[0].startswith("-")
+            and not Path(rest[0]).is_absolute()
+            and (base / rest[0]).is_file()
+        ):
+            rest[0] = str(
+                (base / rest[0]).resolve()
+            )  # the script beside hooks.json, not beside the harness's cwd
+        return [*paths.python_argv(), *rest]
     if os.sep in program or "/" in program:
-        base = Path(entry["_source"]).parent
         path = Path(program) if Path(program).is_absolute() else (base / program)
         found = str(path.resolve()) if path.exists() else None
     else:
@@ -159,16 +213,21 @@ def _resolve_argv(argv: list[str], entry: dict[str, Any]) -> list[str]:
     return [found, *argv[1:]]
 
 
-def _hook_env() -> dict[str, str]:
+def _hook_env(entry: dict[str, Any]) -> dict[str, str]:
+    """The basic environment, plus the folders a python hook script may come from. The frozen backend runs python hooks
+    as a child process whose own user-data settings are not forwarded, so the folders are passed explicitly."""
     from ..envs.execution import BASIC_ENV  # lazy: keeps the hooks package importable on its own
 
-    return {key: os.environ[key] for key in BASIC_ENV if key in os.environ}
+    env = {key: os.environ[key] for key in BASIC_ENV if key in os.environ}
+    folders = [paths.user_data_root() / ".harness", Path(entry["_source"]).resolve().parent]
+    env[HOOK_FOLDERS_ENV] = os.pathsep.join(dict.fromkeys(str(folder) for folder in folders))
+    return env
 
 
 def compile_entry(entry: dict[str, Any]) -> HookSpec:
     if "command" in entry:
         argv = _resolve_argv(entry["command"], entry)
-        handler = command_handler(argv, timeout=entry["timeout"], env=_hook_env())
+        handler = command_handler(argv, timeout=entry["timeout"], env=_hook_env(entry))
         label = (
             Path(entry["command"][1]).name
             if len(entry["command"]) > 1 and Path(entry["command"][0]).stem.startswith("python")
@@ -215,6 +274,8 @@ __all__ = [
     "build_engine",
     "compile_entry",
     "config_paths",
+    "hook_status",
+    "legacy_hooks_file",
     "load_config",
     "parse_config",
     "validate_entry",

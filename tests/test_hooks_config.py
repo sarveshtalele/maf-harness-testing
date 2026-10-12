@@ -1,10 +1,13 @@
 """``.harness/hooks.json``: validation, merging, compilation and the engine it produces."""
 
 import json
+import os
 import sys
 import textwrap
+from pathlib import Path
 
 import pytest
+from test_ui_api import local_api  # noqa: F401
 
 from maf_test_harness.hooks import HookConfig, HookConfigError, build_engine, load_config
 from maf_test_harness.hooks.config import compile_entry, config_paths, parse_config, validate_entry
@@ -227,3 +230,66 @@ def test_the_shipped_example_configuration_is_valid():
     example = Path(".harness/hooks.json.example")
     config = parse_config(json.loads(example.read_text(encoding="utf-8")), str(example))
     assert config.mode == "enforce" and len(config.hooks) == 3
+
+
+def test_a_python_hook_script_is_resolved_beside_its_hooks_json_not_the_cwd(tmp_path, monkeypatch):
+    from maf_test_harness import paths
+    from maf_test_harness.hooks.config import HOOK_FOLDERS_ENV, _hook_env, _resolve_argv
+
+    folder = tmp_path / "cfg"
+    folder.mkdir()
+    (folder / "check.py").write_text("", encoding="utf-8")
+    monkeypatch.chdir(tmp_path)  # the harness's working directory must not decide which script runs
+    monkeypatch.setattr(paths, "user_data_root", lambda: tmp_path / "data")
+    entry = {"_source": str(folder / "hooks.json")}
+    assert _resolve_argv(["python", "check.py", "--flag"], entry) == [
+        sys.executable,
+        str((folder / "check.py").resolve()),
+        "--flag",
+    ]
+    assert _resolve_argv(["python", "-c", "pass"], entry) == [sys.executable, "-c", "pass"]
+    folders = _hook_env(entry)[HOOK_FOLDERS_ENV].split(os.pathsep)
+    assert folders == [str(tmp_path / "data" / ".harness"), str(folder.resolve())]
+
+
+def test_a_working_directory_hooks_file_is_not_loaded_and_is_reported_with_the_new_path(
+    tmp_path, monkeypatch, caplog
+):
+    import logging
+
+    from maf_test_harness import paths
+    from maf_test_harness.hooks import config as hook_config
+
+    data = tmp_path / "data"
+    loaded = data / ".harness" / "hooks.json"
+    monkeypatch.setattr(paths, "user_data_root", lambda: data)
+    monkeypatch.setattr(hook_config, "config_paths", lambda project_root=None: [loaded])
+    checkout = tmp_path / "checkout"
+    legacy = write(
+        checkout / ".harness" / "hooks.json", {"hooks": [{"event": "PreToolUse", "command": ["x"]}]}
+    )
+    monkeypatch.chdir(checkout)
+    with caplog.at_level(logging.WARNING, logger="maf_test_harness.hooks.config"):
+        config = load_config()
+    assert config.hooks == []  # the checkout's file never installs hooks
+    assert "is ignored" in caplog.text and str(loaded) in caplog.text
+    status = hook_config.hook_status()
+    assert Path(status["legacy_file"]).resolve() == legacy.resolve()
+    assert status["project_file"] == str(loaded) and "is ignored" in status["warning"]
+    assert hook_config.legacy_hooks_file(cwd=data) is None  # a file that is loaded is not a legacy file
+
+
+def test_no_warning_when_the_working_directory_has_no_hooks_file(tmp_path, monkeypatch):
+    from maf_test_harness.hooks import config as hook_config
+
+    monkeypatch.chdir(tmp_path)
+    assert hook_config.legacy_hooks_file() is None
+    assert hook_config.hook_status()["legacy_file"] is None
+
+
+def test_the_configuration_api_reports_the_hooks_location(local_api):  # noqa: F811
+    from maf_test_harness import paths
+
+    assert "hooks" in local_api.config() and local_api.config()["hooks"]["project_file"] == str(
+        paths.user_data_root() / ".harness" / "hooks.json"
+    )

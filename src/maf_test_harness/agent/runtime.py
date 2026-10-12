@@ -152,6 +152,17 @@ def _structured_value(result: Any) -> Any:
         raise AgentOutputError(f"Structured output failed schema validation: {str(exc)[:400]}") from exc
 
 
+STAGE_AUTHOR = "stage_author"  # default role: the agent that writes the stage's artifact
+
+
+def _trace_key(stage: str, role: str) -> str:
+    """JSON key for per-(stage, role) records in state. The author keeps the plain stage name."""
+    return stage if role == STAGE_AUTHOR else f"{stage}:{role}"
+
+
+_FENCED_BLOCK = re.compile(r"```[A-Za-z0-9_-]*[ \t]*\r?\n?(.*?)```", re.DOTALL)
+
+
 def extract_json_object(text: str) -> dict[str, Any]:
     """Return the complete JSON object from a model response.
 
@@ -175,6 +186,19 @@ def extract_json_object(text: str) -> dict[str, Any]:
         return value
     if value is not None:
         raise AgentOutputError("Agent response must be a JSON object.")
+
+    # Likely blocks first (linear time): a Markdown-fenced body, then the outermost braces.
+    fence = _FENCED_BLOCK.search(text)
+    first, last = text.find("{"), text.rfind("}")
+    for block in ([fence.group(1)] if fence else []) + (
+        [text[first : last + 1]] if 0 <= first < last else []
+    ):
+        try:
+            decoded = json.loads(block)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(decoded, dict):
+            return decoded
 
     # Compatibility path for prose/fenced output. raw_decode() is strict about
     # the JSON itself but permits us to ignore text outside the decoded object.
@@ -412,11 +436,11 @@ class MAFHarnessRuntime:
             )
         self._guards = {}
         self._tracers = {}
-        self._primed = {}
+        self._primed: dict[tuple[str, str], dict[str, Any]] = {}  # (stage, role) -> primed session
         self._run_counts: dict[str, int] = {}
-        self._last_response: dict[
-            tuple[str, str | None], dict[str, Any]
-        ] = {}  # (stage, role) -> {path, result, hit}: awaiting host validation
+        # (stage, role) -> {path, result, hit}: awaiting host validation. A reviewer's answer must not replace
+        # the author's pending entry, or the author's answer is never cached.
+        self._last_response: dict[tuple[str, str], dict[str, Any]] = {}
         self.recorder: TraceRecorder | None = None  # set by the workflow host; None = no trace file
         self._trace_context: dict[str, Any] = {}
         # Reviewed, hash-pinned scripts the agent may call through MAF run_skill_script (model tier only).
@@ -731,8 +755,9 @@ class MAFHarnessRuntime:
                 await _close_bounded(tool)
             except Exception:
                 pass
-        self._agents.pop(stage, None)  # its tools are gone; a rerun rebuilds the agent
-        self._primed.pop(stage, None)
+        for cache in (self._agents, self._primed):  # its tools are gone; a rerun rebuilds the agents
+            for key in [k for k in cache if k[0] == stage]:
+                cache.pop(key, None)
 
     def _create_agent(
         self, stage: str, skills: list[str], persona: str, state: dict, persist, mcp_tools: list | None = None
@@ -905,7 +930,13 @@ class MAFHarnessRuntime:
         ]
 
     def _verify_skill_loaded(
-        self, stage: str, skills: list[str], trace: list[dict[str, Any]], state: dict, requested: list[str]
+        self,
+        stage: str,
+        skills: list[str],
+        trace: list[dict[str, Any]],
+        state: dict,
+        requested: list[str],
+        role: str = STAGE_AUTHOR,
     ) -> None:
         """Every assigned skill (primary and companions) must have been loaded through MAF's load_skill tool."""
         loaded = [
@@ -927,7 +958,7 @@ class MAFHarnessRuntime:
             *self._mcp_names,
         }
         unknown = sorted({n for n in requested + [c["name"] for c in trace] if n not in known_tools})
-        state.setdefault("skill_tool_trace", {})[stage] = {
+        state.setdefault("skill_tool_trace", {})[_trace_key(stage, role)] = {
             "assigned_skill": skills[0],
             "assigned_skills": skills,
             "loaded_skills": loaded,
@@ -943,7 +974,9 @@ class MAFHarnessRuntime:
                 "cannot call tools."
             )
 
-    async def _prime_skill(self, stage: str, skills: list[str], agent, state: dict) -> dict:
+    async def _prime_skill(
+        self, stage: str, skills: list[str], agent, state: dict, role: str = STAGE_AUTHOR
+    ) -> dict:
         """Phase 1 (progressive mode): make the model load every assigned skill via MAF's load_skill tool.
 
         Some OpenAI-compatible models skip tool calls when structured output is requested in the same turn, so the
@@ -978,12 +1011,16 @@ class MAFHarnessRuntime:
                 tool_calls=[c["name"] for c in trace],
             )
             try:
-                self._verify_skill_loaded(stage, skills, trace, state, self._requested_tool_names(result))
+                self._verify_skill_loaded(
+                    stage, skills, trace, state, self._requested_tool_names(result), role
+                )
             except AgentOutputError as exc:
                 failure = str(exc)
-                state.setdefault("skill_tool_trace", {}).setdefault(stage, {})["prime_attempts"] = attempt
+                state.setdefault("skill_tool_trace", {}).setdefault(_trace_key(stage, role), {})[
+                    "prime_attempts"
+                ] = attempt
                 continue
-            state["skill_tool_trace"][stage]["prime_attempts"] = attempt
+            state["skill_tool_trace"][_trace_key(stage, role)]["prime_attempts"] = attempt
             return {"session": session.to_dict(), "trace": trace}
         raise AgentOutputError(failure)
 
@@ -999,19 +1036,19 @@ class MAFHarnessRuntime:
         response_format: Any | None = None,
         companions: tuple[str, ...] | list[str] = (),
         temperature: float = 0.0,
-        role: str | None = None,
+        role: str = STAGE_AUTHOR,
     ) -> dict:
         skills = self._trusted_skills(stage, [skill_name, *companions], state)
         companions = tuple(skills[1:])
         cache_path = self._response_cache_path(stage, skills, persona, prompt, response_format, temperature)
-        key = (stage, role)
-        self._last_response.pop(key, None)
+        slot = (stage, role or STAGE_AUTHOR)
+        self._last_response.pop(slot, None)
         if cache_path is not None and cache_path.is_file():
             try:
                 cached = json.loads(cache_path.read_text(encoding="utf-8"))
                 if isinstance(cached, dict) and cached.get("status") == "completed":
                     digest = hashlib.sha256(prompt.encode()).hexdigest()
-                    self._last_response[key] = {"path": cache_path, "result": cached, "hit": True}
+                    self._last_response[slot] = {"path": cache_path, "result": cached, "hit": True}
                     self._trace_context = {"stage": stage, "phase": "structured"}
                     self._emit(
                         "cache_hit",
@@ -1026,24 +1063,24 @@ class MAFHarnessRuntime:
             except (OSError, ValueError):
                 pass  # unreadable entry: behave like a miss
         identity = (skills, persona)
-        if self._agents.get(stage, (None, None))[0] != identity:  # first call, or the skill set changed
+        if self._agents.get(slot, (None, None))[0] != identity:  # first call, or the skill set changed
             mcp_tools = await self._mcp_tools(stage, state) if self.skill_mode == "progressive" else []
-            self._agents[stage] = (
+            self._agents[slot] = (
                 identity,
                 self._create_agent(stage, skills, persona, state, persist, mcp_tools),
             )
-            self._primed.pop(stage, None)
-        agent = self._agents[stage][1]
+            self._primed.pop(slot, None)
+        agent = self._agents[slot][1]
         self._guards[stage].budget, self._guards[stage].persist = state["budget"], persist
         # Stage prompts are self-contained (inputs, evidence, schema, feedback): use a clean session per call
         # so failed attempts can never poison a retry.
         primed_trace: list[dict[str, Any]] = []
         if self.skill_mode == "progressive":
-            if stage not in self._primed:
-                self._primed[stage] = await self._prime_skill(stage, skills, agent, state)
+            if slot not in self._primed:
+                self._primed[slot] = await self._prime_skill(stage, skills, agent, state, role)
                 persist()
-            session = AgentSession.from_dict(copy.deepcopy(self._primed[stage]["session"]))
-            primed_trace = self._primed[stage]["trace"]
+            session = AgentSession.from_dict(copy.deepcopy(self._primed[slot]["session"]))
+            primed_trace = self._primed[slot]["trace"]
         else:
             session = agent.create_session()
         self._tracers[stage].calls.clear()
@@ -1106,7 +1143,7 @@ class MAFHarnessRuntime:
             response_sha256=invocation.get("response_sha256"),
             tool_calls=[c["name"] for c in self._tracers[stage].calls],
         )
-        self._verify_skill_loaded(stage, skills, trace, state, self._requested_tool_names(result))
+        self._verify_skill_loaded(stage, skills, trace, state, self._requested_tool_names(result), role)
         if (
             self.script_runner.runs
         ):  # scripts the agent ran through MAF run_skill_script (reviewed, hash-checked)
@@ -1132,7 +1169,7 @@ class MAFHarnessRuntime:
             return data
         outcome = {"status": "completed", "artifact": data}
         if cache_path is not None:
-            self._last_response[key] = {"path": cache_path, "result": outcome, "hit": False}
+            self._last_response[slot] = {"path": cache_path, "result": outcome, "hit": False}
         return outcome
 
     def _response_cache_path(
@@ -1161,13 +1198,13 @@ class MAFHarnessRuntime:
         )
         return root / f"{hashlib.sha256(material.encode()).hexdigest()}.json"
 
-    def settle_response_cache(self, stage: str, validated: bool, role: str | None = None) -> None:
+    def settle_response_cache(self, stage: str, validated: bool, role: str | None = STAGE_AUTHOR) -> None:
         """Called by the host after its own validation of the stage's last answer.
 
         Accepted fresh answers are stored; a rejected answer is never stored and a rejected cached one is deleted.
         Cache failures never fail a run.
         """
-        entry = self._last_response.pop((stage, role), None)
+        entry = self._last_response.pop((stage, role or STAGE_AUTHOR), None)
         if entry is None:
             return
         try:

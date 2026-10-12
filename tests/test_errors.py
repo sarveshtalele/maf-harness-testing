@@ -85,3 +85,11 @@ def test_downloading_recipes_are_flagged_and_the_catalogue_renders():
             assert code.autonomy in {"ask", "auto"} and (
                 code.autonomy == "ask" or code.code == "ENV-COMMON-005"
             )
+
+
+def test_evidence_of_a_match_on_the_last_line_keeps_its_final_character():
+    from maf_test_harness.errors import engine
+
+    text = "setup ok\nModuleNotFoundError: No module named 'requests'"
+    found = engine.classify(text, "python")
+    assert found and found[0].evidence == "ModuleNotFoundError: No module named 'requests'"

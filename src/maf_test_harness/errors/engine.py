@@ -71,7 +71,8 @@ def classify(text: str, ecosystem: str | None = None, context: Context | None = 
             match = pattern.search(text)
             if not match or code in found:
                 continue
-            line = text[text.rfind("\n", 0, match.start()) + 1 : text.find("\n", match.end())]
+            end = text.find("\n", match.end())
+            line = text[text.rfind("\n", 0, match.start()) + 1 : (len(text) if end == -1 else end)]
             found[code] = _diagnosis(
                 code, line or match.group(0), {k: v for k, v in match.groupdict().items() if v}
             )

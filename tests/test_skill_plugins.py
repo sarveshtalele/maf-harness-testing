@@ -81,7 +81,8 @@ def _drop(tmp_path, monkeypatch, body, name="go-test-helper"):
     (d / "plugin.yaml").write_text(body, encoding="utf-8")
     monkeypatch.setenv("HARNESS_PLUGIN_DIR", str(tmp_path))
     monkeypatch.setenv("HARNESS_PLUGIN_APPROVALS", str(tmp_path.parent / f"{tmp_path.name}-approvals.json"))
-    trust.approve(config.ROOT / "skills", name)
+    skills = config.ROOT / "skills"
+    trust.approve(skills, name, trust.reviewed_digest(skills, name))
     return d
 
 

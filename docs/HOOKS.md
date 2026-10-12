@@ -61,10 +61,18 @@ off (`HARNESS_HOOKS=off`) does not open the filesystem.
 
 ## 4. Your own hooks: `.harness/hooks.json`
 
-Two files are read, user first, then project: `~/.maf-harness/hooks.json` and `<directory you start the harness from>/.harness/hooks.json`.
-**The repository under test is never consulted**: a cloned repository cannot install hooks. A malformed file stops the run
+Two files are read, user first, then project: `~/.maf-harness/hooks.json` and `<user data>/.harness/hooks.json`.
+`<user data>` is the per-user data folder: `~/Library/Application Support/AgenticQE` (macOS), `%APPDATA%\AgenticQE`
+(Windows), `~/.local/share/agentic-qe` (Linux). A source checkout uses `<repository>/.maf-harness`, so the project file is
+`.maf-harness/.harness/hooks.json`.
+
+**Why not the working directory:** the folder you start the harness from may be a checkout, and a checkout can contain a
+`.harness/hooks.json`. Reading it would let any checkout install hooks silently. The earlier location
+(`<working directory>/.harness/hooks.json`) is therefore **no longer read**. When that file exists the harness logs a warning
+at run start and reports it in the configuration API (`hooks.legacy_file`, `hooks.project_file`). Move it to
+`<user data>/.harness/hooks.json`. **The repository under test is never consulted** either. A malformed file stops the run
 before it starts, with the file and entry named; ignoring a broken safety hook silently would be worse.
-Copy [`.harness/hooks.json.example`](../.harness/hooks.json.example) to start.
+Copy [`.harness/hooks.json.example`](../.harness/hooks.json.example) to start; its `$comment` key is documentation only.
 
 ```json
 {
@@ -84,7 +92,7 @@ Copy [`.harness/hooks.json.example`](../.harness/hooks.json.example) to start.
 | `builtins` | per built-in: `false` switches it off, an object sets options; unknown names are rejected |
 | `hooks[].event` | one of the events above |
 | `hooks[].matcher` | regular expression on the tool name (tool events) or the stage (other events); no matcher = every event |
-| `hooks[].command` | an argv list, **never a shell line**. `python` / `python3` mean the interpreter running the harness. A relative path is resolved against the config file, not the current directory |
+| `hooks[].command` | an argv list, **never a shell line**. `python` / `python3` mean the interpreter running the harness. A relative program or script (`["python", "check.py"]`) is resolved beside the config file, not the current directory |
 | `hooks[].python` | `package.module:function`; receives the event as a dict |
 | `hooks[].timeout` | seconds for a command hook (default 10, at most 300) |
 | `hooks[].name` | label used in the audit log and in deny reasons |
@@ -95,6 +103,11 @@ with `{"verdict": "deny" | "transform" | "ask" | "allow", "reason": "...", "payl
 code, a timeout or unparsable output is a failure (a deny on enforcing events).
 
 **Python hooks** return a `Decision`, a verdict dict (same shape) or `None` (allow).
+
+**The frozen desktop app** runs python hook scripts through its own backend (`--run-python`). A script is accepted only
+from the application, plugin and hook folders: the user hooks folder and the folder of the `hooks.json` that declared it.
+Any other path is refused, and the refusal (exit 2) denies on an enforcing event, with a message saying where the script
+must live. `-c` is limited to a literal `SystemExit` message and `-m` is not available.
 
 ### The switch: `HARNESS_HOOKS`
 

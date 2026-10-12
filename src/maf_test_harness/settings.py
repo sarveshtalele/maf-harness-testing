@@ -8,6 +8,7 @@ a variable that is already set in the environment always wins. Every tunable has
 from __future__ import annotations
 
 import json
+import logging
 import os
 import re
 import threading
@@ -48,8 +49,9 @@ def load_dotenv(path: Path) -> None:
             os.environ[key] = _from_dotenv[key] = value
 
 
-for _candidate in (Path.cwd() / ".env", paths.env_file()):
-    load_dotenv(_candidate)
+# Only the install root or user-data .env is read: a checkout the user runs the harness from may be untrusted and
+# must not be able to set HARNESS_* switches or redirect the API base URL.
+load_dotenv(paths.env_file())
 
 API_KEY = os.getenv("OPENAI_API_KEY", "").strip()
 BASE_URL = os.getenv("OPENAI_BASE_URL", "").strip()
@@ -104,8 +106,46 @@ GENERATION_MAX_ATTEMPTS = max(1, int(os.getenv("HARNESS_GENERATION_MAX_ATTEMPTS"
 # Default 0.5 allows up to half the batches to fail; clamp to [0, 1].
 MAX_FAILED_BATCH_RATIO = max(0.0, min(1.0, float(os.getenv("HARNESS_MAX_FAILED_BATCH_RATIO", "0.5"))))
 
-# Independent review: a generated case is accepted only with verdict supported and host confidence at least this.
-TEST_REVIEW_MIN_CONFIDENCE = max(50, min(100, int(os.getenv("HARNESS_TEST_REVIEW_MIN_CONFIDENCE", "80"))))
+# Review confidence gates (plan, design, test) are HARD gates: the resolved value is always within 95-100, so neither a
+# run override nor an env value can weaken them. Resolution: run override > env > REVIEW_DEFAULT_MIN_CONFIDENCE.
+REVIEW_KINDS = ("plan", "design", "test")
+REVIEW_GATE_FLOOR = 95
+REVIEW_GATE_CEILING = 100
+REVIEW_DEFAULT_MIN_CONFIDENCE = REVIEW_GATE_FLOOR
+
+
+def _threshold(raw) -> int | None:
+    """An integer confidence clamped into the hard gate range; anything that is not an integer yields None."""
+    if isinstance(raw, bool):
+        return None
+    try:
+        value = int(str(raw).strip())
+    except (TypeError, ValueError):
+        return None
+    return max(REVIEW_GATE_FLOOR, min(REVIEW_GATE_CEILING, value))
+
+
+def review_threshold(kind: str, state: dict | None = None) -> int:
+    """Minimum confidence (95-100) a reviewed ``kind`` artifact needs. Reads, in order: the run's override in
+    ``state["confidence_thresholds"][kind]``, the env ``HARNESS_{KIND}_REVIEW_MIN_CONFIDENCE``, then the default 95.
+    Values below 95 are raised to 95 and values above 100 are lowered to 100; malformed values fall back to the next
+    source, so a bad value can never silently remove the gate."""
+    if kind not in REVIEW_KINDS:
+        raise ValueError(f"Unknown review kind {kind!r}; expected one of {', '.join(REVIEW_KINDS)}.")
+    overrides = (state or {}).get("confidence_thresholds") or {}
+    value = _threshold(overrides.get(kind)) if isinstance(overrides, dict) else None
+    if value is None:
+        value = _threshold(os.getenv(f"HARNESS_{kind.upper()}_REVIEW_MIN_CONFIDENCE", ""))
+    return REVIEW_DEFAULT_MIN_CONFIDENCE if value is None else value
+
+
+def test_review_threshold(state: dict | None = None) -> int:
+    """The test-review gate of a run. Generation and test review call this at run time, never a constant."""
+    return review_threshold("test", state)
+
+
+# Import-time alias kept for modules that still read the test gate as a constant (new code uses the resolver).
+TEST_REVIEW_MIN_CONFIDENCE = review_threshold("test")
 # Full-accuracy gate (default on): every designed case must be generated and accepted before execution can start.
 # Off restores the fail-soft behaviour, where failed or unverified cases run and report generation_failed.
 REQUIRE_FULL_ACCURACY = os.getenv("HARNESS_REQUIRE_FULL_ACCURACY", "1").strip().lower() not in {
@@ -131,7 +171,18 @@ def parse_stage_models(text: str) -> dict[str, str]:
     return {str(k): str(v).strip() for k, v in parsed.items() if str(v).strip()}
 
 
-STAGE_MODELS: dict[str, str] = parse_stage_models(os.getenv("HARNESS_STAGE_MODELS", "").strip() or "{}")
+def _stage_models_or_default(text: str) -> dict[str, str]:
+    """Invalid JSON falls back to the default model for every stage (it must not stop the import)."""
+    try:
+        return parse_stage_models(text or "{}")
+    except ValueError:
+        logging.getLogger(__name__).warning(
+            "HARNESS_STAGE_MODELS is not a JSON object; using %s for all stages", MODEL
+        )
+        return {}
+
+
+STAGE_MODELS: dict[str, str] = _stage_models_or_default(os.getenv("HARNESS_STAGE_MODELS", "").strip())
 
 
 # ---- runtime resolver ---------------------------------------------------------------------------------------------
@@ -168,10 +219,11 @@ def current() -> dict:
         else:
             out[field], sources[field] = _env_source(field)
     out["stage_models"] = (
-        parse_stage_models(out["stage_models"])
-        if isinstance(out["stage_models"], str) and out["stage_models"]
+        _stage_models_or_default(out["stage_models"])
+        if isinstance(out["stage_models"], str)
         else (out["stage_models"] or {})
     )
+    out["base_url"] = validate_base_url(out["base_url"]) if out["base_url"] else ""
     out["model"] = out["model"] or "deepseek-v4-flash-global"
     out["source"] = sources["api_key"] if out["api_key"] else "none"
     out["sources"] = sources
@@ -218,6 +270,15 @@ def set_runtime(
         if not isinstance(base_url, str):
             raise ValueError("Base URL must be a string.")
         update["base_url"] = validate_base_url(base_url)
+        # The saved key is sent to the base URL's host. Moving it to another host needs an explicit new key.
+        if (
+            _host_of(update["base_url"]) != _host_of(current()["base_url"])
+            and api_key is None
+            and current()["api_key"]
+        ):
+            raise ValueError(
+                "Changing the API host requires a new API key in the same request; the saved key is not sent to a new host."
+            )
     if model is not None:
         if not isinstance(model, str) or not model.strip() or len(model.strip()) > 100:
             raise ValueError("Model must be 1-100 characters.")
@@ -235,6 +296,11 @@ def set_runtime(
         _runtime.update(update)
     if save_to_env:
         _write_env(update)
+
+
+def _host_of(url: str) -> str:
+    """Host that receives the key: the provider default when the base URL is empty."""
+    return (urlsplit(url).hostname or "") if url else "api.openai.com"
 
 
 def clear_runtime() -> None:

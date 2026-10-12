@@ -27,6 +27,7 @@ from pathlib import Path
 from typing import Any
 
 from ..errors import CODES, RECIPES
+from . import platform_compat
 from .runners import VENV_DIR, Step
 
 MAX_TIMEOUT = 3600.0
@@ -158,8 +159,16 @@ def testclient_http_package(python: str | Path) -> str | None:
     """``httpx2`` or ``httpx``: whichever the installed starlette.testclient imports first (read from its source)."""
     code = "import importlib.util as u;s=u.find_spec('starlette.testclient');print(s.origin if s else '')"
     try:
+        home = Path(python).parent.parent / "probe-home"  # the venv that owns this interpreter
         out = subprocess.run(
-            [str(python), "-c", code], capture_output=True, text=True, timeout=60, check=False
+            [str(python), "-c", code],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=60,
+            check=False,
+            env=platform_compat.probe_env(home),
         ).stdout.strip()
         source = Path(out).read_text(encoding="utf-8", errors="replace") if out else ""
     except (OSError, subprocess.SubprocessError):

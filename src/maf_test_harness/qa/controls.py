@@ -37,7 +37,7 @@ def _best_area(requirement: dict[str, Any], areas: list[dict[str, Any]]) -> int 
     for index, area in enumerate(areas):
         score = len(files & set(area.get("evidence_files") or []))
         text = " ".join([str(area.get("objective") or ""), *map(str, area.get("scenarios") or [])])
-        if symbol and symbol in text:
+        if symbol and re.search(rf"(?<!\w){re.escape(symbol)}(?!\w)", text):  # whole word: "run" != "running"
             score += 1
         if score > best_score:  # strict: ties keep the first area in plan order
             best, best_score = index, score
@@ -202,7 +202,8 @@ def trace_rows(
         else:
             worst = max(outcomes, key=lambda o: SEVERITY[o["final_status"]])
             final = worst["final_status"]
-            steps = [o["failed_at"] for o in outcomes if o["failed_at"]]
+            # The step comes from the outcomes that carry the worst status, not from a milder one.
+            steps = [o["failed_at"] for o in outcomes if o["final_status"] == final and o["failed_at"]]
             failed_at = min(steps, key=FAILED_AT_ORDER.index) if final != "passed" and steps else ""
             reason = next(
                 (

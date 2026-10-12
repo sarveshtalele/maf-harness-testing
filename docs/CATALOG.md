@@ -117,7 +117,7 @@ arguments against a JSON schema and returns one envelope (`ok`, `code`, `categor
 | `check_skill_output` | run a reviewed validator of the stage's own skills on a draft | no | `test_design`, opt-in |
 
 Hooks run around every tool call, model call, gate response and failure: built-in secret redaction, write scope,
-download consent, optional stage budget and audit, plus your own `.harness/hooks.json`. Full reference:
+download consent, optional stage budget and audit, plus your own `hooks.json` in the user data folder (`<user data>/.harness/`, never the working directory). Full reference:
 [HOOKS.md](HOOKS.md).
 
 ## 4. Agent Skills
@@ -167,7 +167,7 @@ table per file.
 | Agent Skills | `skills/config.py`, `skills/registry.py`, `skills/contracts.py`, `skills/scripts.py`, `skills/reports.py` | Which skill a stage loads and why; spec/lock validation; contract enforcement on generated output; sandboxed script execution; host-run QA skill reports |
 | Central tools | `tools/code_intel.py`, `tools/autofix.py`, `tools/build_gate.py`, `tools/agent_tools.py` | The eleven deterministic MAF function tools and the mechanical auto-fixers behind them |
 | Typed tools | `tools/registry.py`, `tools/env_tools.py`, `tools/file_tools.py`, `tools/typed.py` | Schema-validated tools with one result envelope (`ToolResult`), hook-aware `ToolRegistry`, per-stage selection |
-| Hooks | `hooks/events.py`, `engine.py`, `builtin.py`, `config.py`, `maf_bridge.py`, `agent_hooks_bridge.py` | Events, verdict engine (fail-closed), built-in hooks, `.harness/hooks.json` loader, MAF middleware, optional AGENT-HOOKS-0.1 backend |
+| Hooks | `hooks/events.py`, `engine.py`, `builtin.py`, `config.py`, `maf_bridge.py`, `agent_hooks_bridge.py` | Events, verdict engine (fail-closed), built-in hooks, `hooks.json` loader (user data folder), MAF middleware, optional AGENT-HOOKS-0.1 backend |
 | Automation | `envs/recovery.py`, `agent/diagnosis.py`, `llm/prompts.py`, `tools/skill_tools.py` | Bounded automatic recovery of setup failures, the opt-in diagnosis agent, stable-first prompt assembly, skill validators as a tool; see [AUTOMATION.md](AUTOMATION.md) |
 | Runtime | `agent/runtime.py`, `ui/runtime_service.py` | MAF agent construction, `SkillsProvider` wiring, tool-trace middleware, `BudgetGuard` (`agent/runtime.py`); one asyncio event-loop-per-UI-session wrapper (`ui/runtime_service.py`) |
 | QA & delivery | `qa/report.py`, `qa/triage.py`, `qa/packaging.py` | Verdict computation, failure triage (files/lines to update), ZIP assembly |

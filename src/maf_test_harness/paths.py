@@ -12,6 +12,9 @@ from pathlib import Path
 
 _SOURCE_ROOT = Path(__file__).resolve().parents[2]
 
+# Set by the harness on a python hook process: the folders its scripts may come from (see hooks.config._hook_env).
+HOOK_FOLDERS_ENV = "HARNESS_HOOK_FOLDERS"
+
 
 def _env_path(name: str) -> Path | None:
     value = os.getenv(name, "").strip()

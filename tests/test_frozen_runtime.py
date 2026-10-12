@@ -60,8 +60,9 @@ def _seen(script: Path) -> dict:
     return json.loads((script.parent / "out.json").read_text(encoding="utf-8"))
 
 
-def test_run_python_runs_a_script_with_its_argv_and_folder_on_path(tmp_path, interpreter_state):
+def test_run_python_runs_a_script_with_its_argv_and_folder_on_path(tmp_path, interpreter_state, monkeypatch):
     script = _probe(tmp_path)
+    monkeypatch.setattr(paths, "resource_root", lambda: tmp_path)
     assert desktop_backend.main(["--run-python", str(script), "a", "b"]) == 0
     seen = _seen(script)
     assert seen["argv"] == [str(script), "a", "b"]
@@ -77,25 +78,32 @@ def test_run_python_runs_a_script_with_its_argv_and_folder_on_path(tmp_path, int
         ("x = 1\n", 0, ""),
     ],
 )
-def test_run_python_propagates_exit_codes(tmp_path, interpreter_state, capsys, body, code, stderr):
+def test_run_python_propagates_exit_codes(
+    tmp_path, interpreter_state, capsys, body, code, stderr, monkeypatch
+):
     script = tmp_path / "exit.py"
     script.write_text(body, encoding="utf-8")
+    monkeypatch.setattr(paths, "resource_root", lambda: tmp_path)
     assert desktop_backend.main(["--run-python", str(script)]) == code
     assert stderr in capsys.readouterr().err
 
 
-def test_run_python_module_and_code(tmp_path, monkeypatch, interpreter_state, capsys):
+def test_run_python_refuses_arbitrary_code_and_modules(tmp_path, monkeypatch, interpreter_state, capsys):
     monkeypatch.chdir(tmp_path)
-    (tmp_path / "probe_mod.py").write_text("import sys\nprint('MOD', sys.argv)\n", encoding="utf-8")
-    assert desktop_backend.main(["--run-python", "-m", "probe_mod", "x"]) == 0
-    out = capsys.readouterr().out
-    assert "MOD" in out and out.strip().endswith("'x']")
-    assert desktop_backend.main(["--run-python", "-c", "import sys; print('CODE', sys.argv)", "q"]) == 0
-    assert "CODE ['-c', 'q']" in capsys.readouterr().out
+    (tmp_path / "probe_mod.py").write_text("print('MOD')\n", encoding="utf-8")
+    assert desktop_backend.main(["--run-python", "-m", "probe_mod", "x"]) == 2
+    assert desktop_backend.main(["--run-python", "-c", "import os; print('CODE')"]) == 2
+    assert desktop_backend.main(["--run-python", "-c", "raise SystemExit(__import__('os').getcwd())"]) == 2
+    assert "CODE" not in capsys.readouterr().out
+    assert desktop_backend.main(["--run-python", "-c", "raise SystemExit('no python here')"]) == 1
+    assert "no python here" in capsys.readouterr().err
 
 
-def test_run_python_isolated_flag_keeps_the_script_folder_off_sys_path(tmp_path, interpreter_state):
+def test_run_python_isolated_flag_keeps_the_script_folder_off_sys_path(
+    tmp_path, interpreter_state, monkeypatch
+):
     script = _probe(tmp_path)
+    monkeypatch.setattr(paths, "resource_root", lambda: tmp_path)
     assert desktop_backend.main(["--run-python", "-I", "-B", str(script)]) == 0
     seen = _seen(script)
     assert str(script.parent.resolve()) not in seen["path"]
@@ -106,7 +114,7 @@ def test_run_python_never_starts_the_api(monkeypatch, interpreter_state):
     from maf_test_harness.ui import api
 
     monkeypatch.setattr(api, "main", lambda: pytest.fail("the API must not start in --run-python mode"))
-    assert desktop_backend.main(["--run-python", "-c", "pass"]) == 0
+    assert desktop_backend.main(["--run-python", "-c", "raise SystemExit('stop')"]) == 1
 
 
 def test_run_python_rejects_unknown_options_and_missing_scripts(tmp_path, interpreter_state, capsys):
@@ -142,7 +150,19 @@ def test_frozen_skill_script_runs_through_the_backend(monkeypatch):
         files={"request.json": "{}"},
     )
     script = (REPO / "skills/reverse-engineering/scripts/analyze.py").resolve()
-    assert seen["argv"][:3] == [sys.executable, "--run-python", str(script)]
+    assert seen["argv"][:8] == [
+        sys.executable,
+        "--run-python",
+        "-B",
+        "--check-hash-based-pycs",
+        "always",
+        "-X",
+        seen["argv"][6],
+        str(script),
+    ]
+    assert seen["argv"][6].startswith(
+        "pycache_prefix="
+    )  # a per-run prefix: no bytecode beside the reviewed script
 
 
 def _homes(found):
@@ -330,13 +350,16 @@ def test_frozen_runner_argv_round_trips_non_ascii_through_run_command(tmp_path):
         encoding="utf-8",
     )
     argv = [sys.executable, "-c", SHIM, "--run-python", str(script), "--request", "input/request.json"]
-    result = run_command(argv, work, tmp_path / "logs", timeout=60, env={"PYTHONPATH": str(REPO / "src")})
+    # The shim runs in a child process: its allowed folders come from the environment (the plugin folder here).
+    env = {"PYTHONPATH": str(REPO / "src"), "HARNESS_PLUGIN_DIR": str(tmp_path)}
+    result = run_command(argv, work, tmp_path / "logs", timeout=60, env=env)
     assert result["exit_code"] == 0, (tmp_path / "logs" / "stderr.log").read_text(encoding="utf-8")
     out = (tmp_path / "logs" / "stdout.log").read_text(encoding="utf-8")
     assert "h\u00e9llo \u2713" in out and "--request" in out
 
 
-def test_run_python_passes_pycache_prefix_and_hash_check_options(tmp_path, interpreter_state):
+def test_run_python_passes_pycache_prefix_and_hash_check_options(tmp_path, interpreter_state, monkeypatch):
+    monkeypatch.setattr(paths, "resource_root", lambda: tmp_path)
     script = tmp_path / "tool" / "flags.py"
     script.parent.mkdir()
     prefix = tmp_path / "pycache"
@@ -455,3 +478,121 @@ def test_retry_after_a_missing_python_finds_the_install_the_project_requires(mon
     step = runners.setup_steps("python", tmp_path, str(tmp_path / "c"), 60)[0]  # the retry
     assert step.name == "create-venv"
     assert step.argv[0] == str(Path("/opt/python3.11/bin/python3.11"))
+
+
+# --- user python hooks in the frozen app (a hook script is refused unless it sits in a hook folder) -------------------
+
+
+def _frozen_hooks(monkeypatch, tmp_path):
+    """Frozen app: the backend runs as ``[sys.executable, -c, SHIM, --run-python]``. Returns the user hooks folder."""
+    from maf_test_harness.hooks import config as hook_config
+
+    _freeze(monkeypatch)
+    data = tmp_path / "data"
+    folder = data / ".harness"
+    folder.mkdir(parents=True)
+    monkeypatch.setattr(paths, "user_data_root", lambda: data)
+    monkeypatch.setattr(paths, "python_argv", lambda: [sys.executable, "-c", SHIM, "--run-python"])
+    hook_env = hook_config._hook_env
+    # The child needs the package on its path; everything else it gets is the harness's own hook environment.
+    monkeypatch.setattr(
+        hook_config, "_hook_env", lambda entry: {**hook_env(entry), "PYTHONPATH": str(REPO / "src")}
+    )
+    return folder
+
+
+def _engine(config_file: Path, audit=None):
+    from maf_test_harness.hooks.config import compile_entry, load_config
+    from maf_test_harness.hooks.engine import HookEngine
+
+    return HookEngine([compile_entry(e) for e in load_config([config_file]).hooks], "enforce", audit)
+
+
+def test_frozen_python_hook_beside_hooks_json_runs_and_can_deny(tmp_path, monkeypatch):
+    folder = _frozen_hooks(monkeypatch, tmp_path)
+    (folder / "check_path.py").write_text(
+        "import json, sys\n"
+        "event = json.load(sys.stdin)\n"
+        "if event['arguments'].get('path', '').endswith('.sh'):\n"
+        "    sys.stderr.write('shell scripts are not allowed')\n"
+        "    sys.exit(2)\n",
+        encoding="utf-8",
+    )
+    config_file = folder / "hooks.json"
+    config_file.write_text(
+        json.dumps(
+            {
+                "hooks": [
+                    {
+                        "event": "PreToolUse",
+                        "matcher": "^write_test_file$",
+                        "command": ["python", "check_path.py"],
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    engine = _engine(config_file)
+    denied, _ = engine.before_tool("write_test_file", {"path": "tests/run.sh"})
+    assert denied.verdict == "deny" and "shell scripts are not allowed" in denied.reason
+    allowed, _ = engine.before_tool("write_test_file", {"path": "tests/test_run.py"})
+    assert allowed.verdict == "allow"
+
+
+def test_frozen_python_hook_outside_the_hook_folders_is_refused_with_a_clear_message(tmp_path, monkeypatch):
+    folder = _frozen_hooks(monkeypatch, tmp_path)
+    elsewhere = tmp_path / "elsewhere" / "check.py"
+    elsewhere.parent.mkdir()
+    elsewhere.write_text("print('never runs')\n", encoding="utf-8")
+    config_file = folder / "hooks.json"
+    config_file.write_text(
+        json.dumps({"hooks": [{"event": "PreToolUse", "command": ["python", str(elsewhere)]}]}),
+        encoding="utf-8",
+    )
+    decision, _ = _engine(config_file).before_tool("read_file", {"path": "a.py"})
+    # Fail closed: the refusal is a deny on an enforcing event, and the reason says where the script must live.
+    assert decision.verdict == "deny"
+    assert "outside the application, plugin and hook folders" in decision.reason
+    assert "hooks.json" in decision.reason
+
+
+def test_frozen_hook_folder_from_the_home_config_is_allowed_only_when_passed_by_the_harness(
+    tmp_path, monkeypatch
+):
+    home_folder = tmp_path / "home" / ".maf-harness"
+    home_folder.mkdir(parents=True)
+    script = home_folder / "tool.py"
+    script.write_text("print('ok')\n", encoding="utf-8")
+    monkeypatch.delenv("HARNESS_HOOK_FOLDERS", raising=False)
+    monkeypatch.setattr(paths, "resource_root", lambda: tmp_path / "resources")
+    monkeypatch.setattr(paths, "plugin_dir", lambda: tmp_path / "plugins")
+    assert not desktop_backend._allowed_script(str(script))
+    monkeypatch.setenv("HARNESS_HOOK_FOLDERS", os.pathsep.join([str(tmp_path / "x"), str(home_folder)]))
+    assert desktop_backend._allowed_script(str(script))
+    assert not desktop_backend._allowed_script(str(home_folder.parent / "outside.py"))
+
+
+def test_a_crashing_hook_fails_closed_on_enforcing_events_and_only_records_on_observers(
+    tmp_path, monkeypatch
+):
+    folder = _frozen_hooks(monkeypatch, tmp_path)
+    (folder / "broken.py").write_text("import sys\nsys.stderr.write('boom')\nsys.exit(1)\n", encoding="utf-8")
+    config_file = folder / "hooks.json"
+    config_file.write_text(
+        json.dumps(
+            {
+                "hooks": [
+                    {"event": "PreToolUse", "command": ["python", "broken.py"]},
+                    {"event": "PostToolUse", "command": ["python", "broken.py"]},
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    audited = []
+    engine = _engine(config_file, audit=lambda event, **data: audited.append((event, data)))
+    decision, _ = engine.before_tool("read_file", {"path": "a.py"})
+    assert decision.verdict == "deny" and "failed" in decision.reason and "exited 1" in decision.reason
+    assert engine.after_tool("read_file", {"path": "a.py"}, "result") == "result"  # an observer cannot block
+    assert [event for event, _ in audited].count("hook_error") == 2

@@ -105,7 +105,7 @@ def test_supported_review_with_a_score_below_the_threshold_is_rejected_with_the_
     with pytest.raises(ValueError, match="Independent test review requires repair") as exc:
         review(tmp_path, low)
     message = str(exc.value)
-    assert "TC-1: confidence 75 (threshold 80, verdict supported)" in message
+    assert "TC-1: confidence 75 (threshold 95, verdict supported)" in message
     assert "weakest dimensions: isolation_and_determinism 5/15" in message
     assert "reviewer: Scripted reviewer reason." in message
 
@@ -227,7 +227,7 @@ def test_case_verified_on_a_later_round_passes_the_gate(tmp_path, monkeypatch):
         "verified": 2,
         "total": 2,
         "min_confidence": 100,
-        "threshold": 80,
+        "threshold": 95,
     }
     assert result["case_verification"]["TC-2"]["rounds"] == 2
     assert result["case_verification"]["TC-1"]["rounds"] == 0
@@ -459,7 +459,7 @@ def test_gate_reasons_ignore_reviews_recorded_before_this_generation_run(tmp_pat
     assert "TC-2: confidence 40" in str(exc.value)
 
 
-def test_default_review_threshold_is_80_and_the_model_need_not_emit_confidence(tmp_path, monkeypatch):
+def test_default_review_threshold_is_95_and_the_model_need_not_emit_confidence(tmp_path, monkeypatch):
     import subprocess
     import sys
 
@@ -471,7 +471,7 @@ def test_default_review_threshold_is_80_and_the_model_need_not_emit_confidence(t
         [sys.executable, "-c", code], capture_output=True, text=True, env=env, cwd=Path.cwd()
     )
     assert proc.returncode == 0, proc.stderr
-    assert proc.stdout.strip() == "80"
+    assert proc.stdout.strip() == "95"
     review_model = TestCaseReview.model_validate(
         {
             "case_id": "TC-1",

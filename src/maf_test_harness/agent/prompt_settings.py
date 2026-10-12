@@ -3,10 +3,10 @@
 from __future__ import annotations
 
 import json
-import os
 from pathlib import Path
 
 from .. import paths
+from ..storage import atomic_json
 from .personas import PERSONAS
 
 
@@ -60,8 +60,5 @@ def load(path: Path) -> dict:
 def save(path: Path, value: dict) -> dict:
     clean = validate(value)
     path.parent.mkdir(parents=True, exist_ok=True)
-    temporary = path.with_suffix(".tmp")
-    temporary.write_text(json.dumps(clean, indent=2), encoding="utf-8")
-    os.chmod(temporary, 0o600)
-    temporary.replace(path)
+    atomic_json(path, clean)  # unique staging name, Windows-lock retry
     return clean

@@ -424,3 +424,25 @@ def test_environment_plan_lists_downloads_instead_of_blocking_on_missing_tools(t
     write(repo, {"mvnw": "#!/bin/sh"})  # the wrapper brings Maven: only the JDK is fetched
     plan = environment.build_environment_plan(StackProfile(primary="maven"), repo, tmp_path / "c")
     assert [r["kind"] for r in plan["toolchains"]] == ["jdk"]
+
+
+@pytest.mark.parametrize(
+    "version", ["8.5-bin.zip?x=/../../..", "-version", "17 & calc", "1.2.3.4.5", "", "../17"]
+)
+def test_toolchain_versions_are_dotted_numbers_before_any_path_or_download(tmp_path, version):
+    from maf_test_harness.envs import toolchains
+
+    with pytest.raises(toolchains.ToolchainError, match="dotted numbers"):
+        toolchains.resolve_download("gradle", version, fetch=lambda url: b"")
+    with pytest.raises(toolchains.ToolchainError, match="dotted numbers"):
+        toolchains.python_via_uv(version, runner=lambda argv: pytest.fail("uv must not run"))
+    with pytest.raises(toolchains.ToolchainError, match="dotted numbers"):
+        toolchains._dir_for("gradle", version, tmp_path)
+
+
+def test_cache_scan_skips_foreign_folders_and_keeps_valid_entries(tmp_path):
+    from maf_test_harness.envs import toolchains
+
+    base = tmp_path / "jdk"
+    (base / "weird folder & more").mkdir(parents=True)
+    assert toolchains.cached("jdk", "17", root=tmp_path) is None  # no crash on the foreign folder
