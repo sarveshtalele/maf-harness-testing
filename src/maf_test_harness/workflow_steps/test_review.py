@@ -1,26 +1,56 @@
 """Independent MAF review of generated cases against their actual source evidence."""
 
+import re
+
 from ..agent.personas import chief_architect_persona
 from ..llm.prompts import generation_prompt
 from ..models import TestReviewDraft
-from ..qa.confidence import RUBRIC, resolve_target, review_accepted, score_review, verification_note
-from ..qa.derivation import deterministic_findings
+from ..qa.confidence import (
+    RUBRIC,
+    derivation_findings,
+    resolve_target,
+    review_accepted,
+    score_review,
+    verification_note,
+)
+from ..qa.derivation import deterministic_findings, mask_expected_literals
 from ..repo.analyzer import build_repository_evidence, extract_target_sources
 from ..settings import TEST_REVIEW_MIN_CONFIDENCE
 from ..workflow_support import MODEL_REPAIR_ATTEMPTS
 
 
-def _source_found(root, target: str, source_files: list[str]) -> bool:
-    """Only a confident code symbol needs source (routes and free-text targets are not caps-checked against it).
+def _case_source(root, target: str, source_files: list[str], max_chars: int = 24_000) -> str:
+    """The target's own source blocks. A "module.function" target resolves through its symbol when no class or module
+    of that name declares it."""
+    if not target:
+        return ""
+    found = extract_target_sources(root, [target], source_files, max_chars)
+    resolved = resolve_target(target)
+    if not found and resolved is not None and resolved.kind != "route":
+        found = extract_target_sources(root, [resolved.symbol], source_files, max_chars)
+    return found
 
-    A "module.function" target resolves through its symbol when no class/module of that name declares it.
-    """
+
+def _confident_target(target: str) -> bool:
+    resolved = resolve_target(target)
+    return resolved is not None and resolved.kind != "route"
+
+
+def _own_block_present(text: str, target: str) -> bool:
+    """True when the target's own block (its symbol or owning class) survived the size budget."""
     resolved = resolve_target(target)
     if resolved is None or resolved.kind == "route":
         return True
-    return bool(extract_target_sources(root, [target], source_files)) or bool(
-        extract_target_sources(root, [resolved.symbol], source_files)
-    )
+    names = {resolved.symbol, resolved.owner} - {""}
+    return any(re.search(rf" :: {re.escape(name)} \(lines ", text) for name in names)
+
+
+def _source_found(root, target: str, source_files: list[str]) -> bool:
+    """Only a confident code symbol needs source (routes and free-text targets are not caps-checked against it)."""
+    resolved = resolve_target(target)
+    if resolved is None or resolved.kind == "route":
+        return True
+    return bool(_case_source(root, target, source_files))
 
 
 async def review_generated_tests(host, state, candidate, cases, batch, partial_ok: bool = False):
@@ -32,9 +62,14 @@ async def review_generated_tests(host, state, candidate, cases, batch, partial_o
     ]
     paths = [p for r in selected for p in r.get("source_files", [])]
     targets = [str(case.get("target") or "") for case in cases]
-    target_source = extract_target_sources(
-        host.run_dir / "repo", targets, state["artifacts"].get("repo_analysis", {}).get("source_files", [])
-    )
+    root = (host.run_dir / "repo").resolve()
+    source_files = state["artifacts"].get("repo_analysis", {}).get("source_files", [])
+    # Each case gets its own share of the budget, so one large class cannot push another case's target out of the prompt.
+    budget = max(4_000, 24_000 // max(1, len(cases)))
+    target_source = {
+        str(case["id"]): _case_source(root, str(case.get("target") or ""), source_files, budget)
+        for case in cases
+    }
     source = build_repository_evidence(
         host.run_dir / "repo",
         max_files=max(1, len(set(paths))),
@@ -42,24 +77,28 @@ async def review_generated_tests(host, state, candidate, cases, batch, partial_o
         preferred_paths=paths,
         target_symbols=targets,
     )
+    # Blind derivation: each assertion's right-hand literal is masked as «E<n>» and the expected values are withheld.
+    masked_files, slots = mask_expected_literals(candidate["files"])
     sections = {
-        "assignment": "Independently review EACH generated test against actual repository source. Score every rubric dimension conservatively from evidence (scores field); full marks only when the behaviour is verifiable in target_source; name the lowest-scoring dimension in reason. If you would approve the test without changes, each dimension should be at least 85% of its maximum; deduct only for concrete, cited problems. The host computes the final confidence from your scores and deterministic caps, so do not inflate scores. Do not rewrite tests or trust author claims or explanatory comments. Independently derive every expected literal from the actual fixture and implementation, including string lengths, counts, rounding and arithmetic; author calculations are unverified input. Flag nonexistent imports/APIs, wrong assumptions/assertions, invalid fixtures, ineffective mocks and missing invocation of claimed methods. Return one review per supplied case ID. Missing evidence must be insufficient_evidence, not supported. Scores are evidence-based judgments, not calibrated probabilities or runtime proof. Use target_source as the authoritative complete implementation of each targeted method. Do not return insufficient_evidence merely because repository_evidence is a truncated whole-file excerpt when target_source contains the complete method.",
+        "assignment": "Independently review EACH generated test against actual repository source. Score every rubric dimension conservatively from evidence (scores field); full marks only when the behaviour is verifiable in target_source; name the lowest-scoring dimension in reason. Every assertion literal is masked as «E<n>» on purpose: for EACH slot of a case, derive the value the implementation produces for the fixture in that test, and return it in derivations (slot, value, steps, source_quote as verbatim target_source lines, fixture_quote as verbatim test lines that supply the input). Count, length, rounding and arithmetic must be computed from the code, not guessed. The host computes the final confidence from your scores, your derivations and deterministic caps, so do not inflate scores. Do not rewrite tests or trust author claims or explanatory comments. Flag nonexistent imports/APIs, wrong assumptions/assertions, invalid fixtures, ineffective mocks and missing invocation of claimed methods. Return one review per supplied case ID. Missing evidence must be insufficient_evidence, not supported. Scores are evidence-based judgments, not calibrated probabilities or runtime proof. Use target_source as the authoritative complete implementation of each targeted method. Do not return insufficient_evidence merely because repository_evidence is a truncated whole-file excerpt when target_source contains the complete method.",
         "strict_quality_rules": {
             "rubric_points": RUBRIC,
             "supported": "Source supports target, setup and assertion; execution is still required.",
             "needs_revision": "Concrete source contradiction or ineffective test.",
             "insufficient_evidence": "Needed behavior cannot be established from supplied source.",
         },
-        "approved_inputs": {"approved_cases": cases, "requirements": selected},
-        "generated_source": candidate["files"],
-        "target_source": target_source,
+        # The design's expected_result is withheld: the reviewer must not anchor on an expectation it did not derive.
+        "approved_inputs": {
+            "approved_cases": [{k: v for k, v in c.items() if k != "expected_result"} for c in cases],
+            "requirements": selected,
+        },
+        "generated_source": masked_files,
+        "target_source": target_source,  # per case ID: the complete implementation of that case's target
         "repository_evidence": source,
         "citation_rule": "source_files must cite existing repository implementation files supporting your assessment. Do not cite newly generated tests; their code is supplied separately under generated_source.",
         "output_contract": TestReviewDraft.model_json_schema(),
         "json_rules": {"single_complete_object": True, "markdown_fences": False},
     }
-    root = (host.run_dir / "repo").resolve()
-    source_files = state["artifacts"].get("repo_analysis", {}).get("source_files", [])
     repair = None
     for attempt in range(1, MODEL_REPAIR_ATTEMPTS + 1):
         try:
@@ -67,7 +106,7 @@ async def review_generated_tests(host, state, candidate, cases, batch, partial_o
                 stage="test_generation",
                 prompt_batch=f"review-{batch}",
                 role="test_reviewer",
-                skill_name="generic-test-generator",
+                skill_name="test-reviewer",
                 companions=(),
                 persona=chief_architect_persona(
                     state.get("stack"),
@@ -118,10 +157,30 @@ async def review_generated_tests(host, state, candidate, cases, batch, partial_o
         case = by_case[review["case_id"]]
         target = str(case.get("target") or "")
         files = [f["content"] for f in candidate["files"] if review["case_id"] in f["case_ids"]]
-        case_source = extract_target_sources(root, [target], source_files) if target else ""
+        case_source = target_source.get(review["case_id"], "")
         findings = [
             finding for text in files for finding in deterministic_findings(text, case_source, target)
         ]
+        if (
+            target
+            and _case_source(root, target, source_files, 10**9)
+            and not _own_block_present(case_source, target)
+        ):
+            findings.append(
+                {
+                    "rule": "target_source_dropped",
+                    "cap": 50,
+                    "reason": f"The target `{target}` is larger than this case's share of the review budget; "
+                    "its own implementation was not shown to the reviewer.",
+                }
+            )
+        findings += derivation_findings(
+            slots=[s for s in slots if review["case_id"] in s["case_ids"]],
+            derivations=review.get("derivations", []),
+            target_source=case_source,
+            test_text="\n".join(files),
+            require_source=_confident_target(target),
+        )
         scored.append(
             score_review(
                 review,

@@ -124,3 +124,125 @@ def test_checks_never_execute_repository_or_test_code():
     banned = {"eval", "exec", "compile", "__import__"}
     calls = {n.func.id for n in ast.walk(tree) if isinstance(n, ast.Call) and isinstance(n.func, ast.Name)}
     assert not calls & banned
+
+
+# --- Blind derivation: masking and the three host caps --------------------------------------------------------
+
+from maf_test_harness.qa.confidence import derivation_findings, score_review  # noqa: E402
+from maf_test_harness.qa.derivation import mask_expected_literals  # noqa: E402
+
+MASK_SOURCE = (
+    'def test_b(tmp_path):\n    assert idx["a"]["line_count"] == 2; assert x == "hi"\n'
+    "    self.assertEqual(len(r), 3)\n"
+)
+
+
+def test_masking_replaces_right_hand_assertion_literals_in_source_order():
+    masked, slots = mask_expected_literals(
+        [{"path": "tests/test_a.py", "case_ids": ["TC-1"], "content": MASK_SOURCE}]
+    )
+    assert "== «E1»" in masked[0]["content"] and "== «E2»" in masked[0]["content"]
+    assert "len(r), «E3»)" in masked[0]["content"]
+    assert [(s["slot"], s["value"], s["case_ids"]) for s in slots] == [
+        ("E1", "2", ["TC-1"]),
+        ("E2", "hi", ["TC-1"]),
+        ("E3", "3", ["TC-1"]),
+    ]
+
+
+def test_masking_numbers_slots_across_files_and_leaves_non_python_alone():
+    files = [
+        {"path": "tests/test_a.py", "case_ids": ["TC-1"], "content": "assert f() == 1\n"},
+        {"path": "tests/a.spec.ts", "case_ids": ["TC-2"], "content": "expect(f()).toBe(2);\n"},
+        {"path": "tests/test_b.py", "case_ids": ["TC-2"], "content": "assert g() == 5\n"},
+    ]
+    masked, slots = mask_expected_literals(files)
+    assert masked[1]["content"] == files[1]["content"]
+    assert [s["slot"] for s in slots] == ["E1", "E2"] and slots[1]["file"] == 2
+
+
+def test_masking_is_utf8_safe_on_the_line_of_a_literal():
+    masked, _ = mask_expected_literals(
+        [{"path": "t.py", "case_ids": ["TC-1"], "content": 'x = "é"; assert y == 4\n'}]
+    )
+    assert masked[0]["content"] == 'x = "é"; assert y == «E1»\n'
+
+
+SLOTS = [{"slot": "E1", "value": "3", "case_ids": ["TC-1"]}]
+SOURCE = '--- SOURCE: indexer.py :: build (lines 1-3) ---\n2: def build(self):\n3:     return content.count("\\n") + 1\n'
+TEST = 'write_text("x\\ny\\n")\nassert idx.line_count == 3\n'
+
+
+def _derivation(**changes):
+    base = {
+        "slot": "E1",
+        "value": "3",
+        "steps": "count newlines then add one",
+        "source_quote": 'return content.count("\\n") + 1',
+        "fixture_quote": 'write_text("x\\ny\\n")',
+    }
+    return {**base, **changes}
+
+
+def test_answered_verbatim_matching_derivation_has_no_caps():
+    assert (
+        derivation_findings(slots=SLOTS, derivations=[_derivation()], target_source=SOURCE, test_text=TEST)
+        == []
+    )
+
+
+def test_missing_derivation_caps_at_60():
+    (finding,) = derivation_findings(slots=SLOTS, derivations=[], target_source=SOURCE, test_text=TEST)
+    assert finding["rule"] == "derivation_missing" and finding["cap"] == 60
+
+
+def test_quote_not_verbatim_in_the_source_caps_at_50():
+    (finding,) = derivation_findings(
+        slots=SLOTS,
+        derivations=[_derivation(source_quote="return content.count('\\n') + 2")],
+        target_source=SOURCE,
+        test_text=TEST,
+    )
+    assert finding["rule"] == "derivation_unverifiable" and finding["cap"] == 50
+
+
+def test_whitespace_differences_in_quotes_are_tolerated():
+    assert (
+        derivation_findings(
+            slots=SLOTS,
+            derivations=[_derivation(source_quote='return   content.count("\\n")   + 1')],
+            target_source=SOURCE,
+            test_text=TEST,
+        )
+        == []
+    )
+
+
+def test_wrong_derived_value_caps_at_40_and_forces_needs_revision():
+    findings = derivation_findings(
+        slots=SLOTS, derivations=[_derivation(value="2")], target_source=SOURCE, test_text=TEST
+    )
+    assert findings[0]["rule"] == "blind_derivation_mismatch" and findings[0]["cap"] == 40
+    review = {
+        "case_id": "TC-1",
+        "scores": {
+            "source_and_api_match": 25,
+            "assertion_checks_real_behavior": 30,
+            "fixture_validity": 20,
+            "isolation_and_determinism": 15,
+            "traceability": 10,
+        },
+        "confidence": 100,
+        "verdict": "supported",
+        "reason": "r",
+        "source_files": ["indexer.py"],
+        "derivations": [],
+    }
+    scored = score_review(
+        review, target="CodebaseIndexer.build", content=TEST, source_found=True, findings=findings
+    )
+    assert scored["confidence"] == 40 and scored["verdict"] == "needs_revision"
+
+
+def test_a_case_without_slots_has_nothing_to_derive():
+    assert derivation_findings(slots=[], derivations=[], target_source="", test_text=TEST) == []

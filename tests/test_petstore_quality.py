@@ -4,6 +4,7 @@ import asyncio
 import json
 
 import pytest
+from fakes import record_generated, scripted_derivations
 
 from maf_test_harness.envs.regression import maven_regression_steps
 from maf_test_harness.qa.quality import require_complete_intake, validate_java_traceability
@@ -229,7 +230,8 @@ def test_independent_reviewer_scores_every_case_and_rejects_missing_evidence(tmp
             if self.bad_citation:
                 self.bad_citation = False
                 citation = "tests/new_generated.py"
-            if feedback := json.loads(kwargs["prompt"]).get("repair_feedback"):
+            prompt = json.loads(kwargs["prompt"])
+            if feedback := prompt.get("repair_feedback"):
                 self.repairs.append(feedback)
             return {
                 "status": "completed",
@@ -248,6 +250,7 @@ def test_independent_reviewer_scores_every_case_and_rejects_missing_evidence(tmp
                             "verdict": self.verdict,
                             "reason": "Source supports actual add invocation and its result assertion.",
                             "source_files": [citation],
+                            "derivations": scripted_derivations(prompt, cid),
                         }
                         for cid, score in [("low", 60), ("high", 95)]
                     ]
@@ -273,6 +276,7 @@ def test_independent_reviewer_scores_every_case_and_rejects_missing_evidence(tmp
             for cid in ["low", "high"]
         ]
     }
+    record_generated(candidate["files"])
     reviews = asyncio.run(review_generated_tests(host, state, candidate, cases, 1))
     assert [r["case_id"] for r in reviews] == ["high", "low"]
     host.bad_citation = True

@@ -19,12 +19,63 @@ FULL_MARKS = {
 }
 
 
+# Generated test text by case ID, recorded from every scripted generation result (see tests/conftest.py). The scripted
+# reviewer reads the literals it "derives" from here, because the host withholds them from the reviewer prompt.
+GENERATED_TEXT: dict[str, str] = {}
+
+
+def record_generated(files):
+    """Remember the unmasked text of each case as its latest generation returned it."""
+    by_case: dict[str, list[str]] = {}
+    for item in files:
+        text = item.get("content") or "\n".join(item.get("lines", []))
+        for case_id in item.get("case_ids", []):
+            by_case.setdefault(str(case_id), []).append(text)
+    GENERATED_TEXT.update({case_id: "\n".join(texts) for case_id, texts in by_case.items()})
+
+
+def scripted_derivations(prompt: dict, case_id: str) -> list[dict]:
+    """Correct blind derivations for one case's masked slots, quoted verbatim from its recorded text and target_source."""
+    from maf_test_harness.qa.derivation import SLOT_PATTERN, mask_expected_literals
+
+    recorded = GENERATED_TEXT.get(case_id)
+    if recorded is None:
+        return []
+    _, real = mask_expected_literals([{"path": "recorded.py", "content": recorded, "case_ids": [case_id]}])
+    slot_ids = [
+        slot
+        for item in prompt.get("generated_source", [])
+        if case_id in item.get("case_ids", [])
+        for slot in SLOT_PATTERN.findall(item["content"])
+    ]
+    target_source = prompt.get("target_source", {})
+    target_source = target_source.get(case_id, "") if isinstance(target_source, dict) else target_source
+    source_lines = [
+        line.split(": ", 1)[-1].strip()
+        for line in target_source.splitlines()
+        if line.strip() and not line.startswith("--- SOURCE")
+    ]
+    source_quote = source_lines[0] if source_lines else ""
+    fixture_quote = next((line.strip() for line in recorded.splitlines() if line.strip()), "")
+    return [
+        {
+            "slot": slot,
+            "value": literal["value"],
+            "steps": "Scripted derivation: the fixture is evaluated by the implementation shown in source_quote.",
+            "source_quote": source_quote,
+            "fixture_quote": fixture_quote,
+        }
+        for slot, literal in zip(slot_ids, real, strict=False)
+    ]
+
+
 def review_response(kwargs, source="service.py", scores=None):
     from maf_test_harness.models import TestReviewDraft
 
     if kwargs.get("response_format") is not TestReviewDraft:
         return None
-    cases = json.loads(kwargs["prompt"])["approved_inputs"]["approved_cases"]
+    prompt = json.loads(kwargs["prompt"])
+    cases = prompt["approved_inputs"]["approved_cases"]
     return {
         "status": "completed",
         "artifact": {
@@ -36,6 +87,7 @@ def review_response(kwargs, source="service.py", scores=None):
                     "verdict": "supported",
                     "reason": "Scripted reviewer transport: source and assertions match the fixture.",
                     "source_files": [source],
+                    "derivations": scripted_derivations(prompt, str(c["id"])),
                 }
                 for c in cases
             ]

@@ -125,6 +125,92 @@ def mask_code(content: str) -> str:
     return _MASK.sub(lambda m: re.sub(r"[^\n]", " ", m.group(0)), content)
 
 
+_LINE_PREFIX = re.compile(r"^\d+: ", re.M)
+
+
+def _normal(text: str) -> str:
+    """Whitespace-collapsed text with target line-number prefixes removed, for verbatim quote checks."""
+    return " ".join(_LINE_PREFIX.sub("", text or "").split())
+
+
+def _normal_value(value: str) -> str:
+    return (value or "").strip().strip("'\"").strip()
+
+
+def _quoted(quote: str, normal_text: str) -> bool:
+    """A non-empty quote that is a whitespace-normalised substring of the (normalised) text."""
+    return bool(_normal(quote)) and _normal(quote) in normal_text
+
+
+def derivation_findings(
+    *,
+    slots: list[dict[str, Any]],
+    derivations: list[dict[str, Any]],
+    target_source: str,
+    test_text: str,
+    require_source: bool = True,
+) -> list[dict[str, Any]]:
+    """Caps for the blind derivations of one case (slots from qa/derivation.mask_expected_literals).
+
+    Every slot must be answered (60), each quote must be verbatim in the target source or the test (50), and each value
+    must equal the real literal (40, verdict needs_revision). A case with no slots has nothing to derive. A case without
+    a confident code target has no implementation to quote, so only its fixture quotes are checked (require_source=False).
+    """
+    if not slots:
+        return []
+    answers = {d["slot"]: d for d in derivations}
+    missing = [s["slot"] for s in slots if s["slot"] not in answers]
+    findings: list[dict[str, Any]] = []
+    if missing:
+        findings.append(
+            {
+                "rule": "derivation_missing",
+                "cap": 60,
+                "reason": f"The reviewer did not derive {', '.join(missing)}; every assertion literal needs a derivation.",
+            }
+        )
+    source, fixture = _normal(target_source), _normal(test_text)
+    unverifiable = [
+        slot
+        for slot in slots
+        if slot["slot"] in answers
+        and not (
+            (not require_source or _quoted(answers[slot["slot"]]["source_quote"], source))
+            and _quoted(answers[slot["slot"]]["fixture_quote"], fixture)
+        )
+    ]
+    if unverifiable:
+        findings.append(
+            {
+                "rule": "derivation_unverifiable",
+                "cap": 50,
+                "reason": "Quoted source or fixture lines are not verbatim in the target source or the test: "
+                + ", ".join(slot["slot"] for slot in unverifiable)
+                + ".",
+            }
+        )
+    mismatched = [
+        slot
+        for slot in slots
+        if slot["slot"] in answers
+        and _normal_value(answers[slot["slot"]]["value"]) != _normal_value(slot["value"])
+    ]
+    if mismatched:
+        findings.append(
+            {
+                "rule": "blind_derivation_mismatch",
+                "cap": 40,
+                "reason": "The reviewer's derived value differs from the literal the test asserts: "
+                + "; ".join(
+                    f"{slot['slot']} derived {answers[slot['slot']]['value']!r}, asserted {slot['value']!r}"
+                    for slot in mismatched
+                )
+                + ".",
+            }
+        )
+    return findings
+
+
 def model_score(scores: dict[str, int]) -> int:
     return sum(int(scores[dimension]) for dimension in RUBRIC)
 
@@ -237,7 +323,7 @@ def score_review(
     rules = {cap["rule"] for cap in caps}
     if "target_source_missing" in rules:
         verdict = "insufficient_evidence"
-    elif "expectation_contradicts_source" in rules:
+    elif rules & {"expectation_contradicts_source", "blind_derivation_mismatch"}:
         verdict = "needs_revision"
     else:
         verdict = review["verdict"]

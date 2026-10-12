@@ -122,7 +122,7 @@ def test_reviewer_prompt_has_full_target_method_for_large_file(tmp_path):
         ]
     }
     asyncio.run(review_generated_tests(Host(), state, candidate, cases, 1))
-    assert "MARK_END" in prompts[0]["target_source"]
+    assert "MARK_END" in prompts[0]["target_source"]["c1"]
     assert "authoritative complete implementation" in prompts[0]["assignment"]
 
 

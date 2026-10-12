@@ -29,6 +29,7 @@ def test_all_bundled_skills_follow_the_agent_skills_spec():
         "test-data-generator",
         "test-design-generator",
         "test-planning",
+        "test-reviewer",
         "traceability-generator",
     ]
     assert [r.name for r in reports if not r.ok] == []
@@ -113,6 +114,7 @@ def test_vendored_upstream_skills_match_the_lock_and_tampering_is_detected(tmp_p
         "repository-requirements",
         "test-design-generator",
         "test-planning",
+        "test-reviewer",
         "spec-authoring",
     }
     assert all(

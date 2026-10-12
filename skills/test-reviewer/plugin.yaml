@@ -1,0 +1,7 @@
+name: test-reviewer
+stages: ["test_generation"]
+role: companion
+kind: model
+purpose: "review generated tests by deriving every assertion value from the implementation, blind to the expected value"
+applies_when:
+  levels: ["review-only"]

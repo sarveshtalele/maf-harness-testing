@@ -327,3 +327,76 @@ def deterministic_findings(test_content: str, target_source: str, target: str) -
         if finding:
             findings.append(finding)
     return findings
+
+
+# --- Blind derivation: masking for the reviewer ---------------------------------------------------------------
+
+SLOT_PATTERN = re.compile("«(E\\d+)»")
+
+
+def literal_value_text(value: Any) -> str:
+    """The normalised form the reviewer's `value` is compared with (no quotes around strings)."""
+    return value if isinstance(value, str) else str(value)
+
+
+def _char_offset(line: str, byte_offset: int) -> int:
+    return len(line.encode("utf-8")[:byte_offset].decode("utf-8", errors="ignore"))
+
+
+def _assertion_literals(tree: ast.AST) -> list[ast.Constant]:
+    """Right-hand literals of `==` comparisons and of assertEqual(…, literal) calls (Python)."""
+    found: list[ast.Constant] = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Compare) and len(node.ops) == 1 and isinstance(node.ops[0], ast.Eq):
+            right = node.comparators[0]
+            if isinstance(right, ast.Constant) and type(right.value) in (int, str, float):
+                found.append(right)
+        if isinstance(node, ast.Call):
+            name = node.func.attr if isinstance(node.func, ast.Attribute) else getattr(node.func, "id", "")
+            if name in _ASSERT_EQUAL and len(node.args) == 2:
+                right = node.args[1]
+                if isinstance(right, ast.Constant) and type(right.value) in (int, str, float):
+                    found.append(right)
+    return sorted((n for n in found if n.lineno == n.end_lineno), key=lambda n: (n.lineno, n.col_offset))
+
+
+def mask_expected_literals(files: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """Blind view of generated Python files: each assertion's right-hand literal becomes «E<n>».
+
+    Returns (masked copies of the files, slot records). A slot record holds the real normalised value (never sent to
+    the reviewer), its file index and the case IDs of that file. Files that do not parse are passed through unmasked.
+    """
+    masked: list[dict[str, Any]] = []
+    slots: list[dict[str, Any]] = []
+    for index, item in enumerate(files):
+        content = item.get("content", "")
+        tree = _parse(content) if item.get("path", "").endswith(".py") else None
+        if tree is None:
+            masked.append(dict(item))
+            continue
+        lines = content.splitlines(keepends=True)
+        spans = []
+        for literal in _assertion_literals(tree):
+            row = literal.lineno - 1
+            number = len(slots) + 1
+            slots.append(
+                {
+                    "slot": f"E{number}",
+                    "file": index,
+                    "case_ids": [str(c) for c in item.get("case_ids", [])],
+                    "value": literal_value_text(literal.value),
+                }
+            )
+            spans.append(
+                (
+                    row,
+                    _char_offset(lines[row], literal.col_offset),
+                    _char_offset(lines[row], literal.end_col_offset),
+                    number,
+                )
+            )
+        # Right to left within each line, so earlier character offsets stay valid.
+        for row, first, last, number in sorted(spans, key=lambda span: (span[0], span[1]), reverse=True):
+            lines[row] = lines[row][:first] + f"«E{number}»" + lines[row][last:]
+        masked.append({**item, "content": "".join(lines)})
+    return masked, slots

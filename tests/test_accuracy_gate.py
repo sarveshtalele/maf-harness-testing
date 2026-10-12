@@ -5,7 +5,14 @@ import re
 from pathlib import Path
 
 import pytest
-from fakes import FULL_MARKS, ScriptedStageRuntime, clone_fixture, review_response
+from fakes import (
+    FULL_MARKS,
+    ScriptedStageRuntime,
+    clone_fixture,
+    record_generated,
+    review_response,
+    scripted_derivations,
+)
 
 from maf_test_harness.qa.confidence import review_accepted
 from maf_test_harness.qa.controls import _case_outcome
@@ -42,12 +49,19 @@ class ReviewHost:
         self.review = {"scores": scores, "confidence": confidence, "verdict": verdict, "reason": reason}
 
     async def _call_model(self, **kwargs):
-        cases = json.loads(kwargs["prompt"])["approved_inputs"]["approved_cases"]
+        prompt = json.loads(kwargs["prompt"])
+        cases = prompt["approved_inputs"]["approved_cases"]
         return {
             "status": "completed",
             "artifact": {
                 "reviews": [
-                    {"case_id": c["id"], **self.review, "source_files": ["service.py"]} for c in cases
+                    {
+                        "case_id": c["id"],
+                        **self.review,
+                        "source_files": ["service.py"],
+                        "derivations": scripted_derivations(prompt, str(c["id"])),
+                    }
+                    for c in cases
                 ]
             },
         }
@@ -63,6 +77,7 @@ def review_fixture(tmp_path):
     (tmp_path / "repo").mkdir(exist_ok=True)
     (tmp_path / "repo" / "service.py").write_text("def add(a, b):\n    return a + b\n", encoding="utf-8")
     candidate = {"files": [{"path": "tests/test_add.py", "case_ids": ["TC-1"], "content": PY_OK}]}
+    record_generated(candidate["files"])
     return candidate, [{"id": "TC-1", "target": "service.add"}]
 
 
@@ -473,7 +488,10 @@ def test_default_review_threshold_is_80_and_the_model_need_not_emit_confidence(t
 
     candidate, cases = review_fixture(tmp_path)
     asyncio.run(review_generated_tests(PromptHost(tmp_path, FULL_MARKS), REVIEW_STATE, candidate, cases, 1))
-    assert "each dimension should be at least 85% of its maximum" in seen[0]
+    assert "85%" not in seen[0]
+    sent = json.loads(seen[0])
+    assert "expected_result" not in json.dumps(sent["approved_inputs"])
+    assert "«E1»" in sent["generated_source"][0]["content"]
 
 
 # Regression fixtures for the requirement-analysis-skill run (2026-10-12): both generated tests were reviewed as
@@ -528,11 +546,13 @@ def ctl_review(tmp_path, *, source_name, source, test_text, target, case_id="TC-
     (tmp_path / "repo").mkdir(exist_ok=True)
     (tmp_path / "repo" / source_name).write_text(source, encoding="utf-8")
     candidate = {"files": [{"path": "tests/test_case.py", "case_ids": [case_id], "content": test_text}]}
+    record_generated(candidate["files"])
     cases = [{"id": case_id, "target": target}]
     state = {"artifacts": {"requirements": {}, "repo_analysis": {"source_files": [source_name]}}}
 
     class Reviewer(ReviewHost):
         async def _call_model(self, **kwargs):
+            prompt = json.loads(kwargs["prompt"])
             review = {
                 "case_id": case_id,
                 "scores": FULL_MARKS,
@@ -541,8 +561,9 @@ def ctl_review(tmp_path, *, source_name, source, test_text, target, case_id="TC-
                 "reason": "Reviewer: the expectation follows from the source.",
                 "source_files": [source_name],
             }
-            if derivations is not None:
-                review["derivations"] = derivations
+            review["derivations"] = (
+                derivations if derivations is not None else scripted_derivations(prompt, case_id)
+            )
             return {"status": "completed", "artifact": {"reviews": [review]}}
 
     (result,) = asyncio.run(
