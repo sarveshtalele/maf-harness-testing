@@ -16,8 +16,11 @@ at most 300 characters). Only Test writes `discovered_tools`; a client-sent valu
 
 - Only tools listed in `allowed_tools` or `approval_required_tools` are visible to the model (MAF `allowed_tools`);
   anything else, including tools a server adds later, does not exist for the agent. A server may list at most 200 tools
-  (approved + approval-required), but at most 8 MCP tools reach a stage (stage tool budget is 20): a server whose
-  exposed tools would exceed that is skipped in the stage, and the UI warns about it.
+  (approved + approval-required), but at most 8 MCP tools reach a stage (stage tool budget is 20). The budget is per
+  stage across all enabled servers that list it, taken in name order: a server that would exceed it is skipped in
+  that stage. The Marketplace tab warns per stage (`stage_budget` in `GET mcp-servers`: tools, max, skipped servers),
+  and each affected card repeats the warning. Counts are approved + approval-required tools, an upper bound (without
+  an approver the runtime exposes only the approved ones).
 - `allowed_tools` run without asking; `approval_required_tools` use MAF `always_require` approval. After connecting, the
   runtime forces `always_require` on any exposed tool that is not auto-approved.
 - Approval requests are answered by `MAFHarnessRuntime.mcp_approver(stage, [{tool, arguments}]) -> [bool]`. **With no
@@ -38,6 +41,8 @@ at most 300 characters). Only Test writes `discovered_tools`; a client-sent valu
 - Env names that change code loading or networking cannot be configured: prefixes `DYLD_`, `LD_`, `NODE_`, `PYTHON`,
   `NPM_CONFIG_`, anything ending in `_PROXY`, and `PATH`, `BASH_ENV`, `ENV`, `PERL5LIB`, `RUBYOPT`, `JAVA_TOOL_OPTIONS`,
   `SSL_CERT_FILE`, `HOME`, `COMSPEC`.
+- A stored tool catalogue is kept only for the definition it was probed on: a Test result is dropped if the target
+  changed while it ran, and changing args or env_keys clears `discovered_tools`.
 - Deleting a server, or changing its url/transport/command, discards its secrets (env-supplied values are ignored until
   new ones are set). Env names encode `-` in the server name as `__` (`HARNESS_MCP_SECRET_ATLASSIAN__JIRA_BEARER_TOKEN`).
 - Mutating API calls return 409 while a run operation is active.
@@ -69,7 +74,14 @@ arguments can be supplied. Not yet exposed in the UI form.
 `POST /mcp-servers/import` with `{"text": "..."}` accepts a stdio command line (`npx -y <pkg>`, `uvx <pkg>`, `docker run -i --rm <image>`;
 a leading `KEY=value` is a secret) or an MCP JSON config (`mcpServers`, VS Code `servers`, a bare map or a single object).
 stdio and streamable HTTP are supported; SSE is rejected. An `Authorization` header becomes the `BEARER_TOKEN` secret;
-other headers are rejected. Servers are imported disabled with no stages and no tools. The response carries names and
+other headers are rejected. docker/podman `-e KEY=value`, `--env KEY=value` and `--env=KEY=value` become the secret
+`KEY` and the argument becomes `-e KEY` (docker passes the value through). Backslash, `^` and backtick line
+continuations are joined; Windows paths (drive letter or UNC) keep their backslashes, with quoted tokens unquoted. VS
+Code placeholders (`${input:x}`, `${env:x}`) are never stored as values: the key stays listed and unset, so the
+server shows Needs secrets. Arguments or a URL that look secret (`--api-key`, `--token`, `--password`, `--secret`,
+`--header`, a `token=`/`api_key=` query, or any credential-looking value) are rejected with a message to move them to
+an environment variable or the token field. The same check applies to manual saves (`validate`). Servers are imported
+disabled with no stages and no tools. The response carries names and
 secret NAMES only (`imported: [{source_key, name, secret_keys}]`, plus `servers`). The import is all or nothing, at most
 20 servers and 100 kB of input.
 

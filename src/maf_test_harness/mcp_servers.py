@@ -39,6 +39,12 @@ MAX_MCP_TOOLS_PER_STAGE = (
 )
 MAX_DISCOVERED_TOOLS = 200  # catalogue stored from the last Test (names and descriptions only)
 MAX_IMPORT_BYTES = 100_000
+_PLACEHOLDER = re.compile(r"\$\{(input|env):[^}]*\}")  # VS Code variables: never a secret value
+_SECRET_FLAG = re.compile(r"(?i)^--?(api[-_]?key|token|password|passwd|secret|authorization|header)(=|$)")
+_SECRET_QUERY = re.compile(
+    r"(?i)(^|&)(api[_-]?key|access[_-]?token|token|key|secret|password|sig|signature)="
+)
+_WINDOWS_PATH = re.compile(r"[A-Za-z]:\\|(?:^|\s)\\\\[^\\\s]")  # drive letter or UNC path
 CONNECT_TIMEOUT_SECONDS = 25  # below the UI proxy's 30 s limit
 _SLUG = re.compile(r"[a-z][a-z0-9-]{0,31}")
 _ENV_KEY = re.compile(r"[A-Z][A-Z0-9_]{0,63}")
@@ -186,7 +192,27 @@ def validate(data: dict) -> dict:
         out["url"] = validate_url(str(data.get("url", "")))
         if out["env_keys"]:
             raise ValueError("env_keys apply to stdio servers; an http server uses the token field.")
+    if _inline_secret(out["args"], out["url"]):
+        raise ValueError(
+            "Arguments or the URL contain a secret-looking value. Move it to an environment variable "
+            "(KEY=value before the command, or -e KEY for docker) or to the token field."
+        )
     return out
+
+
+def _looks_secret(text: str) -> bool:
+    from .ui.presentation import public  # local: ui.presentation -> hooks.builtin -> this module (circular)
+
+    return public(text) != text  # redaction changed it: it holds a credential-looking value
+
+
+def _inline_secret(args: list[str], url: str) -> bool:
+    if any(_SECRET_FLAG.match(a) or _looks_secret(a) for a in args):
+        return True
+    if url:
+        query = urlsplit(url).query
+        return bool((query and _SECRET_QUERY.search(query)) or _looks_secret(url))
+    return False
 
 
 # ---- storage ----------------------------------------------------------------------------------------------------
@@ -253,7 +279,10 @@ def _save_servers(incoming: list[dict]) -> list[dict]:
         changed = old is not None and any(old[k] != server[k] for k in ("url", "transport", "command"))
         if changed:
             clear_secrets(server["name"])  # a secret never follows a server to a different target
-        server["discovered_tools"] = old["discovered_tools"] if old and not changed else []
+        stale = old is not None and any(
+            old[k] != server[k] for k in ("url", "transport", "command", "args", "env_keys")
+        )
+        server["discovered_tools"] = old["discovered_tools"] if old and not stale else []
         current[server["name"]] = server
     _save(sorted(current.values(), key=lambda s: s["name"]))
     return incoming
@@ -273,14 +302,17 @@ def save_many(servers: list[dict]) -> list[dict]:
         return _save_servers(servers)
 
 
-def set_discovered(name: str, catalog: list[dict]) -> None:
-    """Persist the tool catalogue of the last successful Test."""
+def set_discovered(name: str, catalog: list[dict], probed: dict | None = None) -> bool:
+    """Persist the tool catalogue of a successful Test. With ``probed``, only if the stored definition still matches
+    what was probed (a catalogue of an old target is dropped). Returns whether it was stored."""
     with _file_lock:
         servers = load()
-        for server in servers:
-            if server["name"] == name:
-                server["discovered_tools"] = _tool_catalog(catalog)
+        target = [s for s in servers if s["name"] == name]
+        if not target or (probed and any(target[0][k] != probed[k] for k in _TARGET_KEYS)):
+            return False
+        target[0]["discovered_tools"] = _tool_catalog(catalog)
         _save(servers)
+        return True
 
 
 def remove(name: str) -> None:
@@ -302,6 +334,26 @@ def preset_server(preset: str, name: str | None = None) -> dict:
 
 def for_stage(stage: str) -> list[dict]:
     return [s for s in load() if s["enabled"] and stage in s["stages"]]
+
+
+def stage_budget(servers: list[dict]) -> dict[str, dict]:
+    """Stages whose enabled servers list more MCP tools than one stage may use, in the order the runtime takes them.
+    Counts approved + approval-required tools (an upper bound: without an approver the runtime exposes fewer)."""
+    out: dict[str, dict] = {}
+    for stage in STAGES:
+        demand, used, skipped = 0, 0, []
+        for s in servers:
+            if not (s["enabled"] and stage in s["stages"]):
+                continue
+            n = len(set(s["allowed_tools"]) | set(s["approval_required_tools"]))
+            demand += n
+            if used + n > MAX_MCP_TOOLS_PER_STAGE:
+                skipped.append(s["name"])
+            else:
+                used += n
+        if skipped:
+            out[stage] = {"tools": demand, "max": MAX_MCP_TOOLS_PER_STAGE, "skipped": skipped}
+    return out
 
 
 # ---- secrets ----------------------------------------------------------------------------------------------------
@@ -470,6 +522,7 @@ async def probe(server: dict) -> dict:
 
 # ---- import: a pasted command or MCP JSON config --------------------------------------------------------------------
 _ENV_ASSIGNMENT = re.compile(r"[A-Za-z_][A-Za-z0-9_]*=.*", re.S)
+_TARGET_KEYS = ("transport", "command", "args", "url")  # a Test catalogue belongs to this target only
 _IMPORT_FIELDS = {"command", "args", "env", "type", "transport", "url", "headers", "disabled"}
 
 
@@ -502,14 +555,21 @@ def _package_name(command: str, args: list[str]) -> str:
 
 
 def _command_entry(text: str) -> dict:
-    # Windows paths keep their backslashes: without quotes the line is split on whitespace only.
-    if "\\" in text and '"' not in text and "'" not in text:
-        tokens = text.split()
-    else:
-        try:
+    text = re.sub(
+        r"(?:\\|\^|`)[ \t]*\r?\n", " ", text
+    )  # line continuations: \ (POSIX), ^ (cmd), ` (PowerShell)
+    try:
+        if _WINDOWS_PATH.search(text):  # keep backslashes; quotes are stripped per token below
+            tokens = [
+                t[1:-1] if len(t) > 1 and t[0] == t[-1] and t[0] in "\"'" else t
+                for t in shlex.split(text, posix=False)
+            ]
+        elif "\\" in text and '"' not in text and "'" not in text:
+            tokens = text.split()
+        else:
             tokens = shlex.split(text, posix=True)
-        except ValueError as exc:
-            raise ValueError("The command has unbalanced quotes.") from exc
+    except ValueError as exc:
+        raise ValueError("The command has unbalanced quotes.") from exc
     env: dict[str, str] = {}
     while tokens and _ENV_ASSIGNMENT.fullmatch(tokens[0]):
         key, _, value = tokens.pop(0).partition("=")
@@ -517,6 +577,31 @@ def _command_entry(text: str) -> dict:
     if not tokens:
         raise ValueError("Paste a command such as npx, uvx or docker, or an MCP JSON config.")
     return {"command": tokens[0], "args": tokens[1:], "env": env}
+
+
+def _docker_env(command: str, args: list[str], env: dict[str, str]) -> list[str]:
+    """docker/podman ``-e KEY=value``, ``--env KEY=value`` or ``--env=KEY=value``: the value becomes the secret KEY and
+    the argument becomes ``-e KEY``, so docker passes the value through from the environment."""
+    if re.split(r"[\\/]", command)[-1].lower().removesuffix(".exe") not in {"docker", "podman"}:
+        return args
+    out: list[str] = []
+    i = 0
+    while i < len(args):
+        a = args[i]
+        if a in {"-e", "--env"} and i + 1 < len(args) and "=" in args[i + 1]:
+            key, _, value = args[i + 1].partition("=")
+            env[key] = value
+            out += ["-e", key]
+            i += 2
+            continue
+        if a.startswith("--env=") and "=" in a[6:]:
+            key, _, value = a[6:].partition("=")
+            env[key] = value
+            out += ["-e", key]
+        else:
+            out.append(a)
+        i += 1
+    return out
 
 
 def _is_server(data: Any) -> bool:
@@ -566,20 +651,23 @@ def _from_entry(source_key: str, entry: dict, taken: set[str]) -> dict:
     ):
         raise ValueError(f"{shown}: headers must map names to text values.")
     if kind == "stdio":
-        command, args, env = entry.get("command"), entry.get("args", []), entry.get("env") or {}
+        command, args, env = entry.get("command"), entry.get("args", []), dict(entry.get("env") or {})
         if not isinstance(command, str) or not command.strip():
             raise ValueError(f"{shown}: a stdio server needs a command.")
         if not isinstance(args, list) or not all(isinstance(a, str) for a in args):
             raise ValueError(f"{shown}: args must be a list of text values.")
-        if not isinstance(env, dict) or not all(
-            isinstance(k, str) and isinstance(v, str) for k, v in env.items()
+        if not isinstance(entry.get("env") or {}, dict) or not all(
+            isinstance(k, str) and isinstance(v, str) for k, v in (entry.get("env") or {}).items()
         ):
             raise ValueError(f"{shown}: env must map names to text values.")
         if headers:
             raise ValueError(f"{shown}: headers apply to HTTP servers only.")
-        fields = {"transport": "stdio", "command": command.strip(), "args": args, "env_keys": list(env)}
-        secret_keys = list(env)
-        package = _package_name(command.strip(), args)
+        command = command.strip()
+        args = _docker_env(command, args, env)
+        fields = {"transport": "stdio", "command": command, "args": args, "env_keys": list(env)}
+        # VS Code placeholders (${input:x}, ${env:x}) are not values: the key stays listed, unset (needs secrets)
+        secret_keys = [k for k, v in env.items() if not _PLACEHOLDER.fullmatch(v.strip())]
+        package = _package_name(command, args)
     else:
         url = entry.get("url")
         if not isinstance(url, str) or not url.strip():
@@ -588,8 +676,9 @@ def _from_entry(source_key: str, entry: dict, taken: set[str]) -> dict:
             raise ValueError(f"{shown}: env applies to stdio servers only.")
         if any(k.lower() != "authorization" for k in headers):
             raise ValueError(f"{shown}: only an Authorization header is supported (it becomes the token).")
+        auth = next((v for k, v in headers.items() if k.lower() == "authorization"), None)
         fields = {"transport": "http", "url": url.strip()}
-        secret_keys = [BEARER_KEY] if any(k.lower() == "authorization" for k in headers) else []
+        secret_keys = [BEARER_KEY] if auth is not None and not _PLACEHOLDER.fullmatch(auth.strip()) else []
         package = urlsplit(url.strip()).hostname or "mcp"
     base = _slug(source_key) if source_key else _slug(package)
     try:

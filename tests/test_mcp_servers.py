@@ -777,3 +777,98 @@ def test_old_config_without_discovered_tools_loads_and_catalogue_is_capped():
     assert len(mcp_servers.get("pw")["discovered_tools"]) == mcp_servers.MAX_DISCOVERED_TOOLS == 200
     mcp_servers.validate(srv(allowed_tools=[f"t{i}" for i in range(200)]))  # the listed cap is 200
     assert mcp_servers.MAX_MCP_TOOLS_PER_STAGE == 8
+
+
+# ---- review fixes: inline secrets, placeholders, command parsing, stale catalogue, stage budget -----------------------
+@pytest.mark.parametrize(
+    "text",
+    [
+        f"docker run -i --rm -e API_TOKEN={IMPORT_SECRET} mcp/fetch",
+        f"docker run -i --rm --env API_TOKEN={IMPORT_SECRET} mcp/fetch",
+        f"docker run -i --rm --env=API_TOKEN={IMPORT_SECRET} mcp/fetch",
+    ],
+)
+def test_docker_env_flags_become_secret_names_and_pass_through(text):
+    [item] = mcp_servers.parse_import(text)
+    assert item["server"]["args"] == ["run", "-i", "--rm", "-e", "API_TOKEN", "mcp/fetch"]
+    assert item["server"]["env_keys"] == ["API_TOKEN"] and item["secret_keys"] == ["API_TOKEN"]
+    assert IMPORT_SECRET not in json.dumps(item)
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "npx -y server --api-key abcdef123456",
+        "npx -y server --token=ghp_abcdefghijklmnopqrstuvwx",
+        'npx -y server --header "Authorization: Bearer abcdefghijklmnopqrstuvwx"',
+    ],
+)
+def test_secret_looking_arguments_are_rejected(text):
+    with pytest.raises(ValueError, match="secret-looking value"):
+        mcp_servers.parse_import(text)
+
+
+def test_secret_in_url_query_is_rejected_and_manual_save_too():
+    text = json.dumps(
+        {"mcpServers": {"h": {"type": "http", "url": "https://x.example.com/mcp?token=abcdefgh1234"}}}
+    )
+    with pytest.raises(ValueError, match="secret-looking value"):
+        mcp_servers.parse_import(text)
+    with pytest.raises(ValueError, match="secret-looking value"):
+        mcp_servers.validate(srv(args=["--api-key", "abcdef123456"]))
+    with pytest.raises(ValueError, match="secret-looking value"):
+        mcp_servers.validate(
+            {"name": "h", "transport": "http", "url": "https://x.example.com/mcp?access_token=abc123"}
+        )
+
+
+def test_vscode_placeholders_are_not_stored_as_secrets():
+    config = {
+        "mcpServers": {
+            "local": {"command": "node", "env": {"API_TOKEN": "${input:api_token}"}},
+            "remote": {
+                "type": "http",
+                "url": "https://x.example.com/mcp",
+                "headers": {"Authorization": "${env:TOKEN}"},
+            },
+        }
+    }
+    local, remote = mcp_servers.parse_import(json.dumps(config))
+    assert local["server"]["env_keys"] == ["API_TOKEN"] and local["secret_keys"] == []
+    assert remote["secret_keys"] == []
+
+
+def test_command_continuations_unc_and_drive_paths():
+    [item] = mcp_servers.parse_import("npx -y server-x \\\n  C:\\work")
+    assert item["server"]["args"] == ["-y", "server-x", "C:\\work"]
+    [item] = mcp_servers.parse_import('npx x \\\\server\\share "a b"')
+    assert item["server"]["args"] == ["x", "\\\\server\\share", "a b"]
+    [item] = mcp_servers.parse_import("npx -y server-x `\n  --flag")
+    assert item["server"]["args"] == ["-y", "server-x", "--flag"]
+
+
+def test_stale_catalogue_is_dropped_and_args_or_env_changes_clear_it():
+    mcp_servers.upsert(srv())
+    probed = mcp_servers.get("pw")
+    mcp_servers.upsert(srv(args=["changed"]))  # target changed while Test was running
+    assert mcp_servers.set_discovered("pw", [{"name": "t", "description": ""}], probed=probed) is False
+    assert mcp_servers.get("pw")["discovered_tools"] == []
+    current = mcp_servers.get("pw")
+    assert mcp_servers.set_discovered("pw", [{"name": "t", "description": ""}], probed=current) is True
+    mcp_servers.upsert(srv(args=["other"]))
+    assert mcp_servers.get("pw")["discovered_tools"] == []  # args changed: catalogue cleared
+
+
+def test_stage_budget_counts_enabled_servers_in_runtime_order():
+    def server(name, n, enabled=True):
+        return {
+            "name": name,
+            "enabled": enabled,
+            "stages": ["requirements"],
+            "allowed_tools": [f"{name}{i}" for i in range(n)],
+            "approval_required_tools": [],
+        }
+
+    budget = mcp_servers.stage_budget([server("a", 5), server("b", 5), server("c", 2, enabled=False)])
+    assert budget == {"requirements": {"tools": 10, "max": 8, "skipped": ["b"]}}
+    assert mcp_servers.stage_budget([server("a", 5)]) == {}

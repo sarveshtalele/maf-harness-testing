@@ -25,8 +25,10 @@ class McpAPI:
             key: {"label": p["label"], "note": p["note"], "server": mcp_servers.preset_server(key)}
             for key, p in mcp_servers.PRESETS.items()
         }
+        servers = mcp_servers.load()
         return {
-            "servers": [_view(s) for s in mcp_servers.load()],
+            "servers": [_view(s) for s in servers],
+            "stage_budget": mcp_servers.stage_budget(servers),
             "presets": presets,
             "stages": list(mcp_servers.STAGES),
             "max_tools_per_server": mcp_servers.MAX_LISTED_TOOLS,
@@ -78,5 +80,7 @@ class McpAPI:
         catalog = result.get("catalog") or [{"name": t, "description": ""} for t in result["tools"]]
         with self.lock:
             if not self.busy():  # the catalogue is kept only while no run is using the configuration
-                mcp_servers.set_discovered(name, catalog)
+                mcp_servers.set_discovered(
+                    name, catalog, probed=server
+                )  # dropped if the target changed meanwhile
         return {"ok": True, "tools": result["tools"], "count": result["count"]}
