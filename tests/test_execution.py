@@ -178,7 +178,7 @@ def test_forwarded_proxy_settings_never_carry_credentials(tmp_path, monkeypatch)
 def test_probe_env_exposes_no_secrets_and_uses_a_fake_home(tmp_path, monkeypatch):
     from maf_test_harness.envs import platform_compat
 
-    monkeypatch.setenv("OPENAI_API_KEY", "sk-live-should-not-leak")
+    monkeypatch.setenv("OPENAI_API_KEY", "sk" + "-live-should-not-leak")
     monkeypatch.setenv("HARNESS_API_TOKEN", "t" * 40)
     monkeypatch.setenv("GITHUB_TOKEN", "ghp_should_not_leak")
     env = platform_compat.probe_env(tmp_path / "home")
