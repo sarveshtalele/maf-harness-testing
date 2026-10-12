@@ -52,10 +52,9 @@ def merge_plans(plans):
 
 async def plan_tests_batched(host, state):
     requirements = state["artifacts"]["requirements"]
-    ids = [r["id"] for r in requirements["requirement_model"]["requirements"]]
     signature = digest(
         {
-            "ids": ids,
+            "requirements": requirements,  # full content: revised text under the same IDs must re-plan
             "budget": case_budget(state),
             "model": getattr(getattr(host, "runtime", None), "model", None),
             "feedback": state.get("feedback", {}).get("test_planning"),

@@ -649,3 +649,38 @@ def test_http_model_test_route_passes_the_typed_values(local_api, monkeypatch):
     finally:
         server.shutdown()
         server.server_close()
+
+
+def test_rerun_drops_batch_caches_and_review_records_of_restarted_stages(local_api):
+    api = local_api
+    key = api.start({"repo_url": "https://github.com/acme/demo"})["id"]
+    wait(api)
+    for _ in range(10):
+        approve(api, key)
+    path = api.run_path(key) / "run.json"
+    view = json.loads(path.read_text(encoding="utf-8"))
+    view["state"].update(
+        accepted_planning_batches={"signature": "p", "batches": {"1": {}}},
+        accepted_design_batches={"signature": "d", "batches": {"1": {}}},
+        design_reviews={"1": {"verdict": "pass"}},
+        generation_rounds={"1": {}},
+    )
+    path.write_text(json.dumps(view), encoding="utf-8")
+    api.rerun(key, {"stage": "test_design", "request_id": None})
+    wait(api)
+    assert not api.errors
+    state = json.loads(path.read_text(encoding="utf-8"))[
+        "state"
+    ]  # the raw saved state, not the UI projection
+    assert "accepted_planning_batches" in state  # test_planning is before the rerun point
+    # The restarted stages ran again before the gate, so their records were rebuilt rather than replayed.
+    assert state.get("accepted_design_batches", {}).get("signature") != "d"
+    assert state.get("design_reviews") != {"1": {"verdict": "pass"}}
+    assert "generation_rounds" not in state or state["generation_rounds"] != {"1": {}}
+    path.write_text(
+        json.dumps({**json.loads(path.read_text(encoding="utf-8")), "pending": None}), encoding="utf-8"
+    )
+    run = api.read(key)
+    api.rerun(key, {"stage": "test_planning", "request_id": run["pending"]["id"] if run["pending"] else None})
+    wait(api)
+    assert "accepted_planning_batches" not in json.loads(path.read_text(encoding="utf-8"))["state"]

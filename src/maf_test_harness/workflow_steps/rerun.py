@@ -9,6 +9,13 @@ from filelock import FileLock
 from ..storage import read_json, retry
 from ..workflow_support import atomic_json
 
+# Per-stage caches and records. A rerun must regenerate them for the stages it restarts.
+_STAGE_CACHES = (
+    ("accepted_planning_batches", "test_planning"),
+    ("accepted_design_batches", "test_design"),
+    ("design_reviews", "test_design"),
+    ("generation_rounds", "test_generation"),
+)
 _SHARING_VIOLATIONS = {5, 32, 33}  # ERROR_ACCESS_DENIED, ERROR_SHARING_VIOLATION, ERROR_LOCK_VIOLATION
 
 
@@ -82,6 +89,9 @@ class RerunSteps:
                     "skill_tool_trace",
                 ):
                     state.get(key, {}).pop(name, None)
+            for key, owner in _STAGE_CACHES:  # batch caches and review records of the restarted stages
+                if owner in self.stages[index:]:
+                    state.pop(key, None)
             for key in (
                 "draft",
                 "accepted_generation_batches",

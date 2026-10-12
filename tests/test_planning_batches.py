@@ -122,3 +122,16 @@ def test_real_validate_accepts_merged_batch_plans_with_host_fields_and_renumbers
     plan = asyncio.run(PlanningSteps.validate(object(), "test_planning", state))
     assert [a["area_id"] for a in plan["areas"]] == ["PLN-01", "PLN-02"]
     assert len(plan["controls"]) == 3
+
+
+def test_planning_cache_resets_when_requirement_text_changes_under_same_ids():
+    state = {"artifacts": {"requirements": _reqs(2 * PLANNING_BATCH_SIZE + 1)}}
+    asyncio.run(plan_tests_batched(Host(), state))
+    first = state["accepted_planning_batches"]["signature"]
+    changed = _reqs(2 * PLANNING_BATCH_SIZE + 1)
+    changed["requirement_model"]["requirements"][0]["text"] = "a different behaviour"
+    state["artifacts"]["requirements"] = changed
+    host = Host()
+    asyncio.run(plan_tests_batched(host, state))
+    assert state["accepted_planning_batches"]["signature"] != first
+    assert host.calls == [1, 2, 3]
