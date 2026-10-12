@@ -9,7 +9,7 @@ test('greenfield limits are checked before upload', async ({ page }) => {
     if (path === 'runs') return route.fulfill({ json: { runs: [], busy: false } });
     return route.fulfill({ json: {} });
   });
-  await page.goto('/?page=new');
+  await page.goto('/runs/new');
   await page.getByRole('radio', { name: 'Greenfield specs' }).check();
   const input = page.getByLabel('Specification documents');
   const start = page.getByRole('button', { name: 'Start repository review →' });
@@ -32,7 +32,7 @@ test('greenfield limits are checked before upload', async ({ page }) => {
 test('greenfield limits: exactly 10 files and exactly 10 MiB in total are accepted', async ({ page }) => {
   await page.route('**/api/harness/config', route => route.fulfill({ json: { model: 'm', base_url: 'u', key_configured: true, case_budget_default: 2, daily: { used: 0, remaining: 1, limit: 1 }, stages: ['repo_analysis'], personas: {} } }));
   await page.route('**/api/harness/runs', route => route.fulfill({ json: { runs: [], busy: false } }));
-  await page.goto('/?page=new');
+  await page.goto('/runs/new');
   await page.getByRole('radio', { name: 'Greenfield specs' }).check();
   const input = page.getByLabel('Specification documents');
   const mebibyte = 1024 * 1024;

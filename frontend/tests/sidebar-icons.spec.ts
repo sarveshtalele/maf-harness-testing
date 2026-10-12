@@ -27,11 +27,11 @@ test('sidebar collapses to an icon rail, keeps navigation and persists across re
   expect(expandedWidth).toBeGreaterThan(64);
   await expect(page.locator('.sidebar .sidebar-run, .sidebar .sidebar-footer progress')).toBeHidden();
   await expect(page.getByRole('button', { name: 'Dark appearance', exact: true })).toBeVisible();
-  await nav(page).getByRole('button', { name: 'New run', exact: true }).click();
+  await nav(page).getByRole('link', { name: 'New run', exact: true }).click();
   await expect(page.getByRole('heading', { level: 1, name: 'New test run' })).toBeVisible();
-  await nav(page).getByRole('button', { name: /^Configuration\b/ }).click();
+  await nav(page).getByRole('link', { name: /^Configuration\b/ }).click();
   await expect(page.getByRole('heading', { level: 1, name: 'Configuration' })).toBeVisible();
-  await nav(page).getByRole('button', { name: /^Runs\b/ }).click();
+  await nav(page).getByRole('link', { name: /^Runs\b/ }).click();
   await expect(page.getByRole('heading', { level: 1, name: 'Repository runs' })).toBeVisible();
   await page.reload();
   await hydrated(page);
@@ -65,10 +65,10 @@ test('collapse toggle follows the brand in tab order, toggles from the keyboard,
   await expect(toggle(page)).toHaveAttribute('aria-expanded', 'false');
   await expect.poll(() => width(page, '.sidebar')).toBe(64);
   await page.keyboard.press('Tab');
-  await expect(nav(page).getByRole('button', { name: /^Runs\b/ })).toBeFocused();
+  await expect(nav(page).getByRole('link', { name: /^Runs\b/ })).toBeFocused();
   // Tooltip from data-label on :focus-visible; it is generated text, so the accessible name must not change.
   await expect.poll(() => page.evaluate(() => getComputedStyle(document.activeElement!, '::after').content)).toContain('Runs');
-  await expect(nav(page).getByRole('button', { name: /^Runs\b/ })).toHaveAccessibleName(/^Runs \d+$/);
+  await expect(nav(page).getByRole('link', { name: /^Runs\b/ })).toHaveAccessibleName(/^Runs \d+$/);
   await page.keyboard.press('Shift+Tab');
   await expect(toggle(page)).toBeFocused();
   await page.keyboard.press('Space');
@@ -76,7 +76,7 @@ test('collapse toggle follows the brand in tab order, toggles from the keyboard,
   await expect.poll(() => width(page, '.sidebar')).toBeGreaterThan(64);
   await page.keyboard.press('Tab');
   await page.keyboard.press('Tab');
-  await expect(page.getByRole('button', { name: 'New run', exact: true })).toBeFocused();
+  await expect(page.getByRole('link', { name: 'New run', exact: true })).toBeFocused();
   await expect.poll(() => page.evaluate(() => getComputedStyle(document.activeElement!, '::after').content)).toBe('none');
 });
 
@@ -91,15 +91,15 @@ test('nav items, marketplace tabs and run tabs carry decorative icons', async ({
     if (path === 'mcp-servers') return route.fulfill({ json: { servers: [], presets: {}, stages: [], max_tools_per_stage: 8, stage_budget: {} } });
     return route.continue();
   });
-  await page.goto('/?run=icons&tab=Review');
+  await page.goto('/runs/icons');
   for (const name of [/^Runs\b/, 'New run', 'Marketplace', 'Agent prompts', 'Configuration']) {
-    await expect(nav(page).getByRole('button', { name })).toHaveCount(1);
-    await expect(nav(page).getByRole('button', { name }).locator('svg[aria-hidden=true]')).toHaveCount(1);
+    await expect(nav(page).getByRole('link', { name })).toHaveCount(1);
+    await expect(nav(page).getByRole('link', { name }).locator('svg[aria-hidden=true]')).toHaveCount(1);
   }
   for (const name of ['Review', 'Errors', 'Artifacts', 'Generated tests', 'QA report', 'Test reports', 'Logs', 'Observability', 'Audit', 'Prompts']) {
-    await expect(page.getByRole('button', { name: new RegExp(`^${name}( \\d+)?$`) }).first().locator('svg[aria-hidden=true]')).toHaveCount(1);
+    await expect(page.getByRole('link', { name: new RegExp(`^${name}( \\d+)?$`) }).first().locator('svg[aria-hidden=true]')).toHaveCount(1);
   }
-  await page.goto('/?page=marketplace');
+  await page.goto('/marketplace');
   for (const name of ['Agent Skills', 'MCP servers']) await expect(page.getByRole('tab', { name, exact: true }).locator('svg[aria-hidden=true]')).toHaveCount(1);
 });
 
@@ -109,7 +109,7 @@ test('mobile keeps the top bar, hides the collapse button and never scrolls side
   await expect(toggle(page)).toBeHidden();
   await page.evaluate(() => localStorage.setItem('maf:sidebar-collapsed', 'true'));
   await page.reload();
-  await expect(nav(page).getByRole('button', { name: 'New run', exact: true })).toBeVisible();
+  await expect(nav(page).getByRole('link', { name: 'New run', exact: true })).toBeVisible();
   await expect(toggle(page)).toBeHidden();
   const overflow = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
   expect(overflow).toBeLessThanOrEqual(1);

@@ -88,7 +88,7 @@ async function addPreset(page: Page, label: string) {
 
 test('MCP servers in Marketplace: add the Playwright preset, test, set tool access and stage, write-only secrets', async ({ page }) => {
   const state = await mockMcp(page);
-  await page.goto('/?page=marketplace&tab=mcp');
+  await page.goto('/marketplace?tab=mcp');
   await expect(page.getByRole('tab', { name: 'MCP servers', exact: true })).toHaveAttribute('aria-selected', 'true');
   await addPreset(page, 'Playwright MCP (local browser, stdio)');
   const pw = card(page, 'playwright');
@@ -146,7 +146,7 @@ test('pasting a JSON config adds a stdio and an http server, both disabled, and 
       ],
     }),
   });
-  await page.goto('/?page=marketplace&tab=mcp');
+  await page.goto('/marketplace?tab=mcp');
   await page.getByRole('button', { name: 'Add MCP server' }).click();
   const dialog = addDialog(page);
   await dialog.getByLabel(/Paste an npx/).fill(config);
@@ -165,7 +165,7 @@ test('pasting an npx command names the card after the package and stores an inli
       added: [{ name: 'mcp', transport: 'stdio', command: 'npx', args: ['-y', '@playwright/mcp@latest'], env_keys: ['API_TOKEN'], url: '', enabled: false, stages: [], allowed_tools: [], approval_required_tools: [], preset: '' }],
     }),
   });
-  await page.goto('/?page=marketplace&tab=mcp');
+  await page.goto('/marketplace?tab=mcp');
   await page.getByRole('button', { name: 'Add MCP server' }).click();
   const dialog = addDialog(page);
   await dialog.getByLabel(/Paste an npx/).fill(`API_TOKEN=${PASTED} npx -y @playwright/mcp@latest`);
@@ -180,7 +180,7 @@ test('pasting an npx command names the card after the package and stores an inli
 
 test('Escape closes the Add dialog and clears the pasted text', async ({ page }) => {
   await mockMcp(page);
-  await page.goto('/?page=marketplace&tab=mcp');
+  await page.goto('/marketplace?tab=mcp');
   await page.getByRole('button', { name: 'Add MCP server' }).click();
   await addDialog(page).getByLabel(/Paste an npx/).fill(`API_TOKEN=${PASTED} npx -y x`);
   await page.keyboard.press('Escape');
@@ -200,7 +200,7 @@ test('a failed secret save after import keeps the server, reloads the list and n
       added: [{ name: 'files', transport: 'stdio', command: 'npx', args: ['x'], env_keys: ['API_TOKEN'], url: '', enabled: false, stages: [], allowed_tools: [], approval_required_tools: [], preset: '' }],
     }),
   });
-  await page.goto('/?page=marketplace&tab=mcp');
+  await page.goto('/marketplace?tab=mcp');
   await page.getByRole('button', { name: 'Add MCP server' }).click();
   const dialog = addDialog(page);
   await dialog.getByLabel(/Paste an npx/).fill(JSON.stringify({ mcpServers: { files: { command: 'npx', args: ['x'], env: { API_TOKEN: PASTED } } } }));
@@ -215,7 +215,7 @@ test('real backend: paste a docker -e secret and an env secret; the stored secre
   // No MCP routes are mocked here: the import goes through the real parse_import and the real secrets route.
   const names = ['e2e-real', 'e2e-docker'];
   try {
-    await page.goto('/?page=marketplace&tab=mcp');
+    await page.goto('/marketplace?tab=mcp');
     await page.getByRole('button', { name: 'Add MCP server' }).click();
     const dialog = addDialog(page);
     await dialog.getByLabel(/Paste an npx/).fill(JSON.stringify({ mcpServers: { 'e2e-real': { command: 'npx', args: ['-y', '@playwright/mcp@latest'], env: { E2E_TOKEN: PASTED } } } }));
@@ -246,7 +246,7 @@ test('approve all, deselect all, save: counts update and the stage over-budget w
     tools: nine,
     servers: [{ name: 'pw', transport: 'stdio', command: 'npx', args: ['@playwright/mcp@latest'], env_keys: [], url: '', enabled: true, stages: ['requirements'], allowed_tools: [], approval_required_tools: [], preset: '' }],
   });
-  await page.goto('/?page=marketplace&tab=mcp');
+  await page.goto('/marketplace?tab=mcp');
   const pw = card(page, 'pw');
   await expect(pw.getByText('Run Test to discover tools')).toBeVisible();
   await pw.getByRole('button', { name: 'Manage tools' }).click();
@@ -273,7 +273,7 @@ test('approve all, deselect all, save: counts update and the stage over-budget w
 
 test('delete asks for confirmation, removes the card, and focus moves to Add MCP server', async ({ page }) => {
   const state = await mockMcp(page, { servers: [{ name: 'playwright', transport: 'stdio', command: 'npx', args: ['@playwright/mcp@latest'], env_keys: [], url: '', enabled: false, stages: [], allowed_tools: [], approval_required_tools: [], preset: 'playwright' }] });
-  await page.goto('/?page=marketplace&tab=mcp');
+  await page.goto('/marketplace?tab=mcp');
   const pw = card(page, 'playwright');
   await pw.getByRole('button', { name: 'Manage tools' }).click();
   const dialog = manage(page, 'playwright');
@@ -288,11 +288,11 @@ test('delete asks for confirmation, removes the card, and focus moves to Add MCP
 
 test('Configuration links to Marketplace MCP servers', async ({ page }) => {
   await mockMcp(page);
-  await page.goto('/?page=configuration');
+  await page.goto('/settings');
   const link = page.getByRole('link', { name: 'Marketplace → MCP servers' });
-  await expect(link).toHaveAttribute('href', '/?page=marketplace&tab=mcp');
+  await expect(link).toHaveAttribute('href', '/marketplace?tab=mcp');
   await link.click();
-  await expect(page).toHaveURL(/page=marketplace&tab=mcp/);
+  await expect(page).toHaveURL(/\/marketplace\?tab=mcp/);
   await expect(page.getByRole('tab', { name: 'MCP servers', exact: true })).toHaveAttribute('aria-selected', 'true');
 });
 
@@ -301,7 +301,7 @@ test('MCP tab and the manage dialog fit a 390 px screen with a long command', as
     servers: [{ name: 'long', transport: 'stdio', command: 'npx', args: ['-y', '@modelcontextprotocol/server-filesystem', '/a/very/long/path/'.repeat(12)], env_keys: [], url: '', enabled: false, stages: [], allowed_tools: [], approval_required_tools: [], preset: '' }],
   });
   await page.setViewportSize({ width: 390, height: 844 });
-  await page.goto('/?page=marketplace&tab=mcp');
+  await page.goto('/marketplace?tab=mcp');
   await expect(card(page, 'long')).toBeVisible();
   await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
   await card(page, 'long').getByRole('button', { name: 'Manage tools' }).click();
@@ -315,7 +315,7 @@ test('a stored server with a secret in its arguments loads disabled, shows the f
   const state = await mockMcp(page, {
     servers: [{ name: 'legacy', transport: 'stdio', command: 'npx', args: ['-y', 'server-x', '--api-key', 'abcdef123456'], env_keys: [], url: '', enabled: false, stages: [], allowed_tools: [], approval_required_tools: [], preset: '', problems: ['Move the token in the arguments to a secret before enabling.'] }],
   });
-  await page.goto('/?page=marketplace&tab=mcp');
+  await page.goto('/marketplace?tab=mcp');
   const legacy = card(page, 'legacy');
   await expect(legacy.getByText('Move the token in the arguments to a secret before enabling.')).toBeVisible();
   await legacy.getByRole('button', { name: 'Manage tools' }).click();

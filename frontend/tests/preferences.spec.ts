@@ -20,7 +20,7 @@ test('agent prompts reset to defaults', async ({ page, request }) => {
   const originals = { repository_prompt: catalog.settings.repository_prompt, personas: catalog.settings.personas };
   const shipped = { repository_prompt: catalog.defaults.repository_prompt, requirements: catalog.defaults.personas.requirements };
   try {
-    await page.goto('/?page=prompts');
+    await page.goto('/prompts');
     const guidance = page.getByLabel('Review guidance', { exact: true });
     const persona = page.getByLabel('Complete persona prompt', { exact: true });
     await expect(persona).not.toHaveValue('');

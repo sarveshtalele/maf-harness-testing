@@ -13,7 +13,7 @@ test('model & API key panel saves, tests and never shows the key again', async (
     await route.fulfill({ json: view });
   });
   await page.route('**/api/harness/settings/model/test', route => route.fulfill({ json: { ok: true, message: 'Connection works.' } }));
-  await page.goto('/?page=configuration');
+  await page.goto('/settings');
   const title = page.getByRole('button', { name: 'Model & API key', exact: true });
   await expect(title).toBeVisible(); // panel titles are buttons
   await expect(page.getByText('No API key configured yet.')).toBeVisible();
@@ -45,7 +45,7 @@ test('model test uses typed values and shows friendly errors', async ({ page }) 
     tests.push(route.request().postDataJSON());
     return route.fulfill({ json: { ok: false, message: 'The API key was rejected by the gateway.', detail: "AuthenticationError: Error code: 401 - {'error': {'message': 'invalid key'}}" } });
   });
-  await page.goto('/?page=configuration');
+  await page.goto('/settings');
   await page.getByLabel('Base URL').fill('https://typed.example.com/v1');
   await page.getByLabel('Model', { exact: true }).fill('typed-model');
   await page.getByRole('button', { name: 'Test connection' }).click();

@@ -8,7 +8,7 @@ for (const { name, size } of viewports) {
     await page.setViewportSize(size);
     await page.route('**/api/harness/config', route => route.fulfill({ json: config }));
     await page.route('**/api/harness/runs', route => route.fulfill({ json: { runs: [], busy: false } }));
-    await page.goto('/?page=new');
+    await page.goto('/runs/new');
     await page.getByRole('radio', { name: 'Greenfield specs' }).check();
     const labels = page.locator('fieldset.jira-fields > label');
     await expect(labels).toHaveCount(5);
