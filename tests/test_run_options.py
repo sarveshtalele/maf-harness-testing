@@ -195,5 +195,5 @@ def test_greenfield_documents_with_the_same_name_are_all_kept(tmp_path):
     ]
     asyncio.run(host.start("", run_mode="greenfield", documents=docs, target_language="python"))
     saved = sorted(p.name for p in (runs / "spec_inputs").iterdir())
-    assert saved == ["001-spec.md", "002-spec.md", "003-.."]
+    assert saved == ["001-spec.md", "002-spec.md", "003-document"]
     assert [(runs / "spec_inputs" / n).read_bytes() for n in saved] == [b"A", b"B", b"C"]

@@ -337,6 +337,9 @@ class Harness(RerunSteps, ExecutionSteps, GenerationSteps, GreenfieldSteps, Plan
                 inputs.mkdir(parents=True, exist_ok=True)
                 for index, doc in enumerate(docs, 1):  # the index keeps duplicate names apart
                     base = "".join(c if c.isalnum() or c in "._-" else "_" for c in Path(doc["name"]).name)
+                    base = base.strip(
+                        ". "
+                    )  # Windows drops trailing dots and spaces; "." and ".." are not names
                     (inputs / f"{index:03d}-{base[:120] or 'document'}").write_bytes(doc["content"])
             jira = jira or ((spec_sources or {}).get("jira") or None)
             if jira and jira_token:

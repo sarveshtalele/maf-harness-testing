@@ -29,6 +29,7 @@ from pathlib import Path
 import yaml
 
 from .. import paths
+from ..storage import retry
 from .registry import NAME_RE, discover_skills, lint_plugins, lint_skill, load_lock, load_plugin, verify_lock
 
 MAX_IMPORT_BYTES = 20 * 1024 * 1024
@@ -179,7 +180,7 @@ def approve(repo_skills: Path, name: str, reviewed_sha256: str) -> dict:
         fd, tmp = tempfile.mkstemp(dir=path.parent, prefix=".plugins-", suffix=".tmp")
         with os.fdopen(fd, "w", encoding="utf-8") as handle:
             handle.write(json.dumps({"approved": approvals}, indent=2, sort_keys=True) + "\n")
-        os.replace(tmp, path)
+        retry(lambda: os.replace(tmp, path))  # Windows: a reader holding the file briefly blocks the replace
     return trust(repo_skills, directory)
 
 
