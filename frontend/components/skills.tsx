@@ -1,9 +1,11 @@
 'use client';
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { api, label, rows, text, type Row } from '@/lib/harness';
-import { Badge, DataTable, DataView, Metrics } from './data';
+import { ConfirmDialog, Fields, Metrics, StatusBadge, Table } from './page';
 import Markdown from './markdown';
 import Icon from './icons';
+
+const Badge = StatusBadge;
 
 type Skill = { name: string; description: string; role: string; primary_stages: string[]; purpose?: string; instructions: string; resources: string[]; metadata: Row; reviewed_scripts: Row; sha256: string; source?: 'repo' | 'plugin'; verified?: boolean; approved?: boolean; stages?: string[]; kind?: string; valid: boolean; locked: boolean; errors: string[]; warnings: string[]; provenance: Row; executions: Row[] };
 
@@ -14,8 +16,6 @@ export default function Skills() {
   const [selected, setSelected] = useState('');
   const [notice, setNotice] = useState('');
   const [approving, setApproving] = useState<Skill | null>(null);
-  const approveDialog = useRef<HTMLDialogElement>(null);
-  useEffect(() => { if (approving) approveDialog.current?.showModal(); }, [approving]);
   const reload = (signal?: AbortSignal) => api<{ skills: Skill[]; upstream: Row }>('skills', undefined, signal).then(setCatalog).catch(e => { if (!signal?.aborted) setError(e.message); });
   useEffect(() => {
     setSelected(new URLSearchParams(location.search).get('skill') || '');
@@ -47,14 +47,14 @@ export default function Skills() {
   const skills = catalog?.skills || [];
   const visible = skills.filter(s => `${s.name} ${s.description} ${s.role} ${s.primary_stages.join(' ')}`.toLowerCase().includes(search.toLowerCase()));
   const skill = skills.find(s => s.name === selected);
-  if (selected && catalog) return <><a className="button small" href="/?page=skills">← All agent skills</a>{skill ? <article className="skill-document">
-    <header><span className="eyebrow">Agent skill · {skill.role}</span><h1>{label(skill.name.replaceAll('-', ' '))}</h1><p>{skill.description}</p><div className="skill-tags"><Badge value={skill.valid ? 'Valid package' : 'Integrity error'} />{trustBadge(skill)}{skill.primary_stages.map(stage => <Badge key={stage} value={stage} />)}</div></header>
-    <section><h2>Recorded execution by run and step</h2><DataTable data={rows(skill.executions)} /><p>Package loading and script execution are different events. Historical adapter calls have no script execution record.</p></section>
+  if (selected && catalog) return <><a className="button small" href="/marketplace">← All agent skills</a>{skill ? <article className="skill-document">
+    <header><span className="eyebrow">Agent skill · {skill.role}</span><h2>{label(skill.name.replaceAll('-', ' '))}</h2><p>{skill.description}</p><div className="skill-tags"><Badge value={skill.valid ? 'Valid package' : 'Integrity error'} />{trustBadge(skill)}{skill.primary_stages.map(stage => <Badge key={stage} value={stage} />)}</div></header>
+    <section><h2>Recorded execution by run and step</h2><Table caption={`${skill.name} recorded executions`} rows={rows(skill.executions)} searchable empty="No recorded executions." /><p>Package loading and script execution are different events. Historical adapter calls have no script execution record.</p></section>
     <Markdown text={skill.instructions} />
     <section><h2>Package resources</h2><ul>{skill.resources.map(resource => <li key={resource}><code>{resource}</code></li>)}</ul></section>
-    <section><h2>Integrity and reviewed scripts</h2><DataView value={{ package_sha256: skill.sha256, errors: skill.errors, warnings: skill.warnings, reviewed_scripts: skill.reviewed_scripts }} /></section>
+    <section><h2>Integrity and reviewed scripts</h2><Fields data={{ package_sha256: skill.sha256, errors: skill.errors, warnings: skill.warnings, reviewed_scripts: skill.reviewed_scripts }} /></section>
   </article> : <p role="alert">This skill is not in the installed catalog.</p>}</>;
-  return <><div className="page-header"><div><span className="eyebrow">Project skill library</span><h1><Icon name="spark" />Agent skills</h1><p>Installed packages, workflow roles, instructions and integrity details.</p></div><label className="button primary">Add skill<input aria-label="Add skill (.zip)" type="file" accept=".zip,application/zip" hidden onChange={e => { void addSkill(e.target.files?.[0]); e.target.value = ''; }} /></label></div>
+  return <><div className="page-header"><div><span className="eyebrow">Project skill library</span><h2><Icon name="spark" />Agent skills</h2><p>Installed packages, workflow roles, instructions and integrity details.</p></div><label className="button primary">Add skill<input aria-label="Add skill (.zip)" type="file" accept=".zip,application/zip" hidden onChange={e => { void addSkill(e.target.files?.[0]); e.target.value = ''; }} /></label></div>
     {notice && <div className="notice" role="status">{notice}</div>}
     {error && <div className="notice bad" role="alert">{error}</div>}
     {!catalog && !error && <p role="status">Loading project skills…</p>}
@@ -68,10 +68,12 @@ export default function Skills() {
         {!!skill.stages?.length && <div className="skill-tags" aria-label={`${skill.name} stages`}>{skill.stages.map(stage => <Badge key={stage} value={label(stage)} />)}</div>}
         {skill.purpose && <p className="field-help">{skill.purpose}</p>}
         {!skill.verified && !skill.approved && <button className="small" onClick={() => setApproving(skill)}>Approve {skill.name}</button>}
-        <a className="button small" href={`/?page=skills&skill=${encodeURIComponent(skill.name)}`}>View skill details →</a>
+        <a className="button small" href={`/marketplace?skill=${encodeURIComponent(skill.name)}`}>View skill details →</a>
       </article>)}</div>
       <p className="field-help">Availability does not mean every skill runs on every repository. Companion skills are selected from repository facts and the approved test design.</p>
     </>}
-    {approving && <dialog ref={approveDialog} aria-labelledby="approve-skill-title" className="detail-dialog" onCancel={() => setApproving(null)} onClose={() => setApproving(null)}><header className="panel-heading"><h2 id="approve-skill-title">Approve {approving.name}?</h2></header><div className="panel-body"><p>It is not covered by the repository lock. Approving lets agents load its instructions and allows its scripts to run on this machine. Any later file change revokes the approval.</p><div className="header-actions"><button onClick={() => setApproving(null)}>Cancel</button><button className="primary" onClick={() => void approveSkill(approving)}>Approve</button></div></div></dialog>}
+    <ConfirmDialog open={approving !== null} title={`Approve ${approving?.name ?? 'skill'}?`} confirmLabel="Approve" onConfirm={() => { if (approving) void approveSkill(approving); }} onClose={() => setApproving(null)}>
+      <p>It is not covered by the repository lock. Approving lets agents load its instructions and allows its scripts to run on this machine. Any later file change revokes the approval.</p>
+    </ConfirmDialog>
   </>;
 }

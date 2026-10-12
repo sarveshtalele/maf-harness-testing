@@ -31,8 +31,8 @@ export function EmptyState({ title, children, icon }: { title: string; children?
 }
 
 /** A collapsible subsection: h2 > button[aria-expanded][aria-controls]. Children are created only after the first open. */
-export type SectionProps = { id?: string; title: string; count?: number; summary?: ReactNode; defaultOpen?: boolean; open?: boolean; onToggle?: (open: boolean) => void; expandHref?: string; children: ReactNode | (() => ReactNode) };
-export function Section({ id, title, count, summary, defaultOpen = false, open: controlled, onToggle, expandHref, children }: SectionProps) {
+export type SectionProps = { id?: string; title: string; count?: number; summary?: ReactNode; actions?: ReactNode; defaultOpen?: boolean; open?: boolean; onToggle?: (open: boolean) => void; expandHref?: string; children: ReactNode | (() => ReactNode) };
+export function Section({ id, title, count, summary, actions, defaultOpen = false, open: controlled, onToggle, expandHref, children }: SectionProps) {
   const [inner, setInner] = useState(defaultOpen);
   const isOpen = controlled ?? inner;
   const [loaded, setLoaded] = useState(isOpen);
@@ -44,7 +44,7 @@ export function Section({ id, title, count, summary, defaultOpen = false, open: 
       <button type="button" aria-expanded={isOpen} aria-controls={bodyId} onClick={toggle}><span className="section-chevron" aria-hidden="true">{isOpen ? '▾' : '▸'}</span><span className="section-title">{title}</span>{count !== undefined && <span className="section-count">{count}</span>}</button>
       {expandHref && <Link className="section-expand" href={expandHref} aria-label={`Open ${title} as a page`} title={`Open ${title} as a page`}>⤢</Link>}
     </h2>
-    {summary && <div className="section-summary">{summary}</div>}
+    {(summary || actions) && <div className="section-summary">{summary}{actions && <div className="section-actions">{actions}</div>}</div>}
     <div id={bodyId} className="section-body" hidden={!isOpen}>{loaded && (typeof children === 'function' ? children() : children)}</div>
   </section>;
 }
@@ -55,9 +55,12 @@ export type SectionSpec = { id: string; title: string; count?: number; summary?:
 export type Meta = { label: string; value: ReactNode };
 
 /** The one page template: breadcrumbs, title with ID and status, metadata strip, actions, downloads, notices and sections. */
-export function DetailPage({ breadcrumbs, eyebrow, title, id, status, meta, actions, downloads, notices, sections, children }: {
+export function DetailPage({ breadcrumbs, eyebrow, title, id, status, meta, actions, downloads, notices, sections, children, level = 1 }: {
   breadcrumbs?: Crumb[]; eyebrow?: string; title: string; id?: string; status?: unknown; meta?: Meta[]; actions?: ReactNode; downloads?: Download[]; notices?: ReactNode; sections?: SectionSpec[]; children?: ReactNode;
+  /** 1 for a page of its own; 2 for a run tab, whose run name is already the h1. */
+  level?: 1 | 2;
 }) {
+  const Heading = level === 1 ? 'h1' : 'h2';
   const specs = useMemo(() => sections ?? [], [sections]);
   const [open, setOpen] = useState<Record<string, boolean>>({});
   const isOpen = (spec: SectionSpec) => open[spec.id] ?? !!spec.defaultOpen;
@@ -68,7 +71,7 @@ export function DetailPage({ breadcrumbs, eyebrow, title, id, status, meta, acti
     <header className="page-hero">
       <div className="page-hero-text">
         {eyebrow && <span className="eyebrow">{eyebrow}</span>}
-        <h1>{title}</h1>
+        <Heading className="page-title">{title}</Heading>
         {(id || status !== undefined) && <div className="page-hero-meta">{id && <code className="page-id">{id}</code>}{status !== undefined && <StatusBadge value={status} />}</div>}
       </div>
       {actions && <div className="header-actions page-actions">{actions}</div>}
