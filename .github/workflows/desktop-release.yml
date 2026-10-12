@@ -9,7 +9,31 @@ permissions:
   contents: read
 
 jobs:
+  verify-main:
+    # A release is cut from main only (docs/RELEASING.md). Fails when the tag commit is not reachable from main.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          fetch-depth: 0
+      - name: Tag commit is on main
+        run: |
+          if git merge-base --is-ancestor "$GITHUB_SHA" origin/main; then
+            echo "tag commit $GITHUB_SHA is on main"
+          else
+            echo "::error::tag commit $GITHUB_SHA is not on main; release tags must point at main"
+            exit 1
+          fi
+
+  ci:
+    needs: verify-main
+    uses: ./.github/workflows/ci.yml
+  ui:
+    needs: verify-main
+    uses: ./.github/workflows/ui.yml
+
   build:
+    needs: [ci, ui]
     environment: prod
     runs-on: ${{ matrix.os }}
     strategy:
@@ -24,53 +48,42 @@ jobs:
       run:
         shell: bash
     steps:
-      - uses: actions/checkout@v7
-      - name: Guard (desktop/ present?)
-        id: guard
-        run: |
-          if [ -f desktop/package.json ]; then
-            echo "present=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "present=false" >> "$GITHUB_OUTPUT"
-            echo "::notice::desktop/ not present yet - skipping"
-          fi
-      - uses: actions/setup-node@v7
-        if: steps.guard.outputs.present == 'true'
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
         with:
           node-version-file: frontend/.nvmrc
-      - uses: astral-sh/setup-uv@v7
-        if: steps.guard.outputs.present == 'true'
+          cache: npm
+          cache-dependency-path: |
+            frontend/package-lock.json
+            desktop/package-lock.json
+      - uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7
+        with:
+          version: "0.12.23"
       - name: Install Python deps
-        if: steps.guard.outputs.present == 'true'
-        run: uv sync --python 3.12 --extra dev --extra desktop
+        run: uv sync --locked --python 3.12 --extra dev --extra desktop
       - name: Check versions
-        if: steps.guard.outputs.present == 'true'
         run: uv run python scripts/check_version.py
       - name: Build desktop installers
-        if: steps.guard.outputs.present == 'true'
         run: uv run python scripts/build_desktop.py ${{ matrix.arch && format('--arch {0}', matrix.arch) || '' }}
       - name: Backend self-check
-        if: steps.guard.outputs.present == 'true'
         run: build/backend/maf-backend --self-check
       - name: Install smoke test dependencies (Linux)
-        if: steps.guard.outputs.present == 'true' && runner.os == 'Linux'
+        if: runner.os == 'Linux'
         run: |
           sudo apt-get update
           sudo apt-get install -y xvfb
           sudo apt-get install -y libfuse2 || sudo apt-get install -y libfuse2t64
       - name: Packaged app smoke test
-        if: steps.guard.outputs.present == 'true'
         # Launches the installer's app (AGENTIC_QE_SMOKE=1); Linux needs a virtual display.
         run: ${{ runner.os == 'Linux' && 'xvfb-run -a ' || '' }}uv run python scripts/desktop_smoke.py --output smoke-output.txt
-      - uses: actions/upload-artifact@v7
-        if: failure() && steps.guard.outputs.present == 'true'
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        if: failure()
         with:
           # not "desktop-*": the release job downloads that pattern into the release assets
           name: smoke-desktop-${{ matrix.os }}
           path: smoke-output.txt
           if-no-files-found: ignore
-      - uses: actions/upload-artifact@v7
-        if: steps.guard.outputs.present == 'true'
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: desktop-${{ matrix.os }}
           # installers only: unpacked app folders and builder-debug.yml would collide across runners
@@ -87,24 +100,18 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@v7
-      - name: Guard (desktop/ present?)
-        id: guard
-        run: |
-          if [ -f desktop/package.json ]; then
-            echo "present=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "present=false" >> "$GITHUB_OUTPUT"
-            echo "::notice::desktop/ not present yet - skipping"
-          fi
-      - uses: actions/download-artifact@v8
-        if: steps.guard.outputs.present == 'true'
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with:
           pattern: desktop-*
           path: dist
           merge-multiple: true
-      - uses: softprops/action-gh-release@v3
-        if: steps.guard.outputs.present == 'true'
+      - name: Checksums
+        run: |
+          cd dist
+          sha256sum * > SHA256SUMS
+          cat SHA256SUMS
+      - uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3
         with:
           draft: true
+          generate_release_notes: true
           files: dist/*

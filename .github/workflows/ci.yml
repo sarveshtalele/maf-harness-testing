@@ -3,10 +3,11 @@ on:
   push:
     branches: [main, develop, 'release/**']
   pull_request:
+  workflow_call:  # desktop-release and desktop-prerelease run this on the tag commit before they build
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.event_name != 'workflow_call' }}
 
 permissions:
   contents: read
@@ -28,22 +29,27 @@ jobs:
       run:
         shell: bash
     steps:
-      - uses: actions/checkout@v7
-      - uses: astral-sh/setup-uv@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7
+        with:
+          version: "0.12.23"
       - name: Install
-        run: uv sync --extra dev --python ${{ matrix.python }}
+        run: uv sync --locked --extra dev --python ${{ matrix.python }}
       - name: Lint
         run: uv run ruff check src tests scripts && uv run ruff format --check src tests scripts
       - name: Architecture doc up to date
         if: runner.os == 'Linux' && matrix.python == '3.12'
         run: uv run python scripts/gen_architecture.py --check
+      - name: Version files agree
+        if: runner.os == 'Linux' && matrix.python == '3.12'
+        run: uv run python scripts/check_version.py
       - name: Agent Skills spec lint
         run: uv run maf-harness lint-skills --strict
       - name: Generation benchmark reference calibration (offline)
         run: uv run python scripts/benchmark_generation.py --output benchmark-results/calibration
       - name: Upload generation benchmark evidence
         if: always()
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: generation-benchmark-${{ matrix.os }}-py${{ matrix.python }}
           path: benchmark-results/calibration
@@ -53,9 +59,12 @@ jobs:
   secrets-scan:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - name: Fail on credential-shaped strings
+        # Provider keys (sk-, gh*_), AWS access key ids, Slack tokens and PEM private-key headers.
+        # Test fixtures must split such strings in source (see tests/test_hooks_builtin.py).
         run: |
-          if grep -rIE "sk-[A-Za-z0-9_-]{16,}|gh[pousr]_[A-Za-z0-9]{20,}" --exclude-dir=.git --exclude=uv.lock . ; then
+          pattern='sk-[A-Za-z0-9_-]{16,}|gh[pousr]_[A-Za-z0-9]{20,}|AKIA[0-9A-Z]{16}|xox[baprs]-[A-Za-z0-9-]{10,}|-----BEGIN ((RSA|EC|DSA|OPENSSH|PGP) )?PRIVATE KEY-----'
+          if grep -rIEn "$pattern" --exclude-dir=.git --exclude=uv.lock . ; then
             echo "credential-shaped string found"; exit 1
           fi

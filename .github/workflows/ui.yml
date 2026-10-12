@@ -4,9 +4,10 @@ on:
     branches: [main, develop, 'release/**']
   pull_request:
   workflow_dispatch:
+  workflow_call:  # desktop-release and desktop-prerelease run this on the tag commit before they build
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.event_name != 'workflow_call' }}
 
 permissions:
   contents: read
@@ -19,22 +20,33 @@ jobs:
         os: [macos-latest, windows-latest, ubuntu-latest]
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v7
-      - uses: astral-sh/setup-uv@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7
         with:
           python-version: '3.12'
-      - uses: actions/setup-node@v7
+          version: "0.12.23"
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
         with:
           node-version-file: frontend/.nvmrc
           cache: npm
-          cache-dependency-path: frontend/package-lock.json
-      - run: uv sync --extra dev --extra e2e
+          cache-dependency-path: |
+            frontend/package-lock.json
+            desktop/package-lock.json
+      - run: uv sync --locked --extra dev --extra e2e
       - run: uv run pytest tests/test_ui_api.py tests/test_platform_compat.py -q
       - run: uv run ruff check src tests scripts
       - run: uv run pytest tests/test_clone_transport.py tests/test_git_lifecycle.py -q
-      - name: Real GitHub clones (Windows Schannel, POSIX default TLS)
-        run: >-
-          uv run python -c "import os, tempfile; from pathlib import Path; from maf_test_harness.repo.analyzer import clone_repository; os.environ.update({'GIT_CONFIG_COUNT':'1','GIT_CONFIG_KEY_0':'http.sslBackend','GIT_CONFIG_VALUE_0':'schannel'} if os.name == 'nt' else {}); root = Path(tempfile.mkdtemp(prefix='qe-github-clone-')); print(clone_repository('https://github.com/sarveshtalele/requirement-analysis-skill', root / 'requirements')); print(clone_repository('https://github.com/agoncal/agoncal-application-petstore-ee7', root / 'petstore'))"
+      - name: Real GitHub clones (Windows Schannel, POSIX default TLS), retried on network errors
+        shell: bash
+        run: |
+          for attempt in 1 2 3; do
+            if uv run python -c "import os, tempfile; from pathlib import Path; from maf_test_harness.repo.analyzer import clone_repository; os.environ.update({'GIT_CONFIG_COUNT':'1','GIT_CONFIG_KEY_0':'http.sslBackend','GIT_CONFIG_VALUE_0':'schannel'} if os.name == 'nt' else {}); root = Path(tempfile.mkdtemp(prefix='qe-github-clone-')); print(clone_repository('https://github.com/sarveshtalele/requirement-analysis-skill', root / 'requirements')); print(clone_repository('https://github.com/agoncal/agoncal-application-petstore-ee7', root / 'petstore'))"; then
+              exit 0
+            fi
+            echo "clone attempt $attempt failed; GitHub may be unreachable, retrying"
+            sleep $((attempt * 15))
+          done
+          exit 1
       - name: Install without npm command shims (Windows regression)
         run: npm ci --include=dev --bin-links=false
         working-directory: frontend
@@ -60,7 +72,7 @@ jobs:
       - name: Desktop shell tests (tsc + node:test)
         run: npm ci && npm test
         working-directory: desktop
-      - uses: actions/upload-artifact@v7
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         if: always()
         with:
           name: ui-report-${{ matrix.os }}
