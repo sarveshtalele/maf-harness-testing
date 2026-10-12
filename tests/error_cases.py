@@ -125,6 +125,13 @@ CASES: list[dict] = [
         "expect": "ENV-PY-004",
     },
     {
+        "name": "frozen app found no Python for the venv (python-missing step)",
+        "source": "representative",
+        "ecosystem": "python",
+        "text": "Traceback\n SystemExit: Python ==3.11 is required to run Python tests; install it from python.org, then retry\n",
+        "expect": "ENV-PY-011",
+    },
+    {
         "name": "resolver conflict",
         "source": "representative",
         "ecosystem": "python",

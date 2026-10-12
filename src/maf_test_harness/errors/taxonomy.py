@@ -106,6 +106,13 @@ _c(
     ("install-each-package", "stub-dependency"),
 )
 _c(
+    "ENV-PY-011",
+    ENVIRONMENT,
+    MANUAL,
+    "No Python interpreter for the isolated environment",
+    "Install Python 3 (the version the project requires) from python.org, then retry. The desktop app does not bundle Python.",
+)
+_c(
     "ENV-PY-008",
     ENVIRONMENT,
     AUTO_ONCE,

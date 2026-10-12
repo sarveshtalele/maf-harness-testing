@@ -18,6 +18,8 @@ RULES = compile_rules(
             r"No matching distribution found for|Could not find a version that satisfies the requirement",
         ),
         ("ENV-PY-004", r"externally-managed-environment"),
+        # the frozen desktop app found no real Python to build the venv (runners.py: python-missing)
+        ("ENV-PY-011", r"Python [^\n]* is required to run Python tests"),
         (
             "ENV-PY-005",
             r"ResolutionImpossible|conflicting dependencies|Cannot install .* because these package versions",

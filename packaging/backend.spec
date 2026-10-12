@@ -24,6 +24,9 @@ for pkg in ("agent_framework", "agent_framework_core", "agent_framework_openai",
     binaries += b
     hiddenimports += h
 hiddenimports += ["yaml", "filelock"]
+# Imports of the bundled skill scripts (skills/*/scripts/*.py), which run through `maf-backend --run-python` via runpy.
+# PyInstaller cannot see them, so stdlib modules only they use would be missing. desktop_backend.self_check() verifies this.
+hiddenimports += ["argparse", "datetime", "hashlib", "json", "pathlib", "random", "typing", "jsonschema", "yaml"]
 # optional deps, bundled when present in the build environment
 for pkg in ("mcp",):
     try:

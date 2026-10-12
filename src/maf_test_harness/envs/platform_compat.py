@@ -54,7 +54,8 @@ def python_launcher() -> str:
     Display/probe use only (environment.py's prerequisite table, stack.py's tool-presence check) -- never
     use this to create a venv: on Windows, a bare 'python3'/'python' can be a Python Install Manager /
     App Execution Alias stub that silently downloads a whole interpreter over the network instead of
-    running your command. venv creation always uses sys.executable instead (see runners.py).
+    running your command. venv creation uses the running interpreter, or in the frozen app a detected real Python
+    (see runners.py).
     """
     return "python3" if shutil.which("python3") else "python"
 

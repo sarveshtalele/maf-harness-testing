@@ -210,6 +210,7 @@ def build_environment_plan(
         need_playwright=browser_tests and eco == "node",
         extra_requirements=nested_requirements(root) if python else None,
         extra_packages=documented_packages(needs or [], root) if python else None,
+        python_override=python_override if python else None,
     )
     toolchain_rows = plan_toolchains(root, eco, python_override=python_override)
     coverable = {"jdk": "java", "maven": "mvn", "dotnet": "dotnet", "python": "python3"}
