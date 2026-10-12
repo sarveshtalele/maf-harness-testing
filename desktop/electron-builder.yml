@@ -25,8 +25,17 @@ extraResources:
       - "deps/**/*"
 win:
   target:
-    - target: nsis
+    - target: msi
       arch: [x64]
+# Per-machine MSI (WiX): installs to Program Files for all users and needs administrator approval. oneClick false gives the
+# assisted wizard (silent: msiexec /i <msi> /qn). upgradeCode is FIXED for the life of the product so each new version
+# upgrades the installed one in place. Never change it: a new code makes a second, parallel installation.
+msi:
+  perMachine: true
+  oneClick: false
+  createDesktopShortcut: true
+  createStartMenuShortcut: true
+  upgradeCode: "277538a5-b263-410a-b2b4-23a1670e4974"
 mac:
   target:
     - target: dmg   # arch comes from the CLI (--x64/--arm64): the bundled backend is built for the runner's arch only

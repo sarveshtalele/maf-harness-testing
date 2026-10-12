@@ -18,11 +18,12 @@ def _touch(directory: Path, *names: str) -> None:
 def test_find_installer_windows_and_linux(tmp_path):
     _touch(
         tmp_path,
-        "Agentic-QE-1.0.3-win-x64.exe",
+        "Agentic-QE-1.0.3-win-x64.msi",
+        "Agentic-QE-1.0.3-win-x64.exe",  # the retired NSIS build is never picked up
         "Agentic-QE-1.0.3-linux-x86_64.AppImage",
         "builder-debug.yml",
     )
-    assert ds.find_installer("Windows", "AMD64", tmp_path).name == "Agentic-QE-1.0.3-win-x64.exe"
+    assert ds.find_installer("Windows", "AMD64", tmp_path).name == "Agentic-QE-1.0.3-win-x64.msi"
     assert ds.find_installer("Linux", "x86_64", tmp_path).name == "Agentic-QE-1.0.3-linux-x86_64.AppImage"
 
 
@@ -35,7 +36,7 @@ def test_find_installer_macos_prefers_host_arch(tmp_path):
 def test_find_installer_rejects_missing_and_ambiguous(tmp_path):
     with pytest.raises(FileNotFoundError, match="found: none"):
         ds.find_installer("Windows", "AMD64", tmp_path)
-    _touch(tmp_path, "Agentic-QE-1.0.2-win-x64.exe", "Agentic-QE-1.0.3-win-x64.exe")
+    _touch(tmp_path, "Agentic-QE-1.0.2-win-x64.msi", "Agentic-QE-1.0.3-win-x64.msi")
     with pytest.raises(FileNotFoundError, match="pass --installer"):
         ds.find_installer("Windows", "AMD64", tmp_path)
 
@@ -45,21 +46,54 @@ def test_unknown_os_has_no_installer():
         ds.installer_pattern("FreeBSD")
 
 
-def test_windows_install_command_puts_d_last_and_unquoted(tmp_path):
-    target = Path("C:/aqe-smoke-abc")
-    argv = ds.windows_install_argv(Path("Agentic-QE-1.0.3-win-x64.exe"), target)
-    assert argv[1:] == ["/S", f"/D={target}"]
-    assert " " not in argv[-1]
-
-
-def test_windows_candidates_and_taskkill(tmp_path):
-    target = tmp_path / "t"
-    local = tmp_path / "local"
-    assert ds.windows_app_candidates(target, local) == [
-        target / "Agentic QE.exe",
-        local / "Programs" / "Agentic QE" / "Agentic QE.exe",
+def test_windows_install_command_is_a_silent_per_machine_msi_into_the_target():
+    target = Path("C:/aqe-smoke-abc/app")
+    log = Path("C:/aqe-smoke-abc/msi-install.log")
+    argv = ds.windows_install_argv(Path("Agentic-QE-1.0.3-win-x64.msi"), target, log)
+    assert argv == [
+        "msiexec",
+        "/i",
+        "Agentic-QE-1.0.3-win-x64.msi",
+        "/qn",
+        "/norestart",
+        "/l*v",
+        str(log),
+        f"APPLICATIONFOLDER={target}",
     ]
+    assert " " not in argv[-1]  # the install dir must not need quoting
+
+
+def test_windows_uninstall_command_removes_the_same_package():
+    installer = Path("Agentic-QE-1.0.3-win-x64.msi")
+    log = Path("msi-uninstall.log")
+    assert ds.windows_uninstall_argv(installer, log) == [
+        "msiexec",
+        "/x",
+        str(installer),
+        "/qn",
+        "/norestart",
+        "/l*v",
+        str(log),
+    ]
+
+
+def test_windows_app_exe_and_taskkill(tmp_path):
+    assert ds.windows_app_exe(tmp_path / "app") == tmp_path / "app" / "Agentic QE.exe"
     assert ds.windows_taskkill_argv(42) == ["taskkill", "/PID", "42", "/T", "/F"]
+    assert ds.MSI_SUCCESS == (0, 3010)  # 3010 = installed, reboot pending
+
+
+def test_read_log_tail_decodes_windows_installer_utf16_and_utf8(tmp_path):
+    utf16 = tmp_path / "install.log"
+    utf16.write_bytes("MSI (c) start\r\nError 1603: fatal\r\n".encode("utf-16"))  # with BOM
+    text = ds.read_log_tail(utf16)
+    assert "Error 1603: fatal" in text and text.startswith("msiexec log install.log")
+    plain = tmp_path / "plain.log"
+    plain.write_text("line one\nline two\n", encoding="utf-8")
+    assert ds.read_log_tail(plain, limit=9).endswith("line two\n")
+    assert ds.read_log_tail(tmp_path / "missing.log") == ""
+    (tmp_path / "empty.log").write_bytes(b"")
+    assert ds.read_log_tail(tmp_path / "empty.log") == ""
 
 
 def test_temp_root_avoids_spaces():

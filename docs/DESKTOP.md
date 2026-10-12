@@ -46,19 +46,20 @@ The desktop unit tests (`npm ci && npm test` in `desktop/`) run in `ui.yml` on m
 launches the packaged app with `AGENTIC_QE_SMOKE=1` in a fresh temp profile. The app boots the backend and UI, checks
 `/api/harness/config` through the UI port, prints `AGENTIC_QE_SMOKE OK backend=<port> ui=<port>` and quits (exit 0). Failures
 print `AGENTIC_QE_SMOKE FAIL <reason>`, the last 40 lines of each service log, and exit 1. Smoke mode also has a 150 s hard
-timeout and shows no error dialogs. Windows installs silently into a temp dir (or the per-user folder if `/D` is ignored),
-macOS mounts the DMG and runs the copied app, and Linux runs the AppImage with `--appimage-extract-and-run` (needs a display;
-CI uses `xvfb-run -a`). The script refuses to run on Windows if a per-user Agentic QE install already exists. The
+timeout and shows no error dialogs. Windows runs `msiexec /i <msi> /qn /norestart APPLICATIONFOLDER=<temp dir>` (administrator
+rights needed; GitHub Windows runners have them), launches the app, then `msiexec /x <msi> /qn` and checks that the app was
+removed. A failed msiexec step prints the tail of its verbose log. macOS mounts the DMG and runs the copied app, and Linux runs the AppImage with `--appimage-extract-and-run` (needs a display;
+CI uses `xvfb-run -a`). The script refuses to run on Windows if `Program Files\Agentic QE` already exists, because the MSI upgrades an existing install in place. The
 `desktop-prerelease` and `desktop-release` workflows run it after the backend self-check and upload `smoke-output.txt` as
 `smoke-desktop-<os>` when it fails.
 
-Targets: Windows NSIS x64, macOS dmg x64+arm64, Linux AppImage x64. No auto-update: Help > "Check for updates" opens the
+Targets: Windows MSI x64 (per-machine, WiX), macOS dmg x64+arm64, Linux AppImage x64. The MSI config lives in `desktop/electron-builder.yml`: `perMachine`, `oneClick: false` and a fixed `upgradeCode`, which must never change. electron-builder downloads its own WiX binaries on the Windows runner, so no extra CI step is needed. No auto-update: Help > "Check for updates" opens the
 GitHub Releases page (`homepage` in `desktop/package.json`).
 
 ## Unsigned builds (internal distribution)
 
 - **macOS**: unsigned/not notarized, so macOS says *Apple could not verify "Agentic QE" is free of malware*. Drag the app to Applications, then either click **Open Anyway** in System Settings → Privacy & Security after the first blocked launch, or run `xattr -dr com.apple.quarantine "/Applications/Agentic QE.app"`. On macOS 15+ right-click > Open no longer bypasses Gatekeeper. Removing the prompt for everyone needs Developer ID signing + notarization (Apple Developer Program); see RELEASING.md.
-- **Windows**: SmartScreen shows "Windows protected your PC"; choose More info > Run anyway.
+- **Windows**: the MSI installs per machine into Program Files and needs administrator approval. SmartScreen may still show "Windows protected your PC" because the build is unsigned; choose More info > Run anyway. The MSI gives a protected install and managed deployment (`msiexec /i <msi> /qn`); code signing is still what proves the publisher.
 - **Linux**: `chmod +x Agentic-QE-*.AppImage` then run it (needs FUSE 2, or `--appimage-extract-and-run`).
 
 ## Model and API key

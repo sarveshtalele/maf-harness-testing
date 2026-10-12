@@ -4,7 +4,7 @@ Agentic QE Platform is an internal test-engineering tool. Give it a GitHub repos
 
 ## Use the desktop app
 
-If you only want to install and use the platform, read the **[user guide](docs/USER_GUIDE.md)**. Download the installer for your system from the [latest GitHub release](https://github.com/sarveshtalele/maf-harness-testing/releases/latest) (Windows `.exe`, macOS `.dmg` for Apple silicon or Intel, Linux `.AppImage`). The guide covers the unsigned first-launch steps, setting your model API key under **Configuration**, and how to run a test.
+If you only want to install and use the platform, read the **[user guide](docs/USER_GUIDE.md)**. Download the installer for your system from the [latest GitHub release](https://github.com/sarveshtalele/maf-harness-testing/releases/latest) (Windows `.msi`, macOS `.dmg` for Apple silicon or Intel, Linux `.AppImage`). The guide covers the unsigned first-launch steps, setting your model API key under **Configuration**, and how to run a test.
 
 ## Architecture at a glance
 

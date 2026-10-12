@@ -7,7 +7,7 @@ Spawns the packaged Python backend and the standalone Next server on loopback, s
 - `src/process-manager.ts`: spawn/kill of both process trees (POSIX process-group SIGTERM then SIGKILL; Windows `taskkill /T /F`).
 - `src/keystore.ts`: model/API key storage via Electron `safeStorage` into `<userData>/secrets.bin` (0600); in-memory fallback.
 - `src/preload.ts`, `src/util.ts`: minimal bridge and port/token/URL-guard helpers. Tests: `src/util.test.ts`, `src/keystore.test.ts` (`node:test`).
-- `electron-builder.yml`, `package.json`: targets (NSIS x64, dmg x64+arm64, AppImage x64), scripts `build`, `start`, `test`, `dist`.
+- `electron-builder.yml`, `package.json`: targets (Windows MSI x64 per-machine with WiX, dmg x64+arm64, AppImage x64), scripts `build`, `start`, `test`, `dist`. The MSI `upgradeCode` is fixed and must never change.
 
 ## Contracts
 Env passed to the backend: `HARNESS_API_TOKEN`, `HARNESS_API_PORT`, `HARNESS_DATA_DIR` (`app.getPath('userData')`), `HARNESS_RESOURCE_ROOT` (`<resources>/backend` when packaged); honoured by `src/maf_test_harness/paths.py`. Backend binary: `maf-backend` (`desktop_backend.py`, `packaging/backend.spec`).
@@ -16,6 +16,7 @@ Env passed to the backend: `HARNESS_API_TOKEN`, `HARNESS_API_PORT`, `HARNESS_DAT
 - The token and API key never reach the renderer, logs or CLI args (logs redact the token).
 - Windows/macOS/Linux behaviour must match; build each installer on its own OS runner.
 - No auto-update; builds are unsigned (see DESKTOP.md for run instructions).
+- The Windows install is per machine in Program Files, which standard users cannot write. The app and backend must write only under user data (`app.getPath('userData')` / `HARNESS_DATA_DIR`), never under `resources/` (`HARNESS_RESOURCE_ROOT`). Tested by `tests/test_read_only_resources.py`.
 
 ## Commands
 ```bash
