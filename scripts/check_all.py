@@ -68,8 +68,9 @@ def steps() -> list[Step]:
             "skills lint (strict)", [PY, "-m", "maf_test_harness.cli", "lint-skills", "--strict"], env=py_env
         ),
         Step("pytest", [PY, "-m", "pytest", "-q", "--ignore=tests/targets"], env=py_env),
-        Step("frontend typecheck", [NPM, "run", "typecheck"], "ui", ROOT / "frontend"),
+        # Build first: tsc reads .next/types, which a previous build may have left for routes that no longer exist.
         Step("frontend build", [NPM, "run", "build"], "ui", ROOT / "frontend"),
+        Step("frontend typecheck", [NPM, "run", "typecheck"], "ui", ROOT / "frontend"),
         Step("frontend playwright", [NPM, "test"], "ui", ROOT / "frontend", ui_env),
         Step("desktop shell tests", [NPM, "test"], "desktop", ROOT / "desktop"),
     ]
