@@ -16,8 +16,10 @@ import multiprocessing
 import runpy
 import sys
 import tempfile
+import time
 import traceback
-from collections.abc import Iterable, Iterator
+import unicodedata
+from collections.abc import Callable, Iterable, Iterator
 from pathlib import Path
 
 from maf_test_harness import paths
@@ -161,6 +163,223 @@ def _run_bundled_skill(work: Path) -> dict:
     )
 
 
+SMOKE_ARGS = ["--request", "input/request.json", "--output", "output.json"]
+# Small repositories for each stack, a monorepo and an empty one. Names are NFC; one folder has a space and one file a
+# non-ASCII name, the Windows path cases. Declarations are heuristic outside Python, which the scripts report as gaps.
+SAMPLE_REPOS: dict[str, dict[str, str]] = {
+    "python repo": {
+        "pyproject.toml": '[project]\nname = "sample"\nversion = "0.1.0"\n',
+        "src/sample/__init__.py": "",
+        "src/sample/módulo.py": "def soma(a, b):\n    return a + b\n\n\nclass Calc:\n    def dividir(self, a, b):\n        return a / b\n",
+        "tests/test_módulo.py": "from sample.módulo import soma\n\n\ndef test_soma():\n    assert soma(1, 2) == 3\n",
+    },
+    "js ts repo": {
+        "package.json": '{"name": "sample", "version": "0.1.0", "main": "src/index.ts"}\n',
+        "src/index.ts": "export function greet(name: string): string {\n  return `hello ${name}`;\n}\n",
+    },
+    "java repo": {
+        "pom.xml": "<project><modelVersion>4.0.0</modelVersion><groupId>demo</groupId><artifactId>app</artifactId>"
+        "<version>1.0</version></project>\n",
+        "src/main/java/App.java": "public class App {\n    public static int add(int a, int b) {\n        return a + b;\n    }\n\n"
+        "    public static void main(String[] args) {\n        System.out.println(add(1, 2));\n    }\n}\n",
+    },
+    "dotnet repo": {
+        "App.csproj": '<Project Sdk="Microsoft.NET.Sdk">\n  <PropertyGroup><OutputType>Exe</OutputType>'
+        "<TargetFramework>net8.0</TargetFramework></PropertyGroup>\n</Project>\n",
+        "Program.cs": "public static class Program\n{\n    public static int Add(int a, int b) => a + b;\n\n"
+        "    public static void Main() { }\n}\n",
+    },
+    "go repo": {
+        "go.mod": "module example.com/sample\n\ngo 1.22\n",
+        "main.go": "package main\n\nfunc Add(a int, b int) int {\n\treturn a + b\n}\n\nfunc main() {}\n",
+    },
+    "mixed monorepo": {
+        "services/api/app.py": "def handle(request):\n    return {'ok': True}\n",
+        "web/src/index.ts": "export const version = '1';\nexport function render(page: string) {\n  return page;\n}\n",
+        "tools/main.go": "package main\n\nfunc Tool() int {\n\treturn 1\n}\n",
+        "svc/src/main/java/Svc.java": "public class Svc {\n    public static int size() {\n        return 0;\n    }\n}\n",
+    },
+    "empty repo": {},
+}
+
+# Minimal valid inputs for the validators, built from the contracts their assets declare (no network, no toolchains).
+VALIDATOR_INPUTS: dict[str, dict[str, object]] = {
+    "traceability": {
+        "metadata": {
+            "generated_at": "2026-01-01T00:00:00Z",
+            "generator_version": "self-check",
+            "source_skill_names": ["traceability-generator"],
+        },
+        "traceability_matrix": [
+            {
+                "requirement_id": "REQ-1",
+                "test_case_id": "TC-1",
+                "artifact_id": "ART-1",
+                "artifact_type": "test",
+                "status": "covered",
+            }
+        ],
+        "gaps_report": {
+            "uncovered_requirements": [],
+            "orphan_tests": [],
+            "missing_links": [],
+            "warnings": [],
+            "notes": [],
+        },
+    },
+    "traceability_source": {
+        "requirements": [{"id": "REQ-1"}],
+        "test_cases": [{"id": "TC-1"}],
+        "generated_artifacts": [{"id": "ART-1"}],
+    },
+    "fixture": {
+        "positive_fixtures": [
+            {
+                "test_case_id": "TC-1",
+                "payload": {"name": "ok"},
+                "traceability_links": [{"source_id": "REQ-1", "type": "requirement"}],
+            }
+        ],
+        "negative_fixtures": [],
+        "boundary_fixtures": [],
+        "api_payload_examples": {"requests": [], "responses": []},
+        "summary_metadata": {
+            "fixture_count": 1,
+            "positive_count": 1,
+            "negative_count": 0,
+            "boundary_count": 0,
+            "api_payload_count": 0,
+            "coverage_percentage": 100,
+        },
+        "gaps_report": {"coverage_percentage": 100},
+    },
+    "contract": {
+        "api_contracts": [],
+        "validation_rules": [],
+        "gaps_report": {
+            "invalid_document": False,
+            "missing_schemas": [],
+            "incomplete_endpoints": [],
+            "notes": "",
+        },
+    },
+}
+
+SkillRun = Callable[..., dict]  # HarnessScriptRunner.run, or any runner with the same keyword interface
+
+
+def write_sample_repos(base: Path) -> dict[str, Path]:
+    repos = {}
+    for name, files in SAMPLE_REPOS.items():
+        root = base / unicodedata.normalize("NFC", name)
+        root.mkdir(parents=True, exist_ok=True)
+        for rel, text in files.items():
+            target = root / unicodedata.normalize("NFC", rel)
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text(text, encoding="utf-8")
+        repos[name] = root
+    return repos
+
+
+def run_skill_smoke(base: Path, run: SkillRun, report: Callable[[str], None]) -> list[str]:
+    """Run the host analysis scripts on every sample repo, then each validator once, through ``run``.
+
+    Returns the problems found and reports one line per script and sample. Repositories with no declarations must be
+    refused by requirement-analysis (it never invents requirements), so that refusal is the expected outcome there.
+    """
+    problems: list[str] = []
+
+    def check(label: str, started: float, ok: bool, detail: str = "") -> None:
+        report(
+            f"  {'OK  ' if ok else 'FAIL'} {label} ({time.monotonic() - started:.2f}s)"
+            + ("" if ok else f": {detail}")
+        )
+        if not ok:
+            problems.append(f"{label}: {detail}")
+
+    for sample, root in write_sample_repos(base).items():
+        source_files = sorted(p.relative_to(root).as_posix() for p in root.rglob("*") if p.is_file())
+        label = f"reverse-engineering [{sample}]"
+        started = time.monotonic()
+        analysis = run(
+            "reverse-engineering",
+            "scripts/analyze.py",
+            SMOKE_ARGS,
+            files={"request.json": json.dumps({"root": str(root), "source_files": source_files})},
+            output_json="output.json",
+        )
+        facts = (analysis.get("data") or {}).get("facts")
+        ok = analysis["exit_code"] == 0 and isinstance(facts, list)
+        check(label, started, ok, analysis["stderr"][-400:] or "no JSON output")
+        if not ok:
+            continue
+        label = f"requirement-analysis [{sample}]"
+        if not facts:
+            label += " (refusal expected: no declarations)"
+        started = time.monotonic()
+        draft = run(
+            "requirement-analysis",
+            "scripts/analyze.py",
+            SMOKE_ARGS,
+            files={
+                "request.json": json.dumps(
+                    {"analysis": analysis["data"], "app_name": sample, "knowledge": ""}
+                )
+            },
+            output_json="output.json",
+        )
+        if facts:
+            ok = draft["exit_code"] == 0 and isinstance(draft.get("data"), dict)
+        else:
+            ok = draft["exit_code"] != 0 and "No supported callable declarations" in draft["stderr"]
+        check(label, started, ok, draft["stderr"][-400:] or "no JSON output")
+
+    inputs = VALIDATOR_INPUTS
+    validators = [
+        (
+            "traceability-generator",
+            "scripts/validate_traceability.py",
+            ["input/traceability.json", "--source", "input/source.json"],
+            {"traceability.json": inputs["traceability"], "source.json": inputs["traceability_source"]},
+            "Traceability validation passed.",
+            "minimal valid input",
+        ),
+        (
+            "test-data-generator",
+            "scripts/validate_fixtures.py",
+            ["input/fixture.json"],
+            {"fixture.json": inputs["fixture"]},
+            "VALIDATION PASSED",
+            "minimal valid input",
+        ),
+        (
+            "api-contract-analyzer",
+            "scripts/validate_contract.py",
+            ["input/contract.json"],
+            {"contract.json": inputs["contract"]},
+            "Contract report is valid.",
+            "minimal valid input",
+        ),
+        (
+            "test-data-generator",
+            "scripts/deterministic_helpers.py",
+            ["--seed", "42", "--count", "2"],
+            {},
+            '"seed": 42',
+            "--seed 42",
+        ),
+    ]
+    # validate_design.py is not in SKILLS.lock.json, so the host runner refuses it; it is checked by the test suite only.
+    report("  SKIP test-design-generator/scripts/validate_design.py: not hash-locked in SKILLS.lock.json")
+    for skill, rel, args, files, expected, mode in validators:
+        label = f"{rel} [{mode}]"
+        started = time.monotonic()
+        outcome = run(skill, rel, args, files={k: json.dumps(v) for k, v in files.items()})
+        ok = outcome["exit_code"] == 0 and expected in outcome["stdout"]
+        check(label, started, ok, (outcome["stderr"] or outcome["stdout"])[-400:])
+    return problems
+
+
 def self_check() -> int:
     missing = [
         str(p)
@@ -195,6 +414,17 @@ def self_check() -> int:
     if outcome["exit_code"] != 0 or not isinstance(outcome.get("data"), dict):
         print(f"self-check FAILED, bundled skill script did not run:\n{outcome['stderr']}", file=sys.stderr)
         failed = True
+    from maf_test_harness.skills.scripts import HarnessScriptRunner
+
+    runner = HarnessScriptRunner(paths.skills_dir(), tiers=("host", "model"))
+    started = time.monotonic()
+    print("skill smoke (sample repositories and validators):", flush=True)
+    with tempfile.TemporaryDirectory(prefix="maf-self-check-") as tmp:
+        smoke = run_skill_smoke(Path(tmp), runner.run, lambda line: print(line, flush=True))
+    if smoke:
+        print("self-check FAILED, skill smoke:\n  " + "\n  ".join(smoke), file=sys.stderr)
+        failed = True
+    print(f"skill smoke {'FAILED' if smoke else 'OK'} in {time.monotonic() - started:.1f}s", flush=True)
     print(f"self-check {'FAILED' if failed else 'OK'} (resources: {paths.resource_root()})", flush=True)
     return int(failed)
 
