@@ -4,7 +4,8 @@ The reviewer scores four dimensions and quotes its derivation from target_source
 (whitespace-normalised substring, as in test review), applies the caps, and records every pass in the ledger. A case
 below the gate is repaired up to MODEL_REPAIR_ATTEMPTS times; when the gate is on and a case is still below it,
 design raises `Confidence gate: test design ...` and generation never starts. Gate off (HARNESS_REQUIRE_FULL_ACCURACY=0,
-or a greenfield run without code) keeps the review advisory.
+or a greenfield run without code) keeps the review advisory. HARNESS_DESIGN_REVIEW=0 turns the reviewer,
+and with it this gate, off.
 """
 
 import os
@@ -116,12 +117,6 @@ def weak_cases(reviews, cases, state: dict | None = None) -> list[dict]:
                 }
             )
     return weak
-
-
-def flagged(reviews, state: dict | None = None):
-    """Reviews that would not pass the gate (kept for callers that only hold reviews)."""
-    gate = min_confidence(state)
-    return [r for r in reviews if not r["accepted"] or r["confidence"] < gate]
 
 
 def repair_feedback(reviews) -> str:
