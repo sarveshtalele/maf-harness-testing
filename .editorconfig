@@ -1,0 +1,20 @@
+# Editor defaults. Line endings are enforced by .gitattributes (LF; CRLF only for *.cmd and *.bat).
+root = true
+
+[*]
+charset = utf-8
+end_of_line = lf
+insert_final_newline = true
+trim_trailing_whitespace = true
+indent_style = space
+indent_size = 2
+
+[*.py]
+indent_size = 4
+max_line_length = 110
+
+[*.{cmd,bat}]
+end_of_line = crlf
+
+[*.md]
+trim_trailing_whitespace = false

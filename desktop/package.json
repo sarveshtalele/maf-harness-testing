@@ -15,6 +15,9 @@
     "dist:mac": "npm run build && electron-builder --mac",
     "dist:linux": "npm run build && electron-builder --linux"
   },
+  "engines": {
+    "node": ">=24 <25"
+  },
   "devDependencies": {
     "@types/node": "^24.0.0",
     "electron": "^44.6.0",

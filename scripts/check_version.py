@@ -1,23 +1,64 @@
-"""Fail if pyproject and frontend versions differ, or a release tag mismatches."""
+"""Fail when the release version disagrees across the six version files, or a git tag does not match it.
+
+Checked fields: pyproject.toml; uv.lock (the editable maf-test-harness entry); frontend/package.json and
+desktop/package.json; and the root and packages[""] versions of frontend/package-lock.json and
+desktop/package-lock.json. A tag must be exactly vX.Y.Z or vX.Y.Z-rcN.
+"""
 
 import argparse
 import json
 import os
+import re
 import sys
 import tomllib
 from pathlib import Path
 
+TAG_RE = re.compile(r"v(\d+\.\d+\.\d+)(-rc\d+)?")
+
+
+def _json(path: Path) -> dict:
+    return json.loads(path.read_text("utf-8"))
+
+
+def versions(root: Path) -> dict[str, str]:
+    """Every version field a release touches, keyed by where it lives."""
+    found = {
+        "pyproject.toml": tomllib.loads((root / "pyproject.toml").read_text("utf-8"))["project"]["version"]
+    }
+    lock = tomllib.loads((root / "uv.lock").read_text("utf-8"))
+    ours = [
+        p
+        for p in lock.get("package", [])
+        if p.get("name") == "maf-test-harness" and p.get("source") == {"editable": "."}
+    ]
+    if len(ours) != 1:
+        raise ValueError("uv.lock must have exactly one editable maf-test-harness entry")
+    found["uv.lock"] = ours[0]["version"]
+    for folder in ("frontend", "desktop"):
+        found[f"{folder}/package.json"] = _json(root / folder / "package.json")["version"]
+        lock_json = _json(root / folder / "package-lock.json")
+        found[f"{folder}/package-lock.json"] = lock_json["version"]
+        found[f'{folder}/package-lock.json packages[""]'] = lock_json["packages"][""]["version"]
+    return found
+
 
 def check(root: Path) -> str | None:
-    py = tomllib.loads((root / "pyproject.toml").read_text("utf-8"))["project"]["version"]
-    js = json.loads((root / "frontend" / "package.json").read_text("utf-8"))["version"]
-    desk = json.loads((root / "desktop" / "package.json").read_text("utf-8"))["version"]
-    if py != js or py != desk:
-        return f"version mismatch: pyproject.toml={py} frontend/package.json={js} desktop/package.json={desk}"
+    try:
+        found = versions(root)
+    except (OSError, ValueError, KeyError, tomllib.TOMLDecodeError, json.JSONDecodeError) as exc:
+        return f"cannot read the version files: {exc}"
+    expected = found["pyproject.toml"]
+    stale = {name: value for name, value in found.items() if value != expected}
+    if stale:
+        listed = " ".join(f"{name}={value}" for name, value in found.items())
+        return f"version mismatch (pyproject.toml={expected}): {listed}"
     if os.environ.get("GITHUB_REF_TYPE") == "tag":
         tag = os.environ.get("GITHUB_REF_NAME", "")
-        if tag != f"v{py}" and tag.split("-rc")[0] != f"v{py}":
-            return f"tag {tag} does not match version v{py} (v{py}-rcN also accepted)"
+        match = TAG_RE.fullmatch(tag)
+        if not match:
+            return f"tag {tag!r} must look like v{expected} or v{expected}-rcN"
+        if match.group(1) != expected:
+            return f"tag {tag} does not match version v{expected} (v{expected}-rcN also accepted)"
     return None
 
 
