@@ -634,8 +634,15 @@ class LocalAPI(EvidenceAPI, SettingsAPI, McpAPI):
         self.service.close()
 
 
+API_SOCKET_TIMEOUT_SECONDS = 30  # a silent or slow-loris client must not hold a server thread forever
+
+
 def make_server(api: LocalAPI, token: str, port: int = 8765):
     class Handler(BaseHTTPRequestHandler):
+        timeout = (
+            API_SOCKET_TIMEOUT_SECONDS  # applied to each connection's socket by StreamRequestHandler.setup
+        )
+
         def log_message(self, *_):
             pass  # URLs and feedback may contain sensitive repository information.
 

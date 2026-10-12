@@ -18,7 +18,7 @@ from pathlib import Path
 
 import pytest
 
-from maf_test_harness import desktop_backend
+from maf_test_harness import desktop_backend, paths
 from maf_test_harness.skills import scripts
 
 REPO = Path(__file__).resolve().parents[1]
@@ -86,6 +86,7 @@ def test_frozen_shim_runs_a_read_only_bundled_script_without_writing_bytecode(
     helper.write_text("VALUE = 7\n", encoding="utf-8")
     script.write_text("import _read_only_probe_helper as h\nprint('VALUE', h.VALUE)\n", encoding="utf-8")
     _set_tree_writable(read_only_resources, writable=False)
+    monkeypatch.setattr(paths, "resource_root", lambda: read_only_resources)
     monkeypatch.setattr(sys, "dont_write_bytecode", sys.dont_write_bytecode)
     monkeypatch.setattr(sys, "argv", list(sys.argv))
     monkeypatch.setattr(sys, "path", list(sys.path))
@@ -106,6 +107,7 @@ def test_frozen_shim_writes_no_bytecode_even_when_bytecode_is_enabled(tmp_path, 
     (bundled / "sibling_bytecode_probe.py").write_text("VALUE = 11\n", encoding="utf-8")
     script = bundled / "probe_bytecode.py"
     script.write_text("import sibling_bytecode_probe as s\nprint('VALUE', s.VALUE)\n", encoding="utf-8")
+    monkeypatch.setattr(paths, "resource_root", lambda: bundled)
     monkeypatch.setattr(sys, "dont_write_bytecode", False)
     monkeypatch.setattr(sys, "argv", list(sys.argv))
     monkeypatch.setattr(sys, "path", list(sys.path))

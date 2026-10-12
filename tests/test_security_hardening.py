@@ -184,3 +184,33 @@ def test_generated_source_download_is_redacted_like_other_exports(tmp_path):
     data, mime, name = api.download("run-1", {"kind": ["source"], "index": ["0"]})
     assert secret.encode() not in data and b"TOKEN" in data
     assert name == "test_a.py" and mime == "text/plain"
+
+
+def test_run_python_only_runs_scripts_under_the_app_or_plugin_folders(tmp_path, monkeypatch, capsys):
+    from maf_test_harness import desktop_backend, paths
+
+    app, outside = tmp_path / "app", tmp_path / "elsewhere"
+    app.mkdir()
+    outside.mkdir()
+    inside_script, outside_script = app / "ok.py", outside / "evil.py"
+    inside_script.write_text("print('ran')\n", encoding="utf-8")
+    outside_script.write_text("print('ran')\n", encoding="utf-8")
+    monkeypatch.setattr(paths, "resource_root", lambda: app)
+    monkeypatch.setattr(paths, "plugin_dir", lambda: tmp_path / "plugins")
+    monkeypatch.setattr(sys, "argv", list(sys.argv))
+    monkeypatch.setattr(sys, "path", list(sys.path))
+    assert desktop_backend.main(["--run-python", str(outside_script)]) == 2
+    assert "outside the application and plugin folders" in capsys.readouterr().err
+    assert desktop_backend.main(["--run-python", str(inside_script)]) == 0
+    assert "ran" in capsys.readouterr().out
+
+
+def test_api_connections_have_socket_timeouts(tmp_path):
+    from maf_test_harness.ui import api as api_module
+    from maf_test_harness.ui.api import LocalAPI, make_server
+
+    server = make_server(LocalAPI(tmp_path / "runs", requirements_mode="deterministic"), "t" * 40, 0)
+    try:
+        assert server.RequestHandlerClass.timeout == api_module.API_SOCKET_TIMEOUT_SECONDS > 0
+    finally:
+        server.server_close()

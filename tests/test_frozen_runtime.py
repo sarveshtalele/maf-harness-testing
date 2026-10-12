@@ -60,8 +60,9 @@ def _seen(script: Path) -> dict:
     return json.loads((script.parent / "out.json").read_text(encoding="utf-8"))
 
 
-def test_run_python_runs_a_script_with_its_argv_and_folder_on_path(tmp_path, interpreter_state):
+def test_run_python_runs_a_script_with_its_argv_and_folder_on_path(tmp_path, interpreter_state, monkeypatch):
     script = _probe(tmp_path)
+    monkeypatch.setattr(paths, "resource_root", lambda: tmp_path)
     assert desktop_backend.main(["--run-python", str(script), "a", "b"]) == 0
     seen = _seen(script)
     assert seen["argv"] == [str(script), "a", "b"]
@@ -77,25 +78,32 @@ def test_run_python_runs_a_script_with_its_argv_and_folder_on_path(tmp_path, int
         ("x = 1\n", 0, ""),
     ],
 )
-def test_run_python_propagates_exit_codes(tmp_path, interpreter_state, capsys, body, code, stderr):
+def test_run_python_propagates_exit_codes(
+    tmp_path, interpreter_state, capsys, body, code, stderr, monkeypatch
+):
     script = tmp_path / "exit.py"
     script.write_text(body, encoding="utf-8")
+    monkeypatch.setattr(paths, "resource_root", lambda: tmp_path)
     assert desktop_backend.main(["--run-python", str(script)]) == code
     assert stderr in capsys.readouterr().err
 
 
-def test_run_python_module_and_code(tmp_path, monkeypatch, interpreter_state, capsys):
+def test_run_python_refuses_arbitrary_code_and_modules(tmp_path, monkeypatch, interpreter_state, capsys):
     monkeypatch.chdir(tmp_path)
-    (tmp_path / "probe_mod.py").write_text("import sys\nprint('MOD', sys.argv)\n", encoding="utf-8")
-    assert desktop_backend.main(["--run-python", "-m", "probe_mod", "x"]) == 0
-    out = capsys.readouterr().out
-    assert "MOD" in out and out.strip().endswith("'x']")
-    assert desktop_backend.main(["--run-python", "-c", "import sys; print('CODE', sys.argv)", "q"]) == 0
-    assert "CODE ['-c', 'q']" in capsys.readouterr().out
+    (tmp_path / "probe_mod.py").write_text("print('MOD')\n", encoding="utf-8")
+    assert desktop_backend.main(["--run-python", "-m", "probe_mod", "x"]) == 2
+    assert desktop_backend.main(["--run-python", "-c", "import os; print('CODE')"]) == 2
+    assert desktop_backend.main(["--run-python", "-c", "raise SystemExit(__import__('os').getcwd())"]) == 2
+    assert "CODE" not in capsys.readouterr().out
+    assert desktop_backend.main(["--run-python", "-c", "raise SystemExit('no python here')"]) == 1
+    assert "no python here" in capsys.readouterr().err
 
 
-def test_run_python_isolated_flag_keeps_the_script_folder_off_sys_path(tmp_path, interpreter_state):
+def test_run_python_isolated_flag_keeps_the_script_folder_off_sys_path(
+    tmp_path, interpreter_state, monkeypatch
+):
     script = _probe(tmp_path)
+    monkeypatch.setattr(paths, "resource_root", lambda: tmp_path)
     assert desktop_backend.main(["--run-python", "-I", "-B", str(script)]) == 0
     seen = _seen(script)
     assert str(script.parent.resolve()) not in seen["path"]
@@ -106,7 +114,7 @@ def test_run_python_never_starts_the_api(monkeypatch, interpreter_state):
     from maf_test_harness.ui import api
 
     monkeypatch.setattr(api, "main", lambda: pytest.fail("the API must not start in --run-python mode"))
-    assert desktop_backend.main(["--run-python", "-c", "pass"]) == 0
+    assert desktop_backend.main(["--run-python", "-c", "raise SystemExit('stop')"]) == 1
 
 
 def test_run_python_rejects_unknown_options_and_missing_scripts(tmp_path, interpreter_state, capsys):
@@ -142,7 +150,14 @@ def test_frozen_skill_script_runs_through_the_backend(monkeypatch):
         files={"request.json": "{}"},
     )
     script = (REPO / "skills/reverse-engineering/scripts/analyze.py").resolve()
-    assert seen["argv"][:3] == [sys.executable, "--run-python", str(script)]
+    assert seen["argv"][:6] == [
+        sys.executable,
+        "--run-python",
+        "-B",
+        "--check-hash-based-pycs",
+        "always",
+        str(script),
+    ]
 
 
 def _homes(found):
@@ -330,13 +345,16 @@ def test_frozen_runner_argv_round_trips_non_ascii_through_run_command(tmp_path):
         encoding="utf-8",
     )
     argv = [sys.executable, "-c", SHIM, "--run-python", str(script), "--request", "input/request.json"]
-    result = run_command(argv, work, tmp_path / "logs", timeout=60, env={"PYTHONPATH": str(REPO / "src")})
+    # The shim runs in a child process: its allowed folders come from the environment (the plugin folder here).
+    env = {"PYTHONPATH": str(REPO / "src"), "HARNESS_PLUGIN_DIR": str(tmp_path)}
+    result = run_command(argv, work, tmp_path / "logs", timeout=60, env=env)
     assert result["exit_code"] == 0, (tmp_path / "logs" / "stderr.log").read_text(encoding="utf-8")
     out = (tmp_path / "logs" / "stdout.log").read_text(encoding="utf-8")
     assert "h\u00e9llo \u2713" in out and "--request" in out
 
 
-def test_run_python_passes_pycache_prefix_and_hash_check_options(tmp_path, interpreter_state):
+def test_run_python_passes_pycache_prefix_and_hash_check_options(tmp_path, interpreter_state, monkeypatch):
+    monkeypatch.setattr(paths, "resource_root", lambda: tmp_path)
     script = tmp_path / "tool" / "flags.py"
     script.parent.mkdir()
     prefix = tmp_path / "pycache"
