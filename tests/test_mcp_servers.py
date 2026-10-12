@@ -815,9 +815,9 @@ def test_secret_in_url_query_is_rejected_and_manual_save_too():
     with pytest.raises(ValueError, match="secret-looking value"):
         mcp_servers.parse_import(text)
     with pytest.raises(ValueError, match="secret-looking value"):
-        mcp_servers.validate(srv(args=["--api-key", "abcdef123456"]))
+        mcp_servers.upsert(srv(args=["--api-key", "abcdef123456"]))
     with pytest.raises(ValueError, match="secret-looking value"):
-        mcp_servers.validate(
+        mcp_servers.upsert(
             {"name": "h", "transport": "http", "url": "https://x.example.com/mcp?access_token=abc123"}
         )
 
@@ -872,3 +872,59 @@ def test_stage_budget_counts_enabled_servers_in_runtime_order():
     budget = mcp_servers.stage_budget([server("a", 5), server("b", 5), server("c", 2, enabled=False)])
     assert budget == {"requirements": {"tools": 10, "max": 8, "skipped": ["b"]}}
     assert mcp_servers.stage_budget([server("a", 5)]) == {}
+
+
+# ---- stored secret-bearing servers are kept (loaded disabled), checks run on client writes only --------------------
+def test_stored_secret_arg_loads_disabled_with_problem_and_survives_another_save():
+    stored = {
+        "name": "pw",
+        "transport": "stdio",
+        "command": "npx",
+        "args": ["-y", "server-x", "--api-key", "abcdef123456"],
+        "env_keys": [],
+        "url": "",
+        "enabled": True,
+        "stages": ["requirements"],
+        "allowed_tools": [],
+        "approval_required_tools": [],
+        "preset": "",
+    }
+    mcp_servers.config_path().parent.mkdir(parents=True, exist_ok=True)
+    mcp_servers.config_path().write_text(json.dumps({"servers": [stored]}), encoding="utf-8")
+    [server] = mcp_servers.load()
+    assert server["enabled"] is False
+    assert server["problems"] == ["Move the token in the arguments to a secret before enabling."]
+    assert mcp_servers.for_stage("requirements") == []
+    mcp_servers.upsert(
+        srv(name="other")
+    )  # an unrelated save rewrites the file: the stored server is still there
+    names = {s["name"]: s for s in mcp_servers.load()}
+    assert set(names) == {"pw", "other"} and names["pw"]["args"] == stored["args"]
+    assert "problems" not in json.loads(mcp_servers.config_path().read_text(encoding="utf-8"))["servers"][0]
+    with pytest.raises(
+        ValueError, match="secret-looking value"
+    ):  # enabling by saving the same args is refused
+        mcp_servers.upsert({**stored, "enabled": True})
+
+
+@pytest.mark.parametrize(
+    "args",
+    [
+        ["--repository", "."],
+        ["/Users/a/b"],
+        ["C:\\work"],
+        ["@scope/pkg@1.2.3"],
+        ["--port", "8080"],
+        ["3f786850e387550fdab836ed7e6dc881de23001b"],  # a git commit sha
+        ["--headless"],
+        ["-y"],
+        ["--header", "X-Request-Id: 12345"],
+    ],
+)
+def test_legitimate_arguments_are_accepted(args):
+    assert mcp_servers.upsert(srv(name="ok", args=args))["args"] == args
+
+
+def test_legitimate_http_url_without_query_is_accepted():
+    server = mcp_servers.upsert({"name": "h", "transport": "http", "url": "https://example.com/mcp"})
+    assert server["url"] == "https://example.com/mcp"

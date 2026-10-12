@@ -40,7 +40,9 @@ MAX_MCP_TOOLS_PER_STAGE = (
 MAX_DISCOVERED_TOOLS = 200  # catalogue stored from the last Test (names and descriptions only)
 MAX_IMPORT_BYTES = 100_000
 _PLACEHOLDER = re.compile(r"\$\{(input|env):[^}]*\}")  # VS Code variables: never a secret value
-_SECRET_FLAG = re.compile(r"(?i)^--?(api[-_]?key|token|password|passwd|secret|authorization|header)(=|$)")
+_SECRET_FLAG = re.compile(
+    r"(?i)^--?(api[-_]?key|token|password|passwd|secret|authorization)$"
+)  # value follows
 _SECRET_QUERY = re.compile(
     r"(?i)(^|&)(api[_-]?key|access[_-]?token|token|key|secret|password|sig|signature)="
 )
@@ -192,12 +194,19 @@ def validate(data: dict) -> dict:
         out["url"] = validate_url(str(data.get("url", "")))
         if out["env_keys"]:
             raise ValueError("env_keys apply to stdio servers; an http server uses the token field.")
-    if _inline_secret(out["args"], out["url"]):
-        raise ValueError(
-            "Arguments or the URL contain a secret-looking value. Move it to an environment variable "
-            "(KEY=value before the command, or -e KEY for docker) or to the token field."
-        )
     return out
+
+
+_SECRET_MESSAGE = (
+    "Arguments or the URL contain a secret-looking value. Move it to an environment variable "
+    "(KEY=value before the command, or -e KEY for docker) or to the token field."
+)
+
+
+def _reject_inline_secrets(server: dict) -> None:
+    """Client writes only (upsert, import): a stored server is loaded with a problem instead, never dropped."""
+    if _inline_secret(server["args"], server["url"]):
+        raise ValueError(_SECRET_MESSAGE)
 
 
 def _looks_secret(text: str) -> bool:
@@ -206,8 +215,20 @@ def _looks_secret(text: str) -> bool:
     return public(text) != text  # redaction changed it: it holds a credential-looking value
 
 
+def _flag_secret(args: list[str]) -> bool:
+    """--api-key/--token/--password/--secret/--authorization with a value, or --header carrying Authorization."""
+    for i, arg in enumerate(args):
+        name, eq, inline = arg.partition("=")
+        value = inline if eq else (args[i + 1] if i + 1 < len(args) else "")
+        if _SECRET_FLAG.match(name) and value:
+            return True
+        if name.lower() == "--header" and "authorization" in value.lower():
+            return True
+    return False
+
+
 def _inline_secret(args: list[str], url: str) -> bool:
-    if any(_SECRET_FLAG.match(a) or _looks_secret(a) for a in args):
+    if _flag_secret(args) or any(_looks_secret(a) for a in args):
         return True
     if url:
         query = urlsplit(url).query
@@ -247,19 +268,36 @@ def load() -> list[dict]:
         if not isinstance(item, dict):
             continue
         try:
-            server = validate({k: v for k, v in item.items() if k != "discovered_tools"})
+            server = validate({k: v for k, v in item.items() if k not in _STORED_ONLY})
         except ValueError:
             continue  # a hand-edited bad entry is ignored, never trusted
+        problems = _stored_problems(server)
         out.append(
-            {**server, "discovered_tools": _tool_catalog(item.get("discovered_tools"))}
-        )  # absent in old files
+            {
+                **server,
+                "enabled": server["enabled"] and not problems,  # a flagged server stays off until fixed
+                "discovered_tools": _tool_catalog(item.get("discovered_tools")),  # absent in old files
+                "problems": problems,
+            }
+        )
     return out
+
+
+def _stored_problems(server: dict) -> list[str]:
+    """Read-only notes for a stored server; the save check enforces the same rule on any new value."""
+    return (
+        ["Move the token in the arguments to a secret before enabling."]
+        if _inline_secret(server["args"], server["url"])
+        else []
+    )
 
 
 def _save(servers: list[dict]) -> None:
     path = config_path()
     path.parent.mkdir(parents=True, exist_ok=True)
-    atomic_json(path, {"servers": servers})
+    atomic_json(
+        path, {"servers": [{k: v for k, v in s.items() if k != "problems"} for s in servers]}
+    )  # a view field
 
 
 def get(name: str) -> dict:
@@ -292,6 +330,7 @@ def upsert(data: dict) -> dict:
     if isinstance(data, dict):
         data = {k: v for k, v in data.items() if k != "discovered_tools"}  # written only by Test
     server = validate(data)
+    _reject_inline_secrets(server)
     with _file_lock:
         return _save_servers([server])[0]
 
@@ -522,6 +561,10 @@ async def probe(server: dict) -> dict:
 
 # ---- import: a pasted command or MCP JSON config --------------------------------------------------------------------
 _ENV_ASSIGNMENT = re.compile(r"[A-Za-z_][A-Za-z0-9_]*=.*", re.S)
+_STORED_ONLY = {
+    "discovered_tools",
+    "problems",
+}  # kept in the file or the view, never validated as definition fields
 _TARGET_KEYS = ("transport", "command", "args", "url")  # a Test catalogue belongs to this target only
 _IMPORT_FIELDS = {"command", "args", "env", "type", "transport", "url", "headers", "disabled"}
 
@@ -693,6 +736,7 @@ def _from_entry(source_key: str, entry: dict, taken: set[str]) -> dict:
                 **fields,
             }
         )
+        _reject_inline_secrets(server)
     except ValueError as exc:
         raise ValueError(f"{shown}: {exc}") from None
     return {"source_key": source_key, "server": server, "secret_keys": secret_keys}

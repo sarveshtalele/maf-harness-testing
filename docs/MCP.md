@@ -80,7 +80,8 @@ continuations are joined; Windows paths (drive letter or UNC) keep their backsla
 Code placeholders (`${input:x}`, `${env:x}`) are never stored as values: the key stays listed and unset, so the
 server shows Needs secrets. Arguments or a URL that look secret (`--api-key`, `--token`, `--password`, `--secret`,
 `--header`, a `token=`/`api_key=` query, or any credential-looking value) are rejected with a message to move them to
-an environment variable or the token field. The same check applies to manual saves (`validate`). Servers are imported
+an environment variable or the token field. The check runs on client writes only (import and save). A stored server that
+already has such a value still loads, disabled, with a read-only problem note; Manage tools lets you edit its arguments or URL, and the save check then applies. Servers are imported
 disabled with no stages and no tools. The response carries names and
 secret NAMES only (`imported: [{source_key, name, secret_keys}]`, plus `servers`). The import is all or nothing, at most
 20 servers and 100 kB of input.
