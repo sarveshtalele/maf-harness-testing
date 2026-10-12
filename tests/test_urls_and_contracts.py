@@ -501,3 +501,32 @@ def test_local_app_url_helper_accepts_only_localhost_http_urls():
     assert not is_local_app_url("http://evil.example.com")
     assert not is_local_app_url("http://localhost.evil.com")
     assert not is_local_app_url("") and not is_local_app_url("ftp://localhost")
+
+
+def py_payload_for(path):
+    code = "# CASE_ID: TC-1\nimport calc\n\n\ndef test_add():\n    assert calc.add(1, 2) == 3\n"
+    return {"files": [{"path": path, "content": code, "case_ids": ["TC-1"]}]}
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        "-x/test_a.py",
+        "tests/-rf.py",
+        ".github/workflows/test_a.py",
+        ".harness-venv/lib/site-packages/test_a.py",
+        "tests/a&b.py",
+        "tests/a%PATH%.py",
+        "tests/a b.py",
+        "tests/test_a.yml",
+        "pytest.ini",
+        "tests/../test_a.py",
+    ],
+)
+def test_generated_paths_are_restricted_to_plain_test_source_files(path):
+    with pytest.raises(ValueError, match="unsafe generated path"):
+        validate_generated_files(py_payload_for(path), {"TC-1"})
+
+
+def test_plain_generated_test_paths_are_accepted():
+    assert validate_generated_files(py_payload_for("tests/unit/test_add-2.py"), {"TC-1"})

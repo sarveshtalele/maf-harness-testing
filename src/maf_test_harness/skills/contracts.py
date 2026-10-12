@@ -701,7 +701,15 @@ def _native_syntax_check(path: str, content: str) -> str | None:
             target.write_text(content, encoding="utf-8")
             args = [*tool, tmp, str(target)] if suffix == ".java" else [*tool, str(target)]
             try:
-                proc = subprocess.run(args, capture_output=True, text=True, timeout=30, check=False)
+                proc = subprocess.run(
+                    args,
+                    capture_output=True,
+                    text=True,
+                    encoding="utf-8",
+                    errors="replace",
+                    timeout=30,
+                    check=False,
+                )
             except (OSError, subprocess.TimeoutExpired):
                 proc = None
         if proc is not None and proc.returncode:
@@ -933,6 +941,25 @@ def ensure_generated_case_markers(
     return result
 
 
+# Generated tests may only be new files of a supported test language, at plain relative paths. Anything else (a
+# dot-directory such as .github or .harness-venv, a leading "-" that argv parsers read as an option, "&" or "%" that
+# cmd.exe expands, a config file) would reach the workspace and the deliverable.
+_GENERATED_SUFFIXES = frozenset(
+    {".py", ".js", ".jsx", ".mjs", ".ts", ".tsx", ".java", ".kt", ".cs", ".go", ".rb", ".php"}
+)
+_GENERATED_PATH = re.compile(r"[A-Za-z0-9_][A-Za-z0-9_./-]*")
+
+
+def _generated_path_problem(path: str) -> str | None:
+    if not _GENERATED_PATH.fullmatch(path):
+        return "only letters, digits, '_', '.', '/' and '-' are allowed, and the path cannot start with '-' or '.'"
+    if any(part in {"", ".", ".."} or part.startswith((".", "-")) for part in path.split("/")):
+        return "dot-directories and dash-prefixed segments are not allowed"
+    if PurePosixPath(path).suffix.lower() not in _GENERATED_SUFFIXES:
+        return "generated files must be test sources of a supported language"
+    return None
+
+
 def validate_generated_files(payload: dict[str, Any], case_ids: set[str]) -> dict[str, Any]:
     """Validate generated paths, implementation traceability, and non-placeholder tests."""
     if not isinstance(payload, dict) or not isinstance(payload.get("files"), list) or not payload["files"]:
@@ -951,6 +978,8 @@ def validate_generated_files(payload: dict[str, Any], case_ids: set[str]) -> dic
         pure = PurePosixPath(path)
         if pure.is_absolute() or ".." in pure.parts or any(part in {".git", ".env"} for part in pure.parts):
             raise ValueError(f"unsafe generated path: {path}")
+        if problem := _generated_path_problem(path):
+            raise ValueError(f"unsafe generated path: {path} ({problem})")
         if path in seen_paths:
             raise ValueError(f"duplicate generated path: {path}")
         if pure.as_posix() != path or ":" in path or any(ord(c) < 32 for c in path):
@@ -1337,7 +1366,10 @@ def clear_self_rooted_cache() -> None:
 
 
 def self_rooted_dirs(
-    root: Path, py_files: list[str], limit: int = SELF_ROOTED_LIMIT, skip: frozenset[str] | set[str] = frozenset()
+    root: Path,
+    py_files: list[str],
+    limit: int = SELF_ROOTED_LIMIT,
+    skip: frozenset[str] | set[str] = frozenset(),
 ) -> list[str]:
     """Directories whose modules import their siblings by bare name (``backend/admin/dashboard.py``: ``from database
     import get_db`` with ``backend/database/`` beside it). Such a project's entry point inserts that directory into
