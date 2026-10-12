@@ -514,3 +514,8 @@ Format: `YYYY-MM-DD HH:MM | BEFORE|AFTER | actor | action | scope/risk or result
   - Closed #16 (filelock 4) and #21 (TypeScript 7) to keep the pins.
   - Dismissed the sprintf-js alert as tolerable risk: no patched release exists, and it is a build-time-only dependency.
   - v1.0.4 cut with the review-wave, dead-code and dependency fixes.
+- 2026-10-12 | AFTER | Opus | test-case table plus Marketplace (Haiku x2 implemented, Sonnet reviewed each, Opus merged):
+  - Test cases are shown as Sno / Requirement ID / Test Case ID / Description / Steps / Expected Result, grouped by category. This covers the UI gate, Artifacts, the QA report, the step report and the export. AC-only links resolve to their parent requirement, and priority, level, actor, target and preconditions stay visible.
+  - Jira fieldset no longer uses .radio-group: the Windows layout had wrapped one character per line.
+  - "Agent skills" nav is now Marketplace (Agent Skills / MCP servers tabs). MCP servers can be imported from a pasted npx/uvx/docker command or mcpServers JSON. Secrets go only to the secret store; inline secrets in args or URLs are rejected on write, and stored ones are disabled with a problem note, not dropped.
+  - Tool governance dialog has Approve all and Deselect all. discovered_tools persist after Test. The per-server listed cap is now 200, but the runtime per-stage budget stays at 8 and the UI warns per stage.
