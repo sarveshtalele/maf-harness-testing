@@ -735,7 +735,13 @@ def _native_syntax_check(path: str, content: str) -> str | None:
         ".rs",
         ".php",
         ".c",
+        ".cc",
         ".cpp",
+        ".h",
+        ".hpp",
+        ".swift",
+        ".kts",
+        ".scala",
     }:
         return _unbalanced_delimiters(content)
     return None
@@ -765,6 +771,8 @@ def _test_declaration_count(path: str, content: str) -> int:
         ".mjs": _JS_DECL,
         ".java": r"@(?:[\w.]+\.)?(?:Test|ParameterizedTest|RepeatedTest)\b",
         ".kt": r"@(?:[\w.]+\.)?(?:Test|ParameterizedTest)\b",
+        ".kts": r"@(?:[\w.]+\.)?(?:Test|ParameterizedTest)\b",
+        ".scala": r"@(?:[\w.]+\.)?Test\b|(?m:^\s*(?:test|it)\s*\(\s*[\"'])",
         ".cs": r"\[(?:Fact|Theory|Test|TestMethod)\b",
         ".go": r"(?m)^\s*func\s+Test[A-Za-z0-9_]+\s*\(",
         ".rb": r"(?m)^\s*(?:it|test)\s+[\"']",
@@ -774,6 +782,8 @@ def _test_declaration_count(path: str, content: str) -> int:
         ".cpp": r"\bTEST(?:_F|_P)?\s*\(",
         ".cc": r"\bTEST(?:_F|_P)?\s*\(",
         ".cxx": r"\bTEST(?:_F|_P)?\s*\(",
+        ".hpp": r"\bTEST(?:_F|_P)?\s*\(",
+        ".h": r"\bTEST(?:_F|_P)?\s*\(",
         ".c": r"(?m)^\s*(?:void|int)\s+test_[A-Za-z0-9_]+\s*\(",
     }
     pattern = patterns.get(suffix)
@@ -945,16 +955,52 @@ def ensure_generated_case_markers(
 # dot-directory such as .github or .harness-venv, a leading "-" that argv parsers read as an option, "&" or "%" that
 # cmd.exe expands, a config file) would reach the workspace and the deliverable.
 _GENERATED_SUFFIXES = frozenset(
-    {".py", ".js", ".jsx", ".mjs", ".ts", ".tsx", ".java", ".kt", ".cs", ".go", ".rb", ".php"}
+    {
+        ".py",
+        ".js",
+        ".jsx",
+        ".mjs",
+        ".ts",
+        ".tsx",
+        ".java",
+        ".kt",
+        ".kts",
+        ".cs",
+        ".go",
+        ".rb",
+        ".php",
+        ".rs",
+        ".swift",
+        ".c",
+        ".cc",
+        ".cpp",
+        ".h",
+        ".hpp",
+        ".scala",
+    }
 )
-_GENERATED_PATH = re.compile(r"[A-Za-z0-9_][A-Za-z0-9_./-]*")
+# ASCII only. "[", "]" and "+" are allowed in names (parametrised or Scala-style names); _generated_path_problem
+# keeps them out of the first character of every segment.
+_GENERATED_PATH = re.compile(r"[A-Za-z0-9_.+\[\]/-]+")
+_WINDOWS_RESERVED = frozenset(
+    {"CON", "PRN", "AUX", "NUL"} | {f"{name}{n}" for name in ("COM", "LPT") for n in range(1, 10)}
+)
 
 
 def _generated_path_problem(path: str) -> str | None:
+    if any(ord(char) > 127 for char in path):
+        return (
+            "non-ASCII characters are not allowed in generated test paths; use ASCII letters, digits and '_'"
+        )
     if not _GENERATED_PATH.fullmatch(path):
-        return "only letters, digits, '_', '.', '/' and '-' are allowed, and the path cannot start with '-' or '.'"
-    if any(part in {"", ".", ".."} or part.startswith((".", "-")) for part in path.split("/")):
-        return "dot-directories and dash-prefixed segments are not allowed"
+        return "only ASCII letters, digits, '_', '.', '+', '[', ']', '/' and '-' are allowed"
+    for part in path.split("/"):
+        if part in {"", ".", ".."} or part[0] in ".-+[]":
+            return "dot-directories, dash-prefixed segments and segments starting with '.', '+', '[' or ']' are not allowed"
+        if part.endswith((".", " ")):
+            return f"'{part}' ends with a dot or a space, which Windows silently strips"
+        if part.split(".")[0].upper() in _WINDOWS_RESERVED:
+            return f"'{part}' uses a Windows reserved device name (CON, PRN, AUX, NUL, COM1-9, LPT1-9)"
     if PurePosixPath(path).suffix.lower() not in _GENERATED_SUFFIXES:
         return "generated files must be test sources of a supported language"
     return None
@@ -975,6 +1021,11 @@ def validate_generated_files(payload: dict[str, Any], case_ids: set[str]) -> dic
         path, content, linked = item.get("path"), item.get("content"), item.get("case_ids")
         if not isinstance(path, str) or not path.strip() or "\\" in path:
             raise ValueError("generated path must be nonempty POSIX text")
+        while path.startswith(
+            "./"
+        ):  # "./tests/x.py" is "tests/x.py"; written back so the workspace gets that path
+            path = path[2:]
+        item["path"] = path
         pure = PurePosixPath(path)
         if pure.is_absolute() or ".." in pure.parts or any(part in {".git", ".env"} for part in pure.parts):
             raise ValueError(f"unsafe generated path: {path}")
