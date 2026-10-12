@@ -3,7 +3,7 @@ import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import { test } from 'node:test';
-import { KeyStore, SafeStorageLike, mcpEnvName } from './keystore';
+import { KeyStore, SafeStorageLike, keyHost } from './keystore';
 
 const fake = (available = true): SafeStorageLike => ({
   isEncryptionAvailable: () => available,
@@ -83,29 +83,84 @@ test('rejects insecure urls, bad models and keys; corrupt file reads empty', () 
   assert.equal(new KeyStore(f, fake()).view().key_configured, false);
 });
 
-test('MCP secrets: encrypted at rest, env names match Python, view has booleans only, clears', () => {
+const TARGET_A = 'a'.repeat(64);
+const TARGET_B = 'b'.repeat(64);
+
+test('MCP secrets: encrypted at rest, view has booleans only, clears', () => {
   const f = tmp();
   const ks = new KeyStore(f, fake());
-  assert.deepEqual(ks.saveMcpSecrets('atlassian-jira', { BEARER_TOKEN: 'tok-0123456789' }), { BEARER_TOKEN: true });
-  ks.saveMcpSecrets('playwright', { API_KEY: 'pw-secret-value' });
+  assert.deepEqual(ks.saveMcpSecrets('atlassian-jira', { BEARER_TOKEN: 'tok-0123456789' }, TARGET_A), { BEARER_TOKEN: true });
+  ks.saveMcpSecrets('playwright', { API_KEY: 'pw-secret-value' }, TARGET_B);
   assert.ok(!fs.readFileSync(f).toString().includes('tok-0123456789'));
   const again = new KeyStore(f, fake());
-  assert.equal(again.env()['HARNESS_MCP_SECRET_ATLASSIAN__JIRA_BEARER_TOKEN'], 'tok-0123456789');
-  assert.equal(again.env()['HARNESS_MCP_SECRET_PLAYWRIGHT_API_KEY'], 'pw-secret-value');
+  assert.equal(again.get().mcp['atlassian-jira']?.BEARER_TOKEN, 'tok-0123456789');
   assert.ok(!JSON.stringify(again.mcpView()).includes('tok-'));
   assert.deepEqual(again.mcpValues().sort(), ['pw-secret-value', 'tok-0123456789']);
-  again.saveMcpSecrets('playwright', { API_KEY: '' });
+  again.saveMcpSecrets('playwright', { API_KEY: '' }, TARGET_B);
   assert.deepEqual(again.mcpView(), { 'atlassian-jira': { BEARER_TOKEN: true } });
-  assert.throws(() => again.saveMcpSecrets('Bad Name', { A: 'x' }));
-  assert.throws(() => again.saveMcpSecrets('ok', { 'bad key': 'x' }));
-  assert.throws(() => again.saveMcpSecrets('ok', { A: 'line\nbreak' }));
+  assert.throws(() => again.saveMcpSecrets('Bad Name', { A: 'x' }, TARGET_A));
+  assert.throws(() => again.saveMcpSecrets('ok', { 'bad key': 'x' }, TARGET_A));
+  assert.throws(() => again.saveMcpSecrets('ok', { A: 'line\nbreak' }, TARGET_A));
+  assert.throws(() => again.saveMcpSecrets('ok', { A: 'x' }, 'not-a-fingerprint'));
   assert.deepEqual(again.checkMcpSecrets('ok', { A: ' x ' }), { A: 'x' }); // validates and trims, stores nothing
   assert.deepEqual(again.mcpView(), { 'atlassian-jira': { BEARER_TOKEN: true } });
   again.removeMcpServer('atlassian-jira');
   assert.deepEqual(again.mcpView(), {});
 });
 
-test('MCP env names encode - as __ (same as Python) so names cannot collide', () => {
-  assert.equal(mcpEnvName('a-b', 'C'), 'HARNESS_MCP_SECRET_A__B_C');
-  assert.equal(mcpEnvName('a', 'B_C'), 'HARNESS_MCP_SECRET_A_B_C');
+test('MCP secrets never enter the spawn environment', () => {
+  const ks = new KeyStore(tmp(), fake());
+  ks.saveMcpSecrets('atlassian-jira', { BEARER_TOKEN: 'tok-0123456789' }, TARGET_A);
+  assert.ok(!Object.keys(ks.env()).some((k) => k.startsWith('HARNESS_MCP_SECRET_')));
+  assert.ok(!Object.values(ks.env()).includes('tok-0123456789'));
+});
+
+test('F4: reconcile drops secrets whose target changed or disappeared, and keeps the rest', () => {
+  const f = tmp();
+  const ks = new KeyStore(f, fake());
+  ks.saveMcpSecrets('jira', { BEARER_TOKEN: 'jira-token-value' }, TARGET_A);
+  ks.saveMcpSecrets('gone', { BEARER_TOKEN: 'gone-token-value' }, TARGET_A);
+  ks.saveMcpSecrets('moved', { BEARER_TOKEN: 'moved-token-value' }, TARGET_A);
+  const dropped = ks.reconcileMcp({ jira: TARGET_A, moved: TARGET_B }); // "gone" no longer exists in the backend
+  assert.deepEqual(dropped.sort(), ['gone', 'moved']);
+  assert.deepEqual(ks.mcpView(), { jira: { BEARER_TOKEN: true } });
+  assert.deepEqual(ks.mcpValues(), ['jira-token-value']);
+  // The drop is persisted: a restart does not bring the old values back.
+  assert.deepEqual(new KeyStore(f, fake()).mcpValues(), ['jira-token-value']);
+});
+
+test('F4: a secret saved for a new target never keeps values from the old one', () => {
+  const ks = new KeyStore(tmp(), fake());
+  ks.saveMcpSecrets('jira', { BEARER_TOKEN: 'old-token-value', OTHER: 'old-other-value' }, TARGET_A);
+  ks.saveMcpSecrets('jira', { BEARER_TOKEN: 'new-token-value' }, TARGET_B);
+  assert.deepEqual(ks.get().mcp.jira, { BEARER_TOKEN: 'new-token-value' });
+  assert.equal(ks.get().mcp_fp.jira, TARGET_B);
+  // Secrets stored from before fingerprints existed have no fingerprint, so they are dropped on the next reconcile.
+  const legacy = new KeyStore(tmp(), fake());
+  legacy.save({});
+  (legacy as unknown as { cache: { mcp: Record<string, Record<string, string>> } }).cache.mcp = { jira: { BEARER_TOKEN: 'legacy-value' } };
+  assert.deepEqual(legacy.reconcileMcp({ jira: TARGET_A }), ['jira']);
+});
+
+test('F3: a base URL host change needs a new API key in the same call', () => {
+  const ks = new KeyStore(tmp(), fake());
+  ks.save({ api_key: KEY, base_url: 'https://gw.example.com/v1' });
+  assert.throws(() => ks.save({ base_url: 'https://attacker.example.net/v1' }), /new API key in the same request/);
+  assert.equal(ks.get().base_url, 'https://gw.example.com/v1'); // nothing changed
+  assert.equal(ks.get().api_key, KEY);
+  ks.save({ base_url: 'https://gw.example.com:8443/v2' }); // same host, other path and port: allowed
+  ks.save({ base_url: 'https://attacker.example.net/v1', api_key: 'other-key-0123456789' }); // new host with a new key
+  assert.equal(ks.get().api_key, 'other-key-0123456789');
+  const noKey = new KeyStore(tmp(), fake());
+  noKey.save({ base_url: 'https://gw.example.com/v1' }); // no saved key yet: nothing to protect
+  noKey.save({ base_url: 'https://other.example.org/v1' });
+});
+
+test('F3: the empty base URL means the provider host', () => {
+  assert.equal(keyHost(''), 'api.openai.com');
+  assert.equal(keyHost('https://GW.Example.com:443/v1'), 'gw.example.com');
+  assert.equal(keyHost('http://[::1]:4000/v1'), '::1');
+  const ks = new KeyStore(tmp(), fake());
+  ks.save({ api_key: KEY });
+  assert.throws(() => ks.save({ base_url: 'https://gw.example.com/v1' }), /new API key/);
 });

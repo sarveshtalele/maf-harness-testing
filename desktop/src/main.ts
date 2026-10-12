@@ -1,12 +1,12 @@
 import type { ChildProcess } from 'node:child_process';
-import { app, BrowserWindow, dialog, ipcMain, Menu, safeStorage, session, shell } from 'electron';
+import { app, BrowserWindow, dialog, ipcMain, IpcMainInvokeEvent, Menu, safeStorage, session, shell } from 'electron';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import { randomBytes } from 'node:crypto';
 import * as path from 'node:path';
 import { KeyStore, ModelSettingsInput } from './keystore';
 import { ProcessManager, reapOrphans, ServiceSpec, waitForHttp } from './process-manager';
-import { canOpenExternally, csp, isAppOrigin, isEvidenceUrl, makeToken, mergePath, pickTwoPorts, readLoginShellPath } from './util';
+import { canOpenExternally, exchangeLaunchSecret, isAppOrigin, isEvidenceUrl, makeToken, mergePath, nonceMatches, pickTwoPorts, readLoginShellPath, SESSION_COOKIE } from './util';
 
 const pkg = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'package.json'), 'utf8')) as {
   homepage: string;
@@ -19,8 +19,10 @@ let uiPort: number | null = null;
 let quitting = false;
 let exitCode = 0;
 let store: KeyStore;
-let live: { backend: ServiceSpec; apiPort: number; token: string } | null = null;
+let live: { backend: ServiceSpec; apiPort: number; token: string; nonce: string } | null = null;
 let settingsBusy = false;
+/** The window's session id (F1); the smoke check reads the UI through the same session. */
+let uiSessionId = '';
 /** macOS only: PATH for the services, merged from the login shell (a Finder launch gets launchd's minimal PATH). */
 let servicePath: string | undefined;
 /** Per-launch id on the backend command line (not the API token, which must stay out of argv). Recognises orphans. */
@@ -36,7 +38,7 @@ if (smokeDir) app.setPath('userData', smokeDir);
 let smokeDone = false;
 
 /** The backend prints this line only after its own socket bound the port (ui/api.py), so a foreign listener cannot satisfy it. */
-const BACKEND_READY = /Local harness API: http:\/\/127\.0\.0\.1:(\d+)/;
+const BACKEND_READY = /Local harness API: http:\/\/127\.0\.0\.1:(\d+)(?: nonce=(\S+))?/;
 /** Exits the UI when the shell closes its stdin pipe (shell crashed or was killed). Written into userData at boot. */
 const PARENT_EXIT_SOURCE = `// Written by the Agentic QE desktop shell: stop when the shell's stdin pipe closes.
 process.stdin.on('end', () => process.exit(0));
@@ -47,7 +49,7 @@ const LOADING_HTML = '<!doctype html><meta charset="utf-8"><title>Agentic QE</ti
   + '<body style="font-family:system-ui,sans-serif;margin:0;display:grid;place-items:center;height:100vh;background:#fff;color:#333">'
   + '<p>Starting Agentic QE...</p></body>';
 
-function specs(apiPort: number, uiPortNum: number, token: string): { backend: ServiceSpec; ui: ServiceSpec } {
+function specs(apiPort: number, uiPortNum: number, token: string, launchSecret = '', nonce = ''): { backend: ServiceSpec; ui: ServiceSpec } {
   const packaged = app.isPackaged;
   const repo = path.resolve(__dirname, '..', '..'); // dev: desktop/dist -> repo root
   // The preload path is in the Next command line and unique to this user-data folder: it is the UI's orphan marker.
@@ -69,6 +71,8 @@ function specs(apiPort: number, uiPortNum: number, token: string): { backend: Se
     PORT: String(uiPortNum),
     HOSTNAME: '127.0.0.1',
     ELECTRON_RUN_AS_NODE: '1', // process.execPath acts as plain Node
+    // Only the UI gets the launch secret: the window exchanges it once for the session cookie (F1).
+    ...(launchSecret ? { HARNESS_LAUNCH_SECRET: launchSecret } : {}),
   };
   if (packaged) {
     const res = process.resourcesPath;
@@ -76,7 +80,7 @@ function specs(apiPort: number, uiPortNum: number, token: string): { backend: Se
     return {
       backend: {
         name: 'backend', command: exe, args: ['--port', String(apiPort), '--instance', instanceId], cwd: path.join(res, 'backend'),
-        env: { ...base, ...store.env(), HARNESS_RESOURCE_ROOT: path.join(res, 'backend') },
+        env: { ...base, ...store.env(), HARNESS_LAUNCH_NONCE: nonce, HARNESS_RESOURCE_ROOT: path.join(res, 'backend') },
         port: apiPort, marker: instanceId,
       },
       ui: {
@@ -106,7 +110,7 @@ function specs(apiPort: number, uiPortNum: number, token: string): { backend: Se
   return {
     backend: {
       name: 'backend', command: py, args: ['-m', 'maf_test_harness.desktop_backend', '--port', String(apiPort), '--instance', instanceId],
-      cwd: repo, env: { ...base, ...store.env(), PYTHONPATH: path.join(repo, 'src') },
+      cwd: repo, env: { ...base, ...store.env(), HARNESS_LAUNCH_NONCE: nonce, PYTHONPATH: path.join(repo, 'src') },
       port: apiPort, marker: instanceId,
     },
     ui,
@@ -116,10 +120,53 @@ function specs(apiPort: number, uiPortNum: number, token: string): { backend: Se
 /** False once the service exited or failed to spawn (e.g. ENOENT), so waits fail fast. */
 const alive = (child: ChildProcess) => child.exitCode === null && !pm.hasSpawnError(child);
 
-/** Waits for the backend's own ready line and checks that it names the port we asked for. */
-async function waitBackendReady(child: ChildProcess, apiPort: number, timeoutMs: number): Promise<void> {
+/** Waits for the backend's own ready line: it must name our port and echo this launch's nonce (F13). Only our child
+ *  writes to its stdout pipe, so a process that merely holds the port cannot produce the line; the token is sent after this. */
+async function waitBackendReady(child: ChildProcess, apiPort: number, timeoutMs: number, nonce: string): Promise<void> {
   const m = await pm.waitForOutput('backend', BACKEND_READY, timeoutMs, () => alive(child));
   if (Number(m[1]) !== apiPort) throw new Error(`backend reported port ${m[1]}, expected ${apiPort}`);
+  if (!nonceMatches(m[2] ?? '', nonce)) throw new Error('Another process answered on the API port. Startup was stopped.');
+}
+
+/** Authenticated echo of the nonce (GET /health), checked before the UI or any request relies on this API. */
+async function verifyBackend(apiPort: number, token: string, nonce: string): Promise<void> {
+  const r = await fetch(`http://127.0.0.1:${apiPort}/health`, { headers: { Authorization: `Bearer ${token}` }, signal: AbortSignal.timeout(5_000) });
+  const body: unknown = r.ok ? await r.json().catch(() => undefined) : undefined;
+  if (!nonceMatches(typeof body === 'object' && body !== null ? (body as { nonce?: unknown }).nonce : undefined, nonce)) {
+    throw new Error('Another process answered on the API port. Startup was stopped.');
+  }
+}
+
+/** MCP server name -> target fingerprint, as the backend holds the definitions now (no secrets). */
+async function mcpFingerprints(apiPort: number, token: string): Promise<Record<string, string>> {
+  const r = await fetch(`http://127.0.0.1:${apiPort}/mcp-servers`, { headers: { Authorization: `Bearer ${token}` }, signal: AbortSignal.timeout(10_000) });
+  if (!r.ok) throw new Error('Could not read the MCP servers from the local API.');
+  const body = (await r.json()) as { servers?: { name?: unknown; fingerprint?: unknown }[] };
+  const out: Record<string, string> = {};
+  for (const server of body.servers ?? []) {
+    if (typeof server.name === 'string' && typeof server.fingerprint === 'string') out[server.name] = server.fingerprint;
+  }
+  return out;
+}
+
+/** Hands the backend the MCP secrets whose target still matches (F4). Runs after every backend start, before any run. */
+async function provisionMcp(apiPort: number, token: string): Promise<void> {
+  store.reconcileMcp(await mcpFingerprints(apiPort, token));
+  const auth = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' };
+  for (const [server, values] of Object.entries(store.get().mcp)) {
+    // A rejected server keeps its secrets in the keychain only; the backend then reports it as not ready.
+    await fetch(`http://127.0.0.1:${apiPort}/mcp-servers/${encodeURIComponent(server)}/secrets`, { method: 'POST', headers: auth, body: JSON.stringify(values), signal: AbortSignal.timeout(10_000) }).catch(() => undefined);
+  }
+  pm.addRedactions(store.mcpValues());
+}
+
+/** The UI must reach this launch's API through the session, so a squatter on the UI port cannot pass (F13). */
+async function verifyUi(origin: string, sessionId: string, nonce: string): Promise<void> {
+  const r = await fetch(`${origin}/api/harness/health`, { headers: { Cookie: `${SESSION_COOKIE}=${sessionId}` }, signal: AbortSignal.timeout(30_000) });
+  const body: unknown = r.ok ? await r.json().catch(() => undefined) : undefined;
+  if (!nonceMatches(typeof body === 'object' && body !== null ? (body as { nonce?: unknown }).nonce : undefined, nonce)) {
+    throw new Error('The UI is not connected to this launch\'s local API.');
+  }
 }
 
 /** Running-run check for the settings handlers: a failed check must block the change, never pass as idle. */
@@ -163,6 +210,9 @@ function createWindow(): BrowserWindow {
       if (canOpenExternally(url)) void shell.openExternal(url);
     }
   });
+  w.webContents.on('will-frame-navigate', (details) => {
+    if (uiPort === null || !isAppOrigin(details.url, uiPort)) details.preventDefault();
+  });
   w.webContents.setWindowOpenHandler(({ url }) => {
     if (canOpenExternally(url)) void shell.openExternal(url);
     return { action: 'deny' };
@@ -184,26 +234,34 @@ async function boot(): Promise<{ apiPort: number; uiPort: number }> {
   store = new KeyStore(path.join(dataDir, 'secrets.bin'), safeStorage);
   const [apiPort, uiPortNum] = await pickTwoPorts();
   const token = makeToken();
+  // Single use: the window exchanges it for the session cookie below. It is never a command-line argument.
+  const launchSecret = randomBytes(32).toString('base64url');
   instanceId = randomBytes(12).toString('hex');
-  const { backend, ui } = specs(apiPort, uiPortNum, token);
+  const nonce = randomBytes(24).toString('base64url');
+  const { backend, ui } = specs(apiPort, uiPortNum, token, launchSecret, nonce);
 
-  live = { backend, apiPort, token };
-  const be = pm.start(backend, [token, store.get().api_key, ...store.mcpValues()]);
-  await waitBackendReady(be, apiPort, 90_000).catch(() => {
+  live = { backend, apiPort, token, nonce };
+  const be = pm.start(backend, [token, store.get().api_key, ...store.mcpValues(), nonce]);
+  await waitBackendReady(be, apiPort, 90_000, nonce).catch((err: unknown) => {
+    if (err instanceof Error && err.message.startsWith('Another process')) throw err;
     throw new Error('backend did not start; see logs in ' + path.join(dataDir, 'logs'));
   });
-  const fe = pm.start(ui, [token]);
-  await waitForHttp(`http://127.0.0.1:${uiPortNum}/runs`, 200, 90_000, () => alive(fe));
-  await waitForHttp(`http://127.0.0.1:${uiPortNum}/api/harness/config`, 200, 30_000);
-  uiPort = uiPortNum;
+  await verifyBackend(apiPort, token, nonce);
+  await provisionMcp(apiPort, token);
+  const fe = pm.start(ui, [token, launchSecret]);
+  // Any HTTP reply counts: without a session the UI answers 401 by design (proxy.ts).
+  await waitForHttp(`http://127.0.0.1:${uiPortNum}/`, 'any', 90_000, () => alive(fe));
 
   const origin = `http://127.0.0.1:${uiPortNum}`;
-  session.defaultSession.webRequest.onHeadersReceived((details, cb) => {
-    const headers = { ...details.responseHeaders };
-    if (details.url.startsWith(origin) && !isEvidenceUrl(details.url)) headers['Content-Security-Policy'] = [csp(uiPortNum)];
-    cb({ responseHeaders: headers });
-  });
+  // The window needs no user action: the launch secret becomes the HttpOnly session cookie before the first load.
+  const sessionId = await exchangeLaunchSecret(origin, launchSecret);
+  await verifyUi(origin, sessionId, nonce);
+  uiSessionId = sessionId;
+  await session.defaultSession.cookies.set({ url: origin, name: SESSION_COOKIE, value: sessionId, httpOnly: true, sameSite: 'strict', path: '/' });
+  uiPort = uiPortNum;
+
   session.defaultSession.setPermissionRequestHandler((_wc, _perm, cb) => cb(false));
+  session.defaultSession.setPermissionCheckHandler(() => false);
 
   const w = win ?? createWindow();
   await w.loadURL(origin);
@@ -216,7 +274,9 @@ function writeStdout(text: string): Promise<void> {
 
 /** Smoke verdict: the UI must serve the harness config as a JSON object through the UI port. */
 async function smokeCheckConfig(uiPortNum: number): Promise<void> {
-  const r = await fetch(`http://127.0.0.1:${uiPortNum}/api/harness/config`, { signal: AbortSignal.timeout(10_000) });
+  const r = await fetch(`http://127.0.0.1:${uiPortNum}/api/harness/config`, {
+    headers: { Cookie: `${SESSION_COOKIE}=${uiSessionId}` }, signal: AbortSignal.timeout(10_000),
+  });
   if (!r.ok) throw new Error(`/api/harness/config returned HTTP ${r.status}`);
   const body: unknown = await r.json().catch(() => undefined);
   if (!body || typeof body !== 'object' || Array.isArray(body)) throw new Error('/api/harness/config did not return a JSON object');
@@ -264,44 +324,62 @@ async function smokeSucceed(apiPort: number, uiPortNum: number): Promise<void> {
   app.exit(0);
 }
 
-ipcMain.handle('desktop:appVersion', () => app.getVersion());
-ipcMain.handle('desktop:openDataFolder', () => shell.openPath(app.getPath('userData')).then(() => undefined));
-ipcMain.handle('desktop:getModelSettings', () => store.view());
-ipcMain.handle('desktop:saveModelSettings', async (_e, input: ModelSettingsInput) => {
+/** Only the app's own page may call the desktop bridge: not an evidence report frame, not another origin, not before boot. */
+function trustedSender(e: IpcMainInvokeEvent): boolean {
+  const url = e.senderFrame?.url ?? '';
+  return uiPort !== null && isAppOrigin(url, uiPort) && !isEvidenceUrl(url);
+}
+
+function handle<A extends unknown[], R>(channel: string, listener: (...args: A) => R): void {
+  ipcMain.handle(channel, (e: IpcMainInvokeEvent, ...args: unknown[]) => {
+    if (!trustedSender(e)) throw new Error('This page may not use the desktop bridge.');
+    return listener(...(args as A));
+  });
+}
+
+handle('desktop:appVersion', () => app.getVersion());
+handle('desktop:openDataFolder', () => shell.openPath(app.getPath('userData')).then(() => undefined));
+handle('desktop:getModelSettings', () => store.view());
+handle('desktop:saveModelSettings', async (input: ModelSettingsInput) => {
   if (!live) throw new Error('Backend is not running.');
   if (settingsBusy) throw new Error('A settings change is already in progress.');
   settingsBusy = true;
   try {
-    const { apiPort, token } = live;
+    const { apiPort, token, nonce } = live;
     if (await runsBusy(apiPort, { Authorization: `Bearer ${token}` })) throw new Error('Wait for the current operation to finish before changing model settings.');
     const view = store.save(input); // validates before anything restarts
-    const backend = specs(apiPort, 0, token).backend; // re-reads the new key into the spawn env
+    const backend = specs(apiPort, 0, token, '', nonce).backend; // re-reads the new key into the spawn env
     live.backend = backend;
-    const child = await pm.restart(backend, [token, store.get().api_key, ...store.mcpValues()]);
-    await waitBackendReady(child, apiPort, 60_000).catch(() => {
+    const child = await pm.restart(backend, [token, store.get().api_key, ...store.mcpValues(), nonce]);
+    await waitBackendReady(child, apiPort, 60_000, nonce).catch((err: unknown) => {
+      if (err instanceof Error && err.message.startsWith('Another process')) throw err;
       throw new Error(`Backend did not restart; see logs in ${path.join(app.getPath('userData'), 'logs')}`);
     });
+    await verifyBackend(apiPort, token, nonce);
+    await provisionMcp(apiPort, token);
     return view;
   } finally {
     settingsBusy = false;
   }
 });
-ipcMain.handle('desktop:getMcpSecrets', () => store.mcpView());
-ipcMain.handle('desktop:saveMcpSecrets', async (_e, server: string, values: Record<string, string>) => {
+handle('desktop:getMcpSecrets', () => store.mcpView());
+handle('desktop:saveMcpSecrets', async (server: string, values: Record<string, string>) => {
   if (!live) throw new Error('Backend is not running.');
   const { apiPort, token } = live;
   const auth = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' };
   if (await runsBusy(apiPort, auth)) throw new Error('Wait for the current operation to finish before changing MCP secrets.');
   const clean = store.checkMcpSecrets(server, values); // validate before anything is sent or stored
+  const fingerprint = (await mcpFingerprints(apiPort, token))[server];
+  if (!fingerprint) throw new Error('MCP server not found.');
   pm.addRedactions(Object.values(clean)); // never let a value reach a service log, whatever happens next
   // Backend first (in memory, no restart): it also checks the server exists and the secret name is valid.
   const r = await fetch(`http://127.0.0.1:${apiPort}/mcp-servers/${encodeURIComponent(server)}/secrets`, { method: 'POST', headers: auth, body: JSON.stringify(clean) });
   if (!r.ok) throw new Error(((await r.json().catch(() => ({}))) as { error?: string }).error || 'Backend rejected the secrets.');
-  const view = store.saveMcpSecrets(server, clean); // only now persist to the keychain (a later spawn gets them via env())
+  const view = store.saveMcpSecrets(server, clean, fingerprint); // only now persist to the keychain, bound to this target
   pm.addRedactions(store.mcpValues());
   return view;
 });
-ipcMain.handle('desktop:deleteMcpServer', async (_e, server: string) => {
+handle('desktop:deleteMcpServer', async (server: string) => {
   if (!live) throw new Error('Backend is not running.');
   const { apiPort, token } = live;
   store.checkMcpSecrets(server, {}); // validates the name
@@ -312,7 +390,7 @@ ipcMain.handle('desktop:deleteMcpServer', async (_e, server: string) => {
   store.removeMcpServer(server); // the keychain forgets its secrets only after the backend deleted the server
   return store.mcpView();
 });
-ipcMain.handle('desktop:checkForUpdates', () => shell.openExternal(RELEASES_URL));
+handle('desktop:checkForUpdates', () => shell.openExternal(RELEASES_URL));
 
 if (!app.requestSingleInstanceLock()) {
   app.quit();
