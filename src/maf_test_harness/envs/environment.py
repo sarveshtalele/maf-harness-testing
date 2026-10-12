@@ -15,7 +15,7 @@ import subprocess
 from pathlib import Path
 
 from ..repo.stack import REQUIRED_TOOLS, StackProfile
-from . import plan_toolchains, platform_compat
+from . import plan_toolchains, platform_compat, toolchains
 from .runners import Step, repository_components, resolve_ecosystem, setup_steps
 
 # tool -> (version command, install hint)
@@ -129,13 +129,16 @@ def documented_packages(needs: list[dict], root: Path, limit: int = 8) -> list[s
 
 def _probe(tool: str) -> dict:
     command, hint = TOOLS.get(tool, ([tool, "--version"], f"Install {tool}"))
-    # "python3" is a stable logical key (used by REQUIRED_TOOLS/messages/tests), but the executable to
-    # actually invoke may be named "python" (stock Windows Python ships no "python3").
-    exe = platform_compat.python_launcher() if tool == "python3" else tool
-    path = shutil.which(exe)
+    if tool == "python3":
+        # Never run a bare "python"/"python3": on Windows it can be the Store alias, which downloads an interpreter.
+        # detect_pythons() only returns real interpreters, so the probe runs one of those by absolute path.
+        found = toolchains.detect_pythons()
+        path = str(found[0].home) if found else None
+    else:
+        path = shutil.which(tool)
     entry = {"tool": tool, "present": path is not None, "version": "", "install_hint": hint}
     if path:
-        command = [exe, *command[1:]]
+        command = [path, *command[1:]]
         try:
             proc = platform_compat.run_cancellable(command, timeout=20)
             entry["version"] = ((proc.stdout or proc.stderr).strip().splitlines() or [""])[0][:120]
