@@ -4,6 +4,23 @@ import type { NextConfig } from 'next';
 const config: NextConfig = {
   poweredByHeader: false,
   devIndicators: false,
+  // Old single-page links (?run=&tab=&stage= and ?page=) go to the App Router routes. Tab rules come first.
+  async redirects() {
+    const tabs: [string, string][] = [['Errors', 'errors'], ['Artifacts', 'artifacts'], ['Generated tests', 'tests'], ['QA report', 'qa'], ['Test reports', 'evidence'], ['Logs', 'logs'], ['Observability', 'observability'], ['Audit', 'audit'], ['Prompts', 'prompts'], ['Review', '']];
+    const run = (tab: string, segment: string) => ({ source: '/', has: [{ type: 'query' as const, key: 'run', value: '(?<id>[A-Za-z0-9_-]{1,100})' }, { type: 'query' as const, key: 'tab', value: tab }], destination: segment ? `/runs/:id/${segment}` : '/runs/:id', permanent: false });
+    return [
+      { source: '/', has: [{ type: 'query' as const, key: 'run', value: '(?<id>[A-Za-z0-9_-]{1,100})' }, { type: 'query' as const, key: 'tab', value: 'Artifacts' }, { type: 'query' as const, key: 'stage', value: '(?<stage>[a-z_]{1,40})' }], destination: '/runs/:id/artifacts/:stage', permanent: false },
+      ...tabs.map(([tab, segment]) => run(tab, segment)),
+      { source: '/', has: [{ type: 'query' as const, key: 'run', value: '(?<id>[A-Za-z0-9_-]{1,100})' }], destination: '/runs/:id', permanent: false },
+      { source: '/', has: [{ type: 'query' as const, key: 'page', value: 'new' }], destination: '/runs/new', permanent: false },
+      { source: '/', has: [{ type: 'query' as const, key: 'page', value: 'prompts' }], destination: '/prompts', permanent: false },
+      { source: '/', has: [{ type: 'query' as const, key: 'page', value: 'configuration' }], destination: '/settings', permanent: false },
+      { source: '/', has: [{ type: 'query' as const, key: 'page', value: 'marketplace' }, { type: 'query' as const, key: 'tab', value: 'mcp' }], destination: '/marketplace?tab=mcp', permanent: false },
+      { source: '/', has: [{ type: 'query' as const, key: 'page', value: 'marketplace' }], destination: '/marketplace', permanent: false },
+      { source: '/', has: [{ type: 'query' as const, key: 'page', value: 'skills' }, { type: 'query' as const, key: 'skill', value: '(?<skill>[^&]{1,200})' }], destination: '/marketplace?skill=:skill', permanent: false },
+      { source: '/', has: [{ type: 'query' as const, key: 'page', value: 'skills' }], destination: '/marketplace', permanent: false },
+    ];
+  },
   // Only same-origin framing: the evidence report iframe is same-origin; approvals must not be framed elsewhere.
   async headers() {
     // Not /api/: the proxy passes the backend's own evidence CSP through and must keep it.

@@ -5,8 +5,33 @@ export type RunSummary = { id: string; run_name?: string; repo_url?: string; sta
 export type Config = { case_budget_default?: number; model: string; base_url: string; key_configured: boolean; key_source?: string; daily: { used: number; remaining: number; limit: number }; stages: string[]; personas: Record<string, { name: string; role: string; goal: string }> };
 export const record = (value: unknown): Row => value && typeof value === 'object' && !Array.isArray(value) ? value as Row : {};
 export const rows = (value: unknown): Row[] => Array.isArray(value) ? value.map(record) : [];
-export const label = (value: unknown) => (value === 'environment_setup' ? 'Test execution · Setup' : String(value ?? '—')).replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
-export const text = (value: unknown): string => value == null ? '—' : typeof value === 'object' ? JSON.stringify(value) : String(value);
+/** Words whose display form is fixed. Applied per word before title-casing, so "text" reads "Description". */
+export const LABELS: Record<string, string> = { text: 'Description', id: 'ID', sha256: 'SHA-256', api: 'API' };
+/** Whole-value labels. "verified" means only passed execution; a review acceptance is never called verified. */
+export const VALUE_LABELS: Record<string, string> = { supported: 'Source-review accepted', verified: 'Passed execution', passed: 'Passed', failing: 'Failing', untested: 'Untested', not_executed: 'Not executed' };
+export const label = (value: unknown): string => {
+  const raw = String(value ?? '—');
+  if (raw === 'environment_setup') return 'Test execution · Setup';
+  if (VALUE_LABELS[raw]) return VALUE_LABELS[raw];
+  return raw.replace(/_/g, ' ').split(' ').map(word => LABELS[word.toLowerCase()] ?? (word.charAt(0).toUpperCase() + word.slice(1))).join(' ');
+};
+/** Display text for one value. Arrays join with ", "; objects are summarised, never serialised as JSON. */
+export const text = (value: unknown): string => {
+  if (value == null) return '—';
+  if (Array.isArray(value)) return value.length ? value.map(item => text(item)).join(', ') : '—';
+  if (typeof value === 'object') { const count = Object.keys(value).length; return count ? `${count} ${count === 1 ? 'field' : 'fields'}` : '—'; }
+  return String(value);
+};
+export type Tone = '' | 'good' | 'warn' | 'bad';
+/** The one status tone map. Failures are bad, pending and unverified work is warn, passes are good, everything else neutral. */
+export function statusTone(value: unknown): Tone {
+  const s = text(value).toLowerCase().trim();
+  if (!s || s === '—') return '';
+  if (/fail|error|interrupted|blocked|stopped_with_error|not_verified_failed/.test(s)) return 'bad';
+  if (/unverified|untested|inconclusive|not_executed|pass_with_skips|wait|review|pending|stopp|working|pass(es)?_?warn/.test(s)) return 'warn';
+  if (/^(pass|passed|verified|approved|complete|completed|ready|true|done|supported|good)$/.test(s) || /^pass/.test(s)) return s === 'supported' ? '' : 'good';
+  return '';
+}
 export const number = (value: unknown) => typeof value === 'number' ? value.toLocaleString() : text(value);
 export const artifacts = (run: Run) => record(run.state.artifacts);
 export const download = (id: string, kind: string, format = 'json', index?: number) => `/api/harness/runs/${encodeURIComponent(id)}/download?${new URLSearchParams({ kind, format, ...(index == null ? {} : { index: String(index) }) })}`;
