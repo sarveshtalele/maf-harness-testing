@@ -525,3 +525,10 @@ Format: `YYYY-MM-DD HH:MM | BEFORE|AFTER | actor | action | scope/risk or result
 - 2026-10-12 | AFTER | Haiku | review fixes applied. Bare python3/python are probed only when frozen and not Windows; the py launcher is guarded against aliases; the scan is cached (toolchains._scan_pythons, cache_clear in tests). The missing-Python step is named python-missing and classified ENV-PY-011 (taxonomy, classifier, playbook, error case). create-venv uses the newest satisfying interpreter for the plan's requirement (python_override plumbed from environment.py). Verified: ruff, arch map regenerated, lint-skills --strict, full pytest outside the sandbox 1400 passed / 5 skipped, PyInstaller build and frozen maf-backend --self-check exit 0 (scratchpad only).
 - 2026-10-12 | BEFORE | Haiku | retry after a missing Python must see a new install without an app restart: the scan cache must never keep a negative result. Scope: toolchains scan cache, python-missing path, tests.
 - 2026-10-12 | AFTER | Haiku | the scan cache stores only non-empty scans (replaces lru_cache); clear_python_scan() is called when no suitable Python is found, so the retry rescans. Tests: a missing Python is not cached (install appears, next call finds it), retry after a stale non-empty scan finds the required version. Verified: ruff, arch map, lint-skills --strict, full pytest outside the sandbox 1402 passed / 5 skipped. Not pushed.
+- 2026-10-12 | AFTER | Opus | frozen-app skill fix:
+  - Cause: the PyInstaller backend used sys.executable as Python, which broke every skill script, Python hooks and create-venv in the installed app.
+  - Fix: paths.python_argv() plus the desktop_backend --run-python shim. Real Python is detected per platform (WindowsApps alias never run, negative scans not cached).
+  - The ENV-PY-011 classifier reports a missing Python.
+  - An AST guard test bans new sys.executable or bare python argv.
+  - The self-check runs the host skill scripts on sample Python/JS/Java/.NET/Go/mixed/empty repos in every installer.
+  - v1.0.5 cut.

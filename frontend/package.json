@@ -1,6 +1,6 @@
 {
   "name": "agentic-qe-platform-ui",
-  "version": "1.0.4",
+  "version": "1.0.5",
   "private": true,
   "scripts": {
     "dev": "node node_modules/next/dist/bin/next dev --hostname 127.0.0.1",
