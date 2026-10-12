@@ -930,3 +930,50 @@ def test_legitimate_arguments_are_accepted(args):
 def test_legitimate_http_url_without_query_is_accepted():
     server = mcp_servers.upsert({"name": "h", "transport": "http", "url": "https://example.com/mcp"})
     assert server["url"] == "https://example.com/mcp"
+
+
+# ---- MCP hints (readOnlyHint, destructiveHint) and reserved names -----------------------------------------------
+_HINT_SERVER = """
+from mcp.server.fastmcp import FastMCP
+from mcp.types import ToolAnnotations
+m = FastMCP("hx")
+@m.tool(annotations=ToolAnnotations(readOnlyHint=True))
+def fetch_page(x: str) -> str:
+    return x
+@m.tool(annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=True))
+def drop_rows(x: str) -> str:
+    return x
+@m.tool()
+def mystery(x: str) -> str:
+    return x
+m.run("stdio")
+"""
+
+
+def test_real_stdio_probe_passes_mcp_hints_through(tmp_path):
+    script = tmp_path / "hint_server.py"
+    script.write_text(_HINT_SERVER)
+    import sys
+
+    mcp_servers.upsert(srv(name="hx", command=sys.executable, args=[str(script)]))
+    catalog = {t["name"]: t for t in asyncio.run(mcp_servers.probe(mcp_servers.get("hx")))["catalog"]}
+    assert catalog["fetch_page"] == {"name": "fetch_page", "description": "", "read_only": True}
+    assert catalog["drop_rows"] == {"name": "drop_rows", "description": "", "destructive": True, "read_only": False}
+    assert "read_only" not in catalog["mystery"] and "destructive" not in catalog["mystery"]  # not sent: not guessed
+
+
+def test_stored_catalogue_keeps_only_boolean_hints_and_old_entries_have_none():
+    kept = mcp_servers._tool_catalog(
+        [
+            {"name": "a", "description": "x", "read_only": True, "destructive": "yes"},
+            {"name": "b", "description": "y"},  # written before hints existed
+        ]
+    )
+    assert kept == [{"name": "a", "description": "x", "read_only": True}, {"name": "b", "description": "y"}]
+
+
+def test_server_named_new_is_reserved_and_import_never_picks_it():
+    with pytest.raises(ValueError, match="reserved"):
+        mcp_servers.validate(srv(name="new"))
+    [item] = mcp_servers.parse_import("npx -y new")
+    assert item["server"]["name"] == "new-2"
