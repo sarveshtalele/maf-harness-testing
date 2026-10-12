@@ -134,3 +134,32 @@ def test_run_stop_kills_command_and_preserves_cancelled_result(tmp_path):
         assert json.loads((out / "result.json").read_text())["status"] == "cancelled"
     finally:
         service.close()
+
+
+def test_a_stop_whose_kill_wait_times_out_is_reported_as_cancelled_not_timeout(tmp_path, monkeypatch):
+    import threading
+
+    from maf_test_harness.envs.platform_compat import RUN_CANCEL
+
+    cancel = threading.Event()
+    real_popen = execution.subprocess.Popen
+
+    class SlowKill(real_popen):
+        def __init__(self, *args, **kwargs):
+            super().__init__(*args, **kwargs)
+            cancel.set()  # the stop arrives as soon as the command starts
+
+        def wait(self, timeout=None):
+            if timeout == 10:  # the bounded wait after the kill in the cancel branch
+                raise execution.subprocess.TimeoutExpired(self.args, timeout)
+            return super().wait(timeout)
+
+    monkeypatch.setattr(execution.subprocess, "Popen", SlowKill)
+    token = RUN_CANCEL.set(cancel)
+    try:
+        result = execution.run_command(
+            [sys.executable, "-c", "import time; time.sleep(30)"], tmp_path, tmp_path / "stopped"
+        )
+    finally:
+        RUN_CANCEL.reset(token)
+    assert result["status"] == "cancelled"

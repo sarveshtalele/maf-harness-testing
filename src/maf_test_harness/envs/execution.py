@@ -217,9 +217,11 @@ def run_command(
                 deadline = time.monotonic() + timeout
                 while process.poll() is None:
                     if cancel is not None and cancel.is_set():
+                        result["status"] = (
+                            "cancelled"  # before the wait: a slow kill must not read as a timeout
+                        )
                         platform_compat.kill_process_tree(process)
                         process.wait(timeout=10)
-                        result["status"] = "cancelled"
                         break
                     remaining = deadline - time.monotonic()
                     if remaining <= 0:
@@ -232,9 +234,12 @@ def run_command(
                 if result["status"] != "cancelled":
                     result["status"] = "command_succeeded" if process.returncode == 0 else "failed"
             except subprocess.TimeoutExpired:
-                platform_compat.kill_process_tree(process)
+                if (
+                    result["status"] != "cancelled"
+                ):  # a stop already killed the tree; a second killpg can fail
+                    platform_compat.kill_process_tree(process)
+                    result["status"] = "timeout"
                 process.wait()
-                result["status"] = "timeout"
         except OSError as exc:
             result.update(status="blocked", error=str(exc))
     if junit_glob and result["status"] not in {"timeout", "blocked", "cancelled"}:
