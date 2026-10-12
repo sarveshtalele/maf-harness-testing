@@ -104,8 +104,12 @@ def windows_uninstall_argv(installer: Path, log: Path) -> list[str]:
 
 
 def windows_lock_argv(install_dir: Path, user: str) -> list[str]:
-    """Deny this user every write under the install dir, creating files and folders included."""
-    return ["icacls", str(install_dir), "/deny", f"{user}:(OI)(CI)(W)"]
+    """Deny this user every write under the install dir, creating files and folders included.
+
+    Explicit data-write rights only: the generic (W) also carries SYNCHRONIZE, and denying that makes Windows refuse
+    to start the executable at all (WinError 5).
+    """
+    return ["icacls", str(install_dir), "/deny", f"{user}:(OI)(CI)(WD,AD,WEA,WA)"]
 
 
 def windows_unlock_argv(install_dir: Path, user: str) -> list[str]:

@@ -61,7 +61,7 @@ def test_windows_icacls_lock_and_restore_argv_target_only_this_user():
         "icacls",
         str(install_dir),
         "/deny",
-        "runneradmin:(OI)(CI)(W)",
+        "runneradmin:(OI)(CI)(WD,AD,WEA,WA)",
     ]
     assert ds.windows_unlock_argv(install_dir, "runneradmin") == [
         "icacls",
