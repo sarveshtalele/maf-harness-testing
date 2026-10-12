@@ -49,11 +49,13 @@ def _interpreter(path: Path) -> list[str]:
 
 
 def _script_flags(*, isolated: bool, work: Path) -> list[str]:
-    """Interpreter flags for a reviewed .py script. Bytecode on disk is never trusted: a planted .pyc for a sibling
-    module must not run in place of the reviewed source. Approved plugin code also runs isolated (-I)."""
-    flags = ["-B", "--check-hash-based-pycs", "always"]
+    """Interpreter flags for a reviewed .py script. Bytecode beside the scripts is never trusted: every run reads and
+    writes its own ``pycache_prefix`` in its temporary folder, so a planted timestamp .pyc for a sibling module (which
+    the import system would otherwise accept when its mtime and size match) can never run in place of the source.
+    Approved plugin code also runs isolated (-I); host scripts keep their sibling imports."""
+    flags = ["-B", "--check-hash-based-pycs", "always", "-X", f"pycache_prefix={work / 'pycache'}"]
     if isolated:
-        flags += ["-I", "-X", f"pycache_prefix={work / 'pycache'}"]
+        flags.insert(0, "-I")
     return flags
 
 
@@ -189,7 +191,12 @@ class HarnessScriptRunner:
     # ---- MAF SkillScriptRunner protocol
     def __call__(self, skill: Any, script: Any, args: Any = None) -> str:
         name = skill.frontmatter.name
-        rel = Path(script.full_path).resolve().relative_to(self.dirs.get(name, self.skills_root / name)).as_posix()
+        rel = (
+            Path(script.full_path)
+            .resolve()
+            .relative_to(self.dirs.get(name, self.skills_root / name))
+            .as_posix()
+        )
         try:
             outcome = self.run(name, rel, args)
         except ScriptRefused as exc:

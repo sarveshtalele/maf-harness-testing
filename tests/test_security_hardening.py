@@ -1,7 +1,9 @@
 """Regression tests for the security review (F-series): reads that refuse links, bounded probes, and so on."""
 
+import marshal
 import os
 import sys
+from pathlib import Path
 
 import pytest
 
@@ -98,10 +100,51 @@ def test_cors_header_is_sent_only_for_report_asset_replies(tmp_path):
 def test_every_locked_python_script_ignores_disk_bytecode_and_plugins_are_isolated(tmp_path):
     from maf_test_harness.skills.scripts import _script_flags
 
+    prefix = f"pycache_prefix={tmp_path / 'pycache'}"
     host = _script_flags(isolated=False, work=tmp_path)
-    assert host == ["-B", "--check-hash-based-pycs", "always"]  # host scripts keep their sibling imports
+    # Host scripts keep their sibling imports, but never read or write bytecode beside the scripts.
+    assert host == ["-B", "--check-hash-based-pycs", "always", "-X", prefix]
     plugin = _script_flags(isolated=True, work=tmp_path)
-    assert plugin[:3] == host and "-I" in plugin and f"pycache_prefix={tmp_path / 'pycache'}" in plugin
+    assert plugin[0] == "-I" and plugin[1:] == host
+
+
+def test_a_planted_timestamp_pyc_next_to_a_sibling_module_is_never_loaded(tmp_path):
+    """Bundled host scripts run with their own pycache_prefix: a forged .pyc (timestamp header matching the source
+    mtime and size) beside a sibling module must be ignored. The control run proves the forgery works without it."""
+    import importlib.util
+    import subprocess
+
+    from maf_test_harness.skills.scripts import _script_flags
+
+    scripts = tmp_path / "skill" / "scripts"
+    scripts.mkdir(parents=True)
+    helper = scripts / "helper.py"
+    helper.write_text("MARK = 'reviewed source'\n", encoding="utf-8")
+    main = scripts / "main.py"
+    main.write_text("import helper\nprint(helper.MARK)\n", encoding="utf-8")
+    forged_code = compile("MARK = 'planted bytecode'\n", str(helper), "exec")
+    stat = helper.stat()
+    header = (
+        importlib.util.MAGIC_NUMBER
+        + (0).to_bytes(4, "little")  # flags: timestamp-based
+        + int(stat.st_mtime).to_bytes(4, "little")
+        + (stat.st_size & 0xFFFFFFFF).to_bytes(4, "little")
+    )
+    pyc = importlib.util.cache_from_source(str(helper))
+    Path(pyc).parent.mkdir(parents=True, exist_ok=True)
+    Path(pyc).write_bytes(header + marshal.dumps(forged_code))
+
+    def run(flags):
+        work = tmp_path / "work"
+        work.mkdir(exist_ok=True)
+        done = subprocess.run(
+            [sys.executable, *flags, str(main)], cwd=work, capture_output=True, text=True, timeout=60
+        )
+        assert done.returncode == 0, done.stderr
+        return done.stdout.strip()
+
+    assert run(["-B"]) == "planted bytecode"  # control: without the prefix the forgery is loaded
+    assert run(_script_flags(isolated=False, work=tmp_path / "work")) == "reviewed source"
 
 
 @pytest.mark.parametrize(
@@ -214,3 +257,24 @@ def test_api_connections_have_socket_timeouts(tmp_path):
         assert server.RequestHandlerClass.timeout == api_module.API_SOCKET_TIMEOUT_SECONDS > 0
     finally:
         server.server_close()
+
+
+def test_tool_version_probes_get_the_basic_environment_only(monkeypatch):
+    import subprocess
+
+    from maf_test_harness.envs import environment, platform_compat
+    from maf_test_harness.envs.execution import BASIC_ENV
+
+    seen = {}
+
+    def fake_run(command, *, timeout, env=None, **_):
+        seen["env"] = env
+        return subprocess.CompletedProcess(command, 0, "git version 2.99\n", "")
+
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test-probe-secret")
+    monkeypatch.setattr(platform_compat, "run_cancellable", fake_run)
+    monkeypatch.setattr(environment.shutil, "which", lambda name: sys.executable)
+    entry = environment._probe("git")
+    assert entry["present"] and entry["version"] == "git version 2.99"
+    assert "OPENAI_API_KEY" not in seen["env"]
+    assert set(seen["env"]) <= set(BASIC_ENV)

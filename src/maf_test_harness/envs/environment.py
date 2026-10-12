@@ -16,6 +16,7 @@ from pathlib import Path
 
 from ..repo.stack import REQUIRED_TOOLS, StackProfile
 from . import plan_toolchains, platform_compat, toolchains
+from .execution import BASIC_ENV
 from .runners import Step, repository_components, resolve_ecosystem, setup_steps
 
 # tool -> (version command, install hint)
@@ -140,7 +141,9 @@ def _probe(tool: str) -> dict:
     if path:
         command = [path, *command[1:]]
         try:
-            proc = platform_compat.run_cancellable(command, timeout=20)
+            # Tool probes get the basic allowlist only: a probed binary must not inherit API keys or tokens.
+            basic = {key: os.environ[key] for key in BASIC_ENV if key in os.environ}
+            proc = platform_compat.run_cancellable(command, timeout=20, env=basic)
             entry["version"] = ((proc.stdout or proc.stderr).strip().splitlines() or [""])[0][:120]
         except InterruptedError:
             raise
