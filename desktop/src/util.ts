@@ -1,4 +1,5 @@
 // Pure helpers: no Electron imports so they can be unit-tested with node:test.
+import { execFile } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
 import * as net from 'node:net';
 
@@ -73,4 +74,32 @@ export function csp(uiPort: number): string {
     `frame-ancestors 'self'`,
     `form-action 'self'`,
   ].join('; ');
+}
+
+/** Homebrew (Apple silicon, Intel) and the usual /usr/local bin: where git, uv, java and python3 usually live on macOS. */
+export const DARWIN_FALLBACK_PATH = ['/opt/homebrew/bin', '/usr/local/bin'];
+
+/** A Finder or Dock launch gets launchd's minimal PATH; merge the login shell's PATH, the inherited one and the
+ *  fallback dirs, first occurrence wins. Pure, so it can be tested without a shell. */
+export function mergePath(loginPath: string | null, basePath: string, delimiter = ':'): string {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const dir of [...(loginPath ?? '').split(delimiter), ...basePath.split(delimiter), ...DARWIN_FALLBACK_PATH]) {
+    if (dir && !seen.has(dir)) {
+      seen.add(dir);
+      out.push(dir);
+    }
+  }
+  return out.join(delimiter);
+}
+
+/** The PATH of a login shell (`$SHELL -ilc`), or null when it cannot be read within 3 s. The value is wrapped in a
+ *  marker so shell start-up noise on stdout cannot corrupt it. */
+export function readLoginShellPath(shell: string): Promise<string | null> {
+  return new Promise((resolve) => {
+    execFile(shell, ['-ilc', "printf '__PATH__%s' \"$PATH\""], { timeout: 3000, encoding: 'utf8' }, (err, stdout) => {
+      const m = err ? null : /__PATH__([^\n]*)/.exec(stdout);
+      resolve(m ? m[1] ?? null : null);
+    });
+  });
 }

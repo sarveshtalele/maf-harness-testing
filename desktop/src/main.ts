@@ -5,7 +5,7 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 import { KeyStore, ModelSettingsInput } from './keystore';
 import { ProcessManager, reapOrphans, ServiceSpec, waitForHttp } from './process-manager';
-import { canOpenExternally, csp, isAppOrigin, isEvidenceUrl, makeToken, pickTwoPorts } from './util';
+import { canOpenExternally, csp, isAppOrigin, isEvidenceUrl, makeToken, mergePath, pickTwoPorts, readLoginShellPath } from './util';
 
 const pkg = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'package.json'), 'utf8')) as {
   homepage: string;
@@ -20,6 +20,8 @@ let exitCode = 0;
 let store: KeyStore;
 let live: { backend: ServiceSpec; apiPort: number; token: string } | null = null;
 let settingsBusy = false;
+/** macOS only: PATH for the services, merged from the login shell (a Finder launch gets launchd's minimal PATH). */
+let servicePath: string | undefined;
 
 // Packaged-app smoke mode (scripts/desktop_smoke.py): run the real boot, check the UI, print one verdict line, quit.
 // The profile is a fresh temp dir, set before the single-instance lock and ready so a user or CI profile is untouched.
@@ -54,6 +56,7 @@ function specs(apiPort: number, uiPortNum: number, token: string): { backend: Se
     HARNESS_API_PORT: String(apiPort),
     HARNESS_DATA_DIR: app.getPath('userData'),
     HARNESS_EXIT_ON_STDIN_EOF: '1', // desktop_backend.py: exit when the shell's stdin pipe closes
+    ...(servicePath ? { PATH: servicePath } : {}),
     NEXT_TELEMETRY_DISABLED: '1',
     PYTHONUTF8: '1',
     PYTHONIOENCODING: 'utf-8',
@@ -169,6 +172,9 @@ function createWindow(): BrowserWindow {
 
 async function boot(): Promise<{ apiPort: number; uiPort: number }> {
   const dataDir = app.getPath('userData');
+  if (process.platform === 'darwin') {
+    servicePath = mergePath(await readLoginShellPath(process.env.SHELL || '/bin/zsh'), process.env.PATH ?? '');
+  }
   pm = new ProcessManager(path.join(dataDir, 'logs'), path.join(dataDir, 'children.json'));
   // A previous instance that crashed or was killed may have left services behind: stop them before starting new ones.
   await reapOrphans(path.join(dataDir, 'children.json'));

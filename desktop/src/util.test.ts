@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { canOpenExternally, csp, isAppOrigin, isEvidenceUrl, makeToken, pickFreePort, pickTwoPorts } from './util';
+import { canOpenExternally, csp, isAppOrigin, isEvidenceUrl, makeToken, mergePath, pickFreePort, pickTwoPorts, readLoginShellPath } from './util';
 
 test('free ports are loopback-bindable and distinct', async () => {
   const [a, b] = await pickTwoPorts();
@@ -43,4 +43,16 @@ test('evidence report URLs are recognised', () => {
   assert.ok(!isEvidenceUrl('http://127.0.0.1:4000/runs/r1'));
   assert.ok(!isEvidenceUrl('http://127.0.0.1:4000/api/harness/skills/evidence/x'));
   assert.ok(!isEvidenceUrl('not a url'));
+});
+
+test('macOS service PATH: login shell first, inherited next, fallback dirs last, no duplicates', () => {
+  assert.equal(mergePath('/a:/b', '/b:/c'), '/a:/b:/c:/opt/homebrew/bin:/usr/local/bin');
+  assert.equal(mergePath(null, '/usr/bin:/bin'), '/usr/bin:/bin:/opt/homebrew/bin:/usr/local/bin');
+  assert.equal(mergePath('/opt/homebrew/bin', ''), '/opt/homebrew/bin:/usr/local/bin');
+});
+
+test('login shell PATH is read through the marker; a failing shell yields null', { skip: process.platform === 'win32' }, async () => {
+  const p = await readLoginShellPath('/bin/sh');
+  assert.ok(p === null || p.includes('/'), 'a PATH with directories, or null');
+  assert.equal(await readLoginShellPath('/nonexistent/shell-for-test'), null);
 });
