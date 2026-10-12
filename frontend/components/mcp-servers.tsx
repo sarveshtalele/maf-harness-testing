@@ -6,7 +6,7 @@ import { useReturnFocus } from './data';
 type Tool = { name: string; description: string };
 type Server = {
   name: string; transport: 'stdio' | 'http'; command: string; args: string[]; env_keys: string[]; url: string; enabled: boolean;
-  stages: string[]; allowed_tools: string[]; approval_required_tools: string[]; preset: string; discovered_tools: Tool[]; secrets: Record<string, boolean>; ready: boolean;
+  stages: string[]; allowed_tools: string[]; approval_required_tools: string[]; preset: string; discovered_tools: Tool[]; secrets: Record<string, boolean>; ready: boolean; problems?: string[];
 };
 type Budget = Record<string, { tools: number; max: number; skipped: string[] }>;
 type Preset = { label: string; note: string; server: Omit<Server, 'secrets' | 'ready' | 'discovered_tools'> };
@@ -93,6 +93,7 @@ function ServerCard({ server: s, budget, onManage }: { server: Server; budget: B
   return <section className="skill-card" aria-label={`MCP server ${s.name}`}>
     <div className="skill-card-heading"><h2>{s.name}</h2><span className="skill-tags"><span className="badge">{s.transport}</span><span className={`badge ${tone}`}>{status}</span></span></div>
     <code className="mp-command">{s.transport === 'stdio' ? [s.command, ...s.args].join(' ') : s.url}</code>
+    {s.problems?.map(p => <p key={p} className="mp-warn"><span className="badge warn">Fix before enabling</span> {p}</p>)}
     <p className="field-help">Stages: {s.stages.length ? s.stages.map(st => label(st)).join(', ') : 'none'}</p>
     <p className="field-help">{summary(t)}</p>
     {!s.discovered_tools.length && <p className="field-help">Run Test to discover tools</p>}
@@ -107,6 +108,9 @@ function ManageServer({ server, stages, onChange, onDeleted, onClose }: { server
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState<Notice>(null);
   const [secrets, setSecrets] = useState<Record<string, string>>({});
+  const [argsText, setArgsText] = useState(server.args.join('\n')); // edited only when the stored server needs a fix
+  const [urlText, setUrlText] = useState(server.url);
+  const fixing = !!server.problems?.length;
   const [confirm, setConfirm] = useState(false);
   const rememberDelete = useReturnFocus(confirm);
   const names = toolNames(server.discovered_tools, s); const t = tally(names, s);
@@ -120,7 +124,10 @@ function ManageServer({ server, stages, onChange, onDeleted, onClose }: { server
     approval_required_tools: [...v.approval_required_tools.filter(x => x !== tool), ...(m === 'approval' ? [tool] : [])],
   }));
   const setAll = (m: 'auto' | 'hidden') => setS(v => ({ ...v, allowed_tools: m === 'auto' ? names : [], approval_required_tools: [] }));
-  const save = () => run(async () => { const next = await api<Server>('mcp-servers', pick(s)); setS(next); onChange(); return 'Saved.'; });
+  const save = () => run(async () => {
+    const edited = fixing ? { ...s, args: argsText.split('\n').map(x => x.trim()).filter(Boolean), url: urlText.trim() } : s;
+    const next = await api<Server>('mcp-servers', pick(edited)); setS(next); onChange(); return 'Saved.';
+  });
   const test = () => run(async () => {
     const r = await api<{ ok: boolean; message?: string; tools?: string[]; count?: number }>(`mcp-servers/${s.name}/test`, {});
     onChange();
@@ -146,6 +153,12 @@ function ManageServer({ server, stages, onChange, onDeleted, onClose }: { server
       {Object.keys(server.secrets).length > 0 && <fieldset><legend>Secrets (write-only, kept in memory{desktop<Desktop>() ? ' and your OS keychain' : ''})</legend>
         {Object.entries(server.secrets).map(([k, set]) => <label key={k}>{k === 'BEARER_TOKEN' ? 'Token (Bearer, or "Basic …")' : k}<input type="password" autoComplete="new-password" spellCheck={false} value={secrets[k] || ''} onChange={e => setSecrets({ ...secrets, [k]: e.target.value })} placeholder={set ? 'Set — leave empty to keep' : 'Not set'} /></label>)}
         <button type="button" disabled={busy} onClick={saveSecretsNow}>Save secrets</button></fieldset>}
+      {fixing && <fieldset><legend>Fix before enabling</legend>
+        <p className="field-help">{server.problems?.join(' ')} Remove the value from the arguments or URL and put it in the secret field (docker: -e KEY with the value as KEY=value in the environment), then Save.</p>
+        {server.transport === 'stdio'
+          ? <label>Arguments (one per line)<textarea value={argsText} onChange={e => setArgsText(e.target.value)} spellCheck={false} /></label>
+          : <label>URL<input value={urlText} onChange={e => setUrlText(e.target.value)} inputMode="url" /></label>}
+      </fieldset>}
       <div className="header-actions"><button disabled={busy} onClick={test}>Test</button><span className="field-help">{TIMEOUT_HINT}</span></div>
       <h3>Tools</h3>
       {names.length ? <div className="table-scroll" tabIndex={0} role="region" aria-label={`Tools of ${s.name}`}><table className="data-table"><thead><tr><th scope="col">Tool</th><th scope="col">Description</th><th scope="col">Access</th></tr></thead><tbody>{names.map(n => <tr key={n}>

@@ -310,3 +310,19 @@ test('MCP tab and the manage dialog fit a 390 px screen with a long command', as
   await page.keyboard.press('Escape');
   await page.setViewportSize({ width: 1280, height: 720 });
 });
+
+test('a stored server with a secret in its arguments loads disabled, shows the fix, and can be fixed in Manage tools', async ({ page }) => {
+  const state = await mockMcp(page, {
+    servers: [{ name: 'legacy', transport: 'stdio', command: 'npx', args: ['-y', 'server-x', '--api-key', 'abcdef123456'], env_keys: [], url: '', enabled: false, stages: [], allowed_tools: [], approval_required_tools: [], preset: '', problems: ['Move the token in the arguments to a secret before enabling.'] }],
+  });
+  await page.goto('/?page=marketplace&tab=mcp');
+  const legacy = card(page, 'legacy');
+  await expect(legacy.getByText('Move the token in the arguments to a secret before enabling.')).toBeVisible();
+  await legacy.getByRole('button', { name: 'Manage tools' }).click();
+  const dialog = manage(page, 'legacy');
+  await dialog.getByLabel('Arguments (one per line)').fill('-y\nserver-x');
+  await dialog.getByRole('button', { name: 'Save', exact: true }).click();
+  await expect(dialog.getByRole('status').filter({ hasText: 'Saved.' })).toBeVisible();
+  expect(state.saved.at(-1)?.args).toEqual(['-y', 'server-x']);
+});
+
