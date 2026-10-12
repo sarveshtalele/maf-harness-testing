@@ -1,4 +1,5 @@
 {
+  "$comment": "Copy this file to <user data>/.harness/hooks.json (macOS: ~/Library/Application Support/AgenticQE/.harness/, Windows: %APPDATA%\\AgenticQE\\.harness\\, Linux: ~/.local/share/agentic-qe/.harness/; a source checkout: .maf-harness/.harness/ in the repository). ~/.maf-harness/hooks.json is read too. Hooks are never read from the working directory: a checkout can contain hooks. Commands are argv lists; a relative script is resolved beside this file.",
   "mode": "enforce",
   "builtins": {
     "stage_budget": {"per_stage_tokens": 2000000},

@@ -44,7 +44,7 @@ Notes:
 
 - `--extra e2e` installs Python Playwright used by the e2e tests; `ui.yml` installs it.
 - Edit `.env` to set `OPENAI_API_KEY`, `OPENAI_BASE_URL` and `OPENAI_MODEL`. Never commit it. It is git-ignored.
-- `.env` is read from the current directory and from the repository root. A variable already set in the shell wins over `.env`. The packaged desktop app reads its own copy in the app data folder.
+- `.env` is read from exactly one place, found from the code and never from the current directory: `<repository root>/.env` in a source checkout (`paths.env_file()`), and `<user data folder>/.env` in the packaged desktop app. A variable already set in the shell wins over `.env`.
 - Setting the key later in the UI (Configuration page) is also possible. See [DESKTOP.md](DESKTOP.md) for the precedence order.
 
 ### 1.3 Run the API and the UI in dev mode
@@ -76,7 +76,7 @@ HARNESS_API_TOKEN=<token-of-32-or-more-characters> uv run python -m maf_test_har
 
 ### 1.4 Run from the command line
 
-The CLI runs the same workflow as the UI, without a browser. It reads `.env` from the repository root.
+The CLI runs the same workflow as the UI, without a browser. It reads `.env` from the repository root (see step 3 above; the working directory is not read).
 
 ```bash
 uv run maf-harness run https://github.com/owner/repo

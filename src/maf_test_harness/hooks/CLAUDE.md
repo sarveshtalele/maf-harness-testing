@@ -6,7 +6,7 @@ User- and harness-defined checks before/after tool calls and model calls and at 
 - `events.py`: `HookEvent`, `Decision`, `strongest` (verdict combination).
 - `engine.py`: `HookSpec`, `HookEngine`, `command_handler`, `python_handler`; runs matching hooks, combines verdicts, fail-closed.
 - `builtin.py`: on by default: `secret_redaction`, `path_scope`, `download_consent`, `stage_budget`, `audit` (function `audit_events`); `build_builtins`, `redact`.
-- `config.py`: `load_config`, `parse_config`, `config_paths` (`~/.maf-harness/hooks.json`, `./.harness/hooks.json`), `validate_entry`.
+- `config.py`: `load_config`, `parse_config`, `config_paths` (`~/.maf-harness/hooks.json`, `<user data>/.harness/hooks.json`; never the working directory), `legacy_hooks_file` / `hook_status` (warn about an ignored `./.harness/hooks.json`), `validate_entry`. Python hook scripts are resolved beside their hooks.json and run in the frozen app only from the hook folders passed as `HARNESS_HOOK_FOLDERS`.
 - `maf_bridge.py`: `HookFunctionMiddleware`, `HookChatMiddleware`, `hook_middleware`; a deny/stop raises MAF `MiddlewareFailure`.
 - `agent_hooks_bridge.py`: optional AGENT-HOOKS-0.1 interceptor (`EngineInterceptor`, `sdk_available`); backend picked by `HARNESS_HOOKS_BACKEND`, hooks on/off by `HARNESS_HOOKS`.
 

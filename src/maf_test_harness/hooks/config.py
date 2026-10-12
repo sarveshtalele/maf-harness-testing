@@ -19,6 +19,7 @@ install hooks. A malformed file is an error, not a warning: silently ignoring a 
 from __future__ import annotations
 
 import json
+import logging
 import os
 import re
 import shutil
@@ -33,7 +34,12 @@ from .events import EVENTS
 
 MODES = ("enforce", "evaluate_only")
 _ENTRY_KEYS = {"event", "matcher", "command", "python", "timeout", "name"}
-_TOP_KEYS = {"mode", "builtins", "hooks"}
+_TOP_KEYS = {
+    "mode",
+    "builtins",
+    "hooks",
+    "$comment",
+}  # "$comment": documentation in the shipped example, ignored
 MAX_TIMEOUT = 300
 
 
@@ -55,6 +61,38 @@ def config_paths(project_root: Path | None = None) -> list[Path]:
         Path.home() / ".maf-harness" / "hooks.json",
         (project_root or paths.user_data_root()) / ".harness" / "hooks.json",
     ]
+
+
+def _legacy_message(legacy: Path) -> str:
+    return (
+        f"{legacy} is ignored: hooks are read only from {paths.user_data_root() / '.harness' / 'hooks.json'} and "
+        "~/.maf-harness/hooks.json. Move the file to the first location to use it. A checkout the harness starts in "
+        "can contain hooks, so the working directory is never trusted."
+    )
+
+
+def legacy_hooks_file(cwd: Path | None = None) -> Path | None:
+    """A ``<cwd>/.harness/hooks.json`` from before hooks moved to the user data folder. It is not loaded, so when one
+    exists this returns it for the warning and the configuration API."""
+    candidate = (cwd or Path.cwd()) / ".harness" / "hooks.json"
+    try:
+        if not candidate.is_file():
+            return None
+        loaded = {path.resolve() for path in config_paths()}
+        return None if candidate.resolve() in loaded else candidate
+    except OSError:
+        return None
+
+
+def hook_status() -> dict[str, Any]:
+    """Where hooks are read from, and any legacy file that is ignored (for the configuration API)."""
+    legacy = legacy_hooks_file()
+    return {
+        "files": [str(path) for path in config_paths() if path.is_file()],
+        "project_file": str(paths.user_data_root() / ".harness" / "hooks.json"),
+        "legacy_file": str(legacy) if legacy else None,
+        "warning": _legacy_message(legacy) if legacy else None,
+    }
 
 
 def validate_entry(entry: Any, source: str, index: int) -> dict[str, Any]:
@@ -126,6 +164,8 @@ def parse_config(data: Any, source: str = "hooks.json") -> HookConfig:
 
 def load_config(paths: list[Path] | None = None) -> HookConfig:
     """Merge every existing config file; no file at all is a valid (built-ins only) configuration."""
+    if paths is None and (legacy := legacy_hooks_file()):
+        logging.getLogger(__name__).warning(_legacy_message(legacy))
     merged = HookConfig()
     for path in paths if paths is not None else config_paths():
         if not path.is_file():
@@ -234,6 +274,8 @@ __all__ = [
     "build_engine",
     "compile_entry",
     "config_paths",
+    "hook_status",
+    "legacy_hooks_file",
     "load_config",
     "parse_config",
     "validate_entry",

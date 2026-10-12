@@ -10,6 +10,7 @@ from urllib.parse import urlsplit
 from .. import settings
 from ..agent import prompt_settings
 from ..agent.personas import PERSONAS
+from ..hooks.config import hook_status
 from ..llm.usage import DailyUsageLedger
 from ..settings import CASES_PER_REQUIREMENT
 from ..storage import prompt_log_records
@@ -205,6 +206,7 @@ class SettingsAPI:
                 "run_directory": str(self.runs),
                 "service_log_directory": os.getenv("HARNESS_LOG_DIR") or str(self.runs.parent / "logs"),
                 "daily": DailyUsageLedger().snapshot(),
+                "hooks": hook_status(),
                 "stages": STAGES,
                 "personas": {
                     stage: {
