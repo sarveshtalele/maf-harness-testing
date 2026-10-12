@@ -9,7 +9,7 @@ from urllib.parse import urlsplit
 
 from .. import settings
 from ..agent import prompt_settings
-from ..agent.personas import PERSONAS
+from ..agent.personas import PERSONA_LABELS, PERSONAS
 from ..hooks.config import hook_status
 from ..llm.usage import DailyUsageLedger
 from ..settings import CASES_PER_REQUIREMENT
@@ -81,6 +81,7 @@ class SettingsAPI:
                     "settings": settings,
                     "defaults": prompt_settings.defaults(),
                     "records": records,
+                    "persona_labels": PERSONA_LABELS,
                     "host_stages": ["repo_analysis", "environment_setup", "test_execution"],
                 }
             )

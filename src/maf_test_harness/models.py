@@ -69,11 +69,31 @@ class TestReviewDraft(BaseModel):
     reviews: list[TestCaseReview] = Field(min_length=1, max_length=8)
 
 
+class DesignScores(BaseModel):
+    """Rubric points of the design confidence reviewer (qa/confidence.py DESIGN_RUBRIC; the host sums them)."""
+
+    model_config = ConfigDict(extra="forbid")
+    source_proven: int = Field(ge=0, le=30)
+    correct_target: int = Field(ge=0, le=25)
+    expected_derivable: int = Field(ge=0, le=25)
+    fixture_validity: int = Field(ge=0, le=20)
+
+
 class DesignCaseReview(BaseModel):
     model_config = ConfigDict(extra="forbid")
     case_id: str = Field(min_length=1)
+    scores: DesignScores
     verdict: Literal["approved", "revise", "reject"]
-    confidence: int = Field(ge=0, le=100)
+    derivation: str = Field(
+        default="",
+        max_length=600,
+        description="How the expected result follows from target_source, in one or two sentences.",
+    )
+    source_quote: str = Field(
+        default="",
+        max_length=600,
+        description="Verbatim lines from target_source that support the derivation.",
+    )
     reason: str = Field(min_length=1, max_length=1500)
     suggested_target: str | None = Field(default=None, max_length=300)
 
@@ -81,6 +101,28 @@ class DesignCaseReview(BaseModel):
 class DesignReviewDraft(BaseModel):
     model_config = ConfigDict(extra="forbid")
     reviews: list[DesignCaseReview] = Field(min_length=1, max_length=60)
+
+
+class PlanScores(BaseModel):
+    """Rubric points of the planning confidence reviewer (qa/confidence.py PLAN_RUBRIC; the host sums them)."""
+
+    model_config = ConfigDict(extra="forbid")
+    controls_covered: int = Field(ge=0, le=40)
+    level_fit: int = Field(ge=0, le=30)
+    scenarios_derivable: int = Field(ge=0, le=30)
+
+
+class PlanAreaReview(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    area_id: str = Field(min_length=1)
+    scores: PlanScores
+    verdict: Literal["approved", "revise", "reject"]
+    reason: str = Field(min_length=1, max_length=1500)
+
+
+class PlanReviewDraft(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    reviews: list[PlanAreaReview] = Field(min_length=1, max_length=24)
 
 
 class RepoAnalysis(BaseModel):

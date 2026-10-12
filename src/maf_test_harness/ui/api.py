@@ -35,6 +35,7 @@ from ..settings import is_local_app_url, validate_gateway_settings
 from ..storage import read_json
 from ..workflow import Harness
 from ..workflow_support import atomic_json
+from .confidence_api import ConfidenceAPI
 from .errors import run_errors
 from .eta import case_budget_view, run_eta
 from .evidence_api import EvidenceAPI
@@ -145,7 +146,7 @@ def _budget_value(value) -> int:
     return value
 
 
-class LocalAPI(EvidenceAPI, SettingsAPI, McpAPI):
+class LocalAPI(EvidenceAPI, SettingsAPI, McpAPI, ConfidenceAPI):
     def __init__(
         self,
         runs: Path,
@@ -778,6 +779,8 @@ def make_server(api: LocalAPI, token: str, port: int = 8765):
                             self.reply(200, api.audit(key))
                         elif parts[2:] == ["observability"]:
                             self.reply(200, public(build_report(api.run_path(key), paths.skills_dir())))
+                        elif parts[2:] == ["confidence"]:
+                            self.reply(200, api.confidence(key, query))
                         elif parts[2:] == ["evidence"]:
                             self.reply(200, api.evidence(key))
                         elif len(parts) >= 4 and parts[2] == "evidence":

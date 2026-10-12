@@ -1,9 +1,11 @@
-from maf_test_harness.agent.personas import PERSONAS, persona_instructions
+from maf_test_harness.agent.personas import PERSONAS, REVIEWER_ROLES, persona_instructions
 from maf_test_harness.workflow import STAGES
 
 
 def test_every_workflow_stage_has_a_persona():
-    assert set(PERSONAS) == set(STAGES) | {"spec_authoring"}  # greenfield sub-stage of requirements
+    # greenfield sub-stage of requirements; confidence reviewers are roles with their own editable prompts
+    assert set(PERSONAS) - set(REVIEWER_ROLES) == set(STAGES) | {"spec_authoring"}
+    assert set(REVIEWER_ROLES) <= set(PERSONAS)
 
 
 def test_personas_are_cross_language_and_no_manual_input():
