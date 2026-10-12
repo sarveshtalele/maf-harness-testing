@@ -7,7 +7,7 @@ import Icon from './icons';
 
 const Badge = StatusBadge;
 
-type Skill = { name: string; description: string; role: string; primary_stages: string[]; purpose?: string; instructions: string; resources: string[]; metadata: Row; reviewed_scripts: Row; sha256: string; source?: 'repo' | 'plugin'; verified?: boolean; approved?: boolean; stages?: string[]; kind?: string; valid: boolean; locked: boolean; errors: string[]; warnings: string[]; provenance: Row; executions: Row[] };
+type Skill = { name: string; tree_sha256?: string; description: string; role: string; primary_stages: string[]; purpose?: string; instructions: string; resources: string[]; metadata: Row; reviewed_scripts: Row; sha256: string; source?: 'repo' | 'plugin'; verified?: boolean; approved?: boolean; stages?: string[]; kind?: string; valid: boolean; locked: boolean; errors: string[]; warnings: string[]; provenance: Row; executions: Row[] };
 
 export default function Skills() {
   const [catalog, setCatalog] = useState<{ skills: Skill[]; upstream: Row } | null>(null);
@@ -35,10 +35,15 @@ export default function Skills() {
       await reload();
     } catch (e) { setError(e instanceof Error ? e.message : 'Import failed.'); }
   };
+  // The approval names the hash the user reviewed; the backend refuses it if the skill changed since then.
   const approveSkill = async (skill: Skill) => {
     setApproving(null); setError(''); setNotice('');
-    try { await api(`skills/${encodeURIComponent(skill.name)}/approve`, {}); setNotice(`${skill.name} approved.`); await reload(); }
-    catch (e) { setError(e instanceof Error ? e.message : 'Approval failed.'); }
+    try { await api(`skills/${encodeURIComponent(skill.name)}/approve`, { tree_sha256: skill.tree_sha256 }); setNotice(`${skill.name} approved.`); await reload(); }
+    catch (e) {
+      const message = e instanceof Error ? e.message : 'Approval failed.';
+      setError(/changed since it was reviewed/i.test(message) ? `${message} The list has been reloaded; review the skill again before approving.` : message);
+      await reload();
+    }
   };
   const trustBadge = (s: Skill) => <>
     <Badge value={s.source === 'plugin' ? 'Plugin' : 'Repo'} />
@@ -74,6 +79,7 @@ export default function Skills() {
     </>}
     <ConfirmDialog open={approving !== null} title={`Approve ${approving?.name ?? 'skill'}?`} confirmLabel="Approve" onConfirm={() => { if (approving) void approveSkill(approving); }} onClose={() => setApproving(null)}>
       <p>It is not covered by the repository lock. Approving lets agents load its instructions and allows its scripts to run on this machine. Any later file change revokes the approval.</p>
+      <p>You are approving the reviewed package hash <code title={approving?.tree_sha256}>{approving?.tree_sha256 ? approving.tree_sha256.slice(0, 12) : 'not provided'}</code>.</p>
     </ConfirmDialog>
   </>;
 }

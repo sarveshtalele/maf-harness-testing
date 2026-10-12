@@ -132,7 +132,7 @@ test('complete browser workflow, layouts, evidence, downloads and stale gates', 
   await expect(review.getByRole('columnheader', { name: 'Confidence', exact: false })).toBeVisible();
   // host-computed confidence = rubric sum (the scripted reviewer gives full marks), not the model's self-reported 90
   await expect(review.getByRole('cell', { name: '100', exact: true }).first()).toBeVisible();
-  await expect(review.getByRole('cell', { name: 'Supported', exact: true }).first()).toBeVisible();
+  await expect(review.getByRole('cell', { name: 'Source-review accepted', exact: true }).first()).toBeVisible();
   await page.getByRole('button', { name: 'Dark appearance' }).click();
   await expect.poll(() => page.evaluate(() => getComputedStyle(document.documentElement).getPropertyValue('--primary').trim())).toBe('#eeeeef');
   await page.screenshot({ path: testInfo.outputPath('review-confidence-dark.png'), fullPage: true, animations: 'disabled' });

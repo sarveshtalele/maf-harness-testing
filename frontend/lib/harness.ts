@@ -7,9 +7,12 @@ export const record = (value: unknown): Row => value && typeof value === 'object
 export const rows = (value: unknown): Row[] => Array.isArray(value) ? value.map(record) : [];
 /** Words whose display form is fixed. Applied per word before title-casing, so "text" reads "Description". */
 export const LABELS: Record<string, string> = { text: 'Description', id: 'ID', sha256: 'SHA-256', api: 'API' };
+/** Whole-value labels. "verified" means only passed execution; a review acceptance is never called verified. */
+export const VALUE_LABELS: Record<string, string> = { supported: 'Source-review accepted', verified: 'Passed execution', passed: 'Passed', failing: 'Failing', untested: 'Untested', not_executed: 'Not executed' };
 export const label = (value: unknown): string => {
   const raw = String(value ?? '—');
   if (raw === 'environment_setup') return 'Test execution · Setup';
+  if (VALUE_LABELS[raw]) return VALUE_LABELS[raw];
   return raw.replace(/_/g, ' ').split(' ').map(word => LABELS[word.toLowerCase()] ?? (word.charAt(0).toUpperCase() + word.slice(1))).join(' ');
 };
 /** Display text for one value. Arrays join with ", "; objects are summarised, never serialised as JSON. */
@@ -25,7 +28,7 @@ export function statusTone(value: unknown): Tone {
   const s = text(value).toLowerCase().trim();
   if (!s || s === '—') return '';
   if (/fail|error|interrupted|blocked|stopped_with_error|not_verified_failed/.test(s)) return 'bad';
-  if (/unverified|inconclusive|not_executed|pass_with_skips|wait|review|pending|stopp|working|pass(es)?_?warn/.test(s)) return 'warn';
+  if (/unverified|untested|inconclusive|not_executed|pass_with_skips|wait|review|pending|stopp|working|pass(es)?_?warn/.test(s)) return 'warn';
   if (/^(pass|passed|verified|approved|complete|completed|ready|true|done|supported|good)$/.test(s) || /^pass/.test(s)) return s === 'supported' ? '' : 'good';
   return '';
 }

@@ -268,7 +268,7 @@ export function QaView() {
       {rows(qa.baseline_regression).map((scope, i) => <Section key={i} title={`${label(scope.scope)} · ${text(scope.verdict)}`} defaultOpen={false}><Table caption={`${label(scope.scope)} cases`} columns={[{ key: 'classname', label: 'Class' }, { key: 'name', label: 'Name' }, { key: 'status', label: 'Status', render: row => <StatusBadge value={row.status} /> }, { key: 'message', label: 'Message' }]} rows={rows(scope.cases)} searchable /></Section>)}
     </> },
     { id: 'traceability', title: 'Requirement traceability', count: rows(qa.requirement_coverage).length, render: () => <>
-      <p>Links between requirements and generated tests. This is not measured line, branch or complete behavior coverage. A requirement is verified only when its linked tests passed.</p>
+      <p>Links between requirements and generated tests. This is not measured line, branch or complete behavior coverage. A requirement counts as passed only when its linked tests passed execution. Source-review acceptance is not execution.</p>
       <Table caption="Requirement traceability" columns={requirementColumns} rows={rows(qa.requirement_coverage)} searchable />
     </> },
     { id: 'worklist', title: 'Improvement worklist', count: actions.length, render: () => <Table caption="Improvement worklist" columns={worklistColumns} rows={[...actions, ...rows(updates.requirements_needing_tests), ...rows(updates.environment_actions)]} searchable /> },

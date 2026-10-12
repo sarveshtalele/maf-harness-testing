@@ -28,7 +28,7 @@ const run = {
         qa_report: {
           verdict: 'FAIL', execution_status: 'completed', adapter: 'pytest', generated_verdict: 'FAIL', case_status_counts: { passed: 0, failed: 1 },
           cases: [{ id: 'TC-1', title: 'adds two numbers', level: 'unit', status: 'failed', message: 'assert 3 == 4', file: 'tests/test_add.py', priority: 'P1', confidence: 100 }],
-          requirement_coverage: [{ state: 'verified', category: 'functional', actor: 'Developer', text: 'Add two numbers' }],
+          requirement_coverage: [{ state: 'passed', category: 'functional', actor: 'Developer', text: 'Add two numbers' }],
           baseline_regression: [], updates: { generated_test_files_to_update: [{ case_id: 'TC-1', classification: 'test expectation', action: 'Never weaken the assertion.', file: 'tests/test_add.py', line: 2 }], repository_files_to_review: [] },
           warnings: ['Coverage is static.'], limitations: [], unmapped_results: [], source_intake: {}, runtime_coverage: {}, skill_checks: [],
         },
@@ -141,6 +141,17 @@ test('the test-design requirement table names its description column "Descriptio
   await page.goto('/runs/rich/artifacts/requirements/requirements');
   await expect(page.getByRole('columnheader', { name: 'Description' }).first()).toBeVisible();
   await expect(page.getByRole('columnheader', { name: 'Text', exact: true })).toHaveCount(0);
+});
+
+test('requirement states read as passed execution; review acceptance is source-review accepted', async ({ page }) => {
+  await page.goto('/runs/rich/qa');
+  await page.getByRole('button', { name: 'Requirement traceability' }).click();
+  const table = page.getByRole('region', { name: 'Requirement traceability' });
+  await expect(table.getByText('Passed', { exact: true })).toBeVisible();
+  await expect(page.locator('main')).not.toContainText(/\bverified\b/i);
+  await page.goto('/runs/rich/tests');
+  await page.getByRole('button', { name: 'Independent test review' }).click();
+  await expect(page.getByRole('region', { name: 'Independent test review' }).getByRole('cell', { name: 'Source-review accepted', exact: true })).toBeVisible();
 });
 
 test('old ?run= and ?page= URLs redirect to the new routes', async ({ page }) => {
