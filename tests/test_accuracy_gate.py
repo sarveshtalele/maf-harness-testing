@@ -239,7 +239,7 @@ def test_case_verified_on_a_later_round_passes_the_gate(tmp_path, monkeypatch):
 def test_gate_off_keeps_the_fail_soft_path_and_reports_the_unverified_case(tmp_path, monkeypatch):
     monkeypatch.setattr(generation_steps, "TEST_GENERATION_BATCH_SIZE", 1)
     monkeypatch.setattr(generation_steps, "TEST_GENERATION_MAX_ATTEMPTS", 1)
-    monkeypatch.setattr(generation_steps, "REQUIRE_FULL_ACCURACY", False)
+    monkeypatch.setenv("HARNESS_REQUIRE_FULL_ACCURACY", "0")
     (tmp_path / "repo").mkdir()
     (tmp_path / "repo" / "service.py").write_text("def value(): return 2", encoding="utf-8")
     host = Harness(tmp_path, skills_root=Path("skills"), requirements_mode="model", runtime=FlakyProvider())
@@ -366,7 +366,7 @@ def counting_host(tmp_path, provider, ids=("TC-1", "TC-2")):
 def test_last_attempt_keeps_verified_cases_and_fails_only_the_rejected_ids(tmp_path, monkeypatch):
     monkeypatch.setattr(generation_steps, "TEST_GENERATION_BATCH_SIZE", 2)
     monkeypatch.setattr(generation_steps, "TEST_GENERATION_MAX_ATTEMPTS", 2)
-    monkeypatch.setattr(generation_steps, "REQUIRE_FULL_ACCURACY", False)
+    monkeypatch.setenv("HARNESS_REQUIRE_FULL_ACCURACY", "0")
     provider = CountingProvider({"TC-2": 99})
     # Two batches: [TC-1, TC-2] is partly rejected on its last attempt, [TC-3] passes (1 of 2 batches failed).
     host, state = counting_host(tmp_path, provider, ids=("TC-1", "TC-2", "TC-3"))
@@ -396,7 +396,7 @@ def test_rejected_ids_from_a_partial_batch_go_to_the_accuracy_rounds(tmp_path, m
 def test_a_retry_regenerates_only_the_cases_missing_from_the_partial_cache(tmp_path, monkeypatch):
     monkeypatch.setattr(generation_steps, "TEST_GENERATION_BATCH_SIZE", 2)
     monkeypatch.setattr(generation_steps, "TEST_GENERATION_MAX_ATTEMPTS", 2)
-    monkeypatch.setattr(generation_steps, "REQUIRE_FULL_ACCURACY", False)
+    monkeypatch.setenv("HARNESS_REQUIRE_FULL_ACCURACY", "0")
     provider = CountingProvider({"TC-2": 2})
     host, state = counting_host(tmp_path, provider, ids=("TC-1", "TC-2", "TC-3"))
     asyncio.run(host._generate_tests_batched(state))  # TC-2 fails on its last attempt
@@ -678,7 +678,7 @@ def test_generated_case_settles_the_response_cache_only_after_review(tmp_path, m
     """A model answer the reviewer rejects must not be replayed from the response cache."""
     monkeypatch.setattr(generation_steps, "TEST_GENERATION_BATCH_SIZE", 1)
     monkeypatch.setattr(generation_steps, "TEST_GENERATION_MAX_ATTEMPTS", 2)
-    monkeypatch.setattr(generation_steps, "REQUIRE_FULL_ACCURACY", False)
+    monkeypatch.setenv("HARNESS_REQUIRE_FULL_ACCURACY", "0")
 
     class Settling(CountingProvider):
         settled: list = []

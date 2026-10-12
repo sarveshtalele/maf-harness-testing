@@ -83,6 +83,13 @@ REMEDIES: list[tuple[re.Pattern[str], str]] = [
         "makes the gates advisory.",
     ),
     (
+        re.compile(r"^Confidence reviewer unavailable:"),
+        "A confidence reviewer (test planning, test design or generated-test review) returned no usable review: its model "
+        "gateway was unreachable, or its answer stayed invalid after its own repairs. No author repair was spent. Check the "
+        "gateway settings and the connection, then Retry the stage. HARNESS_REQUIRE_FULL_ACCURACY=0 makes reviewer outages "
+        "advisory, with a note in the audit log.",
+    ),
+    (
         re.compile(r"^Accuracy gate:"),
         "Some cases are not source-review accepted at the required confidence. Retry the generation stage (accepted cases are kept; Rerun-from-step or Revise regenerate everything), or revise "
         "the design for the listed cases. HARNESS_REQUIRE_FULL_ACCURACY=0 allows partial execution instead.",

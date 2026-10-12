@@ -132,6 +132,9 @@ class RepoAnalysis(BaseModel):
     file_count: int = 0
     source_file_count: int = 0
     source_files: list[str] = Field(default_factory=list)
+    tracked_files: list[str] = Field(
+        default_factory=list
+    )  # every tracked regular file (plan evidence may cite any)
     languages: dict[str, int] = Field(default_factory=dict)
     frameworks: list[str] = Field(default_factory=list)
     package_files: list[str] = Field(default_factory=list)

@@ -19,7 +19,6 @@ from maf_test_harness.qa.report import build_qa_report, render_markdown
 from maf_test_harness.ui.confidence_api import ConfidenceAPI
 from maf_test_harness.ui.runtime_service import RuntimeService
 from maf_test_harness.workflow import Harness
-from maf_test_harness.workflow_steps import plan_review
 from maf_test_harness.workflow_steps.design_review import score_case
 from maf_test_harness.workflow_steps.plan_review import score_area
 
@@ -89,7 +88,7 @@ def test_plan_gate_blocks_design_after_repairs(tmp_path, monkeypatch):
 
 
 def test_plan_gate_is_advisory_when_full_accuracy_is_off(tmp_path, monkeypatch):
-    monkeypatch.setattr(plan_review, "REQUIRE_FULL_ACCURACY", False)
+    monkeypatch.setenv("HARNESS_REQUIRE_FULL_ACCURACY", "0")
     runtime = PlanReviewRuntime(scores={**FULL_PLAN, "level_fit": 0})
     h = drive(tmp_path, monkeypatch, runtime)
     assert pending_error(h) == "" and h.view["pending"]["stage"] == "test_design"
@@ -105,15 +104,25 @@ def test_plan_area_caps_for_missing_evidence_uncovered_controls_and_verdicts():
     repo = {"src/a.py"}
     missing = score_area(review, area, controls, req_files, repo, 95)
     assert missing["confidence"] == 40 and missing["caps"][0]["rule"] == "evidence_missing"
-    uncovered = score_area(review, {**area, "evidence_files": ["src/a.py"]}, [], req_files, repo, 95)
-    assert uncovered["caps"][0]["rule"] == "no_controls" and uncovered["confidence"] == 60
-    controls_elsewhere = score_area(
+    # A cross-cutting area without a control is a note, never a cap.
+    cross_cutting = score_area(review, {**area, "evidence_files": ["src/a.py"]}, [], req_files, repo, 95)
+    assert cross_cutting["caps"] == [] and [n["rule"] for n in cross_cutting["notes"]] == ["no_controls"]
+    assert cross_cutting["confidence"] == 100
+    # Evidence in another directory does not cover the control: cap 70.
+    elsewhere = score_area(
+        review,
+        {**area, "evidence_files": ["docs/guide.md"]},
+        controls,
+        req_files,
+        {"src/a.py", "docs/guide.md"},
+        95,
+    )
+    assert elsewhere["caps"][0]["rule"] == "controls_uncovered" and elsewhere["confidence"] == 70
+    # A sibling file in the requirement's directory covers it.
+    sibling = score_area(
         review, {**area, "evidence_files": ["src/b.py"]}, controls, req_files, {"src/a.py", "src/b.py"}, 95
     )
-    assert (
-        controls_elsewhere["caps"][0]["rule"] == "controls_uncovered"
-        and controls_elsewhere["confidence"] == 50
-    )
+    assert sibling["caps"] == [] and sibling["confidence"] == 100
     revise = score_area(
         {**review, "verdict": "revise"},
         {**area, "evidence_files": ["src/a.py"]},
@@ -125,6 +134,7 @@ def test_plan_area_caps_for_missing_evidence_uncovered_controls_and_verdicts():
     assert revise["confidence"] == 79 and revise["accepted"] is False
     good = score_area(review, {**area, "evidence_files": ["src/a.py"]}, controls, req_files, repo, 95)
     assert good["confidence"] == 100 and good["accepted"] is True
+    assert good["evidence"] == [{"quote": "src/a.py", "exists": True}]
 
 
 # Design caps and quotes -----------------------------------------------------------------------------------------------

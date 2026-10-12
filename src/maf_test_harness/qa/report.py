@@ -14,7 +14,7 @@ from typing import Any
 from ..envs.runners import map_results_to_cases
 from ..qa import ledger
 from ..qa.confidence import review_accepted
-from ..settings import TEST_REVIEW_MIN_CONFIDENCE
+from ..settings import TEST_REVIEW_MIN_CONFIDENCE, design_review_enabled
 from .controls import case_controls, plan_controls, summarize_trace, summary_text, trace_rows
 from .triage import build_updates
 
@@ -171,7 +171,9 @@ def confidence_summary(
     records: list[dict[str, Any]], cases: list[dict[str, Any]], controls: list[dict]
 ) -> dict:
     """Gates per kind (threshold, hard or advisory, accepted subjects) and, per case, the latest plan, design and test
-    score with a link to its ledger line. Runs without a ledger get empty gates and no rows."""
+    score with a link to its ledger line. Only the latest epoch counts (a rerun-from-step starts a new one), so stale
+    scores of removed cases are not shown. Runs without a ledger get empty gates and no rows."""
+    records = ledger.in_epoch(records)
     latest = ledger.latest_by_subject(records)
     gates: dict[str, Any] = {}
     for kind in GATE_LABELS:
@@ -599,7 +601,9 @@ def confidence_gates_text(report: dict[str, Any]) -> str:
             )
             continue
         gate = gates.get(kind) or {}
-        if gate.get("threshold") is None:
+        if gate.get("threshold") is None and kind == "design" and not design_review_enabled():
+            parts.append(f"{label}: design review disabled (HARNESS_DESIGN_REVIEW=0)")
+        elif gate.get("threshold") is None:
             parts.append(f"{label}: not recorded (run predates the confidence ledger)")
         else:
             parts.append(

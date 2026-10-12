@@ -67,6 +67,8 @@ PUBLIC_STATE = (
     "budget",
     "case_budget",
     "confidence_thresholds",
+    "require_full_accuracy",
+    "ledger_epoch",
     "environment",
     "completed_reason",
     "runtime_provenance",
@@ -77,6 +79,15 @@ PUBLIC_STATE = (
     "heal_rounds",
     "test_reviews",
 )
+
+
+def _full_accuracy(value) -> bool | None:
+    """Per-run full-accuracy gate: a JSON boolean, or absent (the environment default applies)."""
+    if value is None:
+        return None
+    if not isinstance(value, bool):
+        raise ValueError("require_full_accuracy must be true or false.")
+    return value
 
 
 def _confidence_thresholds(value) -> dict[str, int]:
@@ -398,6 +409,7 @@ class LocalAPI(EvidenceAPI, SettingsAPI, McpAPI, ConfidenceAPI):
             ):
                 raise ValueError("Repository and application URLs must be text; start_app must be boolean.")
             thresholds = _confidence_thresholds(body.get("confidence_thresholds"))
+            full_accuracy_flag = _full_accuracy(body.get("require_full_accuracy"))
             budget = body.get("case_budget")
             if budget is not None:
                 budget = _budget_value(
@@ -430,6 +442,11 @@ class LocalAPI(EvidenceAPI, SettingsAPI, McpAPI, ConfidenceAPI):
                             "run_mode": opts["run_mode"],
                             "test_types": opts["test_types"],
                             **({"confidence_thresholds": thresholds} if thresholds else {}),
+                            **(
+                                {"require_full_accuracy": full_accuracy_flag}
+                                if full_accuracy_flag is not None
+                                else {}
+                            ),
                         },
                         "consumed": [],
                     },
@@ -447,6 +464,7 @@ class LocalAPI(EvidenceAPI, SettingsAPI, McpAPI, ConfidenceAPI):
                         run_name,
                         run_mode=opts["run_mode"],
                         confidence_thresholds=thresholds or None,
+                        require_full_accuracy=full_accuracy_flag,
                         test_types=opts["test_types"],
                         spec_sources=opts["spec_sources"],
                         documents=opts["documents"],

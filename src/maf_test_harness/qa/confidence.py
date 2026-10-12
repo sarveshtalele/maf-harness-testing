@@ -85,6 +85,12 @@ class CodeTarget:
     route: str = ""  # path literal; {param} and :param segments are wildcards
 
 
+def confident_target(target: str) -> bool:
+    """True when the target names one confident code symbol (test review and design review cap only these)."""
+    resolved = resolve_target(target)
+    return resolved is not None and resolved.kind != "route"
+
+
 def resolve_target(target: str) -> CodeTarget | None:
     """Parse a case target. None means no confident symbol: target-based caps are skipped."""
     text = re.sub(r"\([^)]*\)", " ", target or "").strip()
@@ -140,6 +146,7 @@ def mask_code(content: str) -> str:
 
 
 _QUOTE_PREFIX = re.compile(r"(?:^|(?<=\s))\d+: ", re.M)
+MIN_QUOTE_CHARS = 12  # non-space characters a verified quote needs, unless it is an exact full source line
 
 
 def _normal(text: str) -> str:
@@ -148,9 +155,18 @@ def _normal(text: str) -> str:
 
 
 def _quoted(quote: str, *texts: str) -> bool:
-    """A non-empty quote that is a whitespace-normalised substring of one of the texts."""
+    """A verified quote: a whitespace-normalised substring of one of the texts with at least MIN_QUOTE_CHARS
+    non-space characters, or exactly one full line of a text (so a trivial token such as "a", "0" or "if" never verifies)."""
     normal = _normal(quote)
-    return bool(normal) and any(normal in _normal(text) for text in texts)
+    if not normal:
+        return False
+    substring_ok = len(re.sub(r"\s", "", normal)) >= MIN_QUOTE_CHARS
+    for text in texts:
+        if substring_ok and normal in _normal(text):
+            return True
+        if any(_normal(line) == normal for line in (text or "").splitlines()):
+            return True
+    return False
 
 
 def literal_matches(value: str, literal: Any) -> bool:
@@ -352,6 +368,15 @@ def settle_deterministic(
             continue
         settled.append(finding)
     return settled
+
+
+class ConfidenceReviewerUnavailable(RuntimeError):
+    """A confidence reviewer returned no usable review (gateway unreachable, or its own contract repair exhausted).
+    This is an outage, not a low score: the stage stops at once and the author's repair attempts are not spent."""
+
+
+def reviewer_unavailable(stage: str, detail: str) -> ConfidenceReviewerUnavailable:
+    return ConfidenceReviewerUnavailable(f"Confidence reviewer unavailable: {stage} {detail}".strip())
 
 
 def model_score(scores: dict[str, int]) -> int:

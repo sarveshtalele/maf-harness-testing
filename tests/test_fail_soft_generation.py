@@ -42,9 +42,7 @@ class Provider:
 
 def run(tmp_path, monkeypatch, ids, bad):
     monkeypatch.setattr(generation_steps, "TEST_GENERATION_BATCH_SIZE", 1)
-    monkeypatch.setattr(
-        generation_steps, "REQUIRE_FULL_ACCURACY", False
-    )  # these tests cover the fail-soft path
+    monkeypatch.setenv("HARNESS_REQUIRE_FULL_ACCURACY", "0")  # these tests cover the fail-soft path
     (tmp_path / "repo").mkdir(exist_ok=True)
     (tmp_path / "repo" / "service.py").write_text("def value(): return 2", encoding="utf-8")
     host = Harness(tmp_path, skills_root=Path("skills"), requirements_mode="model", runtime=Provider(bad))

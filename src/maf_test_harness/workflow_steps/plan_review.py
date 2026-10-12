@@ -1,20 +1,24 @@
 """Confidence reviewer of test planning areas: rubric points from the reviewer, host caps, a hard gate at 95.
 
 Each PLN area is checked for three things: its controls are covered by its evidence_files, its level fits the evidence,
-and its scenarios can be derived from that evidence. The host verifies the evidence files against the repository and
-the control requirements, applies the caps, and records every pass in the ledger. Below the gate, the planning model
-is re-asked up to MODEL_REPAIR_ATTEMPTS times; a stage that is still below the gate raises
-`Confidence gate: test planning ...` and test design never starts. Gate off (HARNESS_REQUIRE_FULL_ACCURACY=0, or a
-greenfield run without code) keeps the review advisory.
+and its scenarios can be derived from that evidence. The host checks the evidence files against the tracked repository
+files and the controls against the requirement source files, applies the caps, and records every pass in the ledger.
+An area's evidence file covers a control when it is one of the control requirement's source files or lies in the same
+directory as one. Cross-cutting areas (security, performance, regression) may have no control: that is a note, not a
+cap. Below the gate, the planning model is re-asked up to MODEL_REPAIR_ATTEMPTS times; a stage still below the gate
+raises `Confidence gate: test planning ...` and test design never starts. A reviewer that cannot answer raises
+ConfidenceReviewerUnavailable (see planning.py).
 """
 
+from pathlib import PurePosixPath
+
 from ..agent.personas import stack_expertise
-from ..agent.runtime import AgentOutputError
+from ..agent.runtime import AgentOutputError, GatewayUnavailableError
 from ..llm.prompts import build_prompt
 from ..models import PlanReviewDraft
-from ..qa.confidence import PLAN_RUBRIC, rubric_score
+from ..qa.confidence import PLAN_RUBRIC, reviewer_unavailable, rubric_score
 from ..qa.ledger import append_score
-from ..settings import REQUIRE_FULL_ACCURACY, review_threshold
+from ..settings import full_accuracy, review_threshold
 from ..workflow_support import MODEL_REPAIR_ATTEMPTS
 from .greenfield import has_no_code
 
@@ -27,7 +31,7 @@ def min_confidence(state: dict | None = None) -> int:
 
 
 def gate_on(state: dict | None = None) -> bool:
-    return bool(REQUIRE_FULL_ACCURACY) and not has_no_code(state or {})
+    return full_accuracy(state) and not has_no_code(state or {})
 
 
 def _requirement_files(state: dict) -> dict[str, set[str]]:
@@ -37,9 +41,23 @@ def _requirement_files(state: dict) -> dict[str, set[str]]:
     return {str(r["id"]): set(r.get("source_files") or []) for r in requirements}
 
 
-def _repository_files(state: dict) -> set[str]:
+def repository_files(state: dict) -> set[str]:
+    """Every tracked repository file (configs, specs, manifests and docs included), plus the analysed source and tests."""
     analysis = state["artifacts"].get("repo_analysis", {})
-    return set(analysis.get("source_files", [])) | set(analysis.get("test_files", []))
+    return (
+        set(analysis.get("tracked_files", []))
+        | set(analysis.get("source_files", []))
+        | set(analysis.get("test_files", []))
+        | set(analysis.get("package_files", []))
+    )
+
+
+def _covers(requirement_files: set[str], evidence: set[str]) -> bool:
+    """A requirement source file is among the evidence, or shares its directory with an evidence file."""
+    directories = {str(PurePosixPath(path).parent) for path in evidence}
+    return any(
+        path in evidence or str(PurePosixPath(path).parent) in directories for path in requirement_files
+    )
 
 
 def score_area(
@@ -56,19 +74,25 @@ def score_area(
             {
                 "rule": "evidence_missing",
                 "cap": 40,
-                "reason": "None of the area's evidence_files is a repository source or test file.",
+                "reason": "None of the area's evidence_files is a tracked file of the repository.",
             }
         )
     if not mine:
+        # Cross-cutting areas (security, performance, regression) legitimately have no assigned control.
         findings.append(
-            {"rule": "no_controls", "cap": 60, "reason": "No approved requirement is assigned to this area."}
+            {
+                "rule": "no_controls",
+                "cap": None,
+                "reason": "No approved requirement is assigned to this area (note: cross-cutting areas may have none).",
+            }
         )
-    elif not any(req_files.get(c["requirement_id"], set()) & known for c in mine):
+    elif not any(_covers(req_files.get(c["requirement_id"], set()), known) for c in mine):
         findings.append(
             {
                 "rule": "controls_uncovered",
-                "cap": 50,
-                "reason": f"None of the source files of its {len(mine)} control requirement(s) is among its evidence_files.",
+                "cap": 70,
+                "reason": f"None of the source files of its {len(mine)} control requirement(s) is among its evidence_files "
+                "or in the same directory as one.",
             }
         )
     scored = rubric_score("plan", scores, findings, review["verdict"])
@@ -78,7 +102,7 @@ def score_area(
         "verdict": review["verdict"],
         "reason": review["reason"],
         "accepted": review["verdict"] == "approved" and scored["confidence"] >= threshold,
-        "evidence": [{"quote": path, "verified": path in repo_files} for path in evidence_files],
+        "evidence": [{"quote": path, "exists": path in repo_files} for path in evidence_files],
         "derivations": [],
     }
 
@@ -106,7 +130,8 @@ def weak_areas(reviews, artifact: dict, state: dict | None = None) -> list[dict]
 def repair_feedback(weak: list[dict]) -> str:
     return (
         "Independent confidence review flagged these plan areas; re-plan them so every control is covered by the area's "
-        "evidence_files, the level matches the evidence and each scenario is derivable from it: "
+        "evidence_files (a file of the control's source or in its directory), the level matches the evidence and each "
+        "scenario is derivable from it: "
         + "; ".join(
             f"{r['area_id']} (confidence {r['confidence']}, {r['verdict']}): {r['reason']}"
             + "".join(f" Cap {c['rule']} {c['cap']}: {c['reason']}" for c in r.get("caps", []))
@@ -122,20 +147,21 @@ def gate_message(weak: list[dict], total: int, state: dict | None = None) -> str
         + "; ".join(
             f"{r['area_id']} confidence {r['confidence']} ({r['verdict']}): {r['reason']}" for r in weak
         )[:1800]
-        + ". HARNESS_REQUIRE_FULL_ACCURACY=0 makes this gate advisory."
+        + ". Options: (1) revise the plan with the feedback above; (2) edit the test planning reviewer prompt in Settings; "
+        "(3) start the run with full accuracy off (require_full_accuracy false, or HARNESS_REQUIRE_FULL_ACCURACY=0)."
     )
 
 
 async def review_plan_areas(host, state, artifact: dict, batch_index) -> list[dict]:
-    """Score every area of one planning artifact. An unusable reviewer returns [] (the gate then blocks)."""
+    """Score every area of one planning artifact. Raises ConfidenceReviewerUnavailable when the reviewer cannot answer."""
     analysis = state["artifacts"].get("repo_analysis", {})
     threshold = min_confidence(state)
     req_files = _requirement_files(state)
-    repo_files = _repository_files(state)
+    repo_files = repository_files(state)
     areas = artifact.get("areas") or []
     controls = artifact.get("controls") or []
     sections = {
-        "assignment": "Independently review EACH plan area. Score three dimensions from the evidence (scores field): controls_covered (0-40) how completely evidence_files cover the source files of the area's controls; level_fit (0-30) whether the declared level matches the evidence; scenarios_derivable (0-30) whether every scenario can be derived from the cited files. Verdict approved only for full marks; revise when a concrete fix exists; reject when the area cannot be grounded in the repository. Return one review per supplied area_id. The host computes the final confidence from your scores and its caps; do not inflate scores.",
+        "assignment": "Independently review EACH plan area. Score three dimensions from the evidence (scores field): controls_covered (0-40) how completely evidence_files cover the source files of the area's controls (a file of the control's source, or one in the same directory, counts); level_fit (0-30) whether the declared level matches the evidence; scenarios_derivable (0-30) whether every scenario can be derived from the cited files. An area with no control is allowed when it is cross-cutting (security, performance, regression); score its controls_covered from its evidence alone. Verdict approved only for full marks; revise when a concrete fix exists; reject when the area cannot be grounded in the repository. Return one review per supplied area_id. The host computes the final confidence from your scores and its caps; do not inflate scores.",
         "rubric": {"dimensions": PLAN_RUBRIC, "verdict_caps": {"revise": 79, "reject": 0}},
         "output_contract": PlanReviewDraft.model_json_schema(),
         "json_rules": {"single_complete_object": True, "markdown_fences": False},
@@ -187,6 +213,12 @@ async def review_plan_areas(host, state, artifact: dict, batch_index) -> list[di
             if len(ids) != len(set(ids)) or set(ids) != {str(a.get("area_id")) for a in areas}:
                 raise ValueError("Review every supplied area_id exactly once, without inventing IDs.")
             break
+        except GatewayUnavailableError as exc:
+            host.audit(
+                "plan_reviewer_unavailable", stage="test_planning", batch=batch_index, error=str(exc)[:300]
+            )
+            host.save()
+            raise reviewer_unavailable("test planning", f"gateway unreachable: {str(exc)[:400]}") from exc
         except (ValueError, AgentOutputError) as exc:
             repair = str(exc)[:600]
             host.audit(
@@ -196,11 +228,14 @@ async def review_plan_areas(host, state, artifact: dict, batch_index) -> list[di
                 attempt=attempt,
                 error=repair,
             )
-            if attempt == MODEL_REPAIR_ATTEMPTS:  # the gate decides what an unusable reviewer means
-                host.audit("plan_review_skipped", stage="test_planning", batch=batch_index, error=repair)
+            if attempt == MODEL_REPAIR_ATTEMPTS:
                 host.save()
-                return []
+                raise reviewer_unavailable(
+                    "test planning",
+                    f"returned no usable review after {MODEL_REPAIR_ATTEMPTS} attempts: {repair}",
+                ) from exc
     by_id = {str(a.get("area_id")): a for a in areas}
+    epoch = int(state.get("ledger_epoch") or 0)
     scored = []
     for review in reviews:
         area = by_id[review["area_id"]]
@@ -215,6 +250,7 @@ async def review_plan_areas(host, state, artifact: dict, batch_index) -> list[di
             threshold=threshold,
             calls=calls,
             gate="hard" if gate_on(state) else "advisory",
+            epoch=epoch,
         )
         scored.append(item)
     scored.sort(key=lambda r: (-r["confidence"], r["area_id"]))

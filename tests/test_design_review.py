@@ -12,7 +12,7 @@ from maf_test_harness.workflow import Harness
 def test_persona_contains_only_detected_stack_and_is_byte_stable():
     stack = {"ecosystems": ["python", "node"], "test_runner": "pytest", "web_ui": True}
     text = chief_architect_persona(stack, {"Python": 9, "TypeScript": 4})
-    assert "Chief Principal Architect" in text and len(text) < 2500
+    assert "Confidence Reviewer: generated tests" in text and len(text) < 2500
     assert "pytest fixtures" in text and "jest/vitest" in text and "UI:" in text
     assert "JUnit" not in text and "xUnit" not in text and "API:" not in text
     assert text == chief_architect_persona(dict(stack), {"Python": 9, "TypeScript": 4})

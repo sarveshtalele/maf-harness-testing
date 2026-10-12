@@ -22,6 +22,7 @@ from ..models import (
     TestDesignDraft,
     TestPlan,
 )
+from ..qa.confidence import ConfidenceReviewerUnavailable
 from ..qa.controls import add_plan_controls, case_controls, plan_controls
 from ..qa.quality import existing_requirement_witnesses, existing_test_evidence
 from ..qa.report import design_cases
@@ -56,6 +57,8 @@ from . import design_review, plan_review
 from .design import design_tests_batched
 from .planning_batches import plan_tests_batched, planning_is_batched
 
+LINK_KEY = "link"  # coverage keys: requirement links and control IDs a design attempt keeps
+
 
 def _model_for(stage: str) -> str | None:
     """The model a stage call uses: the stage override from settings, else the default model."""
@@ -87,7 +90,8 @@ class PlanningSteps:
             persona = settings["personas"].get(stage, persona)
         batch = kwargs.pop("prompt_batch", None)
         key = f"{stage}:{batch}" if batch is not None else stage
-        prompt = settings["overrides"].get(key) or prompt
+        if not reviewer:  # whole-prompt overrides are for authors; a reviewer's prompt is never replaced
+            prompt = settings["overrides"].get(key) or prompt
         if settings["repository_prompt"] and not reviewer:
             persona += "\n\nUSER REPOSITORY REVIEW GUIDANCE:\n" + settings["repository_prompt"]
         identifier = uuid4().hex
@@ -292,7 +296,11 @@ class PlanningSteps:
                 {a["name"] for a in requirements["actors"]} | {"System"}
             )
         evidence_paths = re.findall(r"--- FILE: (.*?) ---", state.get("evidence", ""))
-        repair = ""
+        gate_key = f"{stage}:{prompt_batch}" if prompt_batch is not None else stage
+        # The reviewer feedback of the last gate failure is the first repair of the next attempt (Retry included).
+        repair = str((state.get("gate_feedback") or {}).get(gate_key) or "")
+        # Coverage the design must keep across repairs (keep or replace, never drop).
+        covered_before: set[str] = set()
         for attempt in range(1, MODEL_REPAIR_ATTEMPTS + 1):
             prompt = build_prompt(
                 {
@@ -462,30 +470,78 @@ class PlanningSteps:
                     "complete JSON object that fixes exactly this problem and keeps everything else valid."
                 )
                 continue
-            if stage == "test_planning":
-                reviews = await plan_review.review_plan_areas(self, state, artifact, prompt_batch or 0)
-                weak = plan_review.weak_areas(reviews, artifact, state)
-                if weak and attempt < MODEL_REPAIR_ATTEMPTS:
-                    self.audit("plan_review_repair", stage=stage, batch=prompt_batch, areas=len(weak))
-                    repair = plan_review.repair_feedback(weak)
-                    continue
-                if weak and plan_review.gate_on(state):
+            if stage == "test_design":
+                # A repair must keep every requirement link and control that an earlier attempt covered.
+                coverage = _design_coverage(artifact)
+                dropped = sorted(covered_before - coverage)
+                covered_before |= coverage
+                if dropped:
                     self._settle_response_cache(stage, False)
-                    raise ValueError(plan_review.gate_message(weak, len(artifact["areas"]), state))
+                    self.audit(
+                        "design_repair_dropped_coverage", stage=stage, batch=prompt_batch, dropped=dropped
+                    )
+                    message = (
+                        "Repair dropped coverage that an earlier attempt had: "
+                        + ", ".join(dropped)
+                        + ". Keep or replace, do not delete: every requirement and control covered before must keep "
+                        "a case that links it."
+                    )
+                    if attempt == MODEL_REPAIR_ATTEMPTS:
+                        raise ValueError(message)
+                    repair = message
+                    continue
+            if stage == "test_planning":
+                try:
+                    reviews = await plan_review.review_plan_areas(self, state, artifact, prompt_batch or 0)
+                except ConfidenceReviewerUnavailable:
+                    self._settle_response_cache(stage, False)
+                    if plan_review.gate_on(state):
+                        raise  # an outage is not a low score: no author repair attempts are spent
+                    self.audit(
+                        "plan_review_advisory", stage=stage, batch=prompt_batch, note="reviewer unavailable"
+                    )
+                    reviews = None
+                if reviews is not None:
+                    weak = plan_review.weak_areas(reviews, artifact, state)
+                    if weak and attempt < MODEL_REPAIR_ATTEMPTS:
+                        self.audit("plan_review_repair", stage=stage, batch=prompt_batch, areas=len(weak))
+                        repair = plan_review.repair_feedback(weak)
+                        continue
+                    if weak and plan_review.gate_on(state):
+                        self._settle_response_cache(stage, False)
+                        self._keep_gate_feedback(state, gate_key, plan_review.repair_feedback(weak))
+                        raise ValueError(plan_review.gate_message(weak, len(artifact["areas"]), state))
             if stage == "test_design" and design_review.enabled():
                 cases = design_cases(artifact)
-                reviews = await design_review.review_design_cases(self, state, cases, prompt_batch or 0)
-                weak = design_review.weak_cases(reviews, cases, state)
-                if weak and attempt < MODEL_REPAIR_ATTEMPTS:
-                    self.audit("design_review_repair", stage=stage, batch=prompt_batch, cases=len(weak))
-                    repair = design_review.repair_feedback(weak)
-                    continue
-                if weak and design_review.gate_on(state):
+                try:
+                    reviews = await design_review.review_design_cases(self, state, cases, prompt_batch or 0)
+                except ConfidenceReviewerUnavailable:
                     self._settle_response_cache(stage, False)
-                    raise ValueError(design_review.gate_message(weak, len(cases), state))
+                    if design_review.gate_on(state):
+                        raise
+                    self.audit(
+                        "design_review_advisory", stage=stage, batch=prompt_batch, note="reviewer unavailable"
+                    )
+                    reviews = None
+                if reviews is not None:
+                    weak = design_review.weak_cases(reviews, cases, state)
+                    if weak and attempt < MODEL_REPAIR_ATTEMPTS:
+                        self.audit("design_review_repair", stage=stage, batch=prompt_batch, cases=len(weak))
+                        repair = design_review.repair_feedback(weak)
+                        continue
+                    if weak and design_review.gate_on(state):
+                        self._settle_response_cache(stage, False)
+                        self._keep_gate_feedback(state, gate_key, design_review.repair_feedback(weak))
+                        raise ValueError(design_review.gate_message(weak, len(cases), state))
             self._settle_response_cache(stage, True)
+            (state.get("gate_feedback") or {}).pop(gate_key, None)
             break
         return artifact
+
+    def _keep_gate_feedback(self, state: dict, key: str, feedback: str) -> None:
+        """Persist the last gate failure's reviewer feedback: the next attempt (after Retry too) repairs with it."""
+        state.setdefault("gate_feedback", {})[key] = feedback[:4000]
+        self.save()
 
     async def validate(self, stage, state, requirements_source=None):
 
@@ -552,7 +608,9 @@ class PlanningSteps:
             if isinstance(draft, dict):
                 draft = {k: v for k, v in draft.items() if k != "controls"}
                 draft["areas"] = [
-                    {k: v for k, v in area.items() if k != "area_id"} if isinstance(area, dict) else area
+                    {k: v for k, v in area.items() if k not in {"area_id", "origins"}}
+                    if isinstance(area, dict)
+                    else area
                     for area in draft.get("areas") or []
                 ]
             plan = TestPlan.model_validate(draft)
@@ -633,3 +691,11 @@ class PlanningSteps:
                 "completion_note": "Generation and static traceability validation complete. Each descriptive test ID is mapped to exactly one generated test file; tests were not executed.",
             }
         raise ValueError(f"Unsupported validation stage: {stage}")
+
+
+def _design_coverage(design: dict) -> set[str]:
+    """What a design attempt covers by case linkage: every traceability link ID and every control ID of its cases."""
+    cases = design_cases(design)
+    return {
+        f"{LINK_KEY}:{link.get('id')}" for case in cases for link in case.get("traceability_links", [])
+    } | {f"control:{control}" for case in cases for control in case.get("control_ids", [])}

@@ -6,9 +6,12 @@ import json
 import re
 from pathlib import Path
 
+from ..qa.triage import remedy_for
+
 CATEGORIES = (
     ("accuracy_gate", r"^Accuracy gate:"),
     ("confidence_gate", r"^Confidence gate:"),
+    ("confidence_reviewer_unavailable", r"^Confidence reviewer unavailable:"),
     ("review_rejected", r"Independent test review"),
     ("import", r"cannot work: the apparent repository|ModuleNotFoundError|No module named|import '"),
     ("syntax", r"source is invalid|was never closed|SyntaxError|NameError"),
@@ -68,6 +71,7 @@ def run_errors(run_dir, view) -> dict:
                     "category": category or categorize(detail),
                     "summary": _summary(detail),
                     "detail": detail,
+                    "remedy": remedy_for(detail),
                     "source": source,
                 }
             )

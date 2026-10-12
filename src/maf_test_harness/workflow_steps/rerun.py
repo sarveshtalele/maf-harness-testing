@@ -117,6 +117,8 @@ class RerunSteps:
                 "restart_stage": stage,
             }
             self.view.pop("error", None)
+            # A new epoch: confidence records of the replayed stages are history, not the latest scores.
+            state["ledger_epoch"] = int(state.get("ledger_epoch") or 0) + 1
             self.state = state
             self.save()
             self.audit("stage_rerun", stage=stage, attempt=attempt, retained_evidence=str(archive))

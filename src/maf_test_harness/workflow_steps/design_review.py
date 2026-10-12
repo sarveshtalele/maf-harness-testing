@@ -1,25 +1,31 @@
 """Confidence reviewer of recommended design cases: rubric points from the reviewer, host caps, a hard gate at 95.
 
-The reviewer scores four dimensions and quotes its derivation from target_source. The host verifies the quote
-(whitespace-normalised substring, as in test review), applies the caps, and records every pass in the ledger. A case
-below the gate is repaired up to MODEL_REPAIR_ATTEMPTS times; when the gate is on and a case is still below it,
-design raises `Confidence gate: test design ...` and generation never starts. Gate off (HARNESS_REQUIRE_FULL_ACCURACY=0,
-or a greenfield run without code) keeps the review advisory. HARNESS_DESIGN_REVIEW=0 turns the reviewer,
-and with it this gate, off.
+The reviewer scores four dimensions. expected_derivable needs a derivation and a source_quote that is verified: verbatim
+in target_source for a code target, or verbatim in the approved requirement evidence (requirement text and evidence,
+acceptance criteria, validation rules, API contracts). A case without a confident code symbol (UI pages, CLI commands,
+routes, flows, free text) gets no target cap, so a verified evidence quote lets it reach 100. A case below the gate is
+repaired up to MODEL_REPAIR_ATTEMPTS times; a reviewer that cannot answer raises ConfidenceReviewerUnavailable (see
+planning.py). HARNESS_DESIGN_REVIEW=0 turns the reviewer, and with it this gate, off.
 """
 
-import os
 import re
 
 from ..agent.personas import stack_expertise
-from ..agent.runtime import AgentOutputError
+from ..agent.runtime import AgentOutputError, GatewayUnavailableError
 from ..llm.prompts import build_prompt
 from ..models import DesignReviewDraft
-from ..qa.confidence import DESIGN_RUBRIC, quote_verified, resolve_target, rubric_score
+from ..qa.confidence import (
+    DESIGN_RUBRIC,
+    confident_target,
+    quote_verified,
+    resolve_target,
+    reviewer_unavailable,
+    rubric_score,
+)
 from ..qa.ledger import append_score
 from ..qa.report import design_cases
 from ..repo.analyzer import extract_target_sources
-from ..settings import REQUIRE_FULL_ACCURACY, review_threshold
+from ..settings import design_review_enabled, full_accuracy, review_threshold
 from ..workflow_support import MODEL_REPAIR_ATTEMPTS
 from .greenfield import has_no_code
 
@@ -29,7 +35,7 @@ _DIGIT = re.compile(r"\d")
 
 
 def enabled() -> bool:
-    return os.getenv("HARNESS_DESIGN_REVIEW", "1").strip().lower() not in {"0", "false", "off", "no"}
+    return design_review_enabled()
 
 
 def min_confidence(state: dict | None = None) -> int:
@@ -37,25 +43,50 @@ def min_confidence(state: dict | None = None) -> int:
 
 
 def gate_on(state: dict | None = None) -> bool:
-    return bool(REQUIRE_FULL_ACCURACY) and not has_no_code(state or {})
+    return full_accuracy(state) and not has_no_code(state or {})
 
 
 def case_source(root, target: str, source_files: list[str]) -> str:
     """Complete source of one case's target; empty when the target does not resolve. A "module.function" target
     resolves through its symbol when no class or module of that name declares it (as in test review)."""
-    if not target:
+    if not target or not confident_target(target):
         return ""
     found = extract_target_sources(root, [target], source_files)
-    resolved = resolve_target(target)
-    if not found and resolved is not None and resolved.kind != "route":
-        found = extract_target_sources(root, [resolved.symbol], source_files)
+    if not found:
+        resolved = resolve_target(target)
+        if resolved is not None:
+            found = extract_target_sources(root, [resolved.symbol], source_files)
     return found
 
 
-def score_case(review: dict, case: dict, source: str, threshold: int) -> dict:
+def requirement_evidence(requirements: dict | None, linked: set[str]) -> str:
+    """The approved evidence a non-code case may quote from: the linked requirements' text and evidence, their acceptance
+    criteria, and the artifact's validation rules and API contracts (one line per item, verbatim)."""
+    model = (requirements or {}).get("requirement_model", {})
+    parts: list[str] = []
+    for requirement in model.get("requirements", []):
+        if requirement.get("id") in linked:
+            parts += [str(requirement.get("text") or ""), str(requirement.get("evidence") or "")]
+    for criterion in model.get("acceptance_criteria", []):
+        if criterion.get("requirement_id") in linked:
+            parts.append(str(criterion.get("text") or ""))
+    parts += [str(rule.get("text") or "") for rule in model.get("validation_rules", [])]
+    parts += [
+        " ".join(
+            str(part)
+            for part in (contract.get("method"), contract.get("path"), *(contract.get("status_codes") or []))
+            if part
+        )
+        for contract in model.get("api_contracts", [])
+    ]
+    return "\n".join(part for part in parts if part.strip())
+
+
+def score_case(review: dict, case: dict, source: str, threshold: int, evidence: str = "") -> dict:
     """The reviewed case with host-computed confidence (rubric points, caps, derivation and quote evidence)."""
     scores = {dimension: int(review["scores"][dimension]) for dimension in DESIGN_RUBRIC}
-    quote_ok = quote_verified(str(review.get("source_quote") or ""), source)
+    quote = str(review.get("source_quote") or "")
+    quote_ok = quote_verified(quote, source) or quote_verified(quote, evidence)
     derivable = bool(str(review.get("derivation") or "").strip()) and quote_ok
     findings: list[dict] = []
     if not derivable:
@@ -64,15 +95,17 @@ def score_case(review: dict, case: dict, source: str, threshold: int) -> dict:
             {
                 "rule": "expected_derivable_unproven",
                 "cap": None,
-                "reason": "expected_derivable needs a derivation and a source_quote that is verbatim in target_source.",
+                "reason": "expected_derivable needs a derivation and a source_quote verbatim in target_source or in the "
+                "approved requirement evidence.",
             }
         )
-    if not source.strip():
+    target = str(case.get("target") or "")
+    if confident_target(target) and not source.strip():
         findings.append(
             {
                 "rule": "target_unresolved",
                 "cap": 50,
-                "reason": f"Target `{case.get('target') or ''}` does not resolve to implementation source.",
+                "reason": f"Target `{target}` names a code symbol that does not resolve to implementation source.",
             }
         )
     if _DIGIT.search(str(case.get("expected_result") or "")) and not quote_ok:
@@ -80,7 +113,7 @@ def score_case(review: dict, case: dict, source: str, threshold: int) -> dict:
             {
                 "rule": "numeric_expected_unverified",
                 "cap": 60,
-                "reason": "The expected result is numeric but no verified source_quote supports it.",
+                "reason": "The expected result is numeric but no verified quote supports it.",
             }
         )
     scored = rubric_score("design", scores, findings, review["verdict"])
@@ -94,7 +127,7 @@ def score_case(review: dict, case: dict, source: str, threshold: int) -> dict:
         # The fields the design artifact and older readers expect.
         "confidence": scored["confidence"],
         "derivations": [{"derivation": review.get("derivation") or ""}],
-        "evidence": [{"quote": review.get("source_quote") or "", "verified": quote_ok}],
+        "evidence": [{"quote": quote, "verified": quote_ok}],
     }
 
 
@@ -121,7 +154,8 @@ def weak_cases(reviews, cases, state: dict | None = None) -> list[dict]:
 
 def repair_feedback(reviews) -> str:
     return (
-        "Independent confidence review flagged these cases; fix, retarget or replace them using only source-proven behaviour: "
+        "Independent confidence review flagged these cases; fix, retarget or replace them using only source-proven behaviour "
+        "or verified requirement evidence: "
         + "; ".join(
             f"{r['case_id']} (confidence {r['confidence']}, {r['verdict']}): {r['reason']}"
             + "".join(f" Cap {c['rule']} {c['cap']}: {c['reason']}" for c in r.get("caps", []))
@@ -138,7 +172,9 @@ def gate_message(weak: list[dict], total: int, state: dict | None = None) -> str
         + "; ".join(
             f"{r['case_id']} confidence {r['confidence']} ({r['verdict']}): {r['reason']}" for r in weak
         )[:1800]
-        + ". Revise the design for these cases. HARNESS_REQUIRE_FULL_ACCURACY=0 makes this gate advisory."
+        + ". Options: (1) revise the design for these cases with the feedback above, keeping or replacing each case; "
+        "(2) edit the test design reviewer prompt in Settings; (3) start the run with full accuracy off "
+        "(require_full_accuracy false, or HARNESS_REQUIRE_FULL_ACCURACY=0)."
     )
 
 
@@ -158,24 +194,21 @@ def apply_design_reviews(design, state):
 
 
 async def review_design_cases(host, state, cases, batch_index):
-    """Score every case of one batch. Returns scored reviews; an unusable reviewer returns [] (the gate then blocks)."""
+    """Score every case of one batch. Raises ConfidenceReviewerUnavailable when the reviewer cannot answer."""
     analysis = state["artifacts"].get("repo_analysis", {})
     root = host.run_dir / "repo"
     source_files = analysis.get("source_files", [])
     threshold = min_confidence(state)
     targets = {str(c.get("target") or "") for c in cases}
     sources = {target: case_source(root, target, source_files) for target in targets}
-    linked = {link["id"] for c in cases for link in c.get("traceability_links", [])}
+    requirements_artifact = state["artifacts"].get("requirements", {})
     requirements = [
         r
-        for r in state["artifacts"]
-        .get("requirements", {})
-        .get("requirement_model", {})
-        .get("requirements", [])
-        if r["id"] in linked
+        for r in requirements_artifact.get("requirement_model", {}).get("requirements", [])
+        if r["id"] in {link["id"] for c in cases for link in c.get("traceability_links", [])}
     ]
     sections = {
-        "assignment": "Independently validate EACH recommended test design case against the actual source. Score four dimensions from the evidence (scores field): source_proven (0-30) the asserted behaviour is implemented by target_source; correct_target (0-25) the target is the method that implements it; expected_derivable (0-25) the expected result follows from the source, with a derivation and a source_quote copied verbatim from target_source; fixture_validity (0-20) the steps and data are valid for the real code. Verdict approved only for full marks; revise when a concrete fix exists (give suggested_target when the target is wrong); reject when the behaviour is not in the source. Return one review per supplied case ID. The host computes the final confidence from your scores and its caps; do not inflate scores.",
+        "assignment": "Independently validate EACH recommended test design case against the actual source. Score four dimensions from the evidence (scores field): source_proven (0-30) the asserted behaviour is implemented by target_source, or is stated by the approved requirement evidence when the target is not code (UI page, CLI command, route, flow); correct_target (0-25) the target is the method, page, command or route that implements it; expected_derivable (0-25) the expected result follows from the source or the approved requirement evidence, with a derivation and a source_quote copied verbatim from target_source or from approved_inputs.requirements; fixture_validity (0-20) the steps and data are valid for the real code or interface. Verdict approved only for full marks; revise when a concrete fix exists (give suggested_target when the target is wrong); reject when the behaviour is not in the source or evidence. Return one review per supplied case ID. The host computes the final confidence from your scores and its caps; do not inflate scores.",
         "rubric": {"dimensions": DESIGN_RUBRIC, "verdict_caps": {"revise": 79, "reject": 0}},
         "output_contract": DesignReviewDraft.model_json_schema(),
         "json_rules": {"single_complete_object": True, "markdown_fences": False},
@@ -212,6 +245,12 @@ async def review_design_cases(host, state, cases, batch_index):
             if len(ids) != len(set(ids)) or set(ids) != {str(c["id"]) for c in cases}:
                 raise ValueError("Review every supplied case ID exactly once, without inventing IDs.")
             break
+        except GatewayUnavailableError as exc:
+            host.audit(
+                "design_reviewer_unavailable", stage="test_design", batch=batch_index, error=str(exc)[:300]
+            )
+            host.save()
+            raise reviewer_unavailable("test design", f"gateway unreachable: {str(exc)[:400]}") from exc
         except (ValueError, AgentOutputError) as exc:
             repair = str(exc)[:600]
             host.audit(
@@ -221,15 +260,25 @@ async def review_design_cases(host, state, cases, batch_index):
                 attempt=attempt,
                 error=repair,
             )
-            if attempt == MODEL_REPAIR_ATTEMPTS:  # the gate decides what an unusable reviewer means
-                host.audit("design_review_skipped", stage="test_design", batch=batch_index, error=repair)
+            if attempt == MODEL_REPAIR_ATTEMPTS:
                 host.save()
-                return []
+                raise reviewer_unavailable(
+                    "test design",
+                    f"returned no usable review after {MODEL_REPAIR_ATTEMPTS} attempts: {repair}",
+                ) from exc
     by_id = {str(c["id"]): c for c in cases}
+    epoch = int(state.get("ledger_epoch") or 0)
     scored = []
     for review in reviews:
         case = by_id[review["case_id"]]
-        item = score_case(review, case, sources.get(str(case.get("target") or ""), ""), threshold)
+        linked = {link["id"] for link in case.get("traceability_links", [])}
+        item = score_case(
+            review,
+            case,
+            sources.get(str(case.get("target") or ""), ""),
+            threshold,
+            evidence=requirement_evidence(requirements_artifact, linked),
+        )
         append_score(
             host.run_dir,
             kind="design",
@@ -240,6 +289,7 @@ async def review_design_cases(host, state, cases, batch_index):
             threshold=threshold,
             calls=calls,
             gate="hard" if gate_on(state) else "advisory",
+            epoch=epoch,
         )
         scored.append(item)
     scored.sort(key=lambda r: (-r["confidence"], r["case_id"]))

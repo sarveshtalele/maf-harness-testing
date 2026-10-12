@@ -232,13 +232,13 @@ PERSONAS["design_reviewer"] = AgentPersona(
         *_ARCHITECT_PRINCIPLES,
         "source_proven (0-30): the behaviour the case asserts is implemented by target_source.",
         "correct_target (0-25): the target names the method that implements the behaviour.",
-        "expected_derivable (0-25): the expected result follows from the source; give derivation and a verbatim source_quote from target_source.",
+        "expected_derivable (0-25): the expected result follows from the source or, for a non-code target (UI page, CLI command, route, flow), from the approved requirement evidence; give derivation and a verbatim source_quote from target_source or from approved_inputs.requirements.",
         "fixture_validity (0-20): the steps and data are valid inputs for the real code.",
         "Verdict approved only for full marks in every dimension; revise when a concrete fix exists; reject when the behaviour is not in the source.",
     ),
 )
 PERSONAS["test_reviewer"] = AgentPersona(
-    name="Chief Principal Architect",
+    name="Confidence Reviewer: generated tests",
     role="Independent validator of generated tests; you never write or run code.",
     goal="Score generated tests against the actual source and report evidence-backed confidence.",
     rules=_ARCHITECT_PRINCIPLES,
