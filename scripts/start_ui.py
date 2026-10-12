@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import html
 import json
 import os
 import re
@@ -13,6 +14,7 @@ import signal
 import socket
 import subprocess
 import sys
+import tempfile
 import time
 import webbrowser
 from datetime import datetime
@@ -296,10 +298,39 @@ def http_get(url, headers=None, timeout=5):
 def open_session(port, launch_secret):
     """Exchanges the one-time launch secret for the session cookie, as the browser does. This spends the secret."""
     status, headers, _ = http_get(f"http://127.0.0.1:{port}/api/session?launch={launch_secret}")
-    match = re.search(r"aqe_session=([A-Za-z0-9_-]+)", headers.get("Set-Cookie", ""))
+    match = re.search(rf"aqe_session_{port}=([A-Za-z0-9_.-]+)", headers.get("Set-Cookie", ""))
     if status != 303 or not match:
         raise RuntimeError("The UI did not accept the launch link.")
-    return f"aqe_session={match.group(1)}"
+    return f"aqe_session_{port}={match.group(1)}"
+
+
+def open_app(port, launch_secret, opener=webbrowser.open, cleanup_after=60):
+    """Opens the UI through a local page that redirects to the launch link. The secret is then never in the opener's
+    command line (visible to other local users). The page is 0600, in a private folder, and is deleted after
+    `cleanup_after` seconds; the printed link remains the fallback. Returns the page path."""
+    target = f"http://127.0.0.1:{port}/api/session?launch={launch_secret}"
+    folder = Path(tempfile.mkdtemp(prefix="maf-open-"))
+    page = folder / "open.html"
+    body = (
+        '<!doctype html><meta charset="utf-8">'
+        f'<meta http-equiv="refresh" content="0;url={html.escape(target, quote=True)}">'
+        f"<title>Agentic QE</title><script>location.replace({json.dumps(target)});</script>"
+        f'<p>Opening Agentic QE. If nothing happens, <a href="{html.escape(target, quote=True)}">continue</a>.</p>'
+    )
+    fd = os.open(page, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    with os.fdopen(fd, "w", encoding="utf-8") as handle:
+        handle.write(body)
+
+    def cleanup():
+        time.sleep(cleanup_after)
+        shutil.rmtree(folder, ignore_errors=True)
+
+    Thread(target=cleanup, daemon=True).start()
+    try:
+        opener(page.as_uri())
+    except webbrowser.Error:
+        pass
+    return page
 
 
 def nonce_matches(body, nonce):
@@ -430,7 +461,10 @@ def main():
     for candidate in range(args.port, args.port + (1 if explicit_port else 10)):
         if running_application(candidate, current_build):
             print(
-                f"Agentic QE Platform is already running on port {candidate}. Open it from the link printed in the terminal that started it (each link works once).\nNo rebuild or duplicate servers started. Stop it with Ctrl+C in its original terminal before updating.",
+                f"Agentic QE Platform is already running on port {candidate}. To use it:\n"
+                f"  1. Open http://127.0.0.1:{candidate} in the browser that already has it: the session lasts 7 days.\n"
+                "  2. For a new link, stop the running launcher (Ctrl+C in its terminal) and start it again. The link printed\n"
+                "     by a launcher is single-use.\nNo rebuild or duplicate servers started.",
                 flush=True,
             )
             # Platform wrappers distinguish reuse from preflight success and skip installation/build.
@@ -474,7 +508,8 @@ def main():
     launch_secret = secrets.token_urlsafe(32)
     backend_nonce = secrets.token_urlsafe(24)
     backend_env = {**env, "HARNESS_LAUNCH_NONCE": backend_nonce}
-    frontend_env = {**env, "HARNESS_LAUNCH_SECRET": launch_secret}
+    # The state directory keeps the session signing key and the spent launch secret across a Next restart (0600 file).
+    frontend_env = {**env, "HARNESS_LAUNCH_SECRET": launch_secret, "HARNESS_UI_STATE_DIR": str(STATE_DIR)}
     log_path = log_dir / ("launch-" + datetime.now().strftime("%Y%m%d-%H%M%S-%f") + ".log")
     log = log_path.open("w", encoding="utf-8")
     print(
@@ -618,13 +653,10 @@ def main():
             except OSError:
                 time.sleep(0.5)
         if os.environ.get("AGENTIC_QE_OPEN_BROWSER", "1") != "0":
-            try:
-                webbrowser.open(launch_url)
-            except webbrowser.Error:
-                pass
+            open_app(args.port, launch_secret)
         print(
-            f"Open the app: {launch_url}\n(The browser opens this link automatically. It works once; if it is lost, "
-            "stop and start the launcher again.) Ctrl+C stops both services.",
+            f"Open the app: {launch_url}\n(The browser opens the app automatically. This link works once; if the browser "
+            "did not open, use it. Afterwards the browser keeps the session for 7 days.) Ctrl+C stops both services.",
             flush=True,
         )
         while all(process.poll() is None for process in processes):
