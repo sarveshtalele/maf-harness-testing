@@ -61,8 +61,10 @@ export type SectionSpec = { id: string; title: string; count?: number; summary?:
 export type Meta = { label: string; value: ReactNode };
 
 /** The one page template: breadcrumbs, title with ID and status, metadata strip, actions, downloads, notices and sections. */
-export function DetailPage({ breadcrumbs, eyebrow, title, id, status, meta, actions, downloads, notices, sections, children, level = 1 }: {
-  breadcrumbs?: Crumb[]; eyebrow?: string; title: string; id?: string; status?: unknown; meta?: Meta[]; actions?: ReactNode; downloads?: Download[]; notices?: ReactNode; sections?: SectionSpec[]; children?: ReactNode;
+export function DetailPage({ breadcrumbs, eyebrow, title, id, status, badges, meta, actions, downloads, notices, sections, children, footer, level = 1 }: {
+  breadcrumbs?: Crumb[]; eyebrow?: string; title: string; id?: string; status?: unknown; badges?: ReactNode; meta?: Meta[]; actions?: ReactNode; downloads?: Download[]; notices?: ReactNode; sections?: SectionSpec[]; children?: ReactNode;
+  /** Rendered after the sections; a sticky footer (for example unsaved-change controls) belongs here. */
+  footer?: ReactNode;
   /** 1 for a page of its own; 2 for a run tab, whose run name is already the h1. */
   level?: 1 | 2;
 }) {
@@ -78,7 +80,7 @@ export function DetailPage({ breadcrumbs, eyebrow, title, id, status, meta, acti
       <div className="page-hero-text">
         {eyebrow && <span className="eyebrow">{eyebrow}</span>}
         <Heading className="page-title">{title}</Heading>
-        {(id || status !== undefined) && <div className="page-hero-meta">{id && <code className="page-id">{id}</code>}{status !== undefined && <StatusBadge value={status} />}</div>}
+        {(id || status !== undefined || badges) && <div className="page-hero-meta">{id && <code className="page-id">{id}</code>}{status !== undefined && <StatusBadge value={status} />}{badges}</div>}
       </div>
       {actions && <div className="header-actions page-actions">{actions}</div>}
     </header>
@@ -88,6 +90,7 @@ export function DetailPage({ breadcrumbs, eyebrow, title, id, status, meta, acti
     {children}
     {specs.length > 1 && <div className="section-tools"><button type="button" className="small" onClick={() => setAll(true)}>Expand all</button><button type="button" className="small" onClick={() => setAll(false)}>Collapse all</button></div>}
     {specs.map(spec => <Section key={spec.id} tag={level === 1 ? 'h2' : 'h3'} id={spec.id} title={spec.title} count={spec.count} summary={spec.summary} expandHref={spec.expandHref} open={isOpen(spec)} onToggle={value => setOpen(current => ({ ...current, [spec.id]: value }))}>{spec.render}</Section>)}
+    {footer}
   </article>;
 }
 
