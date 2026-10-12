@@ -61,6 +61,7 @@ class ExecutionSteps:
             },
             plan=arts.get("test_planning"),
             confidence=ledger.entries(self.run_dir),
+            repaired=sorted({cid for regenerated in state.get("heal_history", []) for cid in regenerated}),
             provenance={
                 "runtime": state.get("runtime_provenance"),
                 "skills": state.get("skill_provenance"),

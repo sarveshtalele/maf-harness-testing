@@ -24,6 +24,16 @@ test('QA report shows a structured verdict, status badges, scrollable tables and
   await expect(wrapper.locator('table > caption')).toHaveCount(1);
   await expect(wrapper.locator('thead th').first()).toHaveCSS('position', 'sticky');
   await expect(wrapper.locator('.badge.bad').filter({ hasText: /^(Failed|Error|Generation Failed)$/ }).first()).toBeVisible();
+  // Behaviour split (product, component, characterization), failure split and the measured-coverage state.
+  await expect(page.getByRole('button', { name: 'Behaviour: product, component, characterization' })).toBeVisible();
+  await page.getByRole('button', { name: 'Behaviour: product, component, characterization' }).click();
+  const product = page.getByRole('region', { name: 'Product behaviour' });
+  await expect(product).toBeVisible();
+  await expect(product.locator('td').filter({ hasText: 'specified' }).first()).toBeVisible();
+  await expect(page.getByRole('region', { name: 'Component behaviour' })).toBeVisible();
+  await page.getByRole('button', { name: 'Test defects (auto-repaired / still failing)' }).click();
+  await expect(page.getByRole('region', { name: 'Test defects still failing' })).toBeVisible();
+  await expect(page.getByText('Line and branch coverage: not measured', { exact: false }).first()).toBeVisible();
   // Markdown and JSON are offered only as downloads.
   await expect(page.locator('a[download]', { hasText: 'Markdown' }).first()).toBeVisible();
   await expect(page.locator('a[download]', { hasText: 'JSON' }).first()).toBeVisible();

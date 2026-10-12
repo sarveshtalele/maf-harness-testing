@@ -235,7 +235,9 @@ def build_qa_report(
     generated_at: str | None = None,
     plan: dict[str, Any] | None = None,
     confidence: list[dict[str, Any]] | None = None,
+    repaired: list[str] | None = None,
 ) -> dict[str, Any]:
+    """``repaired`` names the cases an earlier heal round regenerated (state ``heal_history``)."""
     files = generation.get("files", [])
     controls = plan_controls(requirements, plan)
     reviews = {r["case_id"]: r for r in generation.get("case_reviews", [])}
@@ -531,6 +533,9 @@ def build_qa_report(
             if c["status"] in {"failed", "error", "generation_failed"}
             or (c["status"] == "not_executed" and c["message"])
         ],
+        "behaviour": behaviour_sections(cases),
+        "failure_split": failure_split(cases, triage_rows, repaired or []),
+        "oracle_summary": oracle_summary(design, requirements),
         "unmapped_results": unmapped,
         "updates": updates,
         "stack": stack or {},
@@ -544,6 +549,193 @@ def build_qa_report(
             "not semantic completeness.",
         ],
     }
+
+
+BEHAVIOUR_SECTIONS = (
+    ("product", "Product behaviour", "Documented product requirements (tier product)."),
+    (
+        "component",
+        "Component behaviour",
+        "Callable-level requirements (tier component; the default for older runs).",
+    ),
+    (
+        "characterization",
+        "Characterization",
+        "Current behaviour only. These cases describe what the code does today and are never reported as verified.",
+    ),
+)
+
+
+def behaviour_sections(cases: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Product behaviour, component behaviour, then characterization. Review acceptance and execution stay separate
+    columns; ``verified`` (review accepted AND execution passed) is always False for characterization cases."""
+    buckets: dict[str, list[dict[str, Any]]] = {kind: [] for kind, _, _ in BEHAVIOUR_SECTIONS}
+    for case in sorted(cases, key=lambda c: c["id"]):
+        if str(case.get("oracle") or "").lower() == "characterization":
+            kind = "characterization"
+        elif str(case.get("tier") or "").lower() == "product":
+            kind = "product"
+        else:
+            kind = "component"
+        verified = kind != "characterization" and bool(case.get("verified"))
+        buckets[kind].append(
+            {
+                "case_id": case["id"],
+                "title": case["title"],
+                "tier": case.get("tier"),
+                "oracle": case.get("oracle"),
+                "source_review": case.get("source_review", "not_reviewed"),
+                "execution": case["status"],
+                "verified": verified,
+                "label": "current behaviour, never verified"
+                if kind == "characterization"
+                else ("verified" if verified else "not verified"),
+            }
+        )
+    return [
+        {"id": kind, "title": title, "description": text, "cases": buckets[kind]}
+        for kind, title, text in BEHAVIOUR_SECTIONS
+    ]
+
+
+def failure_split(
+    cases: list[dict[str, Any]], triage_rows: list[dict[str, Any]], repaired: list[str]
+) -> dict[str, Any]:
+    """Product defects (with documented evidence); test defects, auto-repaired or still failing; the rest."""
+    by_id = {c["id"]: c for c in cases}
+    split: dict[str, Any] = {
+        "product_defects": [],
+        "test_defects": {"auto_repaired": [], "still_failing": []},
+        "unresolved": [],
+        "environment": [],
+    }
+    for record in triage_rows:
+        case = by_id.get(record["case_id"], {})
+        entry = {
+            "case_id": record["case_id"],
+            "title": case.get("title", ""),
+            "file": case.get("file"),
+            "status": record["status"],
+            "classification": record["classification"],
+            "reason": record["reason"],
+            "oracle": record.get("oracle"),
+            "expected": record.get("expected"),
+            "actual": record.get("actual"),
+            "documented_quote": record.get("documented_quote"),
+            "message": (case.get("message") or "")[:600],
+        }
+        if record["classification"] == "product_defect":
+            split["product_defects"].append(entry)
+        elif record["classification"] == "test_defect":
+            split["test_defects"]["still_failing"].append(entry)
+        elif record["classification"] == "environment":
+            split["environment"].append(entry)
+        else:
+            split["unresolved"].append(entry)
+    for case_id in dict.fromkeys(repaired):
+        case = by_id.get(case_id)
+        if case and case["status"] == "passed":
+            split["test_defects"]["auto_repaired"].append(
+                {
+                    "case_id": case_id,
+                    "title": case.get("title", ""),
+                    "file": case.get("file"),
+                    "status": "passed",
+                }
+            )
+    return split
+
+
+def oracle_summary(design: dict[str, Any], requirements: dict[str, Any]) -> dict[str, Any]:
+    """Counts by oracle kind and tier. Uses qa.oracles.oracle_summary when that module exists; otherwise a local
+    fallback that reads ``oracle`` and ``tier`` defensively (older design cases carry neither)."""
+    try:
+        from . import oracles
+    except ImportError:
+        oracles = None
+    if oracles is not None and hasattr(oracles, "oracle_summary"):
+        return oracles.oracle_summary(design, requirements)
+    by_oracle: dict[str, int] = {}
+    by_tier: dict[str, int] = {}
+    for case in design_cases(design):
+        oracle_kind = str(case.get("oracle") or "missing")
+        tier = str(case.get("tier") or "component")
+        by_oracle[oracle_kind] = by_oracle.get(oracle_kind, 0) + 1
+        by_tier[tier] = by_tier.get(tier, 0) + 1
+    return {"by_oracle": dict(sorted(by_oracle.items())), "by_tier": dict(sorted(by_tier.items()))}
+
+
+def _behaviour_markdown(report: dict[str, Any]) -> list[str]:
+    sections = report.get("behaviour") or []
+    if not any(s["cases"] for s in sections) or not any(
+        c.get("tier") or c.get("oracle") for s in sections for c in s["cases"]
+    ):
+        return []  # runs without tier or oracle fields keep the old layout
+    out = ["## Behaviour", ""]
+    for section in sections:
+        out += [f"### {section['title']}", "", section["description"], ""]
+        if not section["cases"]:
+            out += ["_No cases in this section._", ""]
+            continue
+        out += [
+            "| Case | Oracle | Review accepted | Execution | Verified | Note |",
+            "|---|---|---|---|---|---|",
+        ]
+        out += [
+            f"| {md_cell(c['case_id'])} {md_cell(c['title'], 60)} | {md_cell(c['oracle'] or 'missing')} "
+            f"| {'yes' if c['source_review'] == 'accepted' else c['source_review']} | {c['execution']} "
+            f"| {'yes' if c['verified'] else 'no'} | {md_cell(c['label'])} |"
+            for c in section["cases"]
+        ]
+        out.append("")
+    return out
+
+
+def _failure_split_markdown(report: dict[str, Any]) -> list[str]:
+    split = report["failure_split"]
+    out = ["## Failures", ""]
+    out += ["### Product defects (with documented evidence)", ""]
+    if split["product_defects"]:
+        out += [
+            "| Case | Expected (documented) | Actual | Documented quote | Oracle |",
+            "|---|---|---|---|---|",
+        ]
+        out += [
+            f"| {md_cell(p['case_id'])} {md_cell(p['title'], 60)} | {md_cell(p['expected'])} | {md_cell(p['actual'])} "
+            f"| {md_cell(p['documented_quote'], 200)} | {md_cell(p['oracle'])} |"
+            for p in split["product_defects"]
+        ]
+    else:
+        out.append("_None recorded._")
+    tests = split["test_defects"]
+    out += ["", "### Test defects (auto-repaired / still failing)", ""]
+    out += [
+        f"- Auto-repaired: {md_cell(t['case_id'])} {md_cell(t['title'], 80)} (now passing)"
+        for t in tests["auto_repaired"]
+    ]
+    out += [
+        f"- Still failing: {md_cell(t['case_id'])} {md_cell(t['title'], 80)}: {md_cell(t['reason'], 200)}"
+        for t in tests["still_failing"]
+    ]
+    if not tests["auto_repaired"] and not tests["still_failing"]:
+        out.append("_None recorded._")
+    out += ["", "### Unresolved and environment failures", ""]
+    out += [
+        f"- Unresolved: {md_cell(u['case_id'])} {md_cell(u['title'], 80)}: {md_cell(u['reason'], 200)}"
+        for u in split["unresolved"]
+    ]
+    out += [
+        f"- Environment: {md_cell(e['case_id'])} {md_cell(e['title'], 80)}: {md_cell(e['reason'], 200)}"
+        for e in split["environment"]
+    ]
+    if not split["unresolved"] and not split["environment"]:
+        out.append("_None recorded._")
+    out.append("")
+    for case in report["failures"]:
+        out += [
+            f"- **{case['title']}** (`{case['file'] or 'no file'}`, {case['status']})\n  ```\n  {case['message'][:600]}\n  ```"
+        ]
+    return out
 
 
 def _updates_markdown(updates: dict[str, Any]) -> list[str]:
@@ -801,6 +993,7 @@ def render_markdown(report: dict[str, Any]) -> str:
             for r in report.get("baseline_regression", [])
         ],
         "",
+        *_behaviour_markdown(report),
         *_traceability_markdown(report),
         *measured_coverage_markdown(report),
         *_confidence_markdown(report),
@@ -838,7 +1031,9 @@ def render_markdown(report: dict[str, Any]) -> str:
         "Requirement states (static traceability, not measured coverage): "
         + ", ".join(f"{k}={v}" for k, v in report["requirement_state_counts"].items()),
     ]
-    if report["failures"]:
+    if "failure_split" in report:
+        lines += [""] + _failure_split_markdown(report)
+    elif report["failures"]:
         lines += ["", "## Failures", ""]
         lines += [
             f"- **{c['title']}** (`{c['file'] or 'no file'}`, {c['status']})\n  ```\n  {c['message'][:600]}\n  ```"

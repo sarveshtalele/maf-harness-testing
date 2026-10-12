@@ -2,7 +2,7 @@
 definition and the ledger record. No model is called."""
 
 from maf_test_harness.qa import ledger
-from maf_test_harness.qa.report import build_qa_report, render_markdown
+from maf_test_harness.qa.report import build_qa_report, oracle_summary, render_markdown
 from maf_test_harness.qa.verification import (
     ENVIRONMENT,
     PRODUCT_DEFECT,
@@ -247,3 +247,126 @@ def test_old_runs_without_triage_keep_the_previous_heal_selection():
     state = _heal_state(qa)
     _heal(state)
     assert state["heal"]["failed_case_ids"] == ["TC-1"]
+
+
+def test_behaviour_sections_keep_product_component_and_characterization_apart():
+    design = {
+        "positive_tests": [
+            {
+                "id": "TC-1",
+                "title": "product",
+                "type": "positive",
+                "traceability_links": [],
+                "tier": "product",
+                "oracle": "specified",
+            },
+            {
+                "id": "TC-2",
+                "title": "component",
+                "type": "positive",
+                "traceability_links": [],
+                "tier": "component",
+                "oracle": "derived",
+            },
+            {
+                "id": "TC-3",
+                "title": "today",
+                "type": "positive",
+                "traceability_links": [],
+                "tier": "product",
+                "oracle": "characterization",
+            },
+        ],
+        "traceability_matrix": {},
+    }
+    gen = {
+        "files": [{"path": "tests/test_x.py", "content": "x", "case_ids": ["TC-1", "TC-2", "TC-3"]}],
+        "case_reviews": [
+            {"case_id": cid, "verdict": "supported", "confidence": 97, "reason": "r"}
+            for cid in ("TC-1", "TC-2", "TC-3")
+        ],
+    }
+    execution = {
+        "status": "passed",
+        "adapter": "python-pytest",
+        "cases": [
+            {
+                "name": f"test_{cid}",
+                "classname": "tests.test_x",
+                "status": "passed",
+                "message": "",
+                "file": "tests/test_x.py",
+            }
+            for cid in ("TC-1", "TC-2", "TC-3")
+        ],
+    }
+    qa = build_qa_report(
+        repo={"source_files": []}, requirements={}, design=design, generation=gen, execution=execution
+    )
+    ids = {section["id"]: [c["case_id"] for c in section["cases"]] for section in qa["behaviour"]}
+    assert list(ids) == ["product", "component", "characterization"]
+    assert ids["product"] == ["TC-1"] and ids["component"] == ["TC-2"] and ids["characterization"] == ["TC-3"]
+    characterization = qa["behaviour"][2]["cases"][0]
+    assert characterization["verified"] is False and "never verified" in characterization["label"]
+    assert qa["behaviour"][0]["cases"][0]["verified"] is True
+    md = render_markdown(qa)
+    assert (
+        md.index("### Product behaviour")
+        < md.index("### Component behaviour")
+        < md.index("### Characterization")
+    )
+    assert "## Behaviour" in md
+
+
+def test_failure_split_names_product_defects_and_repaired_or_still_failing_test_defects():
+    qa = _report(_design(oracle="specified", oracle_quote="add(1, 2) is 4", tier="product"))
+    split = qa["failure_split"]
+    assert [p["case_id"] for p in split["product_defects"]] == ["TC-1"]
+    assert split["product_defects"][0]["expected"] == "4" and split["product_defects"][0]["actual"] == "3"
+    assert split["test_defects"] == {"auto_repaired": [], "still_failing": []}
+    md = render_markdown(qa)
+    assert "### Product defects (with documented evidence)" in md
+    assert "### Test defects (auto-repaired / still failing)" in md
+
+
+def test_auto_repaired_test_defects_are_listed_once_they_pass():
+    qa_before = _report(_design(oracle="derived"))
+    assert qa_before["failure_split"]["test_defects"]["still_failing"][0]["case_id"] == "TC-1"
+    gen = {
+        "files": [{"path": "tests/test_x.py", "content": "x", "case_ids": ["TC-1"]}],
+        "case_reviews": [{"case_id": "TC-1", "verdict": "supported", "confidence": 97, "reason": "r"}],
+    }
+    execution = {
+        "status": "passed",
+        "adapter": "python-pytest",
+        "cases": [
+            {
+                "name": "test_x",
+                "classname": "tests.test_x",
+                "status": "passed",
+                "message": "",
+                "file": "tests/test_x.py",
+            }
+        ],
+    }
+    qa = build_qa_report(
+        repo={"source_files": []},
+        requirements={},
+        design=_design(oracle="derived"),
+        generation=gen,
+        execution=execution,
+        repaired=["TC-1"],
+    )
+    assert [r["case_id"] for r in qa["failure_split"]["test_defects"]["auto_repaired"]] == ["TC-1"]
+    assert qa["failure_split"]["test_defects"]["still_failing"] == []
+
+
+def test_oracle_summary_falls_back_to_counts_when_the_oracle_module_is_absent():
+    design = {
+        "positive_tests": [{"id": "TC-1", "oracle": "specified", "tier": "product"}],
+        "negative_tests": [{"id": "TC-2"}],
+        "traceability_matrix": {},
+    }
+    summary = oracle_summary(design, {})
+    assert summary["by_oracle"] == {"missing": 1, "specified": 1}
+    assert summary["by_tier"] == {"component": 1, "product": 1}
