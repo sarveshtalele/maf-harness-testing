@@ -10,7 +10,12 @@ from .presentation import public
 
 def _view(server: dict) -> dict:
     status = mcp_servers.secret_status(server)
-    return {**server, "secrets": status, "ready": all(status.values())}
+    return {
+        **server,
+        "secrets": status,
+        "ready": all(status.values()),
+        "fingerprint": mcp_servers.fingerprint(server),
+    }
 
 
 class McpAPI:

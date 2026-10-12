@@ -8,6 +8,7 @@ environment variables (the desktop app reads them from the OS keychain). They ar
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import os
 import re
@@ -415,6 +416,22 @@ def secret_env_name(server: str, key: str) -> str:
 
 def secret_keys(server: dict) -> list[str]:
     return [BEARER_KEY] if server["transport"] == "http" else list(server["env_keys"])
+
+
+def fingerprint(server: dict) -> str:
+    """Identity of a server's target: transport, URL, command, args and secret names. The desktop keystore keeps each
+    secret next to this value and drops it when the target changes, so a token never follows a server to a new URL
+    or command (F4). Holds no secret value."""
+    target = {
+        "transport": server.get("transport", ""),
+        "url": server.get("url") or "",
+        "command": server.get("command") or "",
+        "args": list(server.get("args") or []),
+        "env_keys": sorted(server.get("env_keys") or []),
+    }
+    return hashlib.sha256(
+        json.dumps(target, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    ).hexdigest()
 
 
 def set_secrets(name: str, values: dict) -> None:
