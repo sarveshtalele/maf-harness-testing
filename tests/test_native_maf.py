@@ -303,7 +303,10 @@ def test_reviewer_persona_gets_fresh_agent_and_session_not_the_generators_primed
                 state=state,
                 persist=lambda: None,
             )
-            seen[persona] = (runtime._agents["test_design"][1], runtime._primed["test_design"])
+            seen[persona] = (
+                runtime._agents[("test_design", "stage_author")][1],
+                runtime._primed[("test_design", "stage_author")],
+            )
 
     try:
         service.submit(go()).result(20)
@@ -312,3 +315,81 @@ def test_reviewer_persona_gets_fresh_agent_and_session_not_the_generators_primed
     assert seen["GENERATOR"][0] is not seen["REVIEWER"][0]
     assert seen["GENERATOR"][1] is not seen["REVIEWER"][1]
     assert client.calls == 6  # the reviewer primed its own skill session instead of copying the generator's
+
+
+def test_author_and_reviewer_roles_keep_their_own_agent_and_skill_trace(monkeypatch):
+    client = ScriptedClient(load=SKILL)
+    monkeypatch.setattr(runtime_module, "OpenAIChatCompletionClient", lambda **kwargs: client)
+    runtime = MAFHarnessRuntime(
+        api_key="test", model="test", skills_root=Path("skills"), base_url="http://test"
+    )
+    created = []
+    original_create = runtime._create_agent
+
+    def counting(stage, *args, **kwargs):
+        created.append(stage)
+        return original_create(stage, *args, **kwargs)
+
+    runtime._create_agent = counting
+    state, service = fresh_state(), RuntimeService()
+
+    async def go():
+        for role in ("stage_author", "test_reviewer", "stage_author", "test_reviewer"):
+            await runtime.run_stage(
+                stage="test_generation",
+                skill_name=SKILL,
+                persona="SAME",
+                prompt="Return JSON.",
+                state=state,
+                persist=lambda: None,
+                role=role,
+            )
+
+    try:
+        service.submit(go()).result(30)
+    finally:
+        service.close()
+    assert created == [
+        "test_generation",
+        "test_generation",
+    ]  # one agent per role, not rebuilt on each alternation
+    assert set(state["skill_tool_trace"]) == {"test_generation", "test_generation:test_reviewer"}
+
+
+def test_reviewer_answer_does_not_replace_the_authors_pending_cache_entry(monkeypatch, tmp_path):
+    client = ScriptedClient(load=SKILL)
+    monkeypatch.setattr(runtime_module, "OpenAIChatCompletionClient", lambda **kwargs: client)
+    monkeypatch.setattr(runtime_module, "response_cache_dir", lambda: tmp_path / "cache")
+    runtime = MAFHarnessRuntime(
+        api_key="test", model="test", skills_root=Path("skills"), base_url="http://test"
+    )
+    state, service = fresh_state(), RuntimeService()
+
+    async def go():
+        await runtime.run_stage(
+            stage="test_generation",
+            skill_name=SKILL,
+            persona="AUTHOR",
+            prompt="Return JSON.",
+            state=state,
+            persist=lambda: None,
+            temperature=0,
+        )
+        await runtime.run_stage(
+            stage="test_generation",
+            skill_name=SKILL,
+            persona="REVIEWER",
+            prompt="Review it.",
+            state=state,
+            persist=lambda: None,
+            temperature=0,
+            role="test_reviewer",
+        )
+        assert ("test_generation", "stage_author") in runtime._last_response
+        runtime.settle_response_cache("test_generation", True)  # the host accepted the author's answer
+
+    try:
+        service.submit(go()).result(30)
+    finally:
+        service.close()
+    assert len(list((tmp_path / "cache").glob("*.json"))) == 1

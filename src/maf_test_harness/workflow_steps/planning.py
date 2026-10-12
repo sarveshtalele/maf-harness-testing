@@ -11,7 +11,7 @@ from pydantic import ValidationError
 
 from ..agent import prompt_settings
 from ..agent.personas import persona_instructions
-from ..agent.runtime import AgentOutputError, GatewayUnavailableError
+from ..agent.runtime import STAGE_AUTHOR, AgentOutputError, GatewayUnavailableError
 from ..envs.environment import build_environment_plan
 from ..envs.setup_guide import setup_guide
 from ..llm.prompts import build_prompt
@@ -87,7 +87,7 @@ class PlanningSteps:
         self.save()
         try:
             return await self.runtime.run_stage(
-                stage=stage, persona=persona, prompt=prompt, state=state, **kwargs
+                stage=stage, persona=persona, prompt=prompt, state=state, role=role or STAGE_AUTHOR, **kwargs
             )
         finally:
             record.update(state.get("model_instructions", {}).get(stage, {}))
