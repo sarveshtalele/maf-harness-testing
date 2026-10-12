@@ -170,3 +170,14 @@ def test_stage_prompts_start_with_the_assignment_and_the_schema_and_end_with_fee
         keys = list(prompt)
         assert keys[:3] == ["assignment", "output_contract", "json_rules"], stage
         assert keys[-2:] == ["revision_feedback", "repair_feedback"], stage
+
+
+def test_prompt_settings_save_never_stages_through_a_shared_temp_name(tmp_path):
+    from maf_test_harness.agent import prompt_settings
+
+    path = tmp_path / "prompts.json"
+    other_writer = tmp_path / "prompts.tmp"  # the fixed staging name the old save used
+    other_writer.write_text("another writer's staging data", encoding="utf-8")
+    prompt_settings.save(path, prompt_settings.defaults())
+    assert other_writer.read_text(encoding="utf-8") == "another writer's staging data"
+    assert prompt_settings.load(path) == prompt_settings.defaults()

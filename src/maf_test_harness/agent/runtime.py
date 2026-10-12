@@ -160,6 +160,9 @@ def _trace_key(stage: str, role: str) -> str:
     return stage if role == STAGE_AUTHOR else f"{stage}:{role}"
 
 
+_FENCED_BLOCK = re.compile(r"```[A-Za-z0-9_-]*[ \t]*\r?\n?(.*?)```", re.DOTALL)
+
+
 def extract_json_object(text: str) -> dict[str, Any]:
     """Return the complete JSON object from a model response.
 
@@ -183,6 +186,19 @@ def extract_json_object(text: str) -> dict[str, Any]:
         return value
     if value is not None:
         raise AgentOutputError("Agent response must be a JSON object.")
+
+    # Likely blocks first (linear time): a Markdown-fenced body, then the outermost braces.
+    fence = _FENCED_BLOCK.search(text)
+    first, last = text.find("{"), text.rfind("}")
+    for block in ([fence.group(1)] if fence else []) + (
+        [text[first : last + 1]] if 0 <= first < last else []
+    ):
+        try:
+            decoded = json.loads(block)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(decoded, dict):
+            return decoded
 
     # Compatibility path for prose/fenced output. raw_decode() is strict about
     # the JSON itself but permits us to ignore text outside the decoded object.
