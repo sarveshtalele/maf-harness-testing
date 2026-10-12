@@ -175,6 +175,22 @@ def append_score(
     return record
 
 
+def append_event(
+    run_dir: Path, *, kind: str, subject_id: str, epoch: int, data: dict[str, Any]
+) -> dict[str, Any]:
+    """Append a non-score record (for example ``execution_triage``). Text values are clipped like score evidence;
+    the record carries no scores, so gates and round counts ignore it."""
+    record = {
+        "kind": kind,
+        "subject_id": str(subject_id),
+        "epoch": int(epoch),
+        **{key: clip(value) if isinstance(value, str) else value for key, value in data.items()},
+        "timestamp": datetime.now(UTC).isoformat(),
+    }
+    append_jsonl(run_dir / LEDGER, record)
+    return record
+
+
 def remap_plan_subjects(run_dir: Path, mapping: dict[tuple[Any, str], str]) -> int:
     """Rewrite plan records of a batched plan to the FINAL merged area IDs.
 

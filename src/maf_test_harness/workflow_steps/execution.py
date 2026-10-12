@@ -22,6 +22,7 @@ from ..qa import ledger
 from ..qa.report import build_qa_report, render_markdown
 from ..qa.step_reports import run_completed_at
 from ..qa.triage import remedy_for
+from ..qa.verification import TEST_DEFECT
 from ..repo.stack import detect_stack
 from ..settings import (
     DIAGNOSIS_AGENT,
@@ -518,7 +519,32 @@ class ExecutionSteps:
                 diagnoses=(report.get("diagnoses") or [])[:5],
                 attempt=info["attempt"],
             )
-        await self.review(EXECUTION_STAGE, self._execution_artifact(state, report), state, ctx)
+        artifact = self._execution_artifact(state, report)
+        self._record_triage(state, artifact["qa_report"], info["attempt"])
+        await self.review(EXECUTION_STAGE, artifact, state, ctx)
+
+    def _record_triage(self, state: dict, qa: dict, attempt: int) -> None:
+        """Keep every verification-triage classification in the run state and the confidence ledger."""
+        records = qa.get("triage") or []
+        state.setdefault("triage", {})[str(attempt)] = records
+        epoch = int(state.get("ledger_epoch") or 0)
+        for record in records:
+            ledger.append_event(
+                self.run_dir,
+                kind="execution_triage",
+                subject_id=record["case_id"],
+                epoch=epoch,
+                data={
+                    "attempt": attempt,
+                    "classification": record["classification"],
+                    "reason": record["reason"],
+                    "oracle": record.get("oracle"),
+                    "expected": record.get("expected"),
+                    "actual": record.get("actual"),
+                    "documented_quote": record.get("documented_quote"),
+                },
+            )
+        self.audit("execution_triaged", attempt=attempt, summary=qa.get("triage_summary"))
 
     def _execute_with_app(
         self, plan: RunPlan, workspace: Path, out_dir: Path, state: dict, info: dict
@@ -544,11 +570,26 @@ class ExecutionSteps:
             raise ValueError(f"Regeneration limit ({MAX_HEAL_ROUNDS}) reached; approve, skip or stop.")
         qa = state["artifacts"][EXECUTION_STAGE]["qa_report"]
         failed = [c for c in qa["cases"] if c["status"] in {"failed", "error", "not_executed"}]
+        triage = {r["case_id"]: r for r in qa.get("triage") or []} if "triage" in qa else None
+        if (
+            triage is not None
+        ):  # verified triage: only test defects are regenerated; product defects keep their assertion
+            failed = [c for c in failed if triage.get(c["id"], {}).get("classification") == TEST_DEFECT]
+            if not failed:
+                raise ValueError(
+                    "No test defects to regenerate. Product defects keep their assertions and unresolved failures "
+                    "need a human decision; approve or stop instead."
+                )
         if not failed:
             raise ValueError("No failing or unexecuted tests to regenerate; approve or stop instead.")
         state["heal_rounds"] = rounds + 1
         evidence = "\n".join(
             f"- {c['id']} ({c['title']}): {c['status']} {c['message'][:500]}"
+            + (
+                f"\n  TRIAGE: test defect, {triage[c['id']]['reason']}"
+                if triage and c["id"] in triage
+                else ""
+            )
             + (f"\n  REMEDY: {remedy_for(c['message'])}" if remedy_for(c["message"]) else "")
             for c in failed
         )
@@ -559,6 +600,9 @@ class ExecutionSteps:
         )
         failed_ids = {c["id"] for c in failed}
         state["heal"] = {"failed_case_ids": sorted(failed_ids), "round": state["heal_rounds"]}
+        state.setdefault("heal_history", []).append(
+            sorted(failed_ids)
+        )  # report: auto-repaired vs still failing
         for stage in ("test_generation", EXECUTION_STAGE):
             state["artifacts"].pop(stage, None)
             state.get("approved", {}).pop(stage, None)

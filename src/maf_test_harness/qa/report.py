@@ -17,6 +17,7 @@ from ..qa.confidence import review_accepted
 from ..settings import TEST_REVIEW_MIN_CONFIDENCE, design_review_enabled
 from .controls import case_controls, plan_controls, summarize_trace, summary_text, trace_rows
 from .triage import build_updates
+from .verification import documented_quote, is_verified, summarize_triage, triage_cases
 
 # Assertion-failure signatures of the common runners: "AssertionError", pytest's "assert a == b" rewrite, and
 # "expected X got Y" / "expected X but was Y" messages. A bare word "assert" in a traceback or a name does not count.
@@ -285,6 +286,10 @@ def build_qa_report(
                     link["id"] for link in case.get("traceability_links", []) if link["type"] == "requirement"
                 ],
                 "control_ids": case_controls(case, controls),
+                # Design-case oracle fields are read defensively: runs made before they existed carry none.
+                "tier": case.get("tier"),
+                "oracle": case.get("oracle"),
+                "oracle_quote": documented_quote(case),
             }
         )
         threshold = (generation.get("verification_summary") or {}).get(
@@ -304,6 +309,15 @@ def build_qa_report(
             source_review == "accepted"
             and row["status"] in {"failed", "error"}
             and bool(_ASSERTION_MISMATCH.search(row["message"] or ""))
+        )
+        row["verified"] = is_verified(source_review, row["status"])
+    adapter = str((execution or {}).get("adapter") or "")
+    triage_rows = triage_cases(cases, adapter.split("-")[0] or None)
+    triage_by_case = {r["case_id"]: r for r in triage_rows}
+    for row in cases:
+        record = triage_by_case.get(row["id"])
+        row["triage"] = (
+            {"classification": record["classification"], "reason": record["reason"]} if record else None
         )
     cases.sort(key=lambda c: (-(c.get("confidence") or 0), c["id"]))
     test_cases = case_table_rows(design, requirements)
@@ -446,12 +460,20 @@ def build_qa_report(
         "generated_verdict": generated_verdict,
         "verification": generation.get("verification_summary"),
         "review_vs_execution": review_vs_execution(cases),
+        "verification_counts": {
+            "review_accepted": sum(c["source_review"] == "accepted" for c in cases),
+            "execution_passed": sum(c["status"] == "passed" for c in cases),
+            "verified": sum(bool(c.get("verified")) for c in cases),
+        },
+        "triage": triage_rows,
+        "triage_summary": summarize_triage(triage_rows),
         "case_verification": {
             row["case_id"]: {
                 "source_review": row["source_review"],
                 "confidence": row["confidence"],
                 "execution": row["execution"],
                 "review_miss": row["review_miss"],
+                "verified": is_verified(row["source_review"], row["execution"]),
             }
             for row in review_vs_execution(cases)
         },
