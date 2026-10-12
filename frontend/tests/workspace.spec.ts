@@ -262,7 +262,7 @@ test('mouse resizing persists and project skill cards show real package details'
   await expect.poll(async () => (await panel.boundingBox())!.height).toBeCloseTo(resized.height, 0);
   await page.getByRole('navigation', { name: 'Main navigation' }).getByRole('button', { name: 'Marketplace', exact: true }).click();
   await expect(page.getByLabel('requirement-analysis workflow map')).toBeVisible();
-  await expect(page.locator('.skill-card')).toHaveCount(13); // 12 repo skills + spec-authoring (greenfield)
+  await expect(page.locator('.skill-card')).toHaveCount(14); // 12 repo skills + spec-authoring (greenfield) + test-reviewer
   await page.getByRole('searchbox', { name: 'Search agent skills' }).fill('playwright');
   await expect(page.locator('.skill-card')).toHaveCount(1);
   await expect(page.getByText('Upstream library provenance', { exact: true })).toHaveCount(0);
