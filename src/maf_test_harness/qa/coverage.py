@@ -7,18 +7,69 @@ and per-requirement line and branch percentages. Nothing here is "measured" unle
 
 from __future__ import annotations
 
+import fnmatch
+import os
+import sys
+from pathlib import Path
 from typing import Any
+
+# Patterns are matched against workspace-relative paths (coverage runs with relative_files), so a workspace that
+# itself lives under a tests/ or test/ directory still measures its own source files.
+OMIT_PATTERNS = (
+    ".harness-*/*",
+    "*/.harness-*/*",
+    "*/site-packages/*",
+    ".venv/*",
+    "*/.venv/*",
+    "venv/*",
+    "*/venv/*",
+    "node_modules/*",
+    "*/node_modules/*",
+    "tests/*",
+    "*/tests/*",
+    "test/*",
+    "*/test/*",
+    "conftest.py",
+    "*/conftest.py",
+    "test_*.py",
+    "*/test_*.py",
+    "*_test.py",
+    "*/*_test.py",
+)
 
 COUNT_KEYS = ("covered_lines", "num_statements", "covered_branches", "num_branches")
 
 
 def _path(value: str) -> str:
+    """A comparable repository-relative path: forward slashes, no leading ./, case-folded on Windows."""
     text = str(value).replace("\\", "/")
-    return text[2:] if text.startswith("./") else text
+    while text.startswith("./"):
+        text = text[2:]
+    return text.lower() if sys.platform.startswith("win") else text
 
 
-def file_counts(report: dict[str, Any]) -> dict[str, dict[str, int]]:
-    """Per-file counts from one coverage.py JSON report (``files`` -> ``summary``). Malformed rows are skipped."""
+def is_omitted(relative: str) -> bool:
+    rel = _path(relative)
+    return any(fnmatch.fnmatch(rel, pattern) for pattern in OMIT_PATTERNS)
+
+
+def count_source_files(root: Path) -> int:
+    """Repository Python source files under ``root`` that coverage would consider (tests, venvs and generated
+    directories excluded). Reported next to the measured files so the measurement's reach is visible."""
+    total = 0
+    for folder, dirs, names in os.walk(root):
+        rel_dir = Path(folder).relative_to(root).as_posix()
+        prefix = "" if rel_dir == "." else f"{rel_dir}/"
+        dirs[:] = [d for d in dirs if not is_omitted(f"{prefix}{d}/_")]
+        for name in names:
+            if name.endswith(".py") and not is_omitted(f"{prefix}{name}"):
+                total += 1
+    return total
+
+
+def file_counts(report: dict[str, Any], prefix: str = "") -> dict[str, dict[str, int]]:
+    """Per-file counts from one coverage.py JSON report (``files`` -> ``summary``), keyed repository-relative: the
+    component's directory (``prefix``) is prepended. Malformed rows are skipped."""
     counts: dict[str, dict[str, int]] = {}
     for name, data in (report.get("files") or {}).items():
         summary = data.get("summary") if isinstance(data, dict) else None
@@ -28,7 +79,8 @@ def file_counts(report: dict[str, Any]) -> dict[str, dict[str, int]]:
             row = {key: int(summary.get(key) or 0) for key in COUNT_KEYS}
         except (TypeError, ValueError):
             continue
-        counts[_path(name)] = row
+        key = _path(f"{prefix}/{name}" if prefix and prefix != "." else name)
+        counts[key] = row
     return counts
 
 
@@ -61,7 +113,9 @@ def _sum(rows: list[dict[str, int]]) -> dict[str, int]:
 
 
 def summarize(
-    files: dict[str, dict[str, int]], requirement_sources: dict[str, list[str]] | None = None
+    files: dict[str, dict[str, int]],
+    requirement_sources: dict[str, list[str]] | None = None,
+    total_source_files: int | None = None,
 ) -> dict:
     """Totals, per-file rows and, per requirement, the measured files among its source files.
 
@@ -90,7 +144,16 @@ def summarize(
     return {
         "status": "measured",
         "tool": "coverage.py",
-        "scope": "Repository source executed by the generated test run; tests, fixtures and the isolated venv omitted.",
+        "scope": (
+            f"Measured over files imported during the tests ({len(files)} files); unimported files are not counted. "
+            + (
+                f"The repository has {total_source_files} Python source files."
+                if total_source_files is not None
+                else ""
+            )
+        ).strip(),
+        "measured_files": len(files),
+        "total_source_files": total_source_files,
         "totals": {
             **totals,
             "line_percent": percent(totals["covered_lines"], totals["num_statements"]),

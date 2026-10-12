@@ -261,8 +261,14 @@ class ScriptedStageRuntime:
                 "expected_result": "add(1, 2) returns 3",
                 "steps": ["Call add(1, 2)", "Compare with 3"],
                 "traceability_links": [{"type": "requirement", "id": req}],
+                # The generator derived this expectation from source (no document states it): positive evidence for
+                # a test defect, so a failure of it may be regenerated.
+                "oracle": "derived",
             }
-            negative = [{**c, "traceability_links": case["traceability_links"]} for c in self.extra_cases]
+            negative = [
+                {**c, "traceability_links": case["traceability_links"], "oracle": c.get("oracle", "derived")}
+                for c in self.extra_cases
+            ]
             return {
                 "status": "completed",
                 "artifact": {

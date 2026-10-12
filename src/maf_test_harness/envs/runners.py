@@ -18,6 +18,7 @@ from itertools import takewhile
 from pathlib import Path, PurePosixPath
 
 from .. import errors, paths
+from ..qa.coverage import OMIT_PATTERNS
 from ..repo.analyzer import declared_dependencies
 from ..repo.stack import REQUIRED_TOOLS, StackProfile
 from ..skills.contracts import PYTHON_PROJECT_FILES, python_import_roots
@@ -74,26 +75,11 @@ COVERAGE_PACKAGES = ("coverage==7.10.7", "pytest-cov==7.0.0")
 COVERAGE_JSON = f"{REPORT_DIR}/coverage.json"
 COVERAGE_INI = f"{REPORT_DIR}/coverage.ini"
 # Repository source only: generated and repository tests, fixtures and the isolated venv are never measured.
-COVERAGE_INI_TEXT = """[run]
-branch = True
-omit =
-    */.harness-*/*
-    .harness-*/*
-    */site-packages/*
-    */.venv/*
-    */venv/*
-    */tests/*
-    tests/*
-    */test/*
-    test/*
-    */conftest.py
-    conftest.py
-    test_*.py
-    */test_*.py
-    *_test.py
-    */*_test.py
-"""
-COVERAGE_ARGV = ["--cov=.", f"--cov-config={COVERAGE_INI}", f"--cov-report=json:{COVERAGE_JSON}"]
+COVERAGE_INI_TEXT = "[run]\nbranch = True\nrelative_files = True\nomit =\n" + "".join(
+    f"    {p}\n" for p in OMIT_PATTERNS
+)
+# Bare --cov measures the files the tests import (not every file under the workspace); paths are workspace-relative.
+COVERAGE_ARGV = ["--cov", f"--cov-config={COVERAGE_INI}", f"--cov-report=json:{COVERAGE_JSON}"]
 
 
 # Third-party test helpers the python adapter may install (allow-list: never install arbitrary model-named packages).
@@ -338,20 +324,24 @@ def setup_steps(
         venv_py = platform_compat.venv_python(ws / VENV_DIR)
         pip = {"PIP_CACHE_DIR": platform_compat.cache_path(cache, "pip")}
         pip_cmd = [venv_py, "-m", "pip", "install", "--disable-pip-version-check", "-q"]
+        coverage_install = Step(
+            # Test-only, exact pins. Optional: without it the tests still run and coverage is reported as not measured.
+            "install-coverage",
+            [*pip_cmd, *COVERAGE_PACKAGES],
+            "setup",
+            env=pip,
+            timeout=timeout,
+            continue_on_failure=True,
+        )
+        if env_ready:  # prepared already; the coverage tooling is still needed for measured runs
+            steps.append(coverage_install)
         if not env_ready:
             steps += [
                 _create_venv_step(ws, timeout, python_override),
                 Step("install-pytest", [*pip_cmd, "pytest"], "setup", env=pip, timeout=timeout),
-                # Optional: without it the tests still run and coverage is reported as not measured.
-                Step(
-                    "install-coverage",
-                    [*pip_cmd, *COVERAGE_PACKAGES],
-                    "setup",
-                    env=pip,
-                    timeout=timeout,
-                    continue_on_failure=True,
-                ),
+                coverage_install,
             ]
+
             if (ws / "requirements.txt").is_file():
                 steps.append(
                     Step(
@@ -1412,10 +1402,15 @@ def _coverage_run(
     evidence = out_dir / label / "coverage.json"
     evidence.parent.mkdir(parents=True, exist_ok=True)
     shutil.copyfile(source, evidence)
-    return {"status": "measured", "cwd": step.cwd, "evidence": str(evidence), "files": file_counts(data)}
+    return {
+        "status": "measured",
+        "cwd": step.cwd,
+        "evidence": str(evidence),
+        "files": file_counts(data, prefix=step.cwd),
+    }
 
 
-def _coverage_result(plan: RunPlan, runs: list[dict]) -> dict:
+def _coverage_result(plan: RunPlan, runs: list[dict], workspace: Path) -> dict:
     """The execution's coverage: measured only when every test step with coverage measured; never estimated."""
     eco = (plan.adapter or "").split("-")[0]
     if not runs:
@@ -1427,7 +1422,7 @@ def _coverage_result(plan: RunPlan, runs: list[dict]) -> dict:
     if any(run["status"] != "measured" for run in runs):
         reasons = "; ".join(f"{run['cwd']}: {run['reason']}" for run in runs if run["status"] != "measured")
         return {"status": "not_measured", "tool": "coverage.py", "reason": reasons, "runs": runs}
-    from ..qa.coverage import merge
+    from ..qa.coverage import count_source_files, merge
 
     return {
         "status": "measured",
@@ -1435,6 +1430,7 @@ def _coverage_result(plan: RunPlan, runs: list[dict]) -> dict:
         "reason": "",
         "runs": [{k: v for k, v in run.items() if k != "files"} for run in runs],
         "files": merge(*(run["files"] for run in runs)),
+        "total_source_files": count_source_files(workspace),
     }
 
 
@@ -1529,7 +1525,7 @@ def execute_plan(
                     error=f"Setup step '{step.name}' failed: {result['status']}" + _why(diagnoses),
                 )
                 break
-    report["coverage"] = _coverage_result(plan, coverage_runs)
+    report["coverage"] = _coverage_result(plan, coverage_runs, workspace)
     if not setup_failed:
         if not report["cases"] or report.get("quarantined"):
             last = next((e for e in reversed(report["steps"]) if e["kind"] == "test"), None)

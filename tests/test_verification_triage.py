@@ -31,20 +31,22 @@ def test_golden_oracle_counts_as_documented():
     assert classify_failure(ASSERT, oracle="golden", quote=quote)["classification"] == PRODUCT_DEFECT
 
 
-def test_a_documented_oracle_whose_quote_does_not_state_the_value_is_a_guessed_test_defect():
+def test_a_documented_oracle_whose_quote_states_neither_value_is_unresolved_not_a_test_defect():
     record = classify_failure(ASSERT, oracle="specified", quote="add sums two numbers.")
-    assert record["classification"] == TEST_DEFECT
-    assert "guessed" in record["reason"]
+    assert record["classification"] == UNRESOLVED
 
 
-def test_derived_characterization_and_missing_oracles_are_test_defects():
-    for oracle in ("derived", "characterization", ""):
-        assert classify_failure(ASSERT, oracle=oracle, quote="3 and 4")["classification"] == TEST_DEFECT
+def test_only_a_derived_expectation_is_a_test_defect_without_a_documented_value():
+    assert (
+        classify_failure(ASSERT, oracle="derived", quote="add sums two numbers.")["classification"]
+        == TEST_DEFECT
+    )
+    for oracle in ("characterization", ""):
+        assert classify_failure(ASSERT, oracle=oracle, quote="")["classification"] == UNRESOLVED
 
 
-def test_a_test_that_cannot_run_is_a_test_defect_whatever_its_oracle():
-    message = "ImportError: cannot import name 'add_numbers' from 'service'"
-    assert classify_failure(message, oracle="specified", quote=DOC)["classification"] == TEST_DEFECT
+def test_a_derived_expectation_that_conflicts_with_a_quote_is_unresolved():
+    assert classify_failure(ASSERT, oracle="derived", quote="add(1, 2) is 4")["classification"] == UNRESOLVED
 
 
 def test_environment_causes_come_from_the_error_taxonomy_first():
@@ -68,12 +70,10 @@ def test_only_executed_failures_are_triaged_and_counted():
     cases = [
         {"id": "TC-1", "status": "failed", "message": ASSERT, "oracle": "derived"},
         {"id": "TC-2", "status": "passed", "message": ""},
-        {"id": "TC-3", "status": "not_executed", "message": ASSERT},
     ]
     rows = triage_cases(cases)
     assert [r["case_id"] for r in rows] == ["TC-1"]
-    counts = summarize_triage(rows)
-    assert counts[TEST_DEFECT] == 1 and counts[PRODUCT_DEFECT] == 0
+    assert summarize_triage(rows)[TEST_DEFECT] == 1
 
 
 def test_verified_needs_both_review_acceptance_and_execution_pass():

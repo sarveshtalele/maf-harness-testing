@@ -22,7 +22,7 @@ from ..qa import ledger
 from ..qa.report import build_qa_report, render_markdown
 from ..qa.step_reports import run_completed_at
 from ..qa.triage import remedy_for
-from ..qa.verification import TEST_DEFECT
+from ..qa.verification import DOCUMENTED_ORACLES, TEST_DEFECT, oracle_kind
 from ..repo.stack import detect_stack
 from ..settings import (
     DIAGNOSIS_AGENT,
@@ -37,6 +37,17 @@ from ..workflow_support import (
     atomic_json,
     digest,
 )
+
+
+def _documented_instruction(case: dict, record: dict | None) -> str:
+    """The documented quote and the rule for a case whose expectation a document may state."""
+    oracle = oracle_kind({"oracle": (record or {}).get("oracle") or case.get("oracle")})
+    if oracle not in DOCUMENTED_ORACLES:
+        return ""
+    quote = (record or {}).get("documented_quote") or "none recorded"
+    return (
+        f"\n  DOCUMENTED ({oracle}): {quote}\n  NEVER CHANGE THIS EXPECTED VALUE; fix setup or inputs only."
+    )
 
 
 class ExecutionSteps:
@@ -62,6 +73,7 @@ class ExecutionSteps:
             plan=arts.get("test_planning"),
             confidence=ledger.entries(self.run_dir),
             repaired=sorted({cid for regenerated in state.get("heal_history", []) for cid in regenerated}),
+            declared_packages=list(state.get("declared_dependencies") or []),
             provenance={
                 "runtime": state.get("runtime_provenance"),
                 "skills": state.get("skill_provenance"),
@@ -525,24 +537,25 @@ class ExecutionSteps:
         await self.review(EXECUTION_STAGE, artifact, state, ctx)
 
     def _record_triage(self, state: dict, qa: dict, attempt: int) -> None:
-        """Keep every verification-triage classification in the run state and the confidence ledger."""
+        """Keep every verification-triage classification in the run state and in triage.jsonl (once per case and
+        attempt), never in the score ledger."""
         records = qa.get("triage") or []
         state.setdefault("triage", {})[str(attempt)] = records
         epoch = int(state.get("ledger_epoch") or 0)
         for record in records:
-            ledger.append_event(
+            ledger.append_triage(
                 self.run_dir,
-                kind="execution_triage",
-                subject_id=record["case_id"],
+                case_id=record["case_id"],
+                attempt=attempt,
                 epoch=epoch,
                 data={
-                    "attempt": attempt,
                     "classification": record["classification"],
                     "reason": record["reason"],
                     "oracle": record.get("oracle"),
                     "expected": record.get("expected"),
                     "actual": record.get("actual"),
                     "documented_quote": record.get("documented_quote"),
+                    "documented_matches": record.get("documented_matches") or [],
                 },
             )
         self.audit("execution_triaged", attempt=attempt, summary=qa.get("triage_summary"))
@@ -592,6 +605,7 @@ class ExecutionSteps:
                 else ""
             )
             + (f"\n  REMEDY: {remedy_for(c['message'])}" if remedy_for(c["message"]) else "")
+            + _documented_instruction(c, triage.get(c["id"]) if triage else None)
             for c in failed
         )
         state.setdefault("feedback", {})["test_generation"] = (
@@ -604,6 +618,20 @@ class ExecutionSteps:
         state.setdefault("heal_history", []).append(
             sorted(failed_ids)
         )  # report: auto-repaired vs still failing
+        # Heal guard: the healed file must keep every documented value its assertions stated before.
+        previous = (state["artifacts"].get("test_generation") or {}).get("files", [])
+        state["heal_guard"] = {
+            "files": {f["path"]: f["content"] for f in previous},
+            "guards": {
+                c["id"]: {
+                    "files": [f["path"] for f in previous if c["id"] in f.get("case_ids", [])],
+                    "documented": list((triage.get(c["id"]) or {}).get("documented_matches") or [])
+                    if triage
+                    else [],
+                }
+                for c in failed
+            },
+        }
         for stage in ("test_generation", EXECUTION_STAGE):
             state["artifacts"].pop(stage, None)
             state.get("approved", {}).pop(stage, None)

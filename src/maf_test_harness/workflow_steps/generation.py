@@ -22,6 +22,7 @@ from ..qa.quality import (
 )
 from ..qa.report import design_cases
 from ..qa.triage import remedy_for
+from ..qa.verification import heal_guard_violations
 from ..repo.analyzer import (
     build_repository_evidence,
     collaborator_signatures,
@@ -634,6 +635,13 @@ class GenerationSteps:
                 "Generated files do not implement all approved case IDs: "
                 + ", ".join(validation["uncovered_case_ids"])
             )
+        guard = state.get("heal_guard")
+        if guard:  # reject a healed file that changed a documented expected value
+            regenerated = {f["path"]: f["content"] for f in final_payload.get("files", [])}
+            violations = heal_guard_violations(guard["files"], regenerated, guard["guards"])
+            if violations:
+                raise ValueError("Heal guard rejected the regenerated tests: " + "; ".join(violations))
+            state.pop("heal_guard", None)
         state.pop("heal", None)  # a heal round is finished once every failing case has been regenerated
         state.setdefault("generation_batches", {})["test_generation"] = {
             "batch_size": TEST_GENERATION_BATCH_SIZE,

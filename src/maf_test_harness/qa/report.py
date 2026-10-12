@@ -19,12 +19,15 @@ from .controls import case_controls, plan_controls, summarize_trace, summary_tex
 from .coverage import not_measured, summarize
 from .triage import build_updates
 from .verification import (
+    PRODUCT_DEFECT,
+    UNRESOLVED,
     counts_as_verified,
     documented_quote,
     is_characterization,
     is_verified,
     oracle_kind,
     oracle_verified,
+    repo_module_names,
     summarize_triage,
     triage_cases,
 )
@@ -228,7 +231,7 @@ def measured_coverage(execution: dict[str, Any] | None, req_sources: dict[str, l
         return not_measured(f"coverage: not measured for {stack}")
     if cov.get("status") != "measured":
         return not_measured(cov.get("reason") or "coverage: not measured", cov.get("tool"))
-    return summarize(cov.get("files") or {}, req_sources)
+    return summarize(cov.get("files") or {}, req_sources, cov.get("total_source_files"))
 
 
 def build_qa_report(
@@ -245,6 +248,7 @@ def build_qa_report(
     plan: dict[str, Any] | None = None,
     confidence: list[dict[str, Any]] | None = None,
     repaired: list[str] | None = None,
+    declared_packages: list[str] | None = None,
 ) -> dict[str, Any]:
     """``repaired`` names the cases an earlier heal round regenerated (state ``heal_history``)."""
     files = generation.get("files", [])
@@ -342,7 +346,14 @@ def build_qa_report(
     adapter = str((execution or {}).get("adapter") or "")
     # Characterization is current behaviour: no verified, review or passed counts.
     scored_cases = [c for c in cases if c.get("oracle") != "characterization"]
-    triage_rows = triage_cases(cases, adapter.split("-")[0] or None)
+    triage_rows = triage_cases(
+        cases,
+        adapter.split("-")[0] or None,
+        {
+            "modules": repo_module_names(list(repo.get("source_files") or [])),
+            "declared": list(declared_packages or []),
+        },
+    )
     triage_by_case = {r["case_id"]: r for r in triage_rows}
     for row in cases:
         record = triage_by_case.get(row["id"])
@@ -477,6 +488,16 @@ def build_qa_report(
         or any(row["state"] == "untested" and row["requirement_state"] == "unexplained" for row in coverage)
     ):
         verdict = "INCONCLUSIVE"
+    # Policy: a product defect or an unresolved failure can never leave the verdict at PASS.
+    classes = summarize_triage(triage_rows)
+    if classes[PRODUCT_DEFECT]:
+        verdict = "FAIL"
+        generated_verdict = "FAIL"
+    if classes[PRODUCT_DEFECT] or classes[UNRESOLVED]:
+        if verdict.startswith("PASS"):
+            verdict = "INCONCLUSIVE"
+        if generated_verdict.startswith("PASS"):
+            generated_verdict = "INCONCLUSIVE"
     source_files = set(repo.get("source_files", []))
     represented_files = {p for sources in req_sources.values() for p in sources}
     traceability = trace_rows(controls, cases, generation, environment, design)

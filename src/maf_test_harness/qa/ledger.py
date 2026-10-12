@@ -191,6 +191,41 @@ def append_event(
     return record
 
 
+TRIAGE = "triage.jsonl"  # verification triage lives beside the score ledger, so it never pushes scores out of the window
+
+
+def append_triage(
+    run_dir: Path, *, case_id: str, attempt: int, epoch: int, data: dict[str, Any]
+) -> dict[str, Any] | None:
+    """Append one triage record for (case, attempt). A record already written for that pair is kept, not duplicated;
+    returns None in that case."""
+    path = run_dir / TRIAGE
+    if path.is_file():
+        for _, existing in _stream(path):
+            if str(existing.get("case_id")) == str(case_id) and int(existing.get("attempt") or 0) == int(
+                attempt
+            ):
+                return None
+    record = {
+        "kind": "execution_triage",
+        "case_id": str(case_id),
+        "attempt": int(attempt),
+        "epoch": int(epoch),
+        **{key: clip(value) if isinstance(value, str) else value for key, value in data.items()},
+        "timestamp": datetime.now(UTC).isoformat(),
+    }
+    append_jsonl(path, record)
+    return record
+
+
+def triage_entries(run_dir: Path) -> list[dict[str, Any]]:
+    """Every triage record of the run, oldest first; a missing file is empty."""
+    path = run_dir / TRIAGE
+    if not path.is_file():
+        return []
+    return [{**record, "line": number} for number, record in _stream(path)]
+
+
 def remap_plan_subjects(run_dir: Path, mapping: dict[tuple[Any, str], str]) -> int:
     """Rewrite plan records of a batched plan to the FINAL merged area IDs.
 
