@@ -696,3 +696,20 @@ def test_the_api_token_is_removed_from_the_environment_and_still_redacted(monkey
     assert "HARNESS_API_TOKEN" not in os.environ
     assert token not in redact(f"token={token}")[0]
     assert api_module.take_api_token() is None
+
+
+def test_prompt_log_lives_beside_the_run_not_in_its_checkpointed_state(local_api):
+    api = local_api
+    key = api.start({"repo_url": "https://github.com/acme/demo"})["id"]
+    wait(api)
+    while (
+        api.read(key)["pending"]["stage"] != "requirements"
+    ):  # clone, then repo analysis: model calls start later
+        approve(api, key)
+    approve(api, key)  # the requirements stage has now made its model call
+    log = api.run_path(key) / "prompt_records.jsonl"
+    assert log.is_file() and log.read_text(encoding="utf-8").count("\n") >= 1
+    run = json.loads((api.run_path(key) / "run.json").read_text(encoding="utf-8"))
+    assert "prompt_records" not in run["state"]
+    records = api.prompts(key)["records"]
+    assert records and {"id", "stage", "sha256"} <= set(records[0])

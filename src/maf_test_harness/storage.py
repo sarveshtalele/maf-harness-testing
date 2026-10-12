@@ -45,6 +45,26 @@ def read_regular_file(path: Path) -> bytes:
         return stream.read()
 
 
+def append_jsonl(path: Path, record: dict) -> None:
+    """Append one record as a JSON line. Logs grow per model call, so they live beside the run, not in its state."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("a", encoding="utf-8") as stream:
+        stream.write(json.dumps(record, default=str) + "\n")
+
+
+def read_jsonl(path: Path) -> list:
+    """Every record in a JSON-lines log; a torn last line from a crash is skipped."""
+    if not path.is_file():
+        return []
+    records = []
+    for line in path.read_text(encoding="utf-8").splitlines():
+        try:
+            records.append(json.loads(line))
+        except ValueError:
+            continue
+    return records
+
+
 def read_json(path: Path):
     return json.loads(_retry(lambda: path.read_text(encoding="utf-8")))
 
