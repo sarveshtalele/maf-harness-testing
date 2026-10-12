@@ -7,6 +7,7 @@ from pathlib import Path
 import pytest
 from fakes import FULL_MARKS, ScriptedStageRuntime, clone_fixture, review_response
 
+from maf_test_harness.qa.confidence import review_accepted
 from maf_test_harness.qa.controls import _case_outcome
 from maf_test_harness.qa.report import build_qa_report, render_markdown
 from maf_test_harness.qa.triage import remedy_for
@@ -473,3 +474,163 @@ def test_default_review_threshold_is_80_and_the_model_need_not_emit_confidence(t
     candidate, cases = review_fixture(tmp_path)
     asyncio.run(review_generated_tests(PromptHost(tmp_path, FULL_MARKS), REVIEW_STATE, candidate, cases, 1))
     assert "each dimension should be at least 85% of its maximum" in seen[0]
+
+
+# Regression fixtures for the requirement-analysis-skill run (2026-10-12): both generated tests were reviewed as
+# "supported" at full marks and then failed at execution. The reviewer transport below is scripted, so each case
+# is the real source snippet plus the wrong (or right) literal and a rubber-stamp reviewer response.
+CTL003_SOURCE = """class LocationResolver:
+    def __init__(self, places):
+        self.places = list(places)
+
+    def score(self, query, place):
+        return sum(1 for ch in query if ch in place)
+
+    def resolve(self, query):
+        scored = [(self.score(query, place), place) for place in self.places]
+        return [place for points, place in scored if points > 0]
+"""
+CTL001_SOURCE = """from pathlib import Path
+
+
+class CodebaseIndexer:
+    def __init__(self, root):
+        self.root = Path(root)
+
+    def build(self):
+        index = {}
+        for path in sorted(self.root.rglob("*.py")):
+            content = path.read_text(encoding="utf-8")
+            index[path.name] = {"line_count": content.count("\\n") + 1}
+        return index
+"""
+CTL003_WRONG = """from location import LocationResolver
+
+
+def test_resolve_keeps_both_places():
+    resolver = LocationResolver(["Berlin", "Paris"])
+    assert len(resolver.resolve("Bx")) == 2
+"""
+CTL003_RIGHT = CTL003_WRONG.replace("== 2", "== 1")
+CTL001_WRONG = """from indexer import CodebaseIndexer
+
+
+def test_build_counts_lines(tmp_path):
+    (tmp_path / "app.py").write_text("x = 1\\ny = 2\\n", encoding="utf-8")
+    index = CodebaseIndexer(tmp_path).build()
+    assert index["app.py"]["line_count"] == 2
+"""
+CTL001_RIGHT = CTL001_WRONG.replace("== 2", "== 3")
+
+
+def ctl_review(tmp_path, *, source_name, source, test_text, target, case_id="TC-1", derivations=None):
+    """Review one generated test against its real source with a rubber-stamp reviewer (full marks, supported)."""
+    (tmp_path / "repo").mkdir(exist_ok=True)
+    (tmp_path / "repo" / source_name).write_text(source, encoding="utf-8")
+    candidate = {"files": [{"path": "tests/test_case.py", "case_ids": [case_id], "content": test_text}]}
+    cases = [{"id": case_id, "target": target}]
+    state = {"artifacts": {"requirements": {}, "repo_analysis": {"source_files": [source_name]}}}
+
+    class Reviewer(ReviewHost):
+        async def _call_model(self, **kwargs):
+            review = {
+                "case_id": case_id,
+                "scores": FULL_MARKS,
+                "confidence": 100,
+                "verdict": "supported",
+                "reason": "Reviewer: the expectation follows from the source.",
+                "source_files": [source_name],
+            }
+            if derivations is not None:
+                review["derivations"] = derivations
+            return {"status": "completed", "artifact": {"reviews": [review]}}
+
+    (result,) = asyncio.run(
+        review_generated_tests(Reviewer(tmp_path, FULL_MARKS), state, candidate, cases, 1, partial_ok=True)
+    )
+    return result
+
+
+def test_ctl003_wrong_expectation_is_accepted_today_demonstrating_the_bug(tmp_path):
+    result = ctl_review(
+        tmp_path,
+        source_name="location.py",
+        source=CTL003_SOURCE,
+        test_text=CTL003_WRONG,
+        target="LocationResolver.resolve",
+    )
+    assert review_accepted(result, 80) and result["confidence"] == 100
+    assert result["caps"] == []
+
+
+def test_ctl001_wrong_expectation_is_accepted_today_demonstrating_the_bug(tmp_path):
+    result = ctl_review(
+        tmp_path,
+        source_name="indexer.py",
+        source=CTL001_SOURCE,
+        test_text=CTL001_WRONG,
+        target="CodebaseIndexer.build",
+    )
+    assert review_accepted(result, 80) and result["confidence"] == 100
+    assert result["caps"] == []
+
+
+@pytest.mark.parametrize(
+    ("source_name", "source", "test_text", "target"),
+    [
+        ("location.py", CTL003_SOURCE, CTL003_RIGHT, "LocationResolver.resolve"),
+        ("indexer.py", CTL001_SOURCE, CTL001_RIGHT, "CodebaseIndexer.build"),
+    ],
+    ids=["CTL-003-expected-1", "CTL-001-expected-3"],
+)
+def test_correct_expectations_are_accepted_before_and_after_the_fix(
+    tmp_path, source_name, source, test_text, target
+):
+    result = ctl_review(tmp_path, source_name=source_name, source=source, test_text=test_text, target=target)
+    assert review_accepted(result, 80), result["caps"]
+
+
+@pytest.mark.xfail(strict=True, reason="Regression target: rejected before execution once the fix lands")
+def test_ctl003_wrong_expectation_is_rejected_before_execution(tmp_path):
+    result = ctl_review(
+        tmp_path,
+        source_name="location.py",
+        source=CTL003_SOURCE,
+        test_text=CTL003_WRONG,
+        target="LocationResolver.resolve",
+        derivations=[
+            {
+                "slot": "E1",
+                "value": "2",
+                "steps": "Every candidate is returned.",
+                "source_quote": "return [place for points, place in scored if points > 0]",
+                "fixture_quote": '["Berlin", "Paris"]',
+            }
+        ],
+    )
+    assert not review_accepted(result, 80)
+    assert result["confidence"] < 80
+    assert "count_assumes_no_filter" in {cap["rule"] for cap in result["caps"]}
+
+
+@pytest.mark.xfail(strict=True, reason="Regression target: rejected before execution once the fix lands")
+def test_ctl001_wrong_expectation_is_rejected_before_execution(tmp_path):
+    result = ctl_review(
+        tmp_path,
+        source_name="indexer.py",
+        source=CTL001_SOURCE,
+        test_text=CTL001_WRONG,
+        target="CodebaseIndexer.build",
+        derivations=[
+            {
+                "slot": "E1",
+                "value": "2",
+                "steps": "Two lines in the fixture.",
+                "source_quote": 'index[path.name] = {"line_count": content.count("\\n") + 1}',
+                "fixture_quote": 'write_text("x = 1\\ny = 2\\n"',
+            }
+        ],
+    )
+    assert not review_accepted(result, 80)
+    assert result["confidence"] < 80
+    assert "expectation_contradicts_source" in {cap["rule"] for cap in result["caps"]}
