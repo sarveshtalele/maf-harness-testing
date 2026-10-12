@@ -8,7 +8,7 @@ export const rows = (value: unknown): Row[] => Array.isArray(value) ? value.map(
 /** Words whose display form is fixed. Applied per word before title-casing, so "text" reads "Description". */
 export const LABELS: Record<string, string> = { text: 'Description', id: 'ID', sha256: 'SHA-256', api: 'API' };
 /** Whole-value labels. "verified" means only passed execution; a review acceptance is never called verified. */
-export const VALUE_LABELS: Record<string, string> = { supported: 'Source-review accepted', verified: 'Passed execution', passed: 'Passed', failing: 'Failing', untested: 'Untested', not_executed: 'Not executed' };
+export const VALUE_LABELS: Record<string, string> = { supported: 'Source-review accepted', verified: 'Passed execution', passed: 'Passed', failing: 'Failing', untested: 'Untested', not_executed: 'Not executed', confidence_gate: 'Confidence gate', confidence_reviewer_unavailable: 'Confidence reviewer unavailable' };
 export const label = (value: unknown): string => {
   const raw = String(value ?? '—');
   if (raw === 'environment_setup') return 'Test execution · Setup';
