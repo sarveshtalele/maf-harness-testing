@@ -3,12 +3,12 @@ import { test, expect } from '@playwright/test';
 test('theme toggle persists across reload', async ({ page }) => {
   await page.goto('/');
   const html = page.locator('html');
-  await page.getByRole('button', { name: '◐ Dark appearance' }).click();
+  await page.getByRole('button', { name: 'Dark appearance' }).click();
   await expect(html).toHaveAttribute('data-theme', 'dark');
   await page.reload();
   await expect(html).toHaveAttribute('data-theme', 'dark');
-  await expect(page.getByRole('button', { name: '☀ Light appearance' })).toBeVisible();
-  await page.getByRole('button', { name: '☀ Light appearance' }).click();
+  await expect(page.getByRole('button', { name: 'Light appearance' })).toBeVisible();
+  await page.getByRole('button', { name: 'Light appearance' }).click();
   await expect(html).toHaveAttribute('data-theme', 'light');
   await page.reload();
   await expect(html).toHaveAttribute('data-theme', 'light');

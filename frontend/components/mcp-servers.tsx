@@ -2,6 +2,7 @@
 import { useCallback, useEffect, useRef, useState, type KeyboardEvent, type MouseEvent, type ReactNode } from 'react';
 import { api, apiDelete, desktop, label, record } from '@/lib/harness';
 import { useReturnFocus } from './data';
+import Icon from './icons';
 
 type Tool = { name: string; description: string };
 type Server = {
@@ -263,7 +264,7 @@ export default function McpServers() {
   const live = data?.servers.find(s => s.name === managing);
   const budget: Budget = data?.stage_budget ?? {};
   return <>
-    <div className="page-header"><div><span className="eyebrow">Marketplace</span><h1>MCP servers</h1><p>Give the agents extra tools from MCP servers (Jira, Playwright, others). Servers start disabled. Approved tools run automatically, tools that need approval wait for a person, and blocked tools are hidden. Output from a server is untrusted evidence.</p></div><button ref={addRef} className="primary" onClick={e => { rememberAdd(e.currentTarget); setAdding(true); }}>Add MCP server</button></div>
+    <div className="page-header"><div><span className="eyebrow">Marketplace</span><h1><Icon name="plug" />MCP servers</h1><p>Give the agents extra tools from MCP servers (Jira, Playwright, others). Servers start disabled. Approved tools run automatically, tools that need approval wait for a person, and blocked tools are hidden. Output from a server is untrusted evidence.</p></div><button ref={addRef} className="primary" onClick={e => { rememberAdd(e.currentTarget); setAdding(true); }}>Add MCP server</button></div>
     {Object.entries(budget).map(([st, b]) => <p key={st} className="mp-warn" role="status"><span className="badge warn">Over budget</span> Stage {label(st)}: {b.tools} MCP tools, max {b.max}; servers beyond the budget are skipped. Skipped: {b.skipped.join(', ')}.</p>)}
     {notice && <p role="status" className={notice.ok ? '' : 'bad'}>{notice.text}</p>}
     {data && !data.servers.length && <p className="field-help">No MCP servers configured yet.</p>}

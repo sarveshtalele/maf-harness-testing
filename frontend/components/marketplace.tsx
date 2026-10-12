@@ -2,9 +2,10 @@
 import { useEffect, useState, type KeyboardEvent } from 'react';
 import Skills from './skills';
 import McpServers from './mcp-servers';
+import Icon, { type IconName } from './icons';
 
 type Tab = 'skills' | 'mcp';
-const TABS: [Tab, string][] = [['skills', 'Agent Skills'], ['mcp', 'MCP servers']];
+const TABS: [Tab, string, IconName][] = [['skills', 'Agent Skills', 'spark'], ['mcp', 'MCP servers', 'plug']];
 const tabFromUrl = (): Tab => (new URLSearchParams(location.search).get('tab') === 'mcp' ? 'mcp' : 'skills');
 
 /** Marketplace: agent skills and MCP servers. The tab lives in the URL (&tab=mcp); /?page=skills opens Agent Skills. */
@@ -22,7 +23,7 @@ export default function Marketplace() {
     document.getElementById(`marketplace-tab-${next}`)?.focus();
   };
   return <>
-    <div className="tabs" role="tablist" aria-label="Marketplace sections" onKeyDown={onKey}>{TABS.map(([key, name]) => <button key={key} role="tab" id={`marketplace-tab-${key}`} aria-controls="marketplace-panel" tabIndex={tab === key ? 0 : -1} aria-selected={tab === key} className={tab === key ? 'selected' : ''} onClick={() => choose(key)}>{name}</button>)}</div>
+    <div className="tabs" role="tablist" aria-label="Marketplace sections" onKeyDown={onKey}>{TABS.map(([key, name, icon]) => <button key={key} role="tab" id={`marketplace-tab-${key}`} aria-controls="marketplace-panel" tabIndex={tab === key ? 0 : -1} aria-selected={tab === key} className={tab === key ? 'selected' : ''} onClick={() => choose(key)}><Icon name={icon} />{name}</button>)}</div>
     <div role="tabpanel" id="marketplace-panel" aria-labelledby={`marketplace-tab-${tab}`}>{tab === 'skills' ? <Skills /> : <McpServers />}</div>
   </>;
 }
