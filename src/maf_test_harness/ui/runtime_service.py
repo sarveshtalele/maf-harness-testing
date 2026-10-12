@@ -47,9 +47,8 @@ class RuntimeService:
         if self.loop.is_closed():
             coroutine.close()
             raise RuntimeError("Runtime is closed. Resume the saved run with a new runtime.")
-        if (
-            not self.idle.is_set()
-        ):  # the previous task has not really ended (a Stop may still be waiting for it)
+        # The previous task has not really ended (a Stop may still be waiting for it): nothing new may start.
+        if not self.idle.is_set():
             coroutine.close()
             if self.stop_requested:
                 raise RuntimeError(
@@ -66,6 +65,11 @@ class RuntimeService:
         self.task = None
 
         async def owned():
+            if (
+                self.stop_requested
+            ):  # Stop came before this work started: it never runs, so nothing is left behind
+                coroutine.close()
+                raise asyncio.CancelledError()
             self.task = asyncio.current_task()
             token = RUN_CANCEL.set(self.cancel_event)
             try:

@@ -405,3 +405,23 @@ def test_work_is_accepted_again_once_the_stopped_task_has_ended(monkeypatch):
         assert service.submit(follow_up()).result(5) == "accepted"
     finally:
         service.close()
+
+
+def test_a_stop_that_arrives_before_the_work_starts_means_the_work_never_runs():
+    service = RuntimeService()
+    ran, stopped = [], []
+
+    async def work():
+        ran.append(1)
+
+    try:
+        service.loop.call_soon_threadsafe(time.sleep, 0.3)  # the loop is busy: the work has not started yet
+        service.submit(work())
+        service.stop_active(lambda: stopped.append(1)).result(10)
+        assert ran == [] and stopped == [1]
+        assert service.idle.wait(5)
+        assert (
+            service.submit(asyncio.sleep(0, "accepted")).result(5) == "accepted"
+        )  # new work starts afterwards
+    finally:
+        service.close()
