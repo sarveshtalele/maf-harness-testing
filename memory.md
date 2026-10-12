@@ -1,9 +1,9 @@
 # memory.md — working notes for the Agentic QE Harness v2
 
-Current branch is **new-ui**. Product: **Agentic QE Platform**. New runs store evidence inside `<repo-root>/.maf-harness`; setup and all runtime checks follow generation at Test execution. Requirements use deterministic host scripts; full discovered intake, component design batches and strict Java quality gates are documented in [the current guide](docs/PETSTORE_STRICT_TEST_GENERATION.md).
+Integration branch is **develop**; releases on **main** (new-ui was deleted 2026-10-11). Product: **Agentic QE Platform**. New runs store evidence inside `<repo-root>/.maf-harness`; setup and all runtime checks follow generation at Test execution. Requirements use deterministic host scripts; full discovered intake, component design batches and strict Java quality gates are documented in [the current guide](docs/PETSTORE_STRICT_TEST_GENERATION.md).
 
 The phase tables and run measurements below are historical implementation notes; they do not override current workflow behavior.
-Full approved plan: `C:\Users\SarveshTalele\.claude\plans\now-analyse-the-exsiting-curried-crescent.md`.
+Current plan: [docs/plans/PLAN_2026-10-12_PRODUCTION_READINESS.md](docs/plans/PLAN_2026-10-12_PRODUCTION_READINESS.md) (the older plan file was local to a Windows machine).
 
 ## 1. What we are building
 
@@ -12,7 +12,7 @@ modes, todos, the existing **Agent Skills with their reviewed scripts**, isolate
 (Maven + Gradle) and .NET**, bounded automatic recovery from environment and execution errors, and far fewer tokens
 through prefix-cache-friendly prompts. The 7 human-gated stages stay (safe, resumable).
 
-Repo: `https://github.com/sarveshtalele/maf-harness-testing` (private). Working branch: **`new-ui`**. Never force-push `main`.
+Repo: `https://github.com/sarveshtalele/maf-harness-testing` (public). Working branch: **`develop`**. Never force-push `main`.
 
 ## 2. Decisions taken (do not re-litigate without the user)
 
