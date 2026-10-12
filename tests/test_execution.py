@@ -163,3 +163,24 @@ def test_a_stop_whose_kill_wait_times_out_is_reported_as_cancelled_not_timeout(t
     finally:
         RUN_CANCEL.reset(token)
     assert result["status"] == "cancelled"
+
+
+def test_forwarded_proxy_settings_never_carry_credentials(tmp_path, monkeypatch):
+    monkeypatch.setenv("HTTPS_PROXY", "http://builder:s3cret@proxy.example.test:8080")
+    monkeypatch.setenv("HTTP_PROXY", "http://proxy.example.test:3128")
+    (tmp_path / "out").mkdir()
+    env = execution._child_env(tmp_path / "out", True, None)
+    assert env["HTTPS_PROXY"] == "http://proxy.example.test:8080"
+    assert env["HTTP_PROXY"] == "http://proxy.example.test:3128"
+    assert "s3cret" not in " ".join(env.values())
+
+
+def test_probe_env_exposes_no_secrets_and_uses_a_fake_home(tmp_path, monkeypatch):
+    from maf_test_harness.envs import platform_compat
+
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-live-should-not-leak")
+    monkeypatch.setenv("HARNESS_API_TOKEN", "t" * 40)
+    monkeypatch.setenv("GITHUB_TOKEN", "ghp_should_not_leak")
+    env = platform_compat.probe_env(tmp_path / "home")
+    assert not {"OPENAI_API_KEY", "HARNESS_API_TOKEN", "GITHUB_TOKEN"} & set(env)
+    assert env["HOME"] == str(tmp_path / "home") and env["PYTHONNOUSERSITE"] == "1"

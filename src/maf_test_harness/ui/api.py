@@ -22,6 +22,7 @@ from filelock import FileLock, Timeout
 from .. import paths
 from ..agent import prompt_settings
 from ..agent.runtime import MAFHarnessRuntime
+from ..hooks.builtin import register_secret
 from ..monitoring.report import build_report
 from ..repo.analyzer import validate_github_url
 from ..repo.git_transport import read_operation
@@ -812,12 +813,20 @@ def make_server(api: LocalAPI, token: str, port: int = 8765):
     return ThreadingHTTPServer(("127.0.0.1", port), Handler)
 
 
+def take_api_token() -> str | None:
+    """Read HARNESS_API_TOKEN once, then remove it from the environment so no child process inherits it."""
+    token = os.environ.pop("HARNESS_API_TOKEN", None)
+    if token:
+        register_secret(token)
+    return token
+
+
 def main():
     logging.basicConfig(level=logging.WARNING, format="%(asctime)s %(levelname)s %(message)s")
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--port", type=int, default=8765)
     args = parser.parse_args()
-    token = os.getenv("HARNESS_API_TOKEN")
+    token = take_api_token()
     if not token or len(token) < 32:
         parser.error(
             "Set HARNESS_API_TOKEN to a random value of at least 32 characters (the launcher does this)."

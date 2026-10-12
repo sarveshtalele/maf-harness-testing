@@ -684,3 +684,15 @@ def test_rerun_drops_batch_caches_and_review_records_of_restarted_stages(local_a
     api.rerun(key, {"stage": "test_planning", "request_id": run["pending"]["id"] if run["pending"] else None})
     wait(api)
     assert "accepted_planning_batches" not in json.loads(path.read_text(encoding="utf-8"))["state"]
+
+
+def test_the_api_token_is_removed_from_the_environment_and_still_redacted(monkeypatch):
+    from maf_test_harness.hooks.builtin import redact
+    from maf_test_harness.ui import api as api_module
+
+    token = "k" * 40
+    monkeypatch.setenv("HARNESS_API_TOKEN", token)
+    assert api_module.take_api_token() == token
+    assert "HARNESS_API_TOKEN" not in os.environ
+    assert token not in redact(f"token={token}")[0]
+    assert api_module.take_api_token() is None

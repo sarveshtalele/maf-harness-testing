@@ -15,6 +15,7 @@ import subprocess
 import time
 import xml.etree.ElementTree as ET
 from pathlib import Path
+from urllib.parse import urlsplit, urlunsplit
 
 from ..repo.analyzer import SENSITIVE_PATH
 from . import platform_compat
@@ -151,9 +152,23 @@ def read_junit(paths: list[Path]) -> dict:
     return counts
 
 
+def _without_proxy_credentials(value: str) -> str:
+    """A proxy URL with any ``user:password@`` removed: untrusted repository code must not receive them."""
+    parts = urlsplit(value)
+    if not (parts.username or parts.password):
+        return value
+    host = parts.hostname or ""
+    netloc = f"{host}:{parts.port}" if parts.port else host
+    return urlunsplit((parts.scheme, netloc, parts.path, parts.query, parts.fragment))
+
+
 def _child_env(output_dir: Path, inherit_env: bool, extra: dict[str, str] | None) -> dict[str, str]:
     names = FORWARDED_ENV if inherit_env else BASIC_ENV
-    env = {key: os.environ[key] for key in names if key in os.environ}
+    env = {
+        key: _without_proxy_credentials(os.environ[key]) if key.endswith("_PROXY") else os.environ[key]
+        for key in names
+        if key in os.environ
+    }
     # No bytecode: a regenerated test with the same size and mtime second must never run from a stale .pyc.
     env.update(platform_compat.fake_home_env(output_dir / "home"))
     env.update(
