@@ -43,8 +43,8 @@ class EvidenceAPI:
             paths.skills_dir(), zip_base64=body.get("zip_base64"), folder=body.get("path")
         )
 
-    def approve_skill(self, name: str) -> dict:
-        return {"name": name, **skill_trust.approve(paths.skills_dir(), name)}
+    def approve_skill(self, name: str, reviewed_sha256: str) -> dict:
+        return {"name": name, **skill_trust.approve(paths.skills_dir(), name, reviewed_sha256)}
 
     def skills(self) -> dict:
         root = paths.skills_dir()
@@ -98,6 +98,7 @@ class EvidenceAPI:
                         if p.is_file() and "__pycache__" not in p.parts
                     ],
                     "reviewed_scripts": lock.get("reviewed_scripts", {}).get(report.name, {}),
+                    "tree_sha256": skill_trust.full_tree_sha256(directory),  # what an approval must present
                     "sha256": report.sha256,
                     "valid": report.ok and not issues and plugin.ok,
                     "errors": report.errors + issues + [f"plugin.yaml: {e}" for e in plugin.errors],

@@ -173,7 +173,7 @@ class Harness(RerunSteps, ExecutionSteps, GenerationSteps, GreenfieldSteps, Plan
         self.run_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
         self.skills_root = skills_root.resolve()
         self.runtime = runtime
-        self._toolbox = HarnessToolbox(self._repo_context, self._build_files)
+        self._toolbox = HarnessToolbox(self._repo_context, self._agent_build)
         if AGENT_TOOLS and runtime is not None and getattr(runtime, "tool_provider", None) is None:
             runtime.tool_provider = self._stage_tools
         if runtime is not None and getattr(runtime, "recorder", None) is None:
@@ -237,6 +237,18 @@ class Harness(RerunSteps, ExecutionSteps, GenerationSteps, GreenfieldSteps, Plan
             builder.add_edge(executors[-1], executors[graph_stages.index("test_generation")])
         self.workflow = builder.build()
         self._restored = False
+
+    def _agent_build(self, files: list[dict]) -> dict:
+        """Collection for the agent's try_build tool. Importing a draft runs the model's code, so only files the host
+        has already accepted, with identical content, are built; a draft is answered with a skip."""
+        accepted = {
+            f["path"]: f.get("content")
+            for batch in (self.state.get("accepted_generation_batches") or {}).get("batches", {}).values()
+            for f in batch.get("files", [])
+        }
+        if any(accepted.get(f.get("path")) is None or accepted[f["path"]] != f.get("content") for f in files):
+            return {"status": "skipped", "reason": "collection runs only on accepted files", "errors": []}
+        return self._build_files(files)
 
     def _stage_tools(self, stage: str) -> list:
         """Tools an agent gets for a stage: the central tools, plus (opt-in) the skill validators of its own skills."""

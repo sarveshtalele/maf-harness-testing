@@ -136,8 +136,14 @@ def plugin_policy_problems(plugin) -> list[str]:
     ]
 
 
-def approve(repo_skills: Path, name: str) -> dict:
-    """User action: record the current hash of an unverified skill. Verified skills need no approval."""
+def reviewed_digest(repo_skills: Path, name: str) -> str:
+    """The digest a reviewer sees for ``name``; an approval must present this same value."""
+    return full_tree_sha256(find_skill(repo_skills, name))
+
+
+def approve(repo_skills: Path, name: str, reviewed_sha256: str) -> dict:
+    """User action: record the reviewed hash of an unverified skill. Verified skills need no approval. The tree on
+    disk must still be the one the user reviewed: a different one is refused, never silently approved."""
     directory = find_skill(repo_skills, name)
     if is_verified(repo_skills, directory):
         raise ValueError(f"{name} is verified by the repository lock; no approval needed.")
@@ -158,11 +164,14 @@ def approve(repo_skills: Path, name: str) -> dict:
     problems = [*report.errors, *lint_plugins([*others, plugin]).get(name, [])]
     if problems:
         raise ValueError(f"{name} is invalid: {'; '.join(problems)}")
+    digest = full_tree_sha256(directory)
+    if not isinstance(reviewed_sha256, str) or reviewed_sha256 != digest:
+        raise ValueError(f"{name} changed since it was reviewed; review the current version and approve it again.")
     with _LOCK:
         approvals = load_approvals()
         approvals[name] = {
             "name": name,
-            "sha256": full_tree_sha256(directory),
+            "sha256": digest,
             "approved_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
         }
         path = approvals_path()

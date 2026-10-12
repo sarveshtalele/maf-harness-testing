@@ -58,7 +58,7 @@ def test_import_is_unverified_and_hidden_until_approved():
     assert not result["verified"] and not result["approved"]
     assert any(p.name == "go-helper" for p in discover_skills([REPO, trust.plugin_dir()]))
     assert "go-helper" not in skills_for("test_generation", state(["Go"])).companions
-    trust.approve(REPO, "go-helper")
+    trust.approve(REPO, "go-helper", trust.reviewed_digest(REPO, "go-helper"))
     assert "go-helper" in skills_for("test_generation", state(["Go"])).companions
     assert "go-helper" not in skills_for("test_generation", state(["Python"])).companions
 
@@ -67,7 +67,7 @@ def test_scripts_blocked_until_approved_and_revoked_by_any_change():
     trust.import_skill(REPO, zip_base64=make_zip())
     with pytest.raises(ScriptRefused):
         runner().check("go-helper", "scripts/hello.py")
-    trust.approve(REPO, "go-helper")
+    trust.approve(REPO, "go-helper", trust.reviewed_digest(REPO, "go-helper"))
     live = runner()
     assert live.check("go-helper", "scripts/hello.py").is_file()
     assert live.run("go-helper", "scripts/hello.py")["stdout"].strip() == "hi"
@@ -82,7 +82,7 @@ def test_scripts_blocked_until_approved_and_revoked_by_any_change():
 def test_unlocked_repo_skill_needs_approval_but_locked_ones_do_not(tmp_path):
     assert all(trust.trust(REPO, p.path)["verified"] for p in discover_skills([REPO]))
     with pytest.raises(ValueError, match="no approval needed"):
-        trust.approve(REPO, "test-planning")
+        trust.approve(REPO, "test-planning", trust.reviewed_digest(REPO, "test-planning"))
     repo = tmp_path / "skills"
     (repo / "mine").mkdir(parents=True)
     (repo / "mine" / "SKILL.md").write_text("---\nname: mine\ndescription: d\n---\n")
@@ -159,7 +159,7 @@ def test_runtime_skips_unapproved_companion_with_note_and_refuses_unapproved_pri
     assert events[0][0] == "skill_skipped"
     with pytest.raises(ValueError, match="unverified"):
         rt._trusted_skills("test_generation", ["go-helper"], {})
-    trust.approve(REPO, "go-helper")
+    trust.approve(REPO, "go-helper", trust.reviewed_digest(REPO, "go-helper"))
     assert rt._trusted_skills("test_generation", ["generic-test-generator", "go-helper"], {}) == [
         "generic-test-generator",
         "go-helper",
@@ -180,10 +180,10 @@ def test_api_lists_flags_and_import_approve_flow(tmp_path):
     card = {s["name"]: s for s in api.skills()["skills"]}["go-helper"]
     assert (card["source"], card["verified"], card["approved"]) == ("plugin", False, False)
     assert card["purpose"] == "follow Go idioms" and card["stages"] == ["test_generation"]
-    assert api.approve_skill("go-helper")["approved"] is True
+    assert api.approve_skill("go-helper", trust.reviewed_digest(REPO, "go-helper"))["approved"] is True
     assert {s["name"]: s for s in api.skills()["skills"]}["go-helper"]["approved"] is True
     with pytest.raises(FileNotFoundError):
-        api.approve_skill("nope")
+        api.approve_skill("nope", trust.reviewed_digest(REPO, "nope"))
     with pytest.raises(ValueError):
         api.import_skill({})
 
@@ -215,11 +215,11 @@ def test_bytecode_rejected_on_import_blocked_on_approve_and_revokes_approval(tmp
         trust.import_skill(REPO, folder=str(src))
     d = drop(extra={"scripts/__pycache__/x.pyc": b"\0"})
     with pytest.raises(ValueError, match="bytecode"):
-        trust.approve(REPO, "go-helper")
+        trust.approve(REPO, "go-helper", trust.reviewed_digest(REPO, "go-helper"))
     for p in d.rglob("__pycache__"):
         (p / "x.pyc").unlink()
         p.rmdir()
-    trust.approve(REPO, "go-helper")
+    trust.approve(REPO, "go-helper", trust.reviewed_digest(REPO, "go-helper"))
     assert trust.trust(REPO, d)["approved"]
     (d / "scripts").mkdir(exist_ok=True)
     (d / "scripts" / "__pycache__").mkdir()
@@ -238,7 +238,7 @@ def test_approved_plugin_script_runs_isolated_without_bytecode_or_sibling_import
             }
         ),
     )
-    trust.approve(REPO, "go-helper")
+    trust.approve(REPO, "go-helper", trust.reviewed_digest(REPO, "go-helper"))
     out = runner().run("go-helper", "scripts/hello.py")
     assert out["exit_code"] != 0  # -I keeps the script directory off sys.path
     assert not list((trust.plugin_dir() / "go-helper").rglob("__pycache__"))
@@ -262,7 +262,7 @@ def test_zip_total_decompressed_size_is_capped_across_entries(monkeypatch):
 def test_hand_dropped_primary_host_or_entrypoint_plugin_cannot_be_approved_or_trusted(manifest):
     d = drop(manifest=manifest)
     with pytest.raises(ValueError, match="not allowed as a plugin"):  # and the entrypoint was never imported
-        trust.approve(REPO, "go-helper")
+        trust.approve(REPO, "go-helper", trust.reviewed_digest(REPO, "go-helper"))
     # even a forged approval record does not make it trusted or selectable
     trust.approvals_path().write_text(
         '{"approved": {"go-helper": {"sha256": "' + trust.full_tree_sha256(d) + '"}}}'
@@ -285,7 +285,7 @@ def test_runtime_source_loads_only_the_exact_trusted_folder():
     from agent_framework import SkillsSourceContext
 
     real = drop()
-    trust.approve(REPO, "go-helper")
+    trust.approve(REPO, "go-helper", trust.reviewed_digest(REPO, "go-helper"))
     decoy = (
         trust.plugin_dir() / "aaa" / "go-helper"
     )  # scanned first, same name one level down, never approved
@@ -307,14 +307,14 @@ def test_concurrent_approvals_do_not_lose_updates():
     for n in names:
         drop(n, manifest=MANIFEST)
     with ThreadPoolExecutor(8) as pool:
-        list(pool.map(lambda n: trust.approve(REPO, n), names))
+        list(pool.map(lambda n: trust.approve(REPO, n, trust.reviewed_digest(REPO, n)), names))
     assert set(trust.load_approvals()) == set(names)
     assert not list(trust.approvals_path().parent.glob(".plugins-*.tmp"))
 
 
 def test_reimport_replaces_atomically_and_revokes_approval():
     trust.import_skill(REPO, zip_base64=make_zip())
-    trust.approve(REPO, "go-helper")
+    trust.approve(REPO, "go-helper", trust.reviewed_digest(REPO, "go-helper"))
     changed = {**FILES, "SKILL.md": FILES["SKILL.md"] + "more\n"}
     result = trust.import_skill(REPO, zip_base64=make_zip(changed))
     assert not result["approved"]
@@ -337,7 +337,7 @@ def test_runner_sees_approval_made_after_it_was_built():
     live = runner()
     with pytest.raises(ScriptRefused):
         live.check("go-helper", "scripts/hello.py")
-    trust.approve(REPO, "go-helper")
+    trust.approve(REPO, "go-helper", trust.reviewed_digest(REPO, "go-helper"))
     assert live.check("go-helper", "scripts/hello.py").is_file()  # no restart needed
     (trust.plugin_dir() / "go-helper" / "plugin.yaml").write_text(MANIFEST + "# edit\n")
     with pytest.raises(ScriptRefused):
@@ -356,3 +356,13 @@ def test_empty_zip_is_refused_with_a_clear_message():
         pass
     with pytest.raises(ValueError, match="Archive is empty"):
         trust.import_skill(REPO, zip_base64=base64.b64encode(empty.getvalue()).decode())
+
+
+def test_approval_refuses_a_tree_that_changed_after_review():
+    trust.import_skill(REPO, zip_base64=make_zip(prefix="go-helper/"))
+    reviewed = trust.reviewed_digest(REPO, "go-helper")
+    with pytest.raises(ValueError, match="changed since it was reviewed"):
+        trust.approve(REPO, "go-helper", "0" * 64)
+    assert not trust.trust(REPO, trust.find_skill(REPO, "go-helper"))["approved"]
+    trust.approve(REPO, "go-helper", reviewed)
+    assert trust.trust(REPO, trust.find_skill(REPO, "go-helper"))["approved"]

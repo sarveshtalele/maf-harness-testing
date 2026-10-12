@@ -48,6 +48,15 @@ def _interpreter(path: Path) -> list[str]:
     return [str(path)]
 
 
+def _script_flags(*, isolated: bool, work: Path) -> list[str]:
+    """Interpreter flags for a reviewed .py script. Bytecode on disk is never trusted: a planted .pyc for a sibling
+    module must not run in place of the reviewed source. Approved plugin code also runs isolated (-I)."""
+    flags = ["-B", "--check-hash-based-pycs", "always"]
+    if isolated:
+        flags += ["-I", "-X", f"pycache_prefix={work / 'pycache'}"]
+    return flags
+
+
 class HarnessScriptRunner:
     """MAF ``SkillScriptRunner`` and the host's own script executor, both gated by the same allow-list."""
 
@@ -134,16 +143,8 @@ class HarnessScriptRunner:
         path = self.check(skill, rel)
         interpreter = _interpreter(path)
         work = Path(tempfile.mkdtemp(prefix="skill-script-")).resolve()
-        if skill in self.dirs and path.suffix == ".py":  # approved plugin code: isolated, no stray bytecode
-            interpreter = [
-                *interpreter,
-                "-I",
-                "-B",
-                "--check-hash-based-pycs",
-                "always",
-                "-X",
-                f"pycache_prefix={work / 'pycache'}",
-            ]
+        if path.suffix == ".py":
+            interpreter = [*interpreter, *_script_flags(isolated=skill in self.dirs, work=work)]
         argv = [*interpreter, str(path), *self._clean_args(args)]
         try:
             for name, content in (files or {}).items():

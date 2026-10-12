@@ -639,7 +639,7 @@ def make_server(api: LocalAPI, token: str, port: int = 8765):
         def log_message(self, *_):
             pass  # URLs and feedback may contain sensitive repository information.
 
-        def reply(self, status, data, mime="application/json", filename=None):
+        def reply(self, status, data, mime="application/json", filename=None, report_asset=False):
             payload = (
                 json.dumps(data).encode()
                 if mime == "application/json" and not isinstance(data, bytes)
@@ -655,9 +655,9 @@ def make_server(api: LocalAPI, token: str, port: int = 8765):
                     "Content-Security-Policy",
                     "default-src 'none'; script-src 'unsafe-inline' blob:; style-src 'unsafe-inline'; img-src 'self' data: blob:; connect-src 'self' data: blob:; font-src data:; worker-src blob:; sandbox allow-scripts",
                 )
-            if isinstance(data, bytes):
-                # Evidence files (always bytes) are read by reports in a sandboxed, opaque-origin iframe: their
-                # fetch() of sibling assets is cross-origin and needs this. API replies (dicts) never get it.
+            if report_asset and isinstance(data, bytes):
+                # A report's sibling assets are fetched by its sandboxed, opaque-origin iframe, which is cross-origin.
+                # Only those replies get the header; downloads, exports and API replies never do.
                 self.send_header("Access-Control-Allow-Origin", "*")
             if filename:
                 safe = re.sub(r"[^A-Za-z0-9._-]", "_", filename)
@@ -719,7 +719,7 @@ def make_server(api: LocalAPI, token: str, port: int = 8765):
                                 download=query.get("download") == ["1"],
                                 theme=query.get("theme", [None])[0],
                             )
-                            self.reply(200, data, mime, name)
+                            self.reply(200, data, mime, name, report_asset=bool(parts[4:]))
                         elif parts[2:] == ["download"]:
                             data, mime, name = api.download(key, query)
                             self.reply(200, data, mime, name)
@@ -762,7 +762,7 @@ def make_server(api: LocalAPI, token: str, port: int = 8765):
                     elif parts == ["skills", "import"]:
                         self.reply(200, api.import_skill(body))
                     elif len(parts) == 3 and parts[0] == "skills" and parts[2] == "approve":
-                        self.reply(200, api.approve_skill(parts[1]))
+                        self.reply(200, api.approve_skill(parts[1], str(body.get("tree_sha256") or "")))
                     elif len(parts) == 3 and parts[0] == "runs" and parts[2] == "prompts":
                         self.reply(200, api.save_prompts(body, parts[1]))
                     elif parts == ["runs"]:
