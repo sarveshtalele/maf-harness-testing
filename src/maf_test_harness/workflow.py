@@ -322,8 +322,9 @@ class Harness(RerunSteps, ExecutionSteps, GenerationSteps, GreenfieldSteps, Plan
             if docs:  # keep the originals with the run
                 inputs = self.run_dir / "spec_inputs"
                 inputs.mkdir(parents=True, exist_ok=True)
-                for doc in docs:
-                    (inputs / Path(doc["name"]).name).write_bytes(doc["content"])
+                for index, doc in enumerate(docs, 1):  # the index keeps duplicate names apart
+                    base = "".join(c if c.isalnum() or c in "._-" else "_" for c in Path(doc["name"]).name)
+                    (inputs / f"{index:03d}-{base[:120] or 'document'}").write_bytes(doc["content"])
             jira = jira or ((spec_sources or {}).get("jira") or None)
             if jira and jira_token:
                 jira = {**jira, "api_token": jira_token}

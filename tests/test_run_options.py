@@ -93,7 +93,7 @@ def test_api_modes_and_token_not_persisted(local_api, monkeypatch):  # noqa: F81
     assert state["run_mode"] == "greenfield" and state["test_types"] == ["unit"]
     assert seen["jira"]["api_token"] == "TOKEN-xyz"  # handed to intake in memory
     assert api.read(key)["pending"]["stage"] == "requirements"
-    assert (run_dir / "spec_inputs" / "spec.md").read_bytes() == b"# Spec"
+    assert (run_dir / "spec_inputs" / "001-spec.md").read_bytes() == b"# Spec"
     for path in Path(run_dir).rglob("*"):
         if path.is_file():
             assert b"TOKEN-xyz" not in path.read_bytes(), path
@@ -178,3 +178,22 @@ def test_per_file_limit_and_extension_only_names_are_rejected():
     assert accepted["spec_sources"]["documents"][0]["size"] == 10_000_000
     with pytest.raises(ValueError, match=r"Unsupported document type: \.md"):
         parse_run_options({"run_mode": "greenfield", "spec_sources": {"documents": [doc(".md")]}})
+
+
+def test_greenfield_documents_with_the_same_name_are_all_kept(tmp_path):
+    import asyncio
+
+    from maf_test_harness import workflow as wf
+
+    runs = tmp_path / "run"
+    runs.mkdir()
+    host = wf.Harness(runs, skills_root=Path("skills"), requirements_mode="deterministic")
+    docs = [
+        {"name": "spec.md", "content": b"A"},
+        {"name": "spec.md", "content": b"B"},
+        {"name": "..", "content": b"C"},
+    ]
+    asyncio.run(host.start("", run_mode="greenfield", documents=docs, target_language="python"))
+    saved = sorted(p.name for p in (runs / "spec_inputs").iterdir())
+    assert saved == ["001-spec.md", "002-spec.md", "003-.."]
+    assert [(runs / "spec_inputs" / n).read_bytes() for n in saved] == [b"A", b"B", b"C"]

@@ -404,7 +404,7 @@ def test_api_greenfield_end_to_end_without_repo(tmp_path):
         assert levels == {"unit", "integration"}
         assert state["artifacts"]["test_generation"]["files"]
         run_dir = api.run_path(key)
-        assert (run_dir / "spec_inputs" / "spec.md").exists()
+        assert (run_dir / "spec_inputs" / "001-spec.md").exists()
         qa = json.loads((run_dir / "qa_report.json").read_text())
         assert qa["execution_note"] == "skipped: no application code"
     finally:
