@@ -31,15 +31,15 @@ export function EmptyState({ title, children, icon }: { title: string; children?
 }
 
 /** A collapsible subsection: h2 > button[aria-expanded][aria-controls]. Children are created only after the first open. */
-export type SectionProps = { id?: string; title: string; count?: number; summary?: ReactNode; actions?: ReactNode; defaultOpen?: boolean; open?: boolean; onToggle?: (open: boolean) => void; expandHref?: string; children: ReactNode | (() => ReactNode) };
-export function Section({ id, title, count, summary, actions, defaultOpen = false, open: controlled, onToggle, expandHref, children }: SectionProps) {
+export type SectionProps = { id?: string; className?: string; title: string; count?: number; summary?: ReactNode; actions?: ReactNode; defaultOpen?: boolean; open?: boolean; onToggle?: (open: boolean) => void; expandHref?: string; children: ReactNode | (() => ReactNode) };
+export function Section({ id, className, title, count, summary, actions, defaultOpen = false, open: controlled, onToggle, expandHref, children }: SectionProps) {
   const [inner, setInner] = useState(defaultOpen);
   const isOpen = controlled ?? inner;
   const [loaded, setLoaded] = useState(isOpen);
   const bodyId = useId();
   useEffect(() => { if (isOpen) setLoaded(true); }, [isOpen]);
   const toggle = () => { if (controlled === undefined) setInner(!isOpen); onToggle?.(!isOpen); };
-  return <section className="section" id={id}>
+  return <section className={`section${className ? ` ${className}` : ''}`} id={id}>
     <h2 className="section-heading">
       <button type="button" aria-expanded={isOpen} aria-controls={bodyId} onClick={toggle}><span className="section-chevron" aria-hidden="true">{isOpen ? '▾' : '▸'}</span><span className="section-title">{title}</span>{count !== undefined && <span className="section-count">{count}</span>}</button>
       {expandHref && <Link className="section-expand" href={expandHref} aria-label={`Open ${title} as a page`} title={`Open ${title} as a page`}>⤢</Link>}

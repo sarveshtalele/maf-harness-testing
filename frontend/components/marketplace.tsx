@@ -10,7 +10,9 @@ const tabFromUrl = (): Tab => (new URLSearchParams(location.search).get('tab') =
 
 /** Marketplace: agent skills and MCP servers. The tab lives in the URL (?tab=mcp). Old /?page=marketplace links redirect here. */
 export default function Marketplace() {
-  const [tab, setTab] = useState<Tab>(() => (typeof location !== 'undefined' ? tabFromUrl() : 'skills'));
+  // Read the URL after mount: the server and the first client render both show Agent Skills (no hydration mismatch).
+  const [tab, setTab] = useState<Tab>('skills');
+  useEffect(() => { setTab(tabFromUrl()); }, []);
   // Back and Forward move between tab entries (choose pushes them), so follow the URL
   useEffect(() => { const sync = () => setTab(tabFromUrl()); window.addEventListener('popstate', sync); return () => window.removeEventListener('popstate', sync); }, []);
   const choose = (next: Tab) => { setTab(next); history.pushState({}, '', next === 'mcp' ? '/marketplace?tab=mcp' : '/marketplace'); };

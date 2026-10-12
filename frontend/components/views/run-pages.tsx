@@ -1,7 +1,7 @@
 'use client';
 import Link from 'next/link';
 import { useParams } from 'next/navigation';
-import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react';
 import { api, artifacts, download, label, record, rows, text, type Row, type Run } from '@/lib/harness';
 import { parseReport, type Report } from '@/lib/report';
 import { DetailPage, EmptyState, Exports, Fields, Metrics, Section, StatusBadge, Table, renderValue, recordHref, useRunId, type Column, type SectionSpec } from '../page';
@@ -14,6 +14,8 @@ import { CaseTable, EventFeed, ReportBlocks, VerdictBanner, findRecord, runName 
 const base = (id: string) => `/runs/${encodeURIComponent(id)}`;
 const isPlainObject = (value: unknown): value is Row => !!value && typeof value === 'object' && !Array.isArray(value);
 const isCaseKey = (key: string) => key.endsWith('_tests');
+/** "positive_tests" is captioned "Positive cases". */
+const caseCaption = (key: string) => `${label(key.replace(/_tests$/, ''))} cases`;
 const describe = (value: unknown): string => {
   if (Array.isArray(value)) return `${value.length} ${value.length === 1 ? 'entry' : 'entries'}`;
   if (isPlainObject(value)) { const n = Object.keys(value).length; return `${n} ${n === 1 ? 'field' : 'fields'}`; }
@@ -33,7 +35,7 @@ function useSplit(): [number, (value: number) => void] { return usePreference<nu
 
 export function SplitWorkspace({ children, split, setSplit }: { children: [ReactNode, ReactNode]; split: number; setSplit: (value: number) => void }) {
   const grid = useRef<HTMLDivElement>(null);
-  return <div ref={grid} className="workspace-grid">{children[0]}<ResizeHandle label="Resize workspace columns" start={() => {
+  return <div ref={grid} className="workspace-grid" style={{ '--main-split': `${Math.max(45, Math.min(80, Number(split) || 68))}%` } as CSSProperties}>{children[0]}<ResizeHandle label="Resize workspace columns" start={() => {
     const width = grid.current!.clientWidth; const initial = split;
     return dx => setSplit(Math.max(45, Math.min(80, initial + dx / width * 100)));
   }} />{children[1]}</div>;
@@ -63,7 +65,7 @@ function ReviewPanel({ run }: { run: Run }) {
     {p.kind === 'tool' && p.details.effects ? <div className="notice">{text(p.details.effects)}</div> : null}
     {p.kind === 'tool' && p.stage !== 'repo_analysis' && <p className="bad">Commands execute locally as your user. Review all commands and download sources before approval.</p>}
     {value.setup_guide ? <SetupGuide guide={record(value.setup_guide)} /> : null}
-    {caseKeys.map((key, i) => <Section key={key} id={`cases-${key}`} title={label(key)} count={rows(value[key]).length} defaultOpen={i === 0}><CaseTable cases={rows(value[key])} requirements={record(artifacts(run).requirements)} caption={`${label(key)} cases`} /></Section>)}
+    {caseKeys.map((key, i) => <Section key={key} id={`cases-${key}`} title={label(key)} count={rows(value[key]).length} defaultOpen={i < 2}><CaseTable cases={rows(value[key])} requirements={record(artifacts(run).requirements)} caption={caseCaption(key)} /></Section>)}
     <Fields data={rest} />
   </Panel>;
 }
@@ -91,7 +93,7 @@ function CaseBudget({ budget, id, disabled, act }: { budget: Row; id: string; di
     { key: 'generation', label: 'Approx. generation time' }, { key: 'design', label: 'Approx. design time' },
   ];
   const data = rows(budget.rows).map(r => ({ k: r.per_requirement, cases: r.cases, batches: r.batches, generation: `~${minutes(Number(r.generation_min) * 60)}`, design: `~${minutes(Number(r.design_min) * 60)}` }));
-  return <Panel title="Case budget" storageKey={`${id}:case-budget`} defaultOpen={false}>
+  return <Panel title="Case budget" storageKey={`${id}:case-budget`}>
     <p>Current: <strong>{text(budget.current)}</strong> test case(s) per requirement. Recommended for ~1 hour of generation: <strong>{recommended}</strong>. Re-run test design to apply a changed budget.</p>
     <div className="header-actions"><label>Cases per requirement<select value={value} disabled={disabled} onChange={e => setValue(Number(e.target.value))}>{Array.from({ length: 10 }, (_, i) => i + 1).map(k => <option key={k} value={k}>{k}</option>)}</select></label><button disabled={disabled || value === Number(budget.current)} onClick={() => void act(`runs/${encodeURIComponent(id)}/case-budget`, { per_requirement: value })}>Save</button></div>
     {!rows(budget.rows).some(r => Number(r.cases) > 0) ? <p className="notice">Time estimates appear after the requirements step, when the requirement count is known.</p> : <Table caption="Case budget estimates" columns={columns} rows={data} />}
@@ -152,7 +154,7 @@ export function StageView() {
   const sections: SectionSpec[] = keys.length ? keys.map((key, i) => ({
     id: `section-${key}`, title: label(key), count: Array.isArray(record(value)[key]) ? (record(value)[key] as unknown[]).length : undefined,
     defaultOpen: i < 2, expandHref: `${base(runId)}/artifacts/${encodeURIComponent(stage)}/${encodeURIComponent(key)}`,
-    render: () => isCaseKey(key) ? <CaseTable cases={rows(record(value)[key])} requirements={record(data.requirements)} caption={`${label(key)} cases`} /> : <SectionBody value={record(value)[key]} keyName={key} />,
+    render: () => isCaseKey(key) ? <CaseTable cases={rows(record(value)[key])} requirements={record(data.requirements)} caption={caseCaption(key)} /> : <SectionBody value={record(value)[key]} keyName={key} />,
   })) : [{ id: 'section-content', title: 'Content', defaultOpen: true, render: () => <SectionBody value={value} keyName={stage} /> }];
   return <DetailPage
     breadcrumbs={[{ label: 'Runs', href: '/runs' }, { label: runName(run, id), href: base(id) }, { label: 'Artifacts', href: `${base(id)}/artifacts` }, { label: label(stage) }]}
@@ -346,7 +348,8 @@ export function EvidenceView() {
   const { files, error, truncated } = useEvidenceFiles(id, run.busy);
   const [kind, setKind] = useState('');
   const [search, setSearch] = useState('');
-  const [selected, setSelected] = useState<string>(() => (typeof location === 'undefined' ? '' : new URLSearchParams(location.search).get('file') || ''));
+  const [selected, setSelected] = useState('');
+  useEffect(() => { setSelected(new URLSearchParams(location.search).get('file') || ''); }, []);
   const available = files.filter(f => f.kind !== 'log');
   const shown = available.filter(f => (!kind || f.kind === kind) && f.path.toLowerCase().includes(search.toLowerCase()));
   const file = shown.find(f => f.id === selected) || shown.find(f => f.kind === 'report') || shown[0];

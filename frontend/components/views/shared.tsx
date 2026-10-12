@@ -84,23 +84,26 @@ export function caseRequirementIds(item: Row, requirements?: Row): string[] {
   return [...new Set(ids.filter(id => id && id !== '—' && id !== 'None'))];
 }
 
-/** Finds a record by ID in the run's saved artifacts and QA report, or in the run's error list. */
+/** Finds a record by ID in the run's saved artifacts and QA report, or in the run's error list. Every match is merged, so
+ *  a case shows its design, its generated catalog entry and its execution result together (later matches win). */
 export function findRecord(run: Run, recordId: string): Row | null {
   const errorItem = (run.errors?.items ?? []).find(item => text(item.id) === recordId);
   if (errorItem) return errorItem;
-  const visit = (value: unknown, depth: number): Row | null => {
-    if (depth > 7 || !value || typeof value !== 'object') return null;
+  const matches: Row[] = [];
+  const visit = (value: unknown, depth: number) => {
+    if (depth > 7 || !value || typeof value !== 'object') return;
     if (Array.isArray(value)) {
       for (const item of value) {
-        if (item && typeof item === 'object' && (text((item as Row).id) === recordId || text((item as Row).case_id) === recordId)) return item as Row;
+        if (item && typeof item === 'object' && (text((item as Row).id) === recordId || text((item as Row).case_id) === recordId)) matches.push(item as Row);
+        else visit(item, depth + 1);
       }
-      for (const item of value) { const found = visit(item, depth + 1); if (found) return found; }
-      return null;
+      return;
     }
-    for (const item of Object.values(value)) { const found = visit(item, depth + 1); if (found) return found; }
-    return null;
+    for (const item of Object.values(value)) visit(item, depth + 1);
   };
-  return visit(artifacts(run), 0) ?? visit(run.state.test_reviews, 0);
+  visit(artifacts(run), 0);
+  visit(run.state.test_reviews, 0);
+  return matches.length ? Object.assign({}, ...matches) as Row : null;
 }
 
 /** Audit or event feed: one expandable row per event, the same structure for audit and trace JSONL. */

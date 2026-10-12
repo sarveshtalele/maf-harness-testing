@@ -132,11 +132,11 @@ export default function RunLayout({ id, children }: { id: string; children: Reac
     {run.status === 'stopping' && tabLevel && <div className="notice" role="status">Stopping… waiting for running work to end. Approved evidence is kept. If this takes more than a minute, restart the app; the run then shows as interrupted and can be resumed with Reconnect.</div>}
     {run.status === 'stopped' && tabLevel && <div className="notice">Workflow stopped. Approved evidence remains available.</div>}
     {run.state.completed_reason && tabLevel ? <div className="notice"><StatusBadge value={record(record(artifacts(run).test_execution).qa_report).verdict} /> {text(run.state.completed_reason)}</div> : null}
-    {tabLevel && <nav className="tabs" aria-label="Run views">{RUN_TABS.map(tab => {
+    <nav className="tabs" aria-label="Run views">{RUN_TABS.map(tab => {
       const href = tab.segment ? `${base}/${tab.segment}` : base;
       const current = tab.segment === currentSegment;
       return <Link key={tab.name} href={href} className={current ? 'selected' : ''} aria-current={current ? 'page' : undefined}><Icon name={tab.icon} />{tab.name === 'Errors' ? `Errors${errorCount ? ` ${errorCount}` : ''}` : tab.name}{tab.name === 'Review' && run.actions.length > 0 && <span className="tab-dot" />}</Link>;
-    })}</nav>}
+    })}</nav>
     {children}
     <ConfirmDialog open={stopOpen} title="Stop this run?" confirmLabel="Stop run" tone="danger" busy={sending} onConfirm={() => void confirmStop()} onClose={() => setStopOpen(false)}>
       <p>Completed stages and evidence are kept.</p>
@@ -160,6 +160,8 @@ function WorkingStatus({ stage, eta, operation, directory, cancel, sending }: { 
   const batch = eta.batch ? record(eta.batch) : null;
   const cloning = current.kind === 'clone' && current.status === 'running';
   const headline = cloning ? 'Cloning repository from GitHub…' : stage === 'repo_analysis' ? 'Inspecting repository source…' : stage === 'test_generation' ? 'Generating tests…' : `${label(stage || 'workflow')} is running…`;
-  const detail = cloning ? `Git attempt ${text(current.attempt)} · ${text(current.elapsed_seconds)}s elapsed · timeout ${text(current.timeout_seconds)}s` : `${batch ? `Batch ${text(batch.done)} of ${text(batch.total)}${eta.remaining_s != null ? ` · ~${minutes(Number(eta.remaining_s))} left of ~${minutes(Number(eta.predicted_s))}` : ''}` : eta.remaining_s != null ? `~${minutes(Number(eta.remaining_s))} left of ~${minutes(Number(eta.predicted_s))}` : 'Waiting for the next saved output'} · ${minutes(eta.elapsed_s != null ? Number(eta.elapsed_s) : elapsed)} active.`;
-  return <div className="notice working"><span className="spinner" aria-hidden="true" /><div><strong role="status" aria-live="polite">{headline}</strong><div>{detail} Updates refresh automatically.</div>{current.latest_output ? <pre className="live-clone-output">{text(current.latest_output)}</pre> : null}{directory && <small>Actual run directory: <code>{directory}</code></small>}{cancel && <div><button disabled={sending} onClick={cancel}>{sending ? 'Cancelling…' : 'Cancel clone'}</button><small>Stops this run’s Git process tree; preserves output for retry.</small></div>}</div></div>;
+  // Live region: the headline and progress only. The elapsed timer changes every second, so it sits outside the region.
+  const progress = cloning ? `Git attempt ${text(current.attempt)} · ${text(current.elapsed_seconds)}s elapsed · timeout ${text(current.timeout_seconds)}s` : batch ? `Batch ${text(batch.done)} of ${text(batch.total)}${eta.remaining_s != null ? ` · ~${minutes(Number(eta.remaining_s))} left of ~${minutes(Number(eta.predicted_s))}` : ''}` : eta.remaining_s != null ? `~${minutes(Number(eta.remaining_s))} left of ~${minutes(Number(eta.predicted_s))}` : 'Waiting for the next saved output';
+  const active = minutes(eta.elapsed_s != null ? Number(eta.elapsed_s) : elapsed);
+  return <div className="notice working"><span className="spinner" aria-hidden="true" /><div><div role="status" aria-live="polite"><strong>{headline}</strong><div>{progress}</div></div><div className="working-timer" aria-hidden="true">{active} active. Updates refresh automatically.</div>{current.latest_output ? <pre className="live-clone-output">{text(current.latest_output)}</pre> : null}{directory && <small>Actual run directory: <code>{directory}</code></small>}{cancel && <div><button disabled={sending} onClick={cancel}>{sending ? 'Cancelling…' : 'Cancel clone'}</button><small>Stops this run’s Git process tree; preserves output for retry.</small></div>}</div></div>;
 }

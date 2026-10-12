@@ -1,6 +1,6 @@
 'use client';
 import Link from 'next/link';
-import { useEffect, useRef, useState, type ReactNode } from 'react';
+import { useEffect, useMemo, useRef, useSyncExternalStore, type ReactNode } from 'react';
 import { Section } from './page';
 
 export function ResizeHandle({ label: name, axis = 'horizontal', start, reset }: { label: string; axis?: 'horizontal' | 'both'; reset?: () => void; start: () => (dx: number, dy: number) => void }) {
@@ -18,12 +18,30 @@ export function ResizeHandle({ label: name, axis = 'horizontal', start, reset }:
   }}><span aria-hidden="true">{axis === 'both' ? '◢' : '⋮'}</span></button>;
 }
 
-/** Preference read on the first client render (no flash of the default), guarded for storage that is blocked or full. */
+const PREFERENCE_EVENT = 'maf:preference';
+/** In-memory copy for browsers that block storage: the value still applies for this page view. */
+const memory = new Map<string, string>();
+function readPreference(key: string): string | null {
+  try { const stored = localStorage.getItem(key); if (stored != null) return stored; } catch { /* storage blocked */ }
+  return memory.get(key) ?? null;
+}
+/**
+ * A saved preference. The server and the first client render use `initial`, so hydration matches; the stored value is
+ * applied right after hydration, before paint (useSyncExternalStore), so returning users never see the default flash.
+ */
 export function usePreference<T>(key: string, initial: T): [T, (value: T) => void] {
-  const [value, setValue] = useState<T>(() => {
-    try { const stored = typeof window === 'undefined' ? null : localStorage.getItem(key); return stored == null ? initial : JSON.parse(stored); } catch { return initial; }
-  });
-  const save = (next: T) => { setValue(next); try { localStorage.setItem(key, JSON.stringify(next)); } catch { /* Layout still works without storage. */ } };
+  const raw = useSyncExternalStore(
+    notify => { window.addEventListener('storage', notify); window.addEventListener(PREFERENCE_EVENT, notify); return () => { window.removeEventListener('storage', notify); window.removeEventListener(PREFERENCE_EVENT, notify); }; },
+    () => readPreference(key),
+    () => null,
+  );
+  const value = useMemo<T>(() => { if (raw == null) return initial; try { return JSON.parse(raw) as T; } catch { return initial; } }, [raw, initial]);
+  const save = (next: T) => {
+    const encoded = JSON.stringify(next);
+    memory.set(key, encoded);
+    try { localStorage.setItem(key, encoded); } catch { /* Layout still works without storage. */ }
+    window.dispatchEvent(new Event(PREFERENCE_EVENT));
+  };
   return [value, save];
 }
 
@@ -42,5 +60,5 @@ export function useReturnFocus(open: boolean): (trigger: EventTarget | null) => 
 /** A collapsible section on a page. `expandHref` adds the ⤢ link that opens the section as its own page. */
 export function Panel({ title, children, storageKey, actions, defaultOpen = true, expandHref }: { title: string; children: ReactNode; storageKey: string; actions?: ReactNode; defaultOpen?: boolean; expandHref?: string }) {
   const id = storageKey.replace(/[^A-Za-z0-9_-]+/g, '-').replace(/^-|-$/g, '') || undefined;
-  return <Section id={id} title={title} actions={actions} defaultOpen={defaultOpen} expandHref={expandHref}>{children}</Section>;
+  return <Section id={id} className="section-card" title={title} actions={actions} defaultOpen={defaultOpen} expandHref={expandHref}>{children}</Section>;
 }
