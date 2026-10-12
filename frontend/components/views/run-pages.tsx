@@ -279,6 +279,25 @@ export function StepView() {
 // ---------- Test reports and logs ----------
 
 type EvidenceFile = { id: string; path: string; name: string; kind: string; bytes: number; updated: number };
+
+/** The report frame has an opaque origin and no cookie, so its files come through a short-lived token prefix. */
+function ReportFrame({ runId, fileId }: { runId: string; fileId: string }) {
+  const [src, setSrc] = useState('');
+  const [failed, setFailed] = useState(false);
+  useEffect(() => {
+    const controller = new AbortController();
+    setSrc(''); setFailed(false);
+    fetch(`/api/report-token/${encodeURIComponent(runId)}`, { cache: 'no-store', signal: controller.signal })
+      .then(r => (r.ok ? r.json() : Promise.reject(new Error('Report link unavailable.'))))
+      .then((body: { prefix: string }) => setSrc(`${body.prefix}/runs/${encodeURIComponent(runId)}/evidence/${encodeURIComponent(fileId)}/view.html`))
+      .catch(() => { if (!controller.signal.aborted) setFailed(true); });
+    return () => controller.abort();
+  }, [runId, fileId]);
+  if (failed) return <p className="notice bad" role="alert">The report could not be opened. Reload the page.</p>;
+  if (!src) return <p className="empty-inline" role="status">Loading report…</p>;
+  return <iframe className="report-frame" title="Playwright report" src={src} sandbox="allow-scripts" />;
+}
+
 export function useEvidenceFiles(id: string, busy: boolean) {
   const [files, setFiles] = useState<EvidenceFile[] | null>(null);
   const [error, setError] = useState('');
@@ -323,7 +342,7 @@ export function EvidenceView() {
       <Panel title={file?.name || 'Evidence preview'} storageKey={`${id}:preview`} actions={file ? <a className="button small" href={`${url}?download=1`} download>Download ↓</a> : undefined}>
         {file ? <>
           <p className="evidence-path">{file.path}</p>
-          {file.kind === 'report' ? <iframe key={file.id} className="report-frame" title="Playwright report" src={`${url}/view.html`} sandbox="allow-scripts" /> : file.kind === 'screenshot' ? <a href={url} target="_blank" rel="noreferrer"><img className="evidence-image" alt={`Screenshot ${file.path}`} src={url} /></a> : file.kind === 'trace' ? <EmptyState title="Playwright trace" icon="◈">Download this trace and open it with your local Playwright trace viewer.<code>npx playwright show-trace trace.zip</code></EmptyState> : <p className="empty-inline">This file has no inline preview. Use Download.</p>}
+          {file.kind === 'report' ? <ReportFrame key={file.id} runId={id} fileId={file.id} /> : file.kind === 'screenshot' ? <a href={url} target="_blank" rel="noreferrer"><img className="evidence-image" alt={`Screenshot ${file.path}`} src={url} /></a> : file.kind === 'trace' ? <EmptyState title="Playwright trace" icon="◈">Download this trace and open it with your local Playwright trace viewer.<code>npx playwright show-trace trace.zip</code></EmptyState> : <p className="empty-inline">This file has no inline preview. Use Download.</p>}
         </> : <p className="empty-inline">Select a file to inspect its evidence.</p>}
       </Panel>
     </div>

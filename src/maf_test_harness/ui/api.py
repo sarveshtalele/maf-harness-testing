@@ -718,7 +718,7 @@ class LocalAPI(EvidenceAPI, SettingsAPI, McpAPI, ConfidenceAPI):
 API_SOCKET_TIMEOUT_SECONDS = 30  # a silent or slow-loris client must not hold a server thread forever
 
 
-def make_server(api: LocalAPI, token: str, port: int = 8765):
+def make_server(api: LocalAPI, token: str, port: int = 8765, nonce: str = ""):
     class Handler(BaseHTTPRequestHandler):
         timeout = (
             API_SOCKET_TIMEOUT_SECONDS  # applied to each connection's socket by StreamRequestHandler.setup
@@ -773,7 +773,10 @@ def make_server(api: LocalAPI, token: str, port: int = 8765):
                 parts = [unquote(part) for part in url.path.strip("/").split("/")]
                 query = parse_qs(url.query)
                 if self.command == "GET":
-                    if parts == ["config"]:
+                    if parts == ["health"]:
+                        # Only the authenticated caller (checked above) learns the launch nonce: it proves this is our API.
+                        self.reply(200, {"ok": True, "nonce": nonce})
+                    elif parts == ["config"]:
                         self.reply(200, api.config())
                     elif parts == ["settings", "model"]:
                         self.reply(200, api.model_settings())
@@ -911,12 +914,18 @@ def take_api_token() -> str | None:
     return token
 
 
+def take_launch_nonce() -> str:
+    """Read HARNESS_LAUNCH_NONCE once and remove it from the environment (GET /health echoes it to authenticated callers)."""
+    return os.environ.pop("HARNESS_LAUNCH_NONCE", "")
+
+
 def main():
     logging.basicConfig(level=logging.WARNING, format="%(asctime)s %(levelname)s %(message)s")
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--port", type=int, default=8765)
     args = parser.parse_args()
     token = take_api_token()
+    nonce = take_launch_nonce()
     if not token or len(token) < 32:
         parser.error(
             "Set HARNESS_API_TOKEN to a random value of at least 32 characters (the launcher does this)."
@@ -927,8 +936,10 @@ def main():
     # ponytail: one local API owns this user's run store; a shared service needs explicit job ownership.
     with FileLock(str(runs.parent / f".{runs.name}-api.lock"), timeout=0):
         api = LocalAPI(runs, (ROOT / ".harness_runs", Path.home() / ".maf-harness" / "runs"))
-        server = make_server(api, token, args.port)
-        print(f"Local harness API: http://127.0.0.1:{args.port}", flush=True)
+        server = make_server(api, token, args.port, nonce)
+        # The nonce on this line is how the desktop shell and the launcher know the port is this process's (F13).
+        ready = f" nonce={nonce}" if nonce else ""
+        print(f"Local harness API: http://127.0.0.1:{args.port}{ready}", flush=True)
         try:
             server.serve_forever()
         except KeyboardInterrupt:

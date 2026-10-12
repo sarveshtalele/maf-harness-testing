@@ -372,11 +372,9 @@ def test_secrets_revoked_on_delete_and_target_change(monkeypatch):
     assert mcp_servers.get_secret("j", "BEARER_TOKEN") == ""  # a deleted server's env value stays ignored
 
 
-def test_secret_env_names_cannot_collide_and_match_desktop():
+def test_secret_env_names_cannot_collide():
     assert mcp_servers.secret_env_name("a-b", "C") == "HARNESS_MCP_SECRET_A__B_C"
     assert mcp_servers.secret_env_name("a", "B_C") == "HARNESS_MCP_SECRET_A_B_C"
-    ts = (Path(__file__).parents[1] / "desktop" / "src" / "keystore.ts").read_text()
-    assert ".toUpperCase().replace(/-/g, '__')" in ts  # keep the TypeScript encoding identical
 
 
 # ---- API --------------------------------------------------------------------------------------------------------
@@ -930,3 +928,44 @@ def test_legitimate_arguments_are_accepted(args):
 def test_legitimate_http_url_without_query_is_accepted():
     server = mcp_servers.upsert({"name": "h", "transport": "http", "url": "https://example.com/mcp"})
     assert server["url"] == "https://example.com/mcp"
+
+
+def test_fingerprint_follows_the_target_and_holds_no_secret(tmp_path):
+    before = mcp_servers.fingerprint(mcp_servers.upsert(srv(env_keys=["API_TOKEN"])))
+    mcp_servers.set_secrets("pw", {"API_TOKEN": SECRET})
+    assert mcp_servers.fingerprint(mcp_servers.get("pw")) == before  # secrets are not part of the target
+    assert SECRET not in before
+    for changed in (
+        srv(env_keys=["API_TOKEN"], command="uvx"),
+        srv(env_keys=["API_TOKEN"], args=["y"]),
+        srv(env_keys=["OTHER"]),
+    ):
+        assert mcp_servers.fingerprint(mcp_servers.validate(changed)) != before
+    listed = LocalAPI(tmp_path / "runs", requirements_mode="deterministic").mcp_list()
+    assert listed["servers"][0]["fingerprint"] == before
+    assert SECRET not in json.dumps(listed)
+
+
+@pytest.mark.parametrize(
+    "changed",
+    [
+        {"args": ["changed"]},  # args only: the case that used to keep the secret
+        {"command": "uvx"},
+        {"env_keys": ["OTHER"]},
+    ],
+)
+def test_any_target_change_clears_the_secret(changed):
+    mcp_servers.upsert(srv(env_keys=["API_TOKEN"]))
+    mcp_servers.set_secrets("pw", {"API_TOKEN": SECRET})
+    assert mcp_servers.secret_status(mcp_servers.get("pw")) == {"API_TOKEN": True}
+    mcp_servers.upsert(srv(**{"env_keys": ["API_TOKEN"], **changed}))
+    assert (
+        mcp_servers.get_secret("pw", "API_TOKEN") == ""
+    )  # the value is gone, whatever the new key list says
+
+
+def test_unchanged_target_keeps_the_secret():
+    mcp_servers.upsert(srv(env_keys=["API_TOKEN"]))
+    mcp_servers.set_secrets("pw", {"API_TOKEN": SECRET})
+    mcp_servers.upsert(srv(env_keys=["API_TOKEN"], enabled=False))  # enabled is not part of the target
+    assert mcp_servers.secret_status(mcp_servers.get("pw")) == {"API_TOKEN": True}

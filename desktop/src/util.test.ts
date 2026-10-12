@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { canOpenExternally, csp, isAppOrigin, isEvidenceUrl, makeToken, mergePath, pickFreePort, pickTwoPorts, readLoginShellPath } from './util';
+import { canOpenExternally, isAppOrigin, isEvidenceUrl, makeToken, mergePath, nonceMatches, pickFreePort, pickTwoPorts, readLoginShellPath, SESSION_TTL_SECONDS, sessionCookieName, sessionCookieValue } from './util';
 
 test('free ports are loopback-bindable and distinct', async () => {
   const [a, b] = await pickTwoPorts();
@@ -32,10 +32,21 @@ test('external links: https only', () => {
   assert.ok(!canOpenExternally('javascript:alert(1)'));
 });
 
-test('csp restricts framing and objects', () => {
-  const c = csp(4000);
-  assert.match(c, /frame-ancestors 'self'/);
-  assert.match(c, /object-src 'none'/);
+test('F13: only this launch nonce matches', () => {
+  assert.ok(nonceMatches('n-0123456789abcdef', 'n-0123456789abcdef'));
+  assert.ok(!nonceMatches('n-0123456789abcdeX', 'n-0123456789abcdef'));
+  assert.ok(!nonceMatches('short', 'n-0123456789abcdef'));
+  assert.ok(!nonceMatches(undefined, 'n-0123456789abcdef'));
+  assert.ok(!nonceMatches('', ''));
+});
+
+test('session cookie value is read per port from Set-Cookie lines only', () => {
+  assert.equal(sessionCookieValue(['aqe_session_4000=abc.DEF-123; Path=/; HttpOnly; SameSite=Strict'], 4000), 'abc.DEF-123');
+  assert.equal(sessionCookieValue(['aqe_session_9999=abc.DEF-123'], 4000), null); // another app's port: not ours
+  assert.equal(sessionCookieValue(['other=1', 'x=aqe_session_4000=bad value'], 4000), null);
+  assert.equal(sessionCookieValue([], 4000), null);
+  assert.equal(sessionCookieName(4000), 'aqe_session_4000');
+  assert.ok(SESSION_TTL_SECONDS === 604800);
 });
 
 test('evidence report URLs are recognised', () => {

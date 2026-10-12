@@ -7,6 +7,7 @@ export interface Secrets {
   model: string;
   stage_models: Record<string, string>;
   mcp: Record<string, Record<string, string>>; // MCP server -> secret name -> value
+  mcp_fp: Record<string, string>; // MCP server -> fingerprint of the target its secrets were entered for (F4)
 }
 export interface ModelSettingsInput extends Partial<Secrets> {}
 /** Renderer-visible view: never contains the key. */
@@ -27,7 +28,7 @@ export interface SafeStorageLike {
   getSelectedStorageBackend?(): string;
 }
 
-const EMPTY: Secrets = { api_key: '', base_url: '', model: '', stage_models: {}, mcp: {} };
+const EMPTY: Secrets = { api_key: '', base_url: '', model: '', stage_models: {}, mcp: {}, mcp_fp: {} };
 
 export function validateBaseUrl(url: string): string {
   const v = url.trim();
@@ -40,10 +41,15 @@ export function validateBaseUrl(url: string): string {
   return v;
 }
 
+/** Host that receives the key: the provider default for an empty URL (same rule as settings.py `_host_of`). */
+export function keyHost(url: string): string {
+  if (!url) return 'api.openai.com';
+  return new URL(url).hostname.replace(/^\[|\]$/g, '');
+}
+
 const MCP_NAME = /^[a-z][a-z0-9-]{0,31}$/;
 const MCP_KEY = /^[A-Z][A-Z0-9_]{0,63}$/;
-/** Same normalisation as maf_test_harness.mcp_servers.secret_env_name. */
-export const mcpEnvName = (server: string, key: string) => `HARNESS_MCP_SECRET_${server.toUpperCase().replace(/-/g, '__')}_${key}`;
+const FINGERPRINT = /^[0-9a-f]{64}$/;
 
 export function validate(input: ModelSettingsInput): ModelSettingsInput {
   const out: ModelSettingsInput = {};
@@ -103,7 +109,13 @@ export class KeyStore {
 
   /** Merge validated input (empty api_key keeps the stored one) and persist when encryption is available. */
   save(input: ModelSettingsInput): ModelSettingsView {
-    this.cache = { ...this.get(), ...validate(input) };
+    const next = validate(input);
+    const cur = this.get();
+    // The saved key goes to the base URL's host: moving it to another host needs a new key in the same call.
+    if (next.base_url !== undefined && keyHost(next.base_url) !== keyHost(cur.base_url) && !next.api_key && cur.api_key) {
+      throw new Error('Changing the API host requires a new API key in the same request; the saved key is not sent to a new host.');
+    }
+    this.cache = { ...cur, ...next };
     if (this.encrypted()) {
       fs.mkdirSync(path.dirname(this.file), { recursive: true, mode: 0o700 });
       const tmp = `${this.file}.tmp`;
@@ -123,7 +135,6 @@ export class KeyStore {
     try { fs.chmodSync(this.file, 0o600); } catch { /* Windows */ }
   }
 
-  /** Merge MCP secrets for one server (empty value clears). Returns that server's names only, never values. */
   /** Validate without storing (so the caller can hand the values to the backend first). */
   checkMcpSecrets(server: string, values: Record<string, string>): Record<string, string> {
     if (!MCP_NAME.test(server)) throw new Error('Invalid MCP server name.');
@@ -136,22 +147,42 @@ export class KeyStore {
     return clean;
   }
 
-  saveMcpSecrets(server: string, values: Record<string, string>): Record<string, boolean> {
-    const next = { ...(this.get().mcp[server] ?? {}) };
+  /** Merge MCP secrets for one server (empty value clears), bound to the target's fingerprint. Returns names only. */
+  saveMcpSecrets(server: string, values: Record<string, string>, fingerprint: string): Record<string, boolean> {
+    if (!FINGERPRINT.test(fingerprint)) throw new Error('Invalid MCP target fingerprint.');
+    const cur = this.get();
+    // Secrets stored for another target are never kept: a new target starts from the values entered now.
+    const next = { ...(cur.mcp_fp[server] === fingerprint ? cur.mcp[server] ?? {} : {}) };
     for (const [k, v] of Object.entries(this.checkMcpSecrets(server, values))) {
       if (v) next[k] = v; else delete next[k];
     }
-    const cur = this.get();
-    this.cache = { ...cur, mcp: { ...cur.mcp, [server]: next } };
-    if (!Object.keys(next).length) delete this.cache.mcp[server];
+    const mcp = { ...cur.mcp };
+    const fps = { ...cur.mcp_fp };
+    if (Object.keys(next).length) { mcp[server] = next; fps[server] = fingerprint; } else { delete mcp[server]; delete fps[server]; }
+    this.cache = { ...cur, mcp, mcp_fp: fps };
     this.persist();
     return this.mcpView()[server] ?? {};
+  }
+
+  /** Drops the secrets of every server whose current target (fingerprint from the backend) no longer matches what they
+   *  were entered for, or that no longer exists. Called before any secret is handed to the backend (F4). */
+  reconcileMcp(current: Record<string, string>): string[] {
+    const cur = this.get();
+    const dropped = Object.keys(cur.mcp).filter((server) => !current[server] || cur.mcp_fp[server] !== current[server]);
+    if (!dropped.length) return [];
+    const mcp = { ...cur.mcp };
+    const fps = { ...cur.mcp_fp };
+    for (const server of dropped) { delete mcp[server]; delete fps[server]; }
+    this.cache = { ...cur, mcp, mcp_fp: fps };
+    this.persist();
+    return dropped;
   }
 
   removeMcpServer(server: string) {
     const cur = this.get();
     const { [server]: _gone, ...rest } = cur.mcp;
-    this.cache = { ...cur, mcp: rest };
+    const { [server]: _goneFp, ...restFp } = cur.mcp_fp;
+    this.cache = { ...cur, mcp: rest, mcp_fp: restFp };
     this.persist();
   }
 
@@ -184,7 +215,8 @@ export class KeyStore {
     if (s.base_url) e.OPENAI_BASE_URL = s.base_url;
     if (s.model) e.OPENAI_MODEL = s.model;
     if (Object.keys(s.stage_models).length) e.HARNESS_STAGE_MODELS = JSON.stringify(s.stage_models);
-    for (const [server, m] of Object.entries(s.mcp)) for (const [k, v] of Object.entries(m)) e[mcpEnvName(server, k)] = v;
+    // MCP secrets are not in the spawn env: they reach the backend only through POST /mcp-servers/<n>/secrets, after
+    // reconcileMcp has matched each one's target (F4).
     return e;
   }
 }

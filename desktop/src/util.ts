@@ -1,6 +1,6 @@
 // Pure helpers: no Electron imports so they can be unit-tested with node:test.
 import { execFile } from 'node:child_process';
-import { randomBytes } from 'node:crypto';
+import { randomBytes, timingSafeEqual } from 'node:crypto';
 import * as net from 'node:net';
 
 /** Ask the OS for a free loopback port (listen on 0, read it, close). */
@@ -59,21 +59,41 @@ export function isEvidenceUrl(url: string): boolean {
   }
 }
 
-export function csp(uiPort: number): string {
-  const self = `http://127.0.0.1:${uiPort}`;
-  return [
-    `default-src 'self'`,
-    // Next inlines bootstrap scripts/styles; tightening to nonces is a later hardening step.
-    `script-src 'self' 'unsafe-inline'`,
-    `style-src 'self' 'unsafe-inline'`,
-    `img-src 'self' data: blob:`,
-    `font-src 'self' data:`,
-    `connect-src 'self' ${self}`,
-    `object-src 'none'`,
-    `base-uri 'self'`,
-    `frame-ancestors 'self'`,
-    `form-action 'self'`,
-  ].join('; ');
+/** True only when `got` is exactly this launch's nonce (constant-time compare). */
+export function nonceMatches(got: unknown, expected: string): boolean {
+  if (typeof got !== 'string' || !expected) return false;
+  const a = Buffer.from(got);
+  const b = Buffer.from(expected);
+  return a.length === b.length && timingSafeEqual(a, b);
+}
+
+/** Session cookie lifetime, seconds: matches frontend/lib/session.ts (SESSION_TTL_SECONDS). */
+export const SESSION_TTL_SECONDS = 7 * 24 * 3600;
+
+/** Per-port cookie name: frontend/lib/session.ts sessionCookieName. */
+export function sessionCookieName(port: number | string): string {
+  return `aqe_session_${port}`;
+}
+
+/** Session id from the Set-Cookie lines of /api/session for one port, or null. */
+export function sessionCookieValue(setCookies: string[], port: number | string): string | null {
+  const name = sessionCookieName(port);
+  for (const line of setCookies) {
+    const m = new RegExp(`(?:^|\\s)${name}=([A-Za-z0-9_.-]+)`).exec(line);
+    if (m) return m[1] ?? null;
+  }
+  return null;
+}
+
+/** Exchanges the one-time launch secret for a session id. The secret is spent; the caller stores the cookie. */
+export async function exchangeLaunchSecret(origin: string, secret: string): Promise<string> {
+  const port = new URL(origin).port;
+  const r = await fetch(`${origin}/api/session?launch=${encodeURIComponent(secret)}`, {
+    redirect: 'manual', signal: AbortSignal.timeout(10_000),
+  });
+  const value = sessionCookieValue(r.headers.getSetCookie(), port);
+  if (r.status !== 303 || !value) throw new Error('The UI did not accept the launch secret.');
+  return value;
 }
 
 /** Homebrew (Apple silicon, Intel) and the usual /usr/local bin: where git, uv, java and python3 usually live on macOS. */

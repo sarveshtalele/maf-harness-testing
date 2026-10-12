@@ -48,5 +48,16 @@ linux:
     - target: AppImage
       arch: [x64]
   category: Development
+# Electron fuses (applied at pack time). runAsNode stays ON on purpose: the UI server is spawned as
+# process.execPath with ELECTRON_RUN_AS_NODE=1 (main.ts specs), so turning it off would stop the UI. NODE_OPTIONS and
+# the inspector flags are off; the app code loads only from app.asar.
+electronFuses:
+  # identity null skips electron-builder's signing, and the fuse flip invalidates Electron's ad-hoc signature on
+  # arm64 macOS. This re-signs ad hoc after the flip (the fuses package only does it for .app bundles).
+  resetAdHocDarwinSignature: true
+  runAsNode: true
+  enableNodeOptionsEnvironmentVariable: false
+  enableNodeCliInspectArguments: false
+  onlyLoadAppFromAsar: true
 # No auto-update publisher on purpose: "Check for updates" opens the GitHub Releases page.
 publish: null
