@@ -324,9 +324,24 @@ def satisfies(kind: str, have: str, want: str, exact: bool = False, specifier: s
 
 
 # ---------------------------------------------------------------------------------------------- cache
+_TOOLCHAIN_KINDS = frozenset({"jdk", "maven", "gradle", "dotnet", "python"})
+_TOOLCHAIN_VERSION = re.compile(r"[0-9]+(?:\.[0-9]+){0,3}")
+
+
+def checked_version(version: str) -> str:
+    """Versions end up in download URLs, cache folder names and argv, so only dotted numbers are accepted."""
+    if not isinstance(version, str) or not _TOOLCHAIN_VERSION.fullmatch(version):
+        raise ToolchainError(
+            f"Toolchain version must be dotted numbers such as 17 or 3.12.1, not {version!r}."
+        )
+    return version
+
+
 def _dir_for(kind: str, version: str, root: Path) -> Path:
+    if kind not in _TOOLCHAIN_KINDS:
+        raise ToolchainError(f"Unknown toolchain kind {kind!r}.")
     system, arch = platform_key()
-    return root / kind / f"{version}-{system}-{arch}"
+    return root / kind / f"{checked_version(version)}-{system}-{arch}"
 
 
 def _home_in(kind: str, folder: Path) -> Path | None:
@@ -351,6 +366,8 @@ def cached(
     best: Toolchain | None = None
     for entry in sorted(base.glob("*")) if base.is_dir() else []:
         version = entry.name.rsplit("-", 2)[0]
+        if not _TOOLCHAIN_VERSION.fullmatch(version):  # a foreign folder must not break the lookup
+            continue
         if entry.name != _dir_for(kind, version, root).name or not (entry / ".complete").is_file():
             continue
         home = _home_in(kind, entry)
@@ -416,6 +433,7 @@ def _archive_kind(name: str) -> str:
 
 def resolve_download(kind: str, want: str, fetch: Fetch = http_get, fallback_version: str = "") -> Download:
     """Where to download ``kind`` >= ``want`` for this platform (queries the vendor's metadata)."""
+    want = checked_version(want)
     system, arch = platform_key()
     if kind == "jdk":
         major = version_tuple(want)[0]
@@ -626,6 +644,7 @@ class Provisioned:
 
 def python_via_uv(want: str, runner: Callable[[list[str]], str] = _run) -> Toolchain | None:
     """Ask ``uv`` for a matching interpreter (installing it into uv's own store); None when uv is missing."""
+    want = checked_version(want)
     uv = shutil.which("uv")
     if not uv:
         return None
