@@ -10,6 +10,8 @@ import os
 import re
 import shutil
 import traceback
+from concurrent.futures import Future
+from concurrent.futures import TimeoutError as FutureTimeout
 from datetime import UTC, datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -73,6 +75,14 @@ PUBLIC_STATE = (
     "heal_rounds",
     "test_reviews",
 )
+
+
+def _apply_run_name(state: dict, body: dict) -> tuple:
+    """Set the run name in ``state``; returns (old name, new name)."""
+    old = state.get("run_name")
+    name = _run_name(body.get("run_name"), state.get("repo_url") or "")
+    state["run_name"] = name
+    return old, name
 
 
 def _run_name(value, url: str) -> str:
@@ -264,6 +274,7 @@ class LocalAPI(EvidenceAPI, SettingsAPI, McpAPI):
                 "actions": [] if self.job else actions,
                 "busy": bool(self.job and self.job_run == key),
                 "pending_consumed": bool(pending and pending["id"] in view.get("consumed", [])),
+                "stop_note": view.get("stop_note"),
                 "run_directory": str(self.run_path(key)),
                 "operation": read_operation(self.run_path(key)) if self.job and self.job_run == key else {},
                 "service_busy": bool(self.job),
@@ -485,45 +496,55 @@ class LocalAPI(EvidenceAPI, SettingsAPI, McpAPI):
             self.run_path(key)
             if not self.job or self.job_run != key:
                 raise RuntimeError("No active operation for this run. Use its pending Stop decision.")
-
             path = self.run_path(key) / "run.json"
-            if read_json(path).get("status") == "stopping":
-                return {"id": key}  # already stopping
+            already = read_json(path).get("status") == "stopping"
+            live = bool(self.host and self.host.run_dir == self.run_path(key))
+        if already:
+            # The first Stop's wait is still running: a repeated Stop only reaches the task again.
+            self.service.cancel_again()
+            return {"id": key, "status": "stopping"}
 
-            def mark(status, **extra):
-                if self.host and self.host.run_dir == self.run_path(key):
-                    self.host.view.update(status=status, **extra)
-                    if status == "stopped":
-                        self.host.audit("run_stopped_by_user", stage=self.host.state.get("active_stage"))
-                    self.host.save()
-                else:
-                    view = read_json(path)
-                    view.update(status=status, **extra)
-                    atomic_json(path, view)
-
-            def stopped():
-                mark("stopped", pending=None)
-                self.operation_log(key, "stopped by user; retained saved evidence")
-
-            # Cancel first: the loop stops at its next cancel point even if the status write is still queued.
-            self.service.cancel_event.set()
+        def mark(status, **extra):
             if self.host and self.host.run_dir == self.run_path(key):
-                # The live host's view/state are mutated on the runtime loop; writing them from this thread
-                # could raise "dictionary changed size during iteration" inside json.dumps.
-                applied = Event()
-
-                def mark_on_loop():
-                    try:
-                        mark("stopping")
-                    finally:
-                        applied.set()
-
-                self.service.loop.call_soon_threadsafe(mark_on_loop)
-                applied.wait(5)  # the loop is free within this window; the status is then visible to the UI
+                self.host.view.update(status=status, **extra)
+                if status == "stopped":
+                    self.host.audit("run_stopped_by_user", stage=self.host.state.get("active_stage"))
+                self.host.save()
             else:
-                mark("stopping")
-            self.job = self.service.stop_active(stopped)
-            return {"id": key}
+                view = read_json(path)
+                view.update(status=status, **extra)
+                atomic_json(path, view)
+
+        def stopped():  # only once the task really ended
+            mark("stopped", pending=None, stop_note=None)
+            self.operation_log(key, "stopped by user; retained saved evidence")
+
+        def still_finishing():  # the task ignored cancellation past the wait: the run stays "stopping"
+            source = self.host.state if live and self.host else read_json(path).get("state", {})
+            note = f"still finishing: {source.get('active_stage') or 'the current step'}"
+            mark("stopping", stop_note=note)
+            self.operation_log(key, note)
+
+        # Cancel first: the loop stops at its next cancel point even if the status write is still queued.
+        self.service.cancel_event.set()
+        if live:
+            # The live host's view is mutated on the runtime loop; writing it from this thread could raise
+            # "dictionary changed size during iteration" inside json.dumps. The wait is outside self.lock.
+            applied = Event()
+
+            def mark_on_loop():
+                try:
+                    mark("stopping")
+                finally:
+                    applied.set()
+
+            self.service.loop.call_soon_threadsafe(mark_on_loop)
+            applied.wait(5)  # the loop is free within this window; the status is then visible to the UI
+        else:
+            mark("stopping")
+        with self.lock:
+            self.job = self.service.stop_active(stopped, still_finishing)
+        return {"id": key}
 
     def rerun(self, key: str, body: dict):
         with self.lock:
@@ -582,31 +603,50 @@ class LocalAPI(EvidenceAPI, SettingsAPI, McpAPI):
         with self.lock:
             if self.busy():
                 raise RuntimeError("Wait for the active operation before renaming a run.")
-            path = self.run_path(key) / "run.json"
-            view = read_json(path)
-            state = view.setdefault("state", {})
-            old = state.get("run_name")
-            name = _run_name(body.get("run_name"), state.get("repo_url") or "")
-            state["run_name"] = name
-            if self.host and self.host.run_dir == self.run_path(key):
-                self.host.state["run_name"] = name  # the live host rewrites run.json on its next save
-                self.host.save()
-            else:
+            live = bool(self.host and self.host.run_dir == self.run_path(key))
+            if not live:
+                path = self.run_path(key) / "run.json"
+                view = read_json(path)
+                old, name = _apply_run_name(view.setdefault("state", {}), body)
                 atomic_json(path, view)
-            with (self.run_path(key) / "audit.jsonl").open("a", encoding="utf-8") as stream:
-                stream.write(
-                    json.dumps(
-                        {
-                            "event": "run_renamed",
-                            "at": datetime.now(UTC).isoformat(),
-                            "run_id": key,
-                            "old_name": old,
-                            "run_name": name,
-                        }
-                    )
-                    + "\n"
+        if live:
+
+            def apply_on_loop():  # the live host's state is changed and saved on its loop, as stop marks are
+                old, name = _apply_run_name(self.host.state, body)
+                self.host.save()
+                return old, name
+
+            old, name = self._on_loop(apply_on_loop)  # waited for outside self.lock
+        with (self.run_path(key) / "audit.jsonl").open("a", encoding="utf-8") as stream:
+            stream.write(
+                json.dumps(
+                    {
+                        "event": "run_renamed",
+                        "at": datetime.now(UTC).isoformat(),
+                        "run_id": key,
+                        "old_name": old,
+                        "run_name": name,
+                    }
                 )
-            return {"id": key, "run_name": name}
+                + "\n"
+            )
+        return {"id": key, "run_name": name}
+
+    def _on_loop(self, action, timeout: float = 30):
+        """Run ``action`` on the runtime loop and return its result. Call without self.lock held."""
+        outcome: Future = Future()
+
+        def run():
+            try:
+                outcome.set_result(action())
+            except Exception as exc:
+                outcome.set_exception(exc)
+
+        self.service.loop.call_soon_threadsafe(run)
+        try:
+            return outcome.result(timeout=timeout)
+        except FutureTimeout as exc:
+            raise RuntimeError("The runtime is busy; try again in a moment.") from exc
 
     def audit(self, key):
         path = self.run_path(key) / "audit.jsonl"

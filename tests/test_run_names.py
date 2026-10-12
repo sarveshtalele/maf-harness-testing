@@ -66,3 +66,36 @@ def test_marker_header_has_run_req_title_and_parsers_still_map():
         [{"name": "test_a", "classname": "tests.test_a", "file": "tests/test_a.py"}], py["files"]
     )
     assert mapped[0]["case_id"] == "TC-1"
+
+
+def test_rename_of_a_live_run_saves_on_the_runtime_loop_and_does_not_hold_the_api_lock(local_api):  # noqa: F811
+    import threading
+
+    api = local_api
+    key = api.start({"repo_url": URL})["id"]
+    wait(api)
+    seen = {}
+
+    class LiveHost:  # the state and save of a running workflow host; save must run on the runtime loop
+        run_dir = api.run_path(key)
+        state = {"repo_url": URL, "run_name": "Before"}
+
+        def save(self):
+            seen["thread"] = threading.current_thread().name
+
+            def other_caller():  # an unrelated API call must not wait behind the rename
+                seen["lock_free"] = api.lock.acquire(timeout=2)
+                if seen["lock_free"]:
+                    api.lock.release()
+
+            caller = threading.Thread(target=other_caller)
+            caller.start()
+            caller.join(5)
+
+    api.host = LiveHost()
+    try:
+        assert api.rename_run(key, {"run_name": "Live name"})["run_name"] == "Live name"
+    finally:
+        api.host = None
+    assert seen == {"thread": "maf-runtime", "lock_free": True}
+    assert api.host is None and LiveHost.state["run_name"] == "Live name"

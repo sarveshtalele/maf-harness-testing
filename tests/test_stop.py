@@ -344,27 +344,64 @@ def test_stop_request_sets_cancel_then_writes_status_on_the_runtime_thread(api):
     assert api.read(key)["status"] == "stopped" and not api.errors
 
 
-def test_stop_reports_stopped_after_a_bounded_wait_when_work_ignores_cancel(monkeypatch):
+def test_a_task_that_ignores_cancel_past_the_timeout_stays_stopping_until_it_really_ends(monkeypatch):
     import maf_test_harness.ui.runtime_service as runtime_service
 
     monkeypatch.setattr(runtime_service, "STOP_WAIT_SECONDS", 0.3)
     service = RuntimeService()
-    stopped = []
+    stopped, notes = [], []
+    cancels = []
 
     async def stubborn():
-        deadline = time.monotonic() + 3.0
-        while time.monotonic() < deadline:
+        deadline = time.monotonic() + 2.0
+        while time.monotonic() < deadline:  # swallows every cancellation until the deadline
+            try:
+                await asyncio.sleep(0.05)
+            except asyncio.CancelledError:
+                cancels.append(time.monotonic())
+
+    async def other():
+        return "never runs"
+
+    try:
+        service.submit(stubborn())
+        time.sleep(0.1)
+        stop = service.stop_active(lambda: stopped.append(1), lambda: notes.append("still finishing"))
+        time.sleep(0.6)  # past the shortened wait, while the task still runs
+        assert notes == ["still finishing"] and not stop.done()
+        assert stopped == [], "reported stopped while the task was still running"
+        with pytest.raises(RuntimeError, match="still finishing after Stop"):
+            service.submit(other())
+        service.cancel_again()  # a later Stop reaches the task again
+        stop.result(10)
+        assert stopped == [1] and len(cancels) >= 2
+        assert service.idle.wait(5)
+        assert service.submit(other()).result(5) == "never runs"
+    finally:
+        service.close()
+
+
+def test_work_is_accepted_again_once_the_stopped_task_has_ended(monkeypatch):
+    import maf_test_harness.ui.runtime_service as runtime_service
+
+    monkeypatch.setattr(runtime_service, "STOP_WAIT_SECONDS", 0.2)
+    service = RuntimeService()
+
+    async def stubborn():
+        for _ in range(60):
             try:
                 await asyncio.sleep(0.05)
             except asyncio.CancelledError:
                 pass
 
+    async def follow_up():
+        return "accepted"
+
     try:
         service.submit(stubborn())
         time.sleep(0.1)
-        started = time.monotonic()
-        stop = service.stop_active(lambda: stopped.append(1))
+        stop = service.stop_active(lambda: None)
         stop.result(10)
-        assert stopped == [1] and time.monotonic() - started < 2.0
+        assert service.submit(follow_up()).result(5) == "accepted"
     finally:
         service.close()
