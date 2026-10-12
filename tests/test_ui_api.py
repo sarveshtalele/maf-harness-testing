@@ -713,3 +713,34 @@ def test_prompt_log_lives_beside_the_run_not_in_its_checkpointed_state(local_api
     assert "prompt_records" not in run["state"]
     records = api.prompts(key)["records"]
     assert records and {"id", "stage", "sha256"} <= set(records[0])
+
+
+def test_legacy_prompt_records_seed_the_log_on_resume_and_are_listed_once(local_api):
+    from maf_test_harness.storage import append_prompt_record
+
+    api = local_api
+    key = api.start({"repo_url": "https://github.com/acme/demo"})["id"]
+    wait(api)
+    run_dir = api.run_path(key)
+
+    def record(identifier, stage):
+        return {
+            "id": identifier * 32,
+            "stage": stage,
+            "role": "stage_author",
+            "batch": None,
+            "sha256": "0" * 64,
+        }
+
+    legacy = [record("a", "requirements"), record("b", "planning")]
+    view = json.loads((run_dir / "run.json").read_text(encoding="utf-8"))
+    view.setdefault("state", {})["prompt_records"] = legacy  # a run saved before the log existed
+    (run_dir / "run.json").write_text(json.dumps(view), encoding="utf-8")
+    (run_dir / "prompt_records.jsonl").unlink(missing_ok=True)
+    assert [r["id"] for r in api.prompts(key)["records"]] == [legacy[0]["id"], legacy[1]["id"]]
+
+    append_prompt_record(run_dir, record("c", "design"))  # the resumed run's first model call seeds the log
+    append_prompt_record(run_dir, legacy[1])  # a retry that writes an earlier record again
+    lines = (run_dir / "prompt_records.jsonl").read_text(encoding="utf-8").splitlines()
+    assert [json.loads(line)["id"][0] for line in lines] == ["a", "b", "c", "b"]
+    assert [r["id"][0] for r in api.prompts(key)["records"]] == ["a", "b", "c"]

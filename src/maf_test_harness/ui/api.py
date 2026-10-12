@@ -71,7 +71,6 @@ PUBLIC_STATE = (
     "invocations",
     "telemetry",
     "heal_rounds",
-    "prompt_records",
     "test_reviews",
 )
 

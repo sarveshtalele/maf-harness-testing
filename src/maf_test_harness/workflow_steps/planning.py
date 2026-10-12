@@ -40,7 +40,7 @@ from ..skills.contracts import (
     validate_generated_files,
 )
 from ..skills.host import execute_host_skill
-from ..storage import append_jsonl
+from ..storage import append_prompt_record
 from ..workflow_support import (
     CORE_STAGES,
     MODEL_REPAIR_ATTEMPTS,
@@ -81,8 +81,8 @@ class PlanningSteps:
             "user_prompt": prompt,
             "sha256": hashlib.sha256(prompt.encode()).hexdigest(),
         }
-        append_jsonl(
-            self.run_dir / "prompt_records.jsonl",
+        append_prompt_record(
+            self.run_dir,
             {k: record[k] for k in ("id", "stage", "role", "batch", "override_key", "sha256")},
         )
         atomic_json(folder / f"{identifier}.json", record)

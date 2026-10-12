@@ -12,7 +12,7 @@ from ..agent import prompt_settings
 from ..agent.personas import PERSONAS
 from ..llm.usage import DailyUsageLedger
 from ..settings import CASES_PER_REQUIREMENT
-from ..storage import read_json, read_jsonl
+from ..storage import prompt_log_records
 from ..workflow import STAGES
 from .presentation import public
 
@@ -60,11 +60,8 @@ class SettingsAPI:
     model_probe = None  # tests inject a fake
 
     def _prompt_records(self, key: str) -> list:
-        """The run's prompt log; runs made before the log moved out of state keep their list in run.json."""
-        path = self.run_path(key) / "prompt_records.jsonl"
-        if path.is_file():
-            return read_jsonl(path)
-        return read_json(self.run_path(key) / "run.json").get("state", {}).get("prompt_records", [])
+        """The run's prompt log, de-duplicated by id; legacy records kept in run.json's state are included."""
+        return prompt_log_records(self.run_path(key))
 
     def prompts(self, key: str | None = None, record_id: str | None = None) -> dict:
         with self.lock:

@@ -65,6 +65,44 @@ def read_jsonl(path: Path) -> list:
     return records
 
 
+PROMPT_LOG = "prompt_records.jsonl"
+
+
+def _legacy_prompt_records(run_dir: Path) -> list[dict]:
+    """Records that older runs kept inside run.json's checkpointed state (before the JSONL log existed)."""
+    path = run_dir / "run.json"
+    if not path.is_file():
+        return []
+    try:
+        records = (json.loads(path.read_text(encoding="utf-8")).get("state") or {}).get("prompt_records")
+    except (OSError, ValueError, AttributeError):
+        return []
+    return [r for r in records if isinstance(r, dict)] if isinstance(records, list) else []
+
+
+def append_prompt_record(run_dir: Path, record: dict) -> None:
+    """Append one prompt record. The first write to a log seeds it from a legacy run.json list, so resumed legacy runs
+    keep their history in the log; readers de-duplicate by id (see ``prompt_log_records``)."""
+    log = run_dir / PROMPT_LOG
+    if not log.exists():
+        for legacy in _legacy_prompt_records(run_dir):
+            append_jsonl(log, legacy)
+    append_jsonl(log, record)
+
+
+def prompt_log_records(run_dir: Path) -> list[dict]:
+    """Every prompt record of a run, oldest first, each id once (legacy run.json records first, then the log)."""
+    seen: set[str] = set()
+    records: list[dict] = []
+    for record in [*_legacy_prompt_records(run_dir), *read_jsonl(run_dir / PROMPT_LOG)]:
+        if isinstance(record, dict) and record.get("id") is not None:
+            if record["id"] in seen:
+                continue
+            seen.add(record["id"])
+        records.append(record)
+    return records
+
+
 def read_json(path: Path):
     return json.loads(_retry(lambda: path.read_text(encoding="utf-8")))
 
