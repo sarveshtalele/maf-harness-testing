@@ -14,7 +14,7 @@ def _view(server: dict) -> dict:
 
 
 class McpAPI:
-    mcp_probe = None  # tests inject a fake: async (server) -> {"tools": [...], "count": n}
+    mcp_probe = None  # tests inject a fake: async (server) -> {"tools": [...], "count": n, "catalog": [{name, description}]}
 
     def _mcp_guard(self) -> None:
         if self.busy():
@@ -25,17 +25,37 @@ class McpAPI:
             key: {"label": p["label"], "note": p["note"], "server": mcp_servers.preset_server(key)}
             for key, p in mcp_servers.PRESETS.items()
         }
+        servers = mcp_servers.load()
         return {
-            "servers": [_view(s) for s in mcp_servers.load()],
+            "servers": [_view(s) for s in servers],
+            "stage_budget": mcp_servers.stage_budget(servers),
             "presets": presets,
             "stages": list(mcp_servers.STAGES),
             "max_tools_per_server": mcp_servers.MAX_LISTED_TOOLS,
+            "max_tools_per_stage": mcp_servers.MAX_MCP_TOOLS_PER_STAGE,
         }
 
     def mcp_save(self, body: dict) -> dict:
         with self.lock:
             self._mcp_guard()
             return _view(mcp_servers.upsert(body))
+
+    def mcp_import(self, body: dict) -> dict:
+        with self.lock:
+            self._mcp_guard()
+            parsed = mcp_servers.parse_import(body.get("text"))
+            saved = mcp_servers.save_many([item["server"] for item in parsed])
+            return {
+                "imported": [
+                    {
+                        "source_key": item["source_key"],
+                        "name": server["name"],
+                        "secret_keys": item["secret_keys"],
+                    }
+                    for item, server in zip(parsed, saved, strict=True)
+                ],
+                "servers": [_view(s) for s in mcp_servers.load()],
+            }
 
     def mcp_delete(self, name: str) -> dict:
         with self.lock:
@@ -57,4 +77,10 @@ class McpAPI:
             result = asyncio.run((self.mcp_probe or mcp_servers.probe)(server))
         except Exception as exc:  # message is redacted: it may echo a URL or command output
             return {"ok": False, "message": public(f"{type(exc).__name__}: {str(exc)[:300]}")}
+        catalog = result.get("catalog") or [{"name": t, "description": ""} for t in result["tools"]]
+        with self.lock:
+            if not self.busy():  # the catalogue is kept only while no run is using the configuration
+                mcp_servers.set_discovered(
+                    name, catalog, probed=server
+                )  # dropped if the target changed meanwhile
         return {"ok": True, "tools": result["tools"], "count": result["count"]}

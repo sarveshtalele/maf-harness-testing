@@ -293,7 +293,7 @@ Skill files (`skills/*/SKILL.md`, `skills/*/references/`) and the document templ
 | `docs/GENERATION_BENCHMARK.md` | developer | Offline scorer for generated pytest suites (scripts/benchmark_generation.py). |
 | `docs/HOOKS.md` | developer | Hook engine: fail-closed checks around tool and model calls, and typed tools. |
 | `docs/IMPLEMENTATION_PLAN.md` | historical | Original implementation plan for the harness, with counts from its date. |
-| `docs/MCP.md` | user, developer | Adding Model Context Protocol servers in Configuration and giving them to chosen stages. |
+| `docs/MCP.md` | user, developer | Adding Model Context Protocol servers in Marketplace and giving them to chosen stages. |
 | `docs/MODULAR_WORKFLOW_IMPLEMENTATION.md` | developer | How the modular workflow and deferred execution setup were implemented. |
 | `docs/NEXTJS_UI.md` | developer | The Next.js workspace and how it talks to the local API. |
 | `docs/OBSERVABILITY.md` | developer, user | Run tracing, the Observability tab and the maf-harness trace command. |
