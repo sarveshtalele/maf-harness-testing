@@ -106,6 +106,8 @@ from .workflow_support import (
 )
 
 RUN_LOCK_TIMEOUT = 5  # seconds; another process holding the run must not block this one forever
+# Run-level settings edited from the UI (ui/api.py set_case_budget / rename_run) that must survive gate resumes.
+RUN_OVERRIDE_KEYS = ("case_budget", "run_name")
 
 
 @contextmanager
@@ -408,6 +410,7 @@ class Harness(RerunSteps, ExecutionSteps, GenerationSteps, GreenfieldSteps, Plan
                 raise PermissionError(f"Blocked by hook ({gate.source}): {gate.reason}")
             self.view = fresh
             self.state = pending["state"]
+            self._apply_run_overrides(self.state)  # before save(), which would otherwise write the stale copy
             self.state["active_stage"] = pending["stage"]
             self.view["status"] = "running"
             self.view["consumed"].append(request_id)
@@ -527,8 +530,17 @@ class Harness(RerunSteps, ExecutionSteps, GenerationSteps, GreenfieldSteps, Plan
             },
         )
 
+    def _apply_run_overrides(self, state: dict) -> None:
+        """UI edits to run-level keys live in run.json. The checkpointed request holds an older copy of state,
+        so the saved value wins on every gate response; otherwise "Revise design" would undo a budget change."""
+        saved = self.view.get("state") or {}
+        for key in RUN_OVERRIDE_KEYS:
+            if key in saved:
+                state[key] = saved[key]
+
     async def answer(self, stage, request, response, ctx):
         state = request["state"]
+        self._apply_run_overrides(state)
         self.state = state
         decision = response.get("decision")
         kind = request["kind"]

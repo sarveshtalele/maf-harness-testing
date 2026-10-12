@@ -184,3 +184,32 @@ def test_api_budget_validation_prompt_and_lock_after_design_approval(local_api, 
 
 def test_config_exposes_default(local_api):  # noqa: F811
     assert local_api.config()["case_budget_default"] == 2
+
+
+def test_budget_edit_survives_revise_design(local_api, monkeypatch):  # noqa: F811
+    """A budget edited while design is pending must reach the next design prompt after "Revise design"."""
+    api = local_api
+    prompts = []
+    original = ScriptedStageRuntime.run_stage
+
+    async def spy(self, *, stage, state, **kwargs):
+        if stage == "test_design" and "prompt" in kwargs:
+            prompts.append(kwargs["prompt"])
+        return await original(self, stage=stage, state=state, **kwargs)
+
+    monkeypatch.setattr(ScriptedStageRuntime, "run_stage", spy)
+    key = api.start({"repo_url": "https://github.com/acme/demo", "case_budget": {"per_requirement": 1}})["id"]
+    wait(api)
+    while api.read(key)["pending"]["stage"] != "test_design":
+        approve(api, key)
+    assert api.set_case_budget(key, {"per_requirement": 3})["per_requirement"] == 3
+    prompts.clear()
+    run = api.read(key)
+    api.respond(
+        key, {"request_id": run["pending"]["id"], "decision": "revise", "feedback": "more boundary cases"}
+    )
+    wait(api)
+    assert not api.errors
+    assert any("at most 3 case(s) per requirement" in p for p in prompts)
+    assert not any("at most 1 case(s) per requirement" in p for p in prompts)
+    assert api.read(key)["state"]["case_budget"] == {"per_requirement": 3}
