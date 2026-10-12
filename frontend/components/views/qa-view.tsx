@@ -19,6 +19,25 @@ function traceCounts(summary: Row): Row {
   return out;
 }
 
+const CONFIDENCE_KINDS: [string, string][] = [['plan', 'test planning'], ['design', 'test design'], ['test', 'generated tests']];
+const gateSummary = (gates: Row) => CONFIDENCE_KINDS.map(([kind, name]) => {
+  const gate = record(gates[kind]);
+  return gate.threshold == null ? `${name}: not recorded` : `${name} ≥ ${text(gate.threshold)} (${text(gate.accepted)}/${text(gate.subjects)} accepted, ${text(gate.gate)} gate)`;
+}).join(' · ');
+const scoreCell = (value: unknown) => {
+  const score = record(value);
+  return Object.keys(score).length ? `${text(score.confidence)} · ${score.accepted ? 'accepted' : 'not accepted'} (threshold ${text(score.threshold)})` : '—';
+};
+const confidenceColumns = (runId: string): Column[] => [
+  { key: 'case_id', label: 'Case', width: '150px', render: row => <span className="cell-id">{text(row.case_id)}</span> },
+  { key: 'control_ids', label: 'Control(s)', width: '120px', render: row => list(row.control_ids) || '—' },
+  { key: 'plan_area_id', label: 'Plan area', width: '100px', render: row => dash(row.plan_area_id) },
+  { key: 'plan', label: 'Plan', render: row => scoreCell(row.plan) },
+  { key: 'design', label: 'Design', render: row => scoreCell(row.design) },
+  { key: 'test', label: 'Test', render: row => scoreCell(row.test) },
+  { key: 'records', label: 'Ledger', width: '110px', render: row => <a href={`/api/harness/runs/${encodeURIComponent(runId)}/confidence?subject=${encodeURIComponent(text(row.case_id))}`}>Records</a> },
+];
+
 const TRACE_COLUMNS: Column[] = [
   { key: 'control_id', label: 'Control', width: '110px', render: row => <span className="cell-id">{dash(row.control_id)}</span> },
   { key: 'requirement_id', label: 'Requirement', width: '120px', render: row => <span className="cell-id">{dash(row.requirement_id)}</span> },
@@ -93,6 +112,7 @@ export function QaView() {
   const anyUpdates = generatedUpdates.length + repoUpdates.length + requirementUpdates.length + envUpdates.length > 0;
   const failures = rows(qa.failures).length ? rows(qa.failures) : rows(qa.cases).filter(c => ['failed', 'error', 'not_executed', 'generation_failed'].includes(text(c.status)));
   const verification = record(qa.verification);
+  const confidence = record(qa.confidence);
   const reviewMiss = rows(qa.review_miss);
   const sections: SectionSpec[] = [
     { id: 'verdict', title: 'Verdict and case counts', defaultOpen: true, render: () => <>
@@ -103,6 +123,7 @@ export function QaView() {
     { id: 'scope', title: 'Evidence scope', defaultOpen: true, render: () => <>
       <p>Generated suite: <StatusBadge value={qa.generated_verdict || qa.verdict} />. A suite verdict does not qualify the complete application.</p>
       {Object.keys(verification).length > 0 && <p className="verification-line"><strong>Verification:</strong> source-review accepted {text(verification.verified ?? 0)}/{text(verification.total ?? 0)} cases · threshold {text(verification.threshold)} · lowest accepted confidence {verification.min_confidence == null ? 'n/a' : text(verification.min_confidence)} · {verification.enforced ? 'full-accuracy gate' : 'fail-soft (HARNESS_REQUIRE_FULL_ACCURACY=0)'}</p>}
+      <p className="verification-line"><strong>Confidence gates:</strong> {gateSummary(record(confidence.gates))}</p>
       <Fields data={{ source_intake: qa.source_intake, runtime_coverage: qa.runtime_coverage }} />
       <h3>Existing regression scopes</h3>
       <Table caption="Existing regression scopes" columns={[{ key: 'scope', label: 'Scope', render: row => label(row.scope) }, { key: 'verdict', label: 'Verdict', render: row => <StatusBadge value={row.verdict} /> }, { key: 'tests', label: 'Tests', width: '90px' }, { key: 'reason', label: 'Reason' }]} rows={rows(qa.baseline_regression)} />
@@ -112,6 +133,10 @@ export function QaView() {
       <p>Each control follows one requirement from planning (PLN) through design, generation, environment setup and execution. Failed at names the first step that did not pass.</p>
       <Metrics values={traceCounts(record(qa.traceability_summary))} />
       <Table caption="End-to-end traceability" columns={TRACE_COLUMNS} rows={rows(qa.traceability)} searchable empty="No controls recorded." />
+    </> },
+    { id: 'confidence', title: 'Confidence traceability', count: rows(confidence.rows).length, render: () => <>
+      <p>Every score is host-computed from the reviewer's rubric points, capped by evidence rules. The table shows the latest plan, design and test score per case; Records opens every ledger entry for that case (confidence.jsonl).</p>
+      <Table caption="Confidence traceability" columns={confidenceColumns(id)} rows={rows(confidence.rows)} searchable empty="No confidence records for this run. It may predate the confidence ledger." />
     </> },
     { id: 'cases', title: 'Case results', count: rows(qa.cases).length, render: () => <Table caption="Case results" columns={CASE_COLUMNS} rows={rows(qa.cases)} searchable rowHref={row => recordHref(id, 'case', text(row.id))} /> },
     { id: 'test-cases', title: 'Test cases', count: rows(qa.test_cases).length, render: () => {

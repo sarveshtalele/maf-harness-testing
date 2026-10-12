@@ -9,6 +9,7 @@ Layout inside the archive::
     harness-report/traceability.json  one row per control (plan -> design -> generation -> execution)
     harness-report/traceability.csv   one row per control/case pair
     harness-report/audit.jsonl    approvals and tool calls
+    harness-report/confidence.jsonl  every host-computed plan, design and test confidence score (the ledger)
     harness-report/RUN_TESTS.md   the exact commands the harness used, to reproduce the run
 """
 
@@ -25,6 +26,7 @@ from pathlib import Path, PureWindowsPath
 from ..envs.execution import EXPORT_SKIP_DIRS, FORWARDED_ENV, _exportable
 from ..hooks.builtin import redact
 from ..ui.evidence import MAX_FILE_BYTES, ROOTS, clean_content
+from . import ledger
 from .controls import trace_matrix
 from .step_reports import build_step_reports
 
@@ -309,6 +311,9 @@ def build_deliverable(run_dir: Path, state: dict, executions_dir: Path | None = 
         audit = run_dir / "audit.jsonl"
         if audit.is_file():
             archive.writestr(f"{REPORT_DIR}/audit.jsonl", clean_content(audit))
+        confidence_ledger = run_dir / ledger.LEDGER  # absent for runs made before the ledger existed
+        if confidence_ledger.is_file():
+            archive.writestr(f"{REPORT_DIR}/{ledger.LEDGER}", clean_content(confidence_ledger))
         for report in sorted((executions_dir or run_dir / "executions").glob("attempt-*/report.json")):
             archive.writestr(f"{REPORT_DIR}/executions/{report.parent.name}.json", clean_content(report))
         for step_name, markdown in build_step_reports(run_dir, state).items():

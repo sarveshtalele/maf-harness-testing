@@ -102,18 +102,67 @@ def review_response(kwargs, source="service.py", scores=None):
     }
 
 
-def design_review_response(kwargs, confidence=96, verdict="approved", reason="Scripted design reviewer."):
+FULL_DESIGN = {"source_proven": 30, "correct_target": 25, "expected_derivable": 25, "fixture_validity": 20}
+FULL_PLAN = {"controls_covered": 40, "level_fit": 30, "scenarios_derivable": 30}
+
+
+def first_source_line(source: str) -> str:
+    """A verbatim code line of a target source block (line-number prefixes and the block header removed)."""
+    for line in source.splitlines():
+        text = line.split(": ", 1)[-1].strip() if line[:1].isdigit() else line.strip()
+        if text and not text.startswith("--- SOURCE"):
+            return text
+    return ""
+
+
+def design_review_response(
+    kwargs, verdict="approved", reason="Scripted design reviewer.", scores=None, quote=None
+):
+    """Design confidence reviewer: full rubric marks and a verbatim quote from target_source, unless told otherwise."""
     from maf_test_harness.models import DesignReviewDraft
 
     if kwargs.get("response_format") is not DesignReviewDraft:
         return None
-    cases = json.loads(kwargs["prompt"])["cases_under_review"]
+    prompt = json.loads(kwargs["prompt"])
+    sources = prompt.get("target_source") or {}
     return {
         "status": "completed",
         "artifact": {
             "reviews": [
-                {"case_id": c["id"], "verdict": verdict, "confidence": confidence, "reason": reason}
-                for c in cases
+                {
+                    "case_id": c["id"],
+                    "scores": dict(scores or FULL_DESIGN),
+                    "verdict": verdict,
+                    "derivation": "Scripted derivation: the implementation returns the value the expectation states.",
+                    "source_quote": quote
+                    if quote is not None
+                    else first_source_line(sources.get(c["target"], "")),
+                    "reason": reason,
+                }
+                for c in prompt["cases_under_review"]
+            ]
+        },
+    }
+
+
+def plan_review_response(kwargs, verdict="approved", reason="Scripted plan reviewer.", scores=None):
+    """Planning confidence reviewer: full rubric marks for every area it is asked about."""
+    from maf_test_harness.models import PlanReviewDraft
+
+    if kwargs.get("response_format") is not PlanReviewDraft:
+        return None
+    prompt = json.loads(kwargs["prompt"])
+    return {
+        "status": "completed",
+        "artifact": {
+            "reviews": [
+                {
+                    "area_id": a["area_id"],
+                    "scores": dict(scores or FULL_PLAN),
+                    "verdict": verdict,
+                    "reason": reason,
+                }
+                for a in prompt["plan_areas"]
             ]
         },
     }
@@ -145,6 +194,8 @@ class ScriptedStageRuntime:
         if review := review_response(kwargs):
             return review
         if review := design_review_response(kwargs):
+            return review
+        if review := plan_review_response(kwargs):
             return review
         self.calls.append(stage)
         if stage == "requirements":

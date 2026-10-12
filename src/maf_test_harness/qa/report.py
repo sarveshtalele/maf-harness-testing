@@ -12,6 +12,7 @@ import re
 from typing import Any
 
 from ..envs.runners import map_results_to_cases
+from ..qa import ledger
 from ..qa.confidence import review_accepted
 from ..settings import TEST_REVIEW_MIN_CONFIDENCE
 from .controls import case_controls, plan_controls, summarize_trace, summary_text, trace_rows
@@ -149,6 +150,60 @@ def verdict_for(execution: dict[str, Any] | None) -> str:
     )
 
 
+GATE_LABELS = {"plan": "test planning", "design": "test design", "test": "generated tests"}
+
+
+def _score_cell(record: dict[str, Any] | None) -> dict[str, Any] | None:
+    if record is None:
+        return None
+    return {
+        "confidence": record["confidence"],
+        "threshold": record["threshold"],
+        "accepted": record["accepted"],
+        "verdict": record["verdict"],
+        "round": record["round"],
+        "line": record["line"],
+        "link": f"{ledger.LEDGER}#L{record['line']}",
+    }
+
+
+def confidence_summary(
+    records: list[dict[str, Any]], cases: list[dict[str, Any]], controls: list[dict]
+) -> dict:
+    """Gates per kind (threshold, hard or advisory, accepted subjects) and, per case, the latest plan, design and test
+    score with a link to its ledger line. Runs without a ledger get empty gates and no rows."""
+    latest = ledger.latest_by_subject(records)
+    gates: dict[str, Any] = {}
+    for kind in GATE_LABELS:
+        rows = [r for r in records if r["kind"] == kind]
+        final = [latest[key] for key in latest if key[0] == kind]
+        gates[kind] = {
+            "threshold": rows[-1]["threshold"] if rows else None,
+            "gate": rows[-1]["gate"] if rows else None,
+            "subjects": len(final),
+            "accepted": sum(1 for r in final if r["accepted"]),
+            "lowest_confidence": min((r["confidence"] for r in final), default=None),
+        }
+    area_of_control = {c["control_id"]: c.get("plan_area_id") or "" for c in controls}
+    rows = []
+    for case in (
+        sorted(cases, key=lambda c: c["id"]) if records else []
+    ):  # no ledger: no rows, the section is omitted
+        control_ids = list(case.get("control_ids") or [])
+        area = next((area_of_control[c] for c in control_ids if area_of_control.get(c)), "")
+        rows.append(
+            {
+                "case_id": case["id"],
+                "control_ids": control_ids,
+                "plan_area_id": area,
+                "plan": _score_cell(latest.get(("plan", area)) if area else None),
+                "design": _score_cell(latest.get(("design", case["id"]))),
+                "test": _score_cell(latest.get(("test", case["id"]))),
+            }
+        )
+    return {"ledger": ledger.LEDGER, "records": len(records), "gates": gates, "rows": rows}
+
+
 def build_qa_report(
     *,
     repo: dict[str, Any],
@@ -161,6 +216,7 @@ def build_qa_report(
     environment: dict[str, Any] | None = None,
     generated_at: str | None = None,
     plan: dict[str, Any] | None = None,
+    confidence: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     files = generation.get("files", [])
     controls = plan_controls(requirements, plan)
@@ -418,6 +474,7 @@ def build_qa_report(
         "coverage_scope": "Requirement-to-test traceability; not measured line, branch or behavior coverage.",
         "traceability": traceability,
         "traceability_summary": summarize_trace(traceability),
+        "confidence": confidence_summary(confidence or [], cases, controls),
         "requirement_status_counts": dict(sorted(status_counts.items())),
         "failures": [
             c
@@ -528,10 +585,33 @@ def review_vs_execution(cases: list[dict[str, Any]]) -> list[dict[str, Any]]:
     ]
 
 
+def confidence_gates_text(report: dict[str, Any]) -> str:
+    """Names the three confidence gates with thresholds: planning and design from the ledger, tests from generation."""
+    gates = (report.get("confidence") or {}).get("gates") or {}
+    verification = report.get("verification") or {}
+    parts = []
+    for kind, label in GATE_LABELS.items():
+        if kind == "test" and verification:
+            mode = "hard" if verification.get("enforced") else "advisory"
+            parts.append(
+                f"{label} >= {verification.get('threshold')} ({verification.get('verified', 0)}/"
+                f"{verification.get('total', 0)} accepted, {mode} gate)"
+            )
+            continue
+        gate = gates.get(kind) or {}
+        if gate.get("threshold") is None:
+            parts.append(f"{label}: not recorded (run predates the confidence ledger)")
+        else:
+            parts.append(
+                f"{label} >= {gate['threshold']} ({gate['accepted']}/{gate['subjects']} accepted, {gate['gate']} gate)"
+            )
+    return "Confidence gates: " + "; ".join(parts) + "."
+
+
 def _verification_markdown(report: dict[str, Any]) -> list[str]:
     summary = report.get("verification") or {}
     if not summary:
-        return []
+        return [confidence_gates_text(report), ""]
     lowest = "n/a" if summary.get("min_confidence") is None else summary["min_confidence"]
     basis = "full-accuracy gate" if summary.get("enforced") else "fail-soft (HARNESS_REQUIRE_FULL_ACCURACY=0)"
     misses = sum(row["review_miss"] for row in report.get("review_vs_execution", []))
@@ -539,6 +619,37 @@ def _verification_markdown(report: dict[str, Any]) -> list[str]:
         f"Source review: {summary.get('verified', 0)}/{summary.get('total', 0)} cases source-review accepted "
         f"(threshold {summary.get('threshold')}, lowest accepted confidence {lowest}; {basis}). "
         f"Review misses (accepted, then failed an assertion): {misses}. Execution is reported separately below.",
+        "",
+        confidence_gates_text(report),
+        "",
+    ]
+
+
+def _confidence_markdown(report: dict[str, Any]) -> list[str]:
+    section = report.get("confidence") or {}
+    rows = section.get("rows") or []
+    if not rows:
+        return []
+
+    def cell(score):
+        if score is None:
+            return "-"
+        mark = "accepted" if score["accepted"] else "not accepted"
+        return f"{score['confidence']} ({mark}) [L{score['line']}]({score['link']})"
+
+    return [
+        "## Confidence traceability",
+        "",
+        "Scores are host-computed: the reviewer's rubric points, capped by deterministic evidence rules. The latest score "
+        f"per kind is shown; every review pass is in `{section.get('ledger', ledger.LEDGER)}` (line links).",
+        "",
+        "| Case | Control(s) | Plan area | Plan | Design | Test |",
+        "|---|---|---|---|---|---|",
+        *[
+            f"| {md_cell(r['case_id'])} | {md_cell(', '.join(r['control_ids']))} | {md_cell(r['plan_area_id'])} "
+            f"| {cell(r['plan'])} | {cell(r['design'])} | {cell(r['test'])} |"
+            for r in rows
+        ],
         "",
     ]
 
@@ -594,6 +705,7 @@ def render_markdown(report: dict[str, Any]) -> str:
         ],
         "",
         *_traceability_markdown(report),
+        *_confidence_markdown(report),
     ]
     for c in report["cases"]:
         lines.append(
