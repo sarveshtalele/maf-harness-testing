@@ -180,14 +180,19 @@ export function ConfirmDialog({ open, title, children, confirmLabel, cancelLabel
 }) {
   const ref = useRef<HTMLDialogElement>(null);
   const opener = useRef<HTMLElement | null>(null);
+  const closing = useRef(false); // our own close(): its close event is async and must not count as a cancel
   const titleId = useId();
   useEffect(() => {
     const dialog = ref.current; if (!dialog) return;
     if (open && !dialog.open) { opener.current = document.activeElement instanceof HTMLElement ? document.activeElement : null; dialog.showModal(); }
-    if (!open && dialog.open) dialog.close();
+    if (!open && dialog.open) { closing.current = true; dialog.close(); }
     if (!open && opener.current) { if (opener.current.isConnected) opener.current.focus(); opener.current = null; }
   }, [open]);
-  return <dialog ref={ref} className="confirm-dialog" aria-labelledby={titleId} onClose={onClose} onCancel={e => { if (busy) e.preventDefault(); }}>
+  const onNativeClose = () => {
+    if (closing.current) { closing.current = false; return; } // closed by us (confirm, or the parent hid it)
+    onClose(); // Escape
+  };
+  return <dialog ref={ref} className="confirm-dialog" aria-labelledby={titleId} onClose={onNativeClose} onCancel={e => { if (busy) e.preventDefault(); }}>
     {open && <form onSubmit={e => { e.preventDefault(); if (!busy && !disabled) onConfirm(); }}>
       <header className="confirm-head"><h2 id={titleId}>{title}</h2></header>
       <div className="confirm-body">{children}</div>

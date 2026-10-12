@@ -100,7 +100,7 @@ test('nav items, marketplace tabs and run tabs carry decorative icons', async ({
     await expect(page.getByRole('link', { name: new RegExp(`^${name}( \\d+)?$`) }).first().locator('svg[aria-hidden=true]')).toHaveCount(1);
   }
   await page.goto('/marketplace');
-  for (const name of ['Agent Skills', 'MCP servers']) await expect(page.getByRole('tab', { name, exact: true }).locator('svg[aria-hidden=true]')).toHaveCount(1);
+  for (const name of ['Agent Skills', 'MCP servers']) await expect(page.getByRole('navigation', { name: 'Marketplace sections' }).getByRole('link', { name, exact: true }).locator('svg[aria-hidden=true]')).toHaveCount(1);
 });
 
 test('mobile keeps the top bar, hides the collapse button and never scrolls sideways', async ({ page }) => {

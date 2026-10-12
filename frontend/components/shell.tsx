@@ -5,6 +5,7 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useRef, use
 import { api, isConnectionError, type Config, type RunSummary } from '@/lib/harness';
 import { ResizeHandle, usePreference } from './data';
 import Icon, { type IconName } from './icons';
+import '@/lib/leave-guard'; // installs the back/forward guard before the router listens
 
 type Shell = { runs: RunSummary[]; config: Config | null; serviceBusy: boolean; connectionError: string; refresh: () => Promise<void> };
 const ShellContext = createContext<Shell | null>(null);

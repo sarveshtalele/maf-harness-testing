@@ -8,33 +8,35 @@ const PRESETS = {
   playwright: { label: 'Playwright MCP (local browser, stdio)', note: 'Navigating requires approval.', server: { name: 'playwright', transport: 'stdio', command: 'npx', args: ['@playwright/mcp@latest'], env_keys: [], url: '', enabled: false, stages: [], allowed_tools: ['browser_snapshot'], approval_required_tools: ['browser_navigate'], preset: 'playwright' } },
   'atlassian-jira-cloud': { label: 'Atlassian Jira Cloud', note: 'Verify endpoint.', server: { name: 'jira', transport: 'http', command: '', args: [], env_keys: [], url: 'https://mcp.atlassian.com/v2/mcp', enabled: false, stages: [], allowed_tools: [], approval_required_tools: [], preset: 'atlassian-jira-cloud' } },
 };
+// Hints as the server sends them: snapshot is read-only, navigate and click change the page.
 const THREE = [
-  { name: 'browser_snapshot', description: 'Capture an accessibility snapshot of the page' },
-  { name: 'browser_navigate', description: 'Navigate to a URL' },
-  { name: 'browser_click', description: 'Click an element on the page' },
+  { name: 'browser_snapshot', description: 'Capture an accessibility snapshot of the page', read_only: true },
+  { name: 'browser_navigate', description: 'Navigate to a URL', read_only: false },
+  { name: 'browser_click', description: 'Click an element on the page', read_only: false },
 ];
 type Srv = Record<string, unknown>;
 type Import = { imported: { source_key: string; name: string; secret_keys: string[] }[]; added: Srv[] };
 
-/** Stage budget as the backend computes it: enabled servers in name order, at most 8 MCP tools per stage. */
-function budgetOf(servers: Srv[]) {
+/** Stage budget as the backend computes it: enabled servers in list (file) order, at most `max` MCP tools per stage. */
+function budgetOf(servers: Srv[], max: number) {
   return Object.fromEntries(STAGES.flatMap(stage => {
     let used = 0; let demand = 0; const skipped: string[] = [];
-    for (const s of [...servers].sort((a, b) => String(a.name).localeCompare(String(b.name)))) {
+    for (const s of servers) {
       if (!(s.enabled && (s.stages as string[]).includes(stage))) continue;
       const n = new Set([...(s.allowed_tools as string[]), ...(s.approval_required_tools as string[])]).size;
       demand += n;
-      if (used + n > 8) skipped.push(String(s.name)); else used += n;
+      if (used + n > max) skipped.push(String(s.name)); else used += n;
     }
-    return skipped.length ? [[stage, { tools: demand, max: 8, skipped }]] : [];
+    return skipped.length ? [[stage, { tools: demand, max, skipped }]] : [];
   }));
 }
 
 /** In-memory stand-in for the MCP routes: list, save, import, test, secrets and delete. */
-async function mockMcp(page: Page, options: { servers?: Srv[]; tools?: { name: string; description: string }[]; importReply?: (text: string) => Import; failSecrets?: boolean } = {}) {
+async function mockMcp(page: Page, options: { servers?: Srv[]; tools?: { name: string; description: string; read_only?: boolean }[]; importReply?: (text: string) => Import; failSecrets?: boolean; max?: number } = {}) {
+  const max = options.max ?? 8;
   const state = { servers: [...(options.servers ?? [])], saved: [] as Srv[], secretBodies: [] as Record<string, unknown>[], deleted: [] as string[], tools: options.tools ?? THREE };
   const view = (s: Srv) => ({ ...s, discovered_tools: s.discovered_tools ?? [], secrets: s.transport === 'http' ? { BEARER_TOKEN: false } : {}, ready: s.transport !== 'http' });
-  const list = () => ({ servers: state.servers.map(view), stages: STAGES, max_tools_per_server: 200, max_tools_per_stage: 8, stage_budget: budgetOf(state.servers), presets: PRESETS });
+  const list = () => ({ servers: state.servers.map(view), stages: STAGES, max_tools_per_server: 200, max_tools_per_stage: max, stage_budget: budgetOf(state.servers, max), presets: PRESETS });
   await page.route('**/api/harness/mcp-servers', async route => {
     if (route.request().method() === 'POST') {
       const body = route.request().postDataJSON() as Srv;
@@ -75,9 +77,12 @@ async function mockMcp(page: Page, options: { servers?: Srv[]; tools?: { name: s
 }
 
 const card = (page: Page, name: string) => page.getByRole('article', { name: `MCP server ${name}` });
-const tool = (page: Page, name: string) => page.getByRole('group', { name: `Access for ${name}` });
+const tool = (page: Page, name: string) => page.getByRole('radiogroup', { name: `Access for ${name}` });
+const row = (page: Page, name: string) => page.locator('.mcp-tool').filter({ has: page.locator('code', { hasText: new RegExp(`^${name}$`) }) });
 const footerSave = (page: Page) => page.locator('footer.mcp-footer').getByRole('button', { name: 'Save', exact: true });
 const crumbLink = (page: Page, name: string) => page.getByRole('navigation', { name: 'Breadcrumb' }).getByRole('link', { name, exact: true });
+const tab = (page: Page, name: string) => page.getByRole('navigation', { name: 'Marketplace sections' }).getByRole('link', { name, exact: true });
+const leaveDialog = (page: Page) => page.getByRole('dialog', { name: 'Leave with unsaved changes?' });
 const noSideScroll = (page: Page) => page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth + 1);
 
 async function addPreset(page: Page, label: string) {
@@ -90,21 +95,21 @@ async function addPreset(page: Page, label: string) {
 test('add the Playwright preset as a page, test, set tool access and stage, write-only secrets', async ({ page }) => {
   const state = await mockMcp(page);
   await page.goto('/marketplace/mcp');
-  await expect(page.getByRole('tab', { name: 'MCP servers', exact: true })).toHaveAttribute('aria-selected', 'true');
+  await expect(tab(page, 'MCP servers')).toHaveAttribute('aria-current', 'page');
   await page.getByRole('link', { name: 'Add MCP server', exact: true }).click();
   await expect(page).toHaveURL(/\/marketplace\/mcp\/new$/);
   await addPreset(page, 'Playwright MCP (local browser, stdio)');
   await expect(page).toHaveURL(/\/marketplace\/mcp\/playwright$/);
   await expect(page.getByRole('heading', { level: 2, name: 'playwright', exact: true })).toBeVisible();
   await expect(page.getByRole('status').filter({ hasText: 'playwright added.' })).toBeVisible();
-  await expect(page.getByRole('switch', { name: 'Enabled' })).not.toBeChecked();
+  await expect(page.getByRole('switch', { name: 'Enable server' })).not.toBeChecked();
   await page.getByRole('button', { name: 'Test connection', exact: true }).click();
   await expect(page.getByRole('status').filter({ hasText: 'Connected: 3 tools available.' })).toBeVisible();
-  await expect(tool(page, 'browser_snapshot').getByRole('button', { name: 'Always allow' })).toHaveAttribute('aria-pressed', 'true');
-  await expect(tool(page, 'browser_navigate').getByRole('button', { name: 'Ask every time' })).toHaveAttribute('aria-pressed', 'true');
-  await expect(tool(page, 'browser_click').getByRole('button', { name: 'Block' })).toHaveAttribute('aria-pressed', 'true'); // not listed: blocked
-  await tool(page, 'browser_click').getByRole('button', { name: 'Block' }).click();
-  await page.getByRole('switch', { name: 'Enabled' }).check();
+  await expect(tool(page, 'browser_snapshot').getByRole('radio', { name: 'Always allow' })).toBeChecked();
+  await expect(tool(page, 'browser_navigate').getByRole('radio', { name: 'Ask every time' })).toBeChecked();
+  await expect(tool(page, 'browser_click').getByRole('radio', { name: 'Block' })).toBeChecked(); // not listed: blocked
+  await tool(page, 'browser_click').getByRole('radio', { name: 'Block' }).click();
+  await page.getByRole('switch', { name: 'Enable server' }).check();
   await page.getByLabel('Requirements', { exact: true }).check();
   await footerSave(page).click();
   await expect(page.getByRole('status').filter({ hasText: 'Saved.' })).toBeVisible();
@@ -175,9 +180,13 @@ test('pasting an npx command names the server after the package, opens its page 
   expect(await page.content()).not.toContain(PASTED);
 });
 
-test('Cancel leaves the add page and the pasted text is not kept', async ({ page }) => {
+test('Cancel leaves the add page and the pasted text is not kept, also after switching tabs', async ({ page }) => {
   await mockMcp(page);
   await page.goto('/marketplace/mcp/new');
+  await page.getByLabel(/Paste an npx/).fill(`API_TOKEN=${PASTED} npx -y x`);
+  await page.getByRole('tab', { name: 'Manual', exact: true }).click();
+  await page.getByRole('tab', { name: 'Paste', exact: true }).click();
+  await expect(page.getByLabel(/Paste an npx/)).toHaveValue('');
   await page.getByLabel(/Paste an npx/).fill(`API_TOKEN=${PASTED} npx -y x`);
   await page.getByRole('button', { name: 'Cancel', exact: true }).click();
   await expect(page).toHaveURL(/\/marketplace\/mcp$/);
@@ -210,7 +219,7 @@ test('real backend: paste a docker -e secret and an env secret; the stored secre
     await page.getByLabel(/Paste an npx/).fill(JSON.stringify({ mcpServers: { 'e2e-real': { command: 'npx', args: ['-y', '@playwright/mcp@latest'], env: { E2E_TOKEN: PASTED } } } }));
     await page.getByRole('button', { name: 'Add from paste' }).click();
     await expect(page).toHaveURL(/\/marketplace\/mcp\/e2e-real$/);
-    await expect(page.getByRole('switch', { name: 'Enabled' })).not.toBeChecked();
+    await expect(page.getByRole('switch', { name: 'Enable server' })).not.toBeChecked();
     await page.goto('/marketplace/mcp/new');
     await page.getByLabel(/Paste an npx/).fill(`docker run -i --rm -e E2E_DOCKER=${PASTED} mcp/fetch`);
     await page.getByRole('button', { name: 'Add from paste' }).click();
@@ -242,10 +251,10 @@ test('a card opens the server page with its Tools section; search filters tools'
 test('per-tool three-state control saves to allowed_tools and approval_required_tools; blocked tools go to neither', async ({ page }) => {
   const state = await mockMcp(page, { servers: [{ name: 'pw', transport: 'stdio', command: 'npx', args: ['x'], env_keys: [], url: '', enabled: false, stages: [], allowed_tools: ['browser_snapshot'], approval_required_tools: ['browser_navigate'], preset: '', discovered_tools: THREE }] });
   await page.goto('/marketplace/mcp/pw');
-  await tool(page, 'browser_snapshot').getByRole('button', { name: 'Ask every time' }).click();
-  await tool(page, 'browser_navigate').getByRole('button', { name: 'Always allow' }).click();
-  await tool(page, 'browser_click').getByRole('button', { name: 'Always allow' }).click();
-  await tool(page, 'browser_click').getByRole('button', { name: 'Block' }).click();
+  await tool(page, 'browser_snapshot').getByRole('radio', { name: 'Ask every time' }).click();
+  await tool(page, 'browser_navigate').getByRole('radio', { name: 'Always allow' }).click();
+  await tool(page, 'browser_click').getByRole('radio', { name: 'Always allow' }).click();
+  await tool(page, 'browser_click').getByRole('radio', { name: 'Block' }).click();
   await expect(page.getByText('3 tools · 1 always allow · 1 ask · 1 blocked', { exact: true })).toBeVisible();
   await footerSave(page).click();
   await expect(page.getByRole('status').filter({ hasText: 'Saved.' })).toBeVisible();
@@ -255,16 +264,34 @@ test('per-tool three-state control saves to allowed_tools and approval_required_
   await expect(footerSave(page)).toBeDisabled();
 });
 
-test('Allow all read-only, Approve all (with its warning), Block all and Reset to saved', async ({ page }) => {
+test('radio group: one tab stop per tool and arrow keys choose the next state', async ({ page }) => {
+  await mockMcp(page, { servers: [{ name: 'pw', transport: 'stdio', command: 'npx', args: ['x'], env_keys: [], url: '', enabled: false, stages: [], allowed_tools: [], approval_required_tools: [], preset: '', discovered_tools: THREE }] });
+  await page.goto('/marketplace/mcp/pw');
+  const group = tool(page, 'browser_click');
+  await expect(group.locator('[tabindex="0"]')).toHaveCount(1);
+  await group.getByRole('radio', { name: 'Block' }).focus();
+  await page.keyboard.press('ArrowLeft');
+  await expect(group.getByRole('radio', { name: 'Ask every time' })).toBeChecked();
+  await expect(group.getByRole('radio', { name: 'Ask every time' })).toBeFocused();
+  await page.keyboard.press('ArrowRight');
+  await expect(group.getByRole('radio', { name: 'Block' })).toBeChecked();
+});
+
+test('Allow all read-only lists the exact tools first, then Approve all (with its warning), Block all and Reset to saved', async ({ page }) => {
   await mockMcp(page, { servers: [{ name: 'pw', transport: 'stdio', command: 'npx', args: ['x'], env_keys: [], url: '', enabled: false, stages: [], allowed_tools: [], approval_required_tools: [], preset: '', discovered_tools: THREE }] });
   await page.goto('/marketplace/mcp/pw');
   await expect(page.getByText('Read-only', { exact: true })).toBeVisible();
   await expect(page.getByText('Can make changes', { exact: true }).first()).toBeVisible();
   await page.getByRole('button', { name: 'Allow all read-only', exact: true }).click();
-  await expect(tool(page, 'browser_snapshot').getByRole('button', { name: 'Always allow' })).toHaveAttribute('aria-pressed', 'true');
-  await expect(tool(page, 'browser_navigate').getByRole('button', { name: 'Block' })).toHaveAttribute('aria-pressed', 'true');
+  const confirm = page.getByRole('dialog', { name: 'Allow 1 read-only tool?' });
+  await expect(confirm.getByRole('listitem')).toHaveText(['browser_snapshot']);
+  await confirm.getByRole('button', { name: 'Cancel', exact: true }).click();
+  await expect(tool(page, 'browser_snapshot').getByRole('radio', { name: 'Block' })).toBeChecked(); // cancelled: unchanged
+  await page.getByRole('button', { name: 'Allow all read-only', exact: true }).click();
+  await page.getByRole('dialog', { name: 'Allow 1 read-only tool?' }).getByRole('button', { name: 'Allow these tools' }).click();
+  await expect(tool(page, 'browser_snapshot').getByRole('radio', { name: 'Always allow' })).toBeChecked();
+  await expect(tool(page, 'browser_navigate').getByRole('radio', { name: 'Block' })).toBeChecked();
   await expect(page.getByText('3 tools · 1 always allow · 0 ask · 2 blocked', { exact: true })).toBeVisible();
-  await expect(page.getByText('Approved tools run without asking', { exact: false })).toHaveCount(1);
   await page.getByRole('button', { name: 'Approve all', exact: true }).click();
   await expect(page.getByText('3 tools · 3 always allow · 0 ask · 0 blocked', { exact: true })).toBeVisible();
   await expect(page.getByText('Approved tools run without asking, including any that change data')).toBeVisible();
@@ -276,22 +303,76 @@ test('Allow all read-only, Approve all (with its warning), Block all and Reset t
   await expect(footerSave(page)).toBeDisabled(); // reset to the saved state: no unsaved changes
 });
 
-test('unsaved changes: in-app links ask before leaving, Stay keeps the edits, and a reload asks the browser first', async ({ page }) => {
+test('read-only is the server hint when it has one, and otherwise the name rule: risky names are not read-only', async ({ page }) => {
+  const names = [
+    { name: 'get_and_delete', description: '' }, { name: 'readAndWrite', description: '' }, { name: 'list_and_purge', description: '' },
+    { name: 'mark_as_read', description: '' }, { name: 'update_list', description: '' }, { name: 'widget_thing', description: '' },
+    { name: 'get_page', description: '' }, { name: 'search_docs', description: '' }, { name: 'describe_table', description: '' },
+    { name: 'drop_all', description: '', read_only: true }, { name: 'get_hinted_write', description: '', read_only: false },
+  ];
+  await mockMcp(page, { tools: names, servers: [{ name: 'risky', transport: 'stdio', command: 'npx', args: ['x'], env_keys: [], url: '', enabled: false, stages: [], allowed_tools: [], approval_required_tools: [], preset: '', discovered_tools: names }] });
+  await page.goto('/marketplace/mcp/risky');
+  const expected: Record<string, string> = {
+    get_and_delete: 'Can make changes', readAndWrite: 'Can make changes', list_and_purge: 'Can make changes', mark_as_read: 'Can make changes',
+    update_list: 'Can make changes', widget_thing: 'Can make changes', get_page: 'Read-only', search_docs: 'Read-only', describe_table: 'Read-only',
+    drop_all: 'Read-only', get_hinted_write: 'Can make changes',
+  };
+  for (const [name, badge] of Object.entries(expected)) {
+    await expect(row(page, name).locator('.badge'), name).toHaveText(badge);
+  }
+});
+
+test('unsaved changes: in-app links, the tab arrow keys and browser back/forward ask first; Stay keeps the edits', async ({ page }) => {
   await mockMcp(page, { servers: [{ name: 'pw', transport: 'stdio', command: 'npx', args: ['x'], env_keys: [], url: '', enabled: false, stages: [], allowed_tools: [], approval_required_tools: [], preset: '', discovered_tools: THREE }] });
-  await page.goto('/marketplace/mcp/pw');
-  await page.getByRole('switch', { name: 'Enabled' }).check();
-  await expect(page.getByText('Unsaved changes', { exact: true })).toBeVisible();
-  await page.getByRole('navigation', { name: 'Main navigation' }).getByRole('link', { name: 'Runs', exact: false }).first().click();
-  const confirm = page.getByRole('dialog', { name: 'Leave with unsaved changes?' });
-  await expect(confirm).toBeVisible();
-  await confirm.getByRole('button', { name: 'Stay', exact: true }).click();
+  await page.goto('/marketplace/mcp');
+  await card(page, 'pw').getByRole('link', { name: 'Manage', exact: true }).click();
   await expect(page).toHaveURL(/\/marketplace\/mcp\/pw$/);
-  await expect(page.getByRole('switch', { name: 'Enabled' })).toBeChecked();
-  // A reload or tab close asks the browser first (beforeunload is cancelled while changes are unsaved).
-  expect(await page.evaluate(() => { const e = new Event('beforeunload', { cancelable: true }); window.dispatchEvent(e); return e.defaultPrevented; })).toBe(true);
+  await page.getByRole('switch', { name: 'Enable server' }).check();
+  await expect(page.getByText('Unsaved changes', { exact: true })).toBeVisible();
+
+  // in-app link
   await page.getByRole('navigation', { name: 'Main navigation' }).getByRole('link', { name: 'Runs', exact: false }).first().click();
-  await confirm.getByRole('button', { name: 'Leave without saving', exact: true }).click();
-  await expect(page).toHaveURL(/\/runs/);
+  await expect(leaveDialog(page)).toBeVisible();
+  await leaveDialog(page).getByRole('button', { name: 'Stay', exact: true }).click();
+  await expect(page).toHaveURL(/\/marketplace\/mcp\/pw$/);
+
+  // tab arrow key goes through the guard
+  await tab(page, 'MCP servers').focus();
+  await page.keyboard.press('ArrowLeft');
+  await expect(leaveDialog(page)).toBeVisible();
+  await leaveDialog(page).getByRole('button', { name: 'Stay', exact: true }).click();
+  await expect(page.getByRole('switch', { name: 'Enable server' })).toBeChecked();
+
+  // browser back: the app stays put until the user decides
+  await page.evaluate(() => history.back());
+  await expect(leaveDialog(page)).toBeVisible();
+  await expect(page.getByRole('switch', { name: 'Enable server' })).toBeChecked();
+  await leaveDialog(page).getByRole('button', { name: 'Stay', exact: true }).click();
+  await expect(page).toHaveURL(/\/marketplace\/mcp\/pw$/);
+  await expect(page.getByRole('switch', { name: 'Enable server' })).toBeChecked();
+
+  // back, then leave: the cards page opens and the edit is gone
+  await page.evaluate(() => history.back());
+  await leaveDialog(page).getByRole('button', { name: 'Leave without saving', exact: true }).click();
+  await expect(page).toHaveURL(/\/marketplace\/mcp$/);
+  await expect(card(page, 'pw').getByText('Disabled', { exact: true })).toBeVisible();
+
+  // a reload asks the browser first (beforeunload is cancelled while changes are unsaved)
+  await card(page, 'pw').getByRole('link', { name: 'Manage', exact: true }).click();
+  await page.getByRole('switch', { name: 'Enable server' }).check();
+  expect(await page.evaluate(() => { const e = new Event('beforeunload', { cancelable: true }); window.dispatchEvent(e); return e.defaultPrevented; })).toBe(true);
+});
+
+test('secrets typed but not saved make the page dirty; Discard clears them', async ({ page }) => {
+  await mockMcp(page, { servers: [{ name: 'jira', transport: 'http', command: '', args: [], env_keys: [], url: 'https://mcp.example.com/mcp', enabled: false, stages: [], allowed_tools: [], approval_required_tools: [], preset: '', discovered_tools: [] }] });
+  await page.goto('/marketplace/mcp/jira');
+  await expect(page.getByText('All changes saved', { exact: true })).toBeVisible();
+  await page.getByLabel(/Token/).fill(PASTED);
+  await expect(page.getByText('Unsaved changes', { exact: true })).toBeVisible();
+  await expect(footerSave(page)).toBeDisabled(); // only settings save from Save
+  await page.getByRole('button', { name: 'Discard', exact: true }).click();
+  await expect(page.getByLabel(/Token/)).toHaveValue('');
+  await expect(page.getByText('All changes saved', { exact: true })).toBeVisible();
 });
 
 test('delete from the card asks first (Cancel returns focus to Delete); the second delete removes the card and moves focus to Add', async ({ page }) => {
@@ -312,7 +393,7 @@ test('delete from the card asks first (Cancel returns focus to Delete); the seco
   await expect(page.getByRole('link', { name: 'Add MCP server', exact: true })).toBeFocused();
 });
 
-test('delete from the server page asks first, then returns to the card list with a notice', async ({ page }) => {
+test('delete from the server page asks first, then returns to the card list with a notice; a plain visit shows no notice', async ({ page }) => {
   const state = await mockMcp(page, { servers: [{ name: 'playwright', transport: 'stdio', command: 'npx', args: ['@playwright/mcp@latest'], env_keys: [], url: '', enabled: false, stages: [], allowed_tools: [], approval_required_tools: [], preset: 'playwright' }] });
   await page.goto('/marketplace/mcp/playwright');
   await page.getByRole('button', { name: 'Delete server', exact: true }).click();
@@ -324,6 +405,9 @@ test('delete from the server page asks first, then returns to the card list with
   await expect(page.getByRole('status').filter({ hasText: 'playwright deleted.' })).toBeVisible();
   await expect(card(page, 'playwright')).toHaveCount(0);
   expect(state.deleted).toEqual(['playwright']);
+  // a URL cannot claim a deletion: only a delete made in this session shows the notice
+  await page.goto('/marketplace/mcp?deleted=ghost');
+  await expect(page.getByRole('status').filter({ hasText: 'ghost deleted.' })).toHaveCount(0);
 });
 
 test('a stored server with a secret in its arguments loads disabled, shows the fix, and can be fixed on its page', async ({ page }) => {
@@ -337,10 +421,19 @@ test('a stored server with a secret in its arguments loads disabled, shows the f
   await expect(page).toHaveURL(/\/marketplace\/mcp\/legacy$/);
   const fix = page.getByRole('group', { name: 'Fix before enabling' });
   await expect(fix.getByLabel('Arguments (one per line)')).toHaveValue('-y\nserver-x\n--api-key\nabcdef123456');
+  await expect(page.getByRole('switch', { name: 'Enable server' })).toBeDisabled();
+  await expect(page.getByText('Fix the problems below first.')).toBeVisible();
   await fix.getByLabel('Arguments (one per line)').fill('-y\nserver-x');
   await footerSave(page).click();
   await expect(page.getByRole('status').filter({ hasText: 'Saved.' })).toBeVisible();
   expect(state.saved.at(-1)?.args).toEqual(['-y', 'server-x']);
+});
+
+test('the enable switch is disabled, with the reason, while a server is not ready', async ({ page }) => {
+  await mockMcp(page, { servers: [{ name: 'jira', transport: 'http', command: '', args: [], env_keys: [], url: 'https://mcp.example.com/mcp', enabled: false, stages: [], allowed_tools: [], approval_required_tools: [], preset: '' }] });
+  await page.goto('/marketplace/mcp/jira');
+  await expect(page.getByRole('switch', { name: 'Enable server' })).toBeDisabled();
+  await expect(page.getByText('Set the secrets first.')).toBeVisible();
 });
 
 test('Configuration links to the MCP servers page', async ({ page }) => {
@@ -350,7 +443,7 @@ test('Configuration links to the MCP servers page', async ({ page }) => {
   await expect(link).toHaveAttribute('href', '/marketplace/mcp');
   await link.click();
   await expect(page).toHaveURL(/\/marketplace\/mcp$/);
-  await expect(page.getByRole('tab', { name: 'MCP servers', exact: true })).toHaveAttribute('aria-selected', 'true');
+  await expect(tab(page, 'MCP servers')).toHaveAttribute('aria-current', 'page');
 });
 
 test('stage budget: approve all for 9 tools warns on the card and in the footer; block all clears it', async ({ page }) => {
@@ -363,10 +456,10 @@ test('stage budget: approve all for 9 tools warns on the card and in the footer;
   await expect(page.getByText('No tools yet. Run Test connection to discover them.')).toBeVisible();
   await page.getByRole('button', { name: 'Test connection', exact: true }).click();
   await expect(page.getByRole('status').filter({ hasText: 'Connected: 9 tools available.' })).toBeVisible();
-  await expect(page.locator('.mcp-tool').filter({ hasText: 'tool_9' })).toContainText('Tool number 9');
+  await expect(row(page, 'tool_9')).toContainText('Tool number 9');
   await page.getByRole('button', { name: 'Approve all', exact: true }).click();
   await expect(page.getByText('9 tools · 9 always allow · 0 ask · 0 blocked', { exact: true })).toBeVisible();
-  await expect(page.getByText('Budget', { exact: true })).toBeVisible(); // live: more than 8 tools in a stage
+  await expect(page.locator('.mcp-footer-notes')).toContainText('Stage Requirements: 9 MCP tools, max 8; this server is skipped in this stage.');
   await footerSave(page).click();
   await expect(page.getByRole('status').filter({ hasText: 'Saved.' })).toBeVisible();
   expect(state.saved.at(-1)?.allowed_tools).toHaveLength(9);
@@ -382,24 +475,45 @@ test('stage budget: approve all for 9 tools warns on the card and in the footer;
   await expect(card(page, 'pw').getByText('Over budget')).toHaveCount(0);
 });
 
-test('MCP cards and the server page fit a 390 px screen with long commands and tool names', async ({ page }) => {
-  const longTool = 'browser_snapshot_with_an_extremely_long_name_'.repeat(3);
-  await mockMcp(page, {
-    servers: [{ name: 'long', transport: 'stdio', command: 'npx', args: ['-y', '@modelcontextprotocol/server-filesystem', '/a/very/long/path/'.repeat(12)], env_keys: [], url: '', enabled: true, stages: ['requirements'], allowed_tools: [longTool], approval_required_tools: [], preset: '', discovered_tools: [{ name: longTool, description: 'Describes a very long tool. '.repeat(10) }] }],
-  });
-  await page.setViewportSize({ width: 390, height: 844 });
-  await page.goto('/marketplace/mcp');
-  await expect(card(page, 'long')).toBeVisible();
-  await expect.poll(() => noSideScroll(page)).toBe(true);
-  await card(page, 'long').getByRole('link', { name: 'Manage', exact: true }).click();
-  await expect(page.locator('#tools')).toBeVisible();
-  await expect.poll(() => noSideScroll(page)).toBe(true);
-  await expect(page.getByRole('switch', { name: 'Enabled' })).toBeVisible();
-  await page.setViewportSize({ width: 1280, height: 720 });
+test('stage budget with two servers: the live rule uses the API maximum, list order, and the other servers as saved', async ({ page }) => {
+  const others = [{ name: 'other', transport: 'stdio', command: 'npx', args: ['x'], env_keys: [], url: '', enabled: true, stages: ['requirements'], allowed_tools: ['tool_1', 'tool_2', 'tool_3', 'tool_4', 'tool_5', 'tool_6'], approval_required_tools: [], preset: '', discovered_tools: [] }];
+  const pw = { name: 'pw', transport: 'stdio', command: 'npx', args: ['x'], env_keys: [], url: '', enabled: true, stages: ['requirements'], allowed_tools: ['browser_snapshot'], approval_required_tools: ['browser_navigate', 'browser_click'], preset: '', discovered_tools: THREE };
+  await mockMcp(page, { max: 5, servers: [pw, ...others] });
+  // pw is first in list order: it fits (3 of 5); other (6 tools) would exceed the maximum and is the one skipped
+  await page.goto('/marketplace/mcp/pw');
+  await expect(page.locator('.mcp-footer-notes')).toContainText('Stage Requirements: 9 MCP tools, max 5; skipped: other.');
+  await page.goto('/marketplace/mcp/other');
+  await expect(page.locator('.mcp-footer-notes')).toContainText('this server is skipped in this stage');
+  // turning pw off in the draft frees the stage for other: the warning goes away before any save
+  await page.goto('/marketplace/mcp/pw');
+  await page.getByRole('switch', { name: 'Enable server' }).uncheck();
+  await expect(page.locator('.mcp-footer-notes')).not.toContainText('max 5');
 });
 
-for (const width of [1366, 1024]) for (const theme of ['light', 'dark'] as const) {
-  test(`visual collisions: cards and the tools list at ${width}px ${theme}, with wide fonts`, async ({ page }) => {
+test('phone: the footer is one compact line, its details collapse, and a focused control is never hidden under it', async ({ page }) => {
+  const many = Array.from({ length: 14 }, (_, i) => ({ name: `tool_number_${i + 1}_with_a_longer_name`, description: `Tool ${i + 1}` }));
+  await mockMcp(page, { tools: many, servers: [{ name: 'pw', transport: 'stdio', command: 'npx', args: ['x'], env_keys: [], url: '', enabled: false, stages: [], allowed_tools: [], approval_required_tools: [], preset: '', discovered_tools: many }] });
+  await page.setViewportSize({ width: 390, height: 700 });
+  await page.goto('/marketplace/mcp/pw');
+  const footer = page.locator('footer.mcp-footer');
+  await expect(footer).toBeVisible();
+  const box = await footer.boundingBox();
+  expect(box!.height).toBeLessThan(130);
+  await expect(page.locator('.mcp-footer-details')).not.toHaveAttribute('open', '');
+  await expect.poll(() => noSideScroll(page)).toBe(true);
+  await page.setViewportSize({ width: 1366, height: 700 });
+  // a control near the bottom of the tools list is brought into view above the footer
+  const target = tool(page, 'tool_number_14_with_a_longer_name').getByRole('radio', { name: 'Block' });
+  await target.focus();
+  const hidden = await page.evaluate(() => {
+    const el = document.activeElement as HTMLElement; const f = document.querySelector('footer.mcp-footer')!.getBoundingClientRect();
+    const r = el.getBoundingClientRect(); return r.bottom > f.top + 1 && r.top < f.bottom - 1;
+  });
+  expect(hidden).toBe(false);
+});
+
+test('visual collisions: cards and the tools list at 1024px and 1366px, light and dark, with wide fonts', async ({ page }) => {
+  for (const width of [1024, 1366]) for (const theme of ['light', 'dark'] as const) {
     const long = 'a_tool_name_without_any_spaces_that_must_wrap_'.repeat(3);
     await mockMcp(page, {
       servers: [
@@ -414,14 +528,39 @@ for (const width of [1366, 1024]) for (const theme of ['light', 'dark'] as const
     }, { theme, css: WIDE_FONTS });
     await page.goto('/marketplace/mcp');
     await expect(card(page, 'playwright')).toBeVisible();
-    expect(await layoutIssues(page), 'cards').toEqual([]);
+    expect(await layoutIssues(page), `cards ${width} ${theme}`).toEqual([]);
     const overflowing = await page.evaluate(() => [...document.querySelectorAll<HTMLElement>('.mcp-card')].filter(c => { const r = c.getBoundingClientRect(); return [...c.querySelectorAll<HTMLElement>('*')].some(el => el.getClientRects().length && el.getBoundingClientRect().right > r.right + 1); }).length);
     expect(overflowing, 'card contents past the card edge').toBe(0);
     await page.goto('/marketplace/mcp/long-name-server-for-layout-checks');
     await expect(page.locator('#tools')).toBeVisible();
-    expect(await layoutIssues(page), 'server page').toEqual([]);
+    expect(await layoutIssues(page), `server page ${width} ${theme}`).toEqual([]);
     const rows = await page.evaluate(() => [...document.querySelectorAll<HTMLElement>('.mcp-tool')].map(r => r.getBoundingClientRect()).filter((r, i, all) => all.some((o, j) => j !== i && Math.min(r.bottom, o.bottom) - Math.max(r.top, o.top) > 2)).length);
     expect(rows, 'tool rows overlapping').toBe(0);
     await page.evaluate(() => { document.getElementById('audit-fonts')?.remove(); document.documentElement.dataset.theme = 'light'; });
+  }
+});
+
+test('MCP cards and the server page fit a 390 px screen with long commands and tool names', async ({ page }) => {
+  const longTool = 'browser_snapshot_with_an_extremely_long_name_'.repeat(3);
+  await mockMcp(page, {
+    servers: [{ name: 'long', transport: 'stdio', command: 'npx', args: ['-y', '@modelcontextprotocol/server-filesystem', '/a/very/long/path/'.repeat(12)], env_keys: [], url: '', enabled: true, stages: ['requirements'], allowed_tools: [longTool], approval_required_tools: [], preset: '', discovered_tools: [{ name: longTool, description: 'Describes a very long tool. '.repeat(10) }] }],
   });
-}
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto('/marketplace/mcp');
+  await expect(card(page, 'long')).toBeVisible();
+  await expect.poll(() => noSideScroll(page)).toBe(true);
+  await card(page, 'long').getByRole('link', { name: 'Manage', exact: true }).click();
+  await expect(page.locator('#tools')).toBeVisible();
+  await expect.poll(() => noSideScroll(page)).toBe(true);
+  await expect(page.getByRole('switch', { name: 'Enable server' })).toBeVisible();
+  await page.setViewportSize({ width: 1280, height: 720 });
+});
+
+test('paste text is dropped when switching away from Paste (sanity for the add page guard)', async ({ page }) => {
+  await mockMcp(page);
+  await page.goto('/marketplace/mcp/new');
+  await page.getByLabel(/Paste an npx/).fill('npx x');
+  await page.getByRole('tab', { name: 'Preset', exact: true }).click();
+  await page.getByRole('tab', { name: 'Paste', exact: true }).click();
+  await expect(page.getByLabel(/Paste an npx/)).toHaveValue('');
+});

@@ -2,10 +2,11 @@
 import Link from 'next/link';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { api, apiDelete, desktop, label, type Tone } from '@/lib/harness';
+import { takeNotice } from '@/lib/leave-guard';
 import { ConfirmDialog, EmptyState } from './page';
 import Icon from './icons';
 
-export type Tool = { name: string; description: string };
+export type Tool = { name: string; description: string; read_only?: boolean; destructive?: boolean };
 export type Server = {
   name: string; transport: 'stdio' | 'http'; command: string; args: string[]; env_keys: string[]; url: string; enabled: boolean;
   stages: string[]; allowed_tools: string[]; approval_required_tools: string[]; preset: string; discovered_tools: Tool[]; secrets: Record<string, boolean>; ready: boolean; problems?: string[];
@@ -15,6 +16,7 @@ export type Preset = { label: string; note: string; server: Omit<Server, 'secret
 export type McpData = { servers: Server[]; presets: Record<string, Preset>; stages: string[]; max_tools_per_stage?: number; stage_budget?: Budget };
 export type Desktop = { saveMcpSecrets(server: string, values: Record<string, string>): Promise<unknown>; deleteMcpServer(server: string): Promise<unknown> };
 export type Access = 'auto' | 'approval' | 'hidden';
+export const MAX_TOOLS_PER_STAGE = 8; // the API sends max_tools_per_stage; this is only the fallback before it loads
 
 /** The fields the API stores for one server (secrets and discovered tools are separate). */
 export const pick = (s: Server) => ({ name: s.name, transport: s.transport, command: s.command, args: s.args, env_keys: s.env_keys, url: s.url, enabled: s.enabled, stages: s.stages, allowed_tools: s.allowed_tools, approval_required_tools: s.approval_required_tools, preset: s.preset });
@@ -22,12 +24,19 @@ export const pick = (s: Server) => ({ name: s.name, transport: s.transport, comm
 export const toolNames = (discovered: Tool[], s: Pick<Server, 'allowed_tools' | 'approval_required_tools'>) => [...new Set([...discovered.map(t => t.name), ...s.allowed_tools, ...s.approval_required_tools])].sort();
 export const accessOf = (s: Pick<Server, 'allowed_tools' | 'approval_required_tools'>, t: string): Access => (s.allowed_tools.includes(t) ? 'auto' : s.approval_required_tools.includes(t) ? 'approval' : 'hidden');
 export const serverStatus = (s: Server): [string, Tone] => (s.problems?.length ? ['Problem', 'bad'] : !s.enabled ? ['Disabled', ''] : s.ready ? ['Enabled', 'good'] : ['Needs secrets', 'warn']);
-/** Name heuristic for Claude Desktop-style grouping: a read-only tool has get, list, search, read, snapshot or console as a word. */
-const READ_WORDS = new Set(['get', 'list', 'search', 'read', 'snapshot', 'console']);
-export const isReadOnly = (name: string) => name.replace(/([a-z])([A-Z])/g, '$1_$2').toLowerCase().split(/[^a-z0-9]+/).some(word => READ_WORDS.has(word));
 export const commandLine = (s: Server) => (s.transport === 'stdio' ? [s.command, ...s.args].join(' ') : s.url);
 export const TIMEOUT_HINT = 'The first Test of an npx server can time out while npx downloads the package; run it again.';
-export const MAX_TOOLS_PER_STAGE = 8;
+
+/** Read-only rule. The server's own readOnlyHint wins when it sent one. Otherwise a tool is read-only only when its
+ *  first word is a read verb and no word is a write verb; unknown names count as "Can make changes". */
+const READ_FIRST = new Set(['get', 'list', 'search', 'read', 'snapshot', 'console', 'describe', 'find', 'query', 'fetch', 'show', 'view']);
+const WRITE_WORDS = new Set(('create update delete remove write set add run exec execute click type navigate send post put patch purge drop clear reset upload merge close fill press edit move submit assign comment mark replace install kill start stop and or save insert rename copy approve').split(' '));
+export const nameWords = (name: string) => name.replace(/([a-z0-9])([A-Z])/g, '$1_$2').toLowerCase().split(/[^a-z0-9]+/).filter(Boolean);
+export const isReadOnly = (tool: Tool) => {
+  if (typeof tool.read_only === 'boolean') return tool.read_only;
+  const words = nameWords(tool.name);
+  return words.length > 0 && READ_FIRST.has(words[0]) && !words.some(w => WRITE_WORDS.has(w));
+};
 
 export const desktopBridge = () => desktop<Desktop>();
 export const saveSecretValues = (name: string, values: Record<string, string>) => {
@@ -39,6 +48,29 @@ export const removeServer = (name: string) => {
   return d ? d.deleteMcpServer(name) : apiDelete(`mcp-servers/${encodeURIComponent(name)}`);
 };
 
+/** Tools a server counts toward a stage: its approved and approval-required names; once it has been tested, names
+ *  it no longer lists are dropped (they cannot run). Never tested: the saved names count as they are. */
+export const countedNames = (allowed: string[], approval: string[], discovered: Tool[]) => {
+  const names = [...new Set([...allowed, ...approval])];
+  return discovered.length ? names.filter(n => discovered.some(t => t.name === n)) : names;
+};
+
+/** The runtime's stage rule, in list order: a server whose tools would exceed the stage's maximum is skipped. */
+export type StageEntry = { name: string; enabled: boolean; stages: string[]; tools: string[] };
+export function stageLoad(entries: StageEntry[], stages: string[], max: number) {
+  const out: Record<string, { demand: number; skipped: string[] }> = {};
+  for (const st of stages) {
+    let used = 0; let demand = 0; const skipped: string[] = [];
+    for (const e of entries) {
+      if (!(e.enabled && e.stages.includes(st))) continue;
+      demand += e.tools.length;
+      if (used + e.tools.length > max) skipped.push(e.name); else used += e.tools.length;
+    }
+    if (skipped.length) out[st] = { demand, skipped };
+  }
+  return out;
+}
+
 /** Loads the server list; the page reloads it after every change. */
 export function useMcpData() {
   const [data, setData] = useState<McpData | null>(null);
@@ -48,9 +80,9 @@ export function useMcpData() {
   return { data, error, load };
 }
 
-/** Per-stage budget notices (saved state): shared by the cards page and the server page. */
-export function BudgetNotices({ budget, stages }: { budget: Budget; stages?: string[] }) {
-  return <>{Object.entries(budget).filter(([st]) => !stages || stages.includes(st)).map(([st, b]) => <p key={st} className="mp-warn" role="status"><span className="badge warn">Over budget</span> Stage {label(st)}: {b.tools} MCP tools, max {b.max}; servers beyond the budget are skipped. Skipped: {b.skipped.join(', ')}.</p>)}</>;
+/** Saved-state budget notices (the cards page): the API's stage_budget. */
+export function BudgetNotices({ budget }: { budget: Budget }) {
+  return <>{Object.entries(budget).map(([st, b]) => <p key={st} className="mp-warn" role="status"><span className="badge warn">Over budget</span> Stage {label(st)}: {b.tools} MCP tools, max {b.max}; servers beyond the budget are skipped. Skipped: {b.skipped.join(', ')}.</p>)}</>;
 }
 
 function ServerCard({ server: s, budget, onDelete }: { server: Server; budget: Budget; onDelete: () => void }) {
@@ -84,14 +116,12 @@ export default function McpServers() {
   const [target, setTarget] = useState('');
   const [busy, setBusy] = useState(false);
   const addRef = useRef<HTMLAnchorElement>(null);
-  // Other pages leave a short notice in the URL (?deleted=name, ?added=count); read it once after mount.
+  // A page that just changed the list leaves its message in session storage: shown once, then removed.
   useEffect(() => {
-    const params = new URLSearchParams(window.location.search);
-    const deleted = params.get('deleted'); const added = params.get('added');
-    if (!deleted && !added) return;
-    if (deleted) addRef.current?.focus(); // the card is gone: focus moves to Add MCP server
-    setNotice({ ok: true, text: deleted ? `${deleted} deleted.` : `${added} MCP server${added === '1' ? '' : 's'} added. ${added === '1' ? 'It starts' : 'They start'} disabled until you enable ${added === '1' ? 'it' : 'them'}.` });
-    history.replaceState(null, '', '/marketplace/mcp');
+    const flash = takeNotice();
+    if (!flash) return;
+    setNotice({ ok: flash.ok, text: flash.text });
+    if (flash.focusAdd) addRef.current?.focus(); // the card is gone: focus moves to Add MCP server
   }, []);
   const remove = async () => {
     setBusy(true);
@@ -114,4 +144,3 @@ export default function McpServers() {
     </ConfirmDialog>
   </>;
 }
-

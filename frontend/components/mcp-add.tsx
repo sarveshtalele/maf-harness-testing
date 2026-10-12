@@ -3,6 +3,7 @@ import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useState, type KeyboardEvent } from 'react';
 import { api, label, record } from '@/lib/harness';
+import { flashNotice } from '@/lib/leave-guard';
 import { DetailPage } from './page';
 import { saveSecretValues, useMcpData, type Preset, type Server } from './mcp-servers';
 
@@ -77,10 +78,15 @@ export default function AddServer() {
   const [notice, setNotice] = useState<Notice>(null);
   const [saved, setSaved] = useState<string[]>([]);
   const p = presets[preset];
-  const choose = (m: Mode) => { setMode(m); setNotice(null); };
+  // Leaving the Paste tab drops the pasted text: it may hold secrets and must not wait in a hidden field.
+  const choose = (m: Mode) => { if (mode === 'paste' && m !== 'paste') setPasteText(''); setMode(m); setNotice(null); };
   const addBody = async (body: Record<string, unknown>) => {
     setBusy(true); setNotice(null);
-    try { const added = await api<Server>('mcp-servers', body); router.push(`/marketplace/mcp/${encodeURIComponent(added.name)}?added=1`); }
+    try {
+      const added = await api<Server>('mcp-servers', body);
+      flashNotice({ ok: true, text: `${added.name} added. It stays disabled until you enable it and save.` });
+      router.push(`/marketplace/mcp/${encodeURIComponent(added.name)}`);
+    }
     catch (e) { setNotice({ ok: false, text: (e as Error).message }); setBusy(false); }
   };
   const addPaste = async () => {
@@ -104,7 +110,13 @@ export default function AddServer() {
       setBusy(false);
       return;
     }
-    router.push(names.length === 1 ? `/marketplace/mcp/${encodeURIComponent(names[0])}?added=1` : `/marketplace/mcp?added=${names.length}`);
+    if (names.length === 1) {
+      flashNotice({ ok: true, text: `${names[0]} added. It stays disabled until you enable it and save.` });
+      router.push(`/marketplace/mcp/${encodeURIComponent(names[0])}`);
+    } else {
+      flashNotice({ ok: true, text: `${names.length} MCP servers added. They start disabled until you enable them.` });
+      router.push('/marketplace/mcp');
+    }
   };
   const cancel = () => router.push('/marketplace/mcp');
   return <DetailPage level={2} eyebrow="MCP servers" title="Add MCP server" breadcrumbs={[{ label: 'Marketplace', href: '/marketplace/skills' }, { label: 'MCP servers', href: '/marketplace/mcp' }, { label: 'Add server' }]}>
