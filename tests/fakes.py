@@ -48,8 +48,9 @@ def scripted_derivations(prompt: dict, case_id: str) -> list[dict]:
         if case_id in item.get("case_ids", [])
         for slot in SLOT_PATTERN.findall(item["content"])
     ]
-    target_source = prompt.get("target_source", {})
-    target_source = target_source.get(case_id, "") if isinstance(target_source, dict) else target_source
+    target = (prompt.get("case_target") or {}).get(case_id, "")
+    sources = prompt.get("target_source", {})
+    target_source = sources.get(target, "") if isinstance(sources, dict) else sources
     source_lines = [
         line.split(": ", 1)[-1].strip()
         for line in target_source.splitlines()
@@ -70,8 +71,14 @@ def scripted_derivations(prompt: dict, case_id: str) -> list[dict]:
 
 
 def review_response(kwargs, source="service.py", scores=None):
-    from maf_test_harness.models import TestReviewDraft
+    from maf_test_harness.models import DerivationRecheckDraft, TestReviewDraft
 
+    if kwargs.get("response_format") is DerivationRecheckDraft:
+        prompt = json.loads(kwargs["prompt"])
+        answers = []
+        for item in prompt["slots_to_recheck"]:
+            answers += [d for d in scripted_derivations(prompt, item["case_id"]) if d["slot"] == item["slot"]]
+        return {"status": "completed", "artifact": {"derivations": answers}}
     if kwargs.get("response_format") is not TestReviewDraft:
         return None
     prompt = json.loads(kwargs["prompt"])

@@ -87,7 +87,7 @@ class PlanningSteps:
         self.save()
         try:
             return await self.runtime.run_stage(
-                stage=stage, persona=persona, prompt=prompt, state=state, **kwargs
+                stage=stage, persona=persona, prompt=prompt, state=state, role=role, **kwargs
             )
         finally:
             record.update(state.get("model_instructions", {}).get(stage, {}))
@@ -101,11 +101,16 @@ class PlanningSteps:
             ]
             atomic_json(folder / f"{identifier}.json", record)
 
-    def _settle_response_cache(self, stage, validated: bool) -> None:
-        """Tell the runtime whether the host accepted the last model result (only accepted ones are cached)."""
+    def _settle_response_cache(self, stage, validated: bool, role: str | None = None) -> None:
+        """Tell the runtime whether the host accepted the last answer of this stage and role (only accepted ones are
+        cached). The author (role None) and the reviewer keep separate answers, so each is settled on its own."""
         settle = getattr(self.runtime, "settle_response_cache", None)
-        if settle is not None:
+        if settle is None:
+            return
+        if role is None:
             settle(stage, validated)
+        else:
+            settle(stage, validated, role=role)
 
     def _selected_app_source(
         self, state: dict, *, preferred: list[str] | None = None, max_chars: int = 14000

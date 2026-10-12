@@ -675,7 +675,7 @@ def _method_pairs(targets) -> frozenset[tuple[str, str]]:
 
 
 def _python_target_chunks(
-    src: str, wanted: set[str], methods: frozenset[tuple[str, str]] = frozenset()
+    src: str, wanted: set[str], methods: frozenset[tuple[str, str]] = frozenset(), hop: bool = True
 ) -> list[tuple[str, int, int, str]]:
     """Complete bodies of the wanted top-level functions/classes plus the same-module helpers they call.
 
@@ -700,7 +700,7 @@ def _python_target_chunks(
         if method not in members:
             continue
         chosen = [method]
-        for call in ast.walk(members[method]):
+        for call in ast.walk(members[method]) if hop else ():
             callee = (
                 call.func.attr
                 if isinstance(call, ast.Call) and isinstance(call.func, ast.Attribute)
@@ -723,9 +723,9 @@ def _python_target_chunks(
         )
         handled_owners.add(owner)
     chosen = [name for name in top if name in wanted and name not in handled_owners]
-    for name in list(
-        chosen
-    ):  # one hop of callees inside the same module (e.g. the scorers a total is built from)
+    for name in (
+        list(chosen) if hop else []
+    ):  # one hop of callees inside the same module (the scorers a total uses)
         for call in ast.walk(top[name]):
             callee = call.func.id if isinstance(call, ast.Call) and isinstance(call.func, ast.Name) else None
             if callee in top and callee not in chosen and callee not in handled_owners:
@@ -742,10 +742,10 @@ def _python_target_chunks(
 
 
 def _target_chunks(
-    rel: str, src: str, wanted: set[str], methods: frozenset[tuple[str, str]] = frozenset()
+    rel: str, src: str, wanted: set[str], methods: frozenset[tuple[str, str]] = frozenset(), hop: bool = True
 ) -> list[tuple[str, int, int, str]]:
     if rel.endswith(".py"):
-        return _python_target_chunks(src, wanted, methods)
+        return _python_target_chunks(src, wanted, methods, hop)
     all_lines = src.splitlines()
     found = []
     for index, line in enumerate(all_lines):
@@ -785,7 +785,7 @@ def _defining_files(root: Path, source_files: list[str], target: str, cache: dic
 
 
 def extract_target_sources(
-    root: Path, targets: list[str], source_files: list[str], max_chars: int = 24_000
+    root: Path, targets: list[str], source_files: list[str], max_chars: int = 24_000, hop: bool = True
 ) -> str:
     """Complete source of the code each case targets, so tests are written against what the code really does.
 
@@ -810,7 +810,7 @@ def extract_target_sources(
             src = _safe_read(root / rel)
             if not src:
                 continue
-            found = _target_chunks(rel, src, wanted, _method_pairs([text]))
+            found = _target_chunks(rel, src, wanted, _method_pairs([text]), hop)
             for name, start, end, body in found:
                 if (rel, name) in seen:
                     continue

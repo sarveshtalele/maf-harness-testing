@@ -122,7 +122,7 @@ Seven stages, each a MAF `Executor`; gates are MAF `request_info` events; state 
 | 2 | `requirements` | host · requirement-analysis | Complete discovered declaration inventory and preview setup plan, then review | `repo.requirements`, `skills.contracts` |
 | 3 | `test_planning` | MAF agent · test-planning | Source-first strategy, levels and explicit gaps, then review | `workflow_steps.planning` |
 | 4 | `test_design` | MAF agent · test-design-generator + test-data-generator; independent Chief Principal Architect design review (advisory, bounded; `HARNESS_DESIGN_REVIEW`, min confidence `HARNESS_DESIGN_REVIEW_MIN_CONFIDENCE`) | Component-batched cases, linked requirements or exclusions, reviewer flags fed back into repair, then review | `workflow_steps.design`, `workflow_steps.design_review`, `skills.contracts` |
-| 5 | `test_generation` | MAF author + independent Repository Test Reviewer | Per-case source, static gates, host-computed confidence and repair; failed batches are fail-soft (`generation_failures`, `HARNESS_MAX_FAILED_BATCH_RATIO`, default 0.5; failed cases show as `generation_failed` and block PASS); full-accuracy gate blocks execution while any case is unverified (section 3.2) | `workflow_steps.generation`, `workflow_steps.test_review`, `qa.quality` |
+| 5 | `test_generation` | MAF author + independent Repository Test Reviewer | Per-case source, static gates, host-computed confidence and repair; failed batches are fail-soft (`generation_failures`, `HARNESS_MAX_FAILED_BATCH_RATIO`, default 0.5; failed cases show as `generation_failed` and block PASS); full-accuracy gate blocks execution while any case is not source-review accepted (section 3.2) | `workflow_steps.generation`, `workflow_steps.test_review`, `qa.quality` |
 | 6 | `environment_setup` | host | Test execution · Setup: approve exact installation plan before creating the isolated workspace or installing dependencies; then review | `workflow_steps.execution`, `envs.runners` |
 | 7 | `test_execution` | host | Approve exact runtime/collection/test commands; fresh results, scoped QA, reports and ZIP; bounded healing where applicable | `envs.runners`, `qa.report`, `qa.packaging` |
 
@@ -185,9 +185,24 @@ sequenceDiagram
 
 ### 3.2 Host-computed confidence and the accuracy gate
 
-The reviewer returns five rubric scores (`models.ReviewScores`, max 25/30/20/15/10). The host sums them and applies the caps in `qa/confidence.py` (target not invoked or mocked, no assertion, missing target source, needs_revision or insufficient_evidence). The model's own `confidence` is kept only as `model_confidence`. A case is accepted when its verdict is `supported` and its confidence is at least `HARNESS_TEST_REVIEW_MIN_CONFIDENCE`; otherwise the repair feedback names the weakest dimensions, the caps and the reviewer reason.
+The reviewer returns five rubric scores (`models.ReviewScores`, max 25/30/20/15/10) and, for every assertion literal, a blind derivation (`models.Derivation`: the value the implementation produces, with verbatim source and fixture quotes). The host sums the scores and applies the caps in `qa/confidence.py`. The model's own `confidence` is kept as `model_confidence`.
 
-With `HARNESS_REQUIRE_FULL_ACCURACY=1` (default), every designed case must be generated and accepted before execution. Unverified cases get up to `HARNESS_ACCURACY_ROUNDS` targeted regeneration rounds (cached accepted batches stay). If any remain, the stage fails with `Accuracy gate: X of N cases are not verified; execution is blocked.` and lists each case's reason; Retry keeps the completed cases. Greenfield runs without code skip the gate. The generation artifact stores `case_verification` and `verification_summary`, and the QA report shows a Confidence column and a verification line.
+Host rules (cap is the ceiling; "lifted" means the rule is recorded as a note and caps nothing):
+
+| Rule | Cap | When it applies | When it is lifted or relaxed |
+|---|---|---|---|
+| `target_source_missing` | 50 | the target names a code symbol and no implementation is found | not lifted; verdict insufficient_evidence |
+| `target_not_invoked`, `target_mocked`, `no_assertion` | 40, 40, 30 | the test never calls the target, mocks it, or has no assertion | not lifted |
+| `derivation_missing` | 60 | a literal has no derivation after two format repairs in the reviewer loop | not lifted |
+| `derivation_unverifiable` | 50 | a quote is not a whitespace-normalised substring of the target source (required for confident targets) or of the test | not lifted |
+| `blind_derivation_mismatch` | 40 (needs_revision) | a verified derivation disagrees with the asserted literal, and a single re-ask with the literal revealed confirms it | the re-ask agrees with the test |
+| `count_assumes_no_filter` (D1) | 60 | `len(...) == N`, where a literal of N items flows into the target call and the target really filters | lifted when the verified derivation of N cites the filter (a token of the filter condition, or the filter line) |
+| `expectation_contradicts_source` (D2) | 0 (needs_revision) | the asserted key of the target's direct return value is computed by a pure expression over the single string input, and that disagrees with the test | lowered to `expectation_conflict` 60 when the verified blind derivation agrees with the test (a human should look); not applied unless every precondition holds, otherwise `derivation_required` (note) |
+| `target_source_oversized` | 70 | the target's method body alone exceeds the review budget; the reviewer saw the body without its helpers | not lifted |
+
+The reviewer may repair format problems (missing or unverifiable derivations) twice before the caps apply. A blind mismatch is re-asked once before it caps. Deterministic checks are static and never execute repository or test code; every check returns no finding instead of raising.
+
+With `HARNESS_REQUIRE_FULL_ACCURACY=1` (default), every designed case must be generated and accepted before execution. Cases that are not source-review accepted get up to `HARNESS_ACCURACY_ROUNDS` targeted regeneration rounds (cached accepted batches stay). If any remain, the stage fails with `Accuracy gate: X of N cases are not verified; execution is blocked.` and lists each case's reason; Retry keeps the completed cases. Greenfield runs without code skip the gate. The generation artifact stores `case_verification` and `verification_summary`, and the QA report shows a Confidence column and a verification line.
 
 ## 4. Guarantees and where they are enforced
 
@@ -464,7 +479,7 @@ its own artifacts. Everything else is refused, and every run is recorded in `sta
 | `HARNESS_MAX_FAILED_BATCH_RATIO` | env | 0.5 | fail-soft threshold for generation batches |
 | `HARNESS_TEST_REVIEW_MIN_CONFIDENCE` | env | 80 (50-100) | host confidence a reviewed generated case needs to be accepted |
 | `HARNESS_REQUIRE_FULL_ACCURACY` | env | 1 | full-accuracy gate before execution; `0` restores fail-soft partial execution |
-| `HARNESS_ACCURACY_ROUNDS` | env | 2 (0-5) | targeted regeneration rounds for unverified cases before the gate blocks |
+| `HARNESS_ACCURACY_ROUNDS` | env | 2 (0-5) | targeted regeneration rounds for cases that are not source-review accepted before the gate blocks |
 | `HARNESS_MAX_OUTPUT_TOKENS` | env | 16384 | per-response cap (not a workflow limit) |
 | `HARNESS_EXECUTION_TIMEOUT` | env | 900 s | per install/test command |
 | `HARNESS_MODEL_TIMEOUT_SECONDS` | env | 300 s | maximum duration of one model operation, then a retry gate |
@@ -492,6 +507,6 @@ its own artifacts. Everything else is refused, and every run is recorded in `sta
 * **Response cache**: validated temperature-0 stage answers are stored under `.maf-harness/cache/responses` (`HARNESS_RESPONSE_CACHE=0` disables, `HARNESS_RESPONSE_CACHE_DIR` relocates; see [CACHING](CACHING.md)).
 * **Testability and retargeting**: `repo/testability.py` marks hard-to-test classes and non-public targets; design cases are retargeted before generation instead of mocking statics.
 * **Existing-test witnesses**: a requirement may be satisfied by a `pre_existing_witness` (an existing repository test directly invokes its source symbol); this is static evidence, never measured coverage.
-* **Fail-soft batches**: a failed generation batch does not abort the run until the failed share exceeds `HARNESS_MAX_FAILED_BATCH_RATIO` (default 0.5); failed cases block PASS. With the full-accuracy gate on (default), unverified cases are retried in rounds and then block execution instead (section 3.2).
+* **Fail-soft batches**: a failed generation batch does not abort the run until the failed share exceeds `HARNESS_MAX_FAILED_BATCH_RATIO` (default 0.5); failed cases block PASS. With the full-accuracy gate on (default), cases that are not source-review accepted are retried in rounds and then block execution instead (section 3.2).
 * **Progress and ETA**: `ui/progress.py` and `ui/eta.py` derive stage progress and a remaining-time estimate from the run's own audit history.
 * **Stopping**: UI Stop (with confirmation) sets status `stopping`, sets the cancel event, cancels the task and kills the process tree; the run becomes `stopped` once the task ends (cancel points between batches and before model calls). CLI Ctrl-C ends as `stopped` with exit 130. Resuming reruns from the active stage.

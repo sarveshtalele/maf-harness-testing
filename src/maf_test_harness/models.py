@@ -33,14 +33,21 @@ class Derivation(BaseModel):
     )
 
 
+class DerivationRecheckDraft(BaseModel):
+    """Second answer for slots whose first derivation disagreed with the asserted literal (the literal is revealed)."""
+
+    model_config = ConfigDict(extra="forbid")
+    derivations: list[Derivation] = Field(min_length=1)
+
+
 class TestCaseReview(BaseModel):
     model_config = ConfigDict(extra="forbid")
     case_id: str = Field(min_length=1)
     scores: ReviewScores
     derivations: list[Derivation] = Field(
         default_factory=list,
-        max_length=40,
-        description="One derivation for every masked slot («E<n>») of this case, derived blind (no expected value is given).",
+        description="One derivation for every masked slot («E<n>») of this case, derived blind (no expected value is given). "
+        "The count is per case: a file with many assertions needs as many derivations.",
     )
     confidence: int = Field(
         default=0,

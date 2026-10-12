@@ -6,6 +6,7 @@ expressions across Python, JavaScript/TypeScript and Java; they are best-effort,
 name a confident code symbol (CLI commands, pages, flows, free text) gets no target caps at all.
 """
 
+import ast
 import re
 from dataclasses import dataclass
 from pathlib import Path
@@ -125,21 +126,77 @@ def mask_code(content: str) -> str:
     return _MASK.sub(lambda m: re.sub(r"[^\n]", " ", m.group(0)), content)
 
 
-_LINE_PREFIX = re.compile(r"^\d+: ", re.M)
+_QUOTE_PREFIX = re.compile(r"(?:^|(?<=\s))\d+: ", re.M)
 
 
 def _normal(text: str) -> str:
-    """Whitespace-collapsed text with target line-number prefixes removed, for verbatim quote checks."""
-    return " ".join(_LINE_PREFIX.sub("", text or "").split())
+    """Whitespace-collapsed text with line-number prefixes removed wherever they appear (quotes may span lines)."""
+    return " ".join(_QUOTE_PREFIX.sub(" ", text or "").split())
 
 
-def _normal_value(value: str) -> str:
-    return (value or "").strip().strip("'\"").strip()
+def _quoted(quote: str, *texts: str) -> bool:
+    """A non-empty quote that is a whitespace-normalised substring of one of the texts."""
+    normal = _normal(quote)
+    return bool(normal) and any(normal in _normal(text) for text in texts)
 
 
-def _quoted(quote: str, normal_text: str) -> bool:
-    """A non-empty quote that is a whitespace-normalised substring of the (normalised) text."""
-    return bool(_normal(quote)) and _normal(quote) in normal_text
+def literal_matches(value: str, literal: Any) -> bool:
+    """Whether a reviewer's value text denotes the asserted literal. Numbers compare by value; strings are unescaped."""
+    text = (value or "").strip()
+    try:
+        parsed: Any = ast.literal_eval(text)
+    except Exception:  # not a Python literal: compare the text with surrounding quotes removed
+        parsed = text.strip("'\"")
+    if isinstance(literal, bool) or literal is None:
+        return str(parsed) == str(literal)
+    if isinstance(literal, int | float):
+        if isinstance(parsed, bool) or not isinstance(parsed, int | float):
+            return False
+        return float(parsed) == float(literal)
+    return isinstance(parsed, str) and parsed == literal
+
+
+def derivation_status(
+    *,
+    slots: list[dict[str, Any]],
+    derivations: list[dict[str, Any]],
+    target_source: str,
+    test_text: str,
+    masked_text: str = "",
+    require_source: bool = True,
+) -> dict[str, list[str]]:
+    """Each slot of one case sorted into missing, unverifiable (quotes not verbatim), mismatch (verified quotes, wrong
+    value) or verified. A quote may come from the target source, and the fixture quote from the masked or unmasked test."""
+    answers = {d["slot"]: d for d in derivations}
+    status: dict[str, list[str]] = {"missing": [], "unverifiable": [], "mismatch": [], "verified": []}
+    for slot in slots:
+        answer = answers.get(slot["slot"])
+        if answer is None:
+            status["missing"].append(slot["slot"])
+            continue
+        quotes_ok = (not require_source or _quoted(answer["source_quote"], target_source)) and _quoted(
+            answer["fixture_quote"], test_text, masked_text
+        )
+        if not quotes_ok:
+            status["unverifiable"].append(slot["slot"])
+        elif not literal_matches(answer["value"], slot["literal"]):
+            status["mismatch"].append(slot["slot"])
+        else:
+            status["verified"].append(slot["slot"])
+    return status
+
+
+def derivation_problems(**kwargs: Any) -> list[str]:
+    """Format problems the reviewer can fix by answering again: missing or unverifiable derivations."""
+    status = derivation_status(**kwargs)
+    problems = []
+    if status["missing"]:
+        problems.append(f"no derivation for {', '.join(status['missing'])}")
+    if status["unverifiable"]:
+        problems.append(
+            f"quotes are not verbatim in target_source or the test for {', '.join(status['unverifiable'])}"
+        )
+    return problems
 
 
 def derivation_findings(
@@ -148,67 +205,140 @@ def derivation_findings(
     derivations: list[dict[str, Any]],
     target_source: str,
     test_text: str,
+    masked_text: str = "",
     require_source: bool = True,
 ) -> list[dict[str, Any]]:
-    """Caps for the blind derivations of one case (slots from qa/derivation.mask_expected_literals).
+    """Caps for the final blind derivations of one case, after the reviewer's repair chances are spent.
 
-    Every slot must be answered (60), each quote must be verbatim in the target source or the test (50), and each value
-    must equal the real literal (40, verdict needs_revision). A case with no slots has nothing to derive. A case without
-    a confident code target has no implementation to quote, so only its fixture quotes are checked (require_source=False).
+    Missing derivations cap at 60, unverifiable quotes at 50, and a verified derivation whose value differs from the
+    asserted literal at 40 with verdict needs_revision (callers re-ask once before a mismatch is final).
     """
     if not slots:
         return []
-    answers = {d["slot"]: d for d in derivations}
-    missing = [s["slot"] for s in slots if s["slot"] not in answers]
+    status = derivation_status(
+        slots=slots,
+        derivations=derivations,
+        target_source=target_source,
+        test_text=test_text,
+        masked_text=masked_text,
+        require_source=require_source,
+    )
     findings: list[dict[str, Any]] = []
-    if missing:
+    if status["missing"]:
         findings.append(
             {
                 "rule": "derivation_missing",
                 "cap": 60,
-                "reason": f"The reviewer did not derive {', '.join(missing)}; every assertion literal needs a derivation.",
+                "reason": f"The reviewer did not derive {', '.join(status['missing'])}; every assertion literal needs a derivation.",
             }
         )
-    source, fixture = _normal(target_source), _normal(test_text)
-    unverifiable = [
-        slot
-        for slot in slots
-        if slot["slot"] in answers
-        and not (
-            (not require_source or _quoted(answers[slot["slot"]]["source_quote"], source))
-            and _quoted(answers[slot["slot"]]["fixture_quote"], fixture)
-        )
-    ]
-    if unverifiable:
+    if status["unverifiable"]:
         findings.append(
             {
                 "rule": "derivation_unverifiable",
                 "cap": 50,
                 "reason": "Quoted source or fixture lines are not verbatim in the target source or the test: "
-                + ", ".join(slot["slot"] for slot in unverifiable)
+                + ", ".join(status["unverifiable"])
                 + ".",
             }
         )
-    mismatched = [
-        slot
-        for slot in slots
-        if slot["slot"] in answers
-        and _normal_value(answers[slot["slot"]]["value"]) != _normal_value(slot["value"])
-    ]
-    if mismatched:
+    if status["mismatch"]:
+        by_slot = {s["slot"]: s for s in slots}
+        answers = {d["slot"]: d for d in derivations}
         findings.append(
             {
                 "rule": "blind_derivation_mismatch",
                 "cap": 40,
-                "reason": "The reviewer's derived value differs from the literal the test asserts: "
+                "reason": "The reviewer's derived value differs from the literal the test asserts, and the re-check "
+                "confirmed it: "
                 + "; ".join(
-                    f"{slot['slot']} derived {answers[slot['slot']]['value']!r}, asserted {slot['value']!r}"
-                    for slot in mismatched
+                    f"{slot} derived {answers[slot]['value']!r}, asserted {by_slot[slot]['value']!r}"
+                    for slot in status["mismatch"]
                 )
                 + ".",
             }
         )
     return findings
+
+
+def _lifts_filter(
+    finding: dict[str, Any], slots: list[dict[str, Any]], derivations: list[dict[str, Any]], status
+) -> bool:
+    """D1 is lifted when a verified derivation of the asserted count cites the filter: a filter token in its steps or
+    source quote, or the filter line quoted verbatim."""
+    answers = {d["slot"]: d for d in derivations}
+    tokens = set(finding.get("tokens", []))
+    for slot in slots:
+        if slot["slot"] not in status["verified"] or slot["literal"] != finding.get("expected"):
+            continue
+        answer = answers[slot["slot"]]
+        words = set(re.findall(r"[A-Za-z_]\w*", f"{answer['steps']} {answer['source_quote']}"))
+        if tokens & words:
+            return True
+        if any(
+            _normal(line) and _normal(line) in _normal(answer["source_quote"])
+            for line in finding.get("filter_lines", [])
+        ):
+            return True
+    return False
+
+
+def settle_deterministic(
+    findings: list[dict[str, Any]],
+    *,
+    slots: list[dict[str, Any]],
+    derivations: list[dict[str, Any]],
+    target_source: str,
+    test_text: str,
+    masked_text: str = "",
+    require_source: bool = True,
+) -> list[dict[str, Any]]:
+    """Apply the evidence rules to the deterministic findings of one case.
+
+    D1 (cap 60) is lifted to a note when the reviewer's verified derivation of that count cites the filter. D2 (cap 0)
+    becomes a conflict cap of 60 when the verified blind derivation agrees with the literal (a human should look), and
+    stays 0 when the blind derivation disagrees or is missing. Notes (cap None) pass through unchanged.
+    """
+    status = derivation_status(
+        slots=slots,
+        derivations=derivations,
+        target_source=target_source,
+        test_text=test_text,
+        masked_text=masked_text,
+        require_source=require_source,
+    )
+    settled: list[dict[str, Any]] = []
+    for finding in findings:
+        rule = finding.get("rule")
+        if rule == "count_assumes_no_filter" and finding.get("cap") == 60:
+            if _lifts_filter(finding, slots, derivations, status):
+                settled.append(
+                    {
+                        "rule": rule,
+                        "cap": None,
+                        "reason": "Note: the reviewer's verified derivation cites the filter, so the count is not capped.",
+                    }
+                )
+                continue
+        elif (
+            rule == "expectation_contradicts_source"
+            and finding.get("cap") == 0
+            and any(
+                slot["slot"] in status["verified"] and slot["literal"] == finding.get("expected")
+                for slot in slots
+            )
+        ):
+            settled.append(
+                {
+                    "rule": "expectation_conflict",
+                    "cap": 60,
+                    "reason": f"The source computes `{finding.get('key')}` = {finding.get('value')}, the test expects "
+                    f"{finding.get('expected')}, and the blind derivation agrees with the test. A human should check.",
+                }
+            )
+            continue
+        settled.append(finding)
+    return settled
 
 
 def model_score(scores: dict[str, int]) -> int:

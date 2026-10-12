@@ -17,7 +17,12 @@ from ..settings import TEST_REVIEW_MIN_CONFIDENCE
 from .controls import case_controls, plan_controls, summarize_trace, summary_text, trace_rows
 from .triage import build_updates
 
-_ASSERTION_MISMATCH = re.compile(r"AssertionError|\bassert\b")
+# Assertion-failure signatures of the common runners: "AssertionError", pytest's "assert a == b" rewrite, and
+# "expected X got Y" / "expected X but was Y" messages. A bare word "assert" in a traceback or a name does not count.
+_ASSERTION_MISMATCH = re.compile(
+    r"AssertionError|\bassert\s+[^\n]{1,200}?\s==\s|\bexpected\b[^\n]{0,200}?\b(?:got|but was)\b",
+    re.IGNORECASE,
+)
 
 SECTIONS = ("positive", "negative", "boundary", "validation", "contract")
 
@@ -239,7 +244,7 @@ def build_qa_report(
         row["source_review"] = source_review
         row["review_miss"] = (
             source_review == "accepted"
-            and row["status"] == "failed"
+            and row["status"] in {"failed", "error"}
             and bool(_ASSERTION_MISMATCH.search(row["message"] or ""))
         )
     cases.sort(key=lambda c: (-(c.get("confidence") or 0), c["id"]))

@@ -239,8 +239,10 @@ def load_plugin(skill_dir: Path) -> SkillPlugin:
             errors.append("stages must be a list of stage names")
         else:
             errors += [f"unknown stage {s!r}" for s in stages if s not in STAGE_NAMES]
-        if meta.get("role") not in ("primary", "companion"):
-            errors.append("role must be 'primary' or 'companion'")
+        if meta.get("role") not in ("primary", "companion", "reviewer"):
+            # A reviewer is never selected by skills_for (it selects primaries and companions only); the host loads it by
+            # name for its own review calls, and it cannot be attached to a generation stage.
+            errors.append("role must be 'primary', 'companion' or 'reviewer'")
         if meta.get("kind") not in ("model", "host"):
             errors.append("kind must be 'model' or 'host'")
         if not isinstance(meta.get("purpose"), str) or not meta["purpose"].strip() or "\n" in meta["purpose"].strip():
@@ -262,7 +264,7 @@ def load_plugin(skill_dir: Path) -> SkillPlugin:
         else:
             errors += [f"unknown applies_when key {k!r}" for k in sorted(set(applies) - APPLIES_KEYS)]
             errors += [f"applies_when.{k} must be a list of strings" for k, v in applies.items() if not _str_list(v)]
-            if applies and meta.get("role") == "primary":
+            if applies and meta.get("role") in ("primary", "reviewer"):
                 errors.append("applies_when is only valid for companion skills")
     return SkillPlugin(
         name=skill_dir.name,
