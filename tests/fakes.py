@@ -43,7 +43,7 @@ def review_response(kwargs, source="service.py", scores=None):
     }
 
 
-def design_review_response(kwargs, confidence=90, verdict="approved", reason="Scripted design reviewer."):
+def design_review_response(kwargs, confidence=96, verdict="approved", reason="Scripted design reviewer."):
     from maf_test_harness.models import DesignReviewDraft
 
     if kwargs.get("response_format") is not DesignReviewDraft:

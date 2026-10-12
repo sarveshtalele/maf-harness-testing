@@ -109,9 +109,11 @@ def test_stage_models_override_only_listed_stages():
 
 
 @pytest.mark.parametrize("value", ["not json", '["a"]'])
-def test_invalid_stage_models_are_rejected(value):
-    proc = stage_models(value)
-    assert proc.returncode != 0 and "HARNESS_STAGE_MODELS" in proc.stderr
+def test_invalid_stage_models_fall_back_to_the_base_model_with_a_warning(value):
+    proc = stage_models(value)  # the import must not fail on a malformed override
+    assert proc.returncode == 0, proc.stderr
+    assert proc.stdout.split() == ["base-model", "base-model"]
+    assert "HARNESS_STAGE_MODELS" in proc.stderr
 
 
 def test_each_stage_keeps_a_small_unique_tool_set():
