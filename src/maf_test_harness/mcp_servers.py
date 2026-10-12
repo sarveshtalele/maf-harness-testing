@@ -567,7 +567,9 @@ async def _hints(session: Any) -> dict[str, dict]:
     out: dict[str, dict] = {}
     cursor = None
     for _ in range(50):  # pages: a server listing more than this is truncated, as the catalogue is
-        page = await session.list_tools(params=types.PaginatedRequestParams(cursor=cursor) if cursor else None)
+        page = await session.list_tools(
+            params=types.PaginatedRequestParams(cursor=cursor) if cursor else None
+        )
         for item in page.tools:
             annotations = item.annotations
             flags = {}

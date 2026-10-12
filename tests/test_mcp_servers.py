@@ -958,8 +958,15 @@ def test_real_stdio_probe_passes_mcp_hints_through(tmp_path):
     mcp_servers.upsert(srv(name="hx", command=sys.executable, args=[str(script)]))
     catalog = {t["name"]: t for t in asyncio.run(mcp_servers.probe(mcp_servers.get("hx")))["catalog"]}
     assert catalog["fetch_page"] == {"name": "fetch_page", "description": "", "read_only": True}
-    assert catalog["drop_rows"] == {"name": "drop_rows", "description": "", "destructive": True, "read_only": False}
-    assert "read_only" not in catalog["mystery"] and "destructive" not in catalog["mystery"]  # not sent: not guessed
+    assert catalog["drop_rows"] == {
+        "name": "drop_rows",
+        "description": "",
+        "destructive": True,
+        "read_only": False,
+    }
+    assert (
+        "read_only" not in catalog["mystery"] and "destructive" not in catalog["mystery"]
+    )  # not sent: not guessed
 
 
 def test_stored_catalogue_keeps_only_boolean_hints_and_old_entries_have_none():
