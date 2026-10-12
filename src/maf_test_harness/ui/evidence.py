@@ -11,6 +11,8 @@ import re
 import zipfile
 from pathlib import Path
 
+from ..storage import read_regular_file
+
 ROOTS = (
     "clone-operations",
     "executions",
@@ -127,7 +129,7 @@ def clean_content(path: Path) -> bytes:
     """Redact report text and embedded Playwright data while preserving native assets."""
     from ..hooks.builtin import _redact_value, redact
 
-    content = path.read_bytes()
+    content = read_regular_file(path)
     mime = MIMES.get(path.suffix.lower())
     if mime == "text/html":
         html = content.decode("utf-8", errors="replace")

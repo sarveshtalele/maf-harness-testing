@@ -314,9 +314,11 @@ def build_deliverable(run_dir: Path, state: dict, executions_dir: Path | None = 
                         ".log",
                     }
                 ):
-                    archive.writestr(
-                        f"{REPORT_DIR}/evidence/{path.relative_to(run_dir).as_posix()}", clean_content(path)
-                    )
+                    try:
+                        content = clean_content(path)
+                    except OSError:  # replaced by a link or moved since the check: skip, never follow
+                        continue
+                    archive.writestr(f"{REPORT_DIR}/evidence/{path.relative_to(run_dir).as_posix()}", content)
         prompt_settings = run_dir / "prompts.json"
         if prompt_settings.is_file():
             archive.writestr(f"{REPORT_DIR}/prompts/settings.json", clean_content(prompt_settings))
