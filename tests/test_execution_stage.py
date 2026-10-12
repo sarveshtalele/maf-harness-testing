@@ -86,7 +86,7 @@ def test_execution_stage_runs_real_tests_and_builds_pass_verdict(drive):
     assert host.view["pending"]["kind"] == "review"
     qa = host.state["artifacts"]["test_execution"]["qa_report"]
     assert qa["verdict"] == "PASS" and qa["case_status_counts"] == {"passed": 1}
-    assert qa["requirement_coverage"][0]["state"] == "verified"
+    assert qa["requirement_coverage"][0]["state"] == "passed"
     assert qa["cases"][0]["level"] == "unit" and qa["cases"][0]["actor"] == "Developer"
     final = answer(decision="approve")
     assert final["status"] == "complete" and "PASS" in host.state["completed_reason"]

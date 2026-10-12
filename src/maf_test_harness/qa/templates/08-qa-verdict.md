@@ -24,5 +24,5 @@ $checks
 
 ## Limitations
 
-- Requirement coverage is static traceability, not measured coverage: a verified requirement means its linked generated tests passed.
+- Requirement coverage is static traceability, not measured coverage: a passed requirement means its linked generated tests passed execution.
 - A passing suite does not qualify the complete application.

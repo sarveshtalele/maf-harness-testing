@@ -542,9 +542,9 @@ class GenerationSteps:
             if missing:
                 lines = [f"{case['id']}: {verification_reason(str(case['id']))}"[:600] for case in missing]
                 raise ValueError(
-                    f"Accuracy gate: {len(missing)} of {len(cases)} cases are not verified; execution is blocked.\n"
+                    f"Accuracy gate: {len(missing)} of {len(cases)} cases are not source-review accepted; execution is blocked.\n"
                     + "\n".join(lines[:30])
-                    + "\nRetry the generation stage (verified cases are kept; Rerun-from-step or Revise regenerate everything), revise the design for these cases, "
+                    + "\nRetry the generation stage (source-review accepted cases are kept; Rerun-from-step or Revise regenerate everything), revise the design for these cases, "
                     "or set HARNESS_REQUIRE_FULL_ACCURACY=0 to allow partial execution."
                 )
             failures.clear()  # every case is verified, so earlier failure records are superseded

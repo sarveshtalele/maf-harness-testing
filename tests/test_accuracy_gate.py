@@ -167,7 +167,9 @@ def test_accuracy_gate_blocks_execution_when_a_case_never_verifies(tmp_path, mon
         # The gate fails the generation stage itself: it is retryable there, and no later stage was reached.
         assert pending["stage"] == "test_generation" and pending["kind"] == "error"
         message = pending["error"]
-        assert message.startswith("Accuracy gate: 1 of 2 cases are not verified; execution is blocked.")
+        assert message.startswith(
+            "Accuracy gate: 1 of 2 cases are not source-review accepted; execution is blocked."
+        )
         assert "target_not_invoked cap 40" in message
         assert message.rstrip().endswith("or set HARNESS_REQUIRE_FULL_ACCURACY=0 to allow partial execution.")
     finally:
@@ -296,7 +298,7 @@ def test_qa_report_shows_confidence_and_the_verification_line():
     assert "| Pri | Confidence | Status | File |" in markdown
     assert re.search(r"\| TC-1 \|.*\| P1 \| 95 \| ", markdown)
     assert (
-        "Verification: verified 1/2 cases (threshold 85, lowest verified confidence 95; full-accuracy gate)."
+        "Source review: 1/2 cases source-review accepted (threshold 85, lowest accepted confidence 95; full-accuracy gate)."
         in markdown
     )
     outcome = _case_outcome(
@@ -306,7 +308,7 @@ def test_qa_report_shows_confidence_and_the_verification_line():
 
 
 def test_accuracy_gate_has_its_own_error_category_and_remedy():
-    message = "Accuracy gate: 1 of 2 cases are not verified; execution is blocked.\nTC-2: confidence 40"
+    message = "Accuracy gate: 1 of 2 cases are not source-review accepted; execution is blocked.\nTC-2: confidence 40"
     assert categorize(message) == "accuracy_gate"
     assert "HARNESS_REQUIRE_FULL_ACCURACY=0" in remedy_for(message)
 
@@ -426,10 +428,12 @@ def test_gate_on_skips_the_early_ratio_raise_and_reports_the_unverified_cases(tm
     with pytest.raises(ValueError) as exc:
         asyncio.run(host._generate_tests_batched(state))
     message = str(exc.value)
-    assert message.startswith("Accuracy gate: 3 of 3 cases are not verified; execution is blocked.")
+    assert message.startswith(
+        "Accuracy gate: 3 of 3 cases are not source-review accepted; execution is blocked."
+    )
     assert "failed for" not in message
     assert (
-        "Retry the generation stage (verified cases are kept; Rerun-from-step or Revise regenerate everything)"
+        "Retry the generation stage (source-review accepted cases are kept; Rerun-from-step or Revise regenerate everything)"
         in message
     )
 
@@ -668,3 +672,61 @@ def test_write_generated_refuses_names_that_differ_only_by_case(tmp_path):
     ]
     with pytest.raises(ValueError, match="differ only by case"):
         write_generated(tmp_path / "workspace", files)
+
+
+def test_review_miss_flags_an_accepted_case_that_fails_an_assertion():
+    design = {
+        "positive_tests": [
+            {
+                "id": "TC-1",
+                "title": "adds",
+                "level": "unit",
+                "priority": "P1",
+                "actor": "Developer",
+                "traceability_links": [],
+            }
+        ]
+    }
+    generation = {
+        "files": [{"path": "tests/test_add.py", "case_ids": ["TC-1"], "content": PY_OK}],
+        "case_reviews": [
+            {
+                "case_id": "TC-1",
+                "confidence": 95,
+                "model_score": 95,
+                "verdict": "supported",
+                "reason": "r",
+                "scores": FULL_MARKS,
+                "caps": [],
+            }
+        ],
+        "generation_failures": [],
+        "verification_summary": {
+            "enforced": True,
+            "verified": 1,
+            "total": 1,
+            "min_confidence": 95,
+            "threshold": 80,
+        },
+    }
+    execution = {
+        "status": "completed",
+        "cases": [
+            {
+                "name": "test_add",
+                "file": "tests/test_add.py",
+                "status": "failed",
+                "message": "AssertionError: assert 2 == 3",
+            }
+        ],
+    }
+    report = build_qa_report(
+        repo={}, requirements={}, design=design, generation=generation, execution=execution
+    )
+    (row,) = [c for c in report["cases"] if c["id"] == "TC-1"]
+    assert row["status"] == "failed" and row["source_review"] == "accepted" and row["review_miss"] is True
+    assert report["case_verification"]["TC-1"]["review_miss"] is True
+    markdown = render_markdown(report)
+    assert "## Review vs execution" in markdown
+    assert "| TC-1 | accepted | 95 | failed | yes |" in markdown
+    assert "Review misses (accepted, then failed an assertion): 1" in markdown

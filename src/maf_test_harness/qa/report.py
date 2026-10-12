@@ -1,15 +1,23 @@
 """Deterministic QA report: requirement -> approved case -> generated test -> executed result.
 
-No model is involved. A requirement is only "verified" when every linked case was executed and passed.
+No model is involved. Two separate signals are reported and never merged: "source-review accepted" (the independent
+reviewer's host-computed confidence, a static judgement) and "passed" (the executed result). A requirement is "passed"
+only when every linked case was executed and passed. A case accepted by the review that then fails on an assertion is a
+`review_miss`.
 """
 
 from __future__ import annotations
 
+import re
 from typing import Any
 
 from ..envs.runners import map_results_to_cases
+from ..qa.confidence import review_accepted
+from ..settings import TEST_REVIEW_MIN_CONFIDENCE
 from .controls import case_controls, plan_controls, summarize_trace, summary_text, trace_rows
 from .triage import build_updates
+
+_ASSERTION_MISMATCH = re.compile(r"AssertionError|\bassert\b")
 
 SECTIONS = ("positive", "negative", "boundary", "validation", "contract")
 
@@ -216,6 +224,24 @@ def build_qa_report(
                 "control_ids": case_controls(case, controls),
             }
         )
+        threshold = (generation.get("verification_summary") or {}).get(
+            "threshold", TEST_REVIEW_MIN_CONFIDENCE
+        )
+        review = reviews.get(case["id"])
+        source_review = (
+            "not_reviewed"
+            if review is None
+            else "accepted"
+            if review_accepted(review, threshold)
+            else "rejected"
+        )
+        row = cases[-1]
+        row["source_review"] = source_review
+        row["review_miss"] = (
+            source_review == "accepted"
+            and row["status"] == "failed"
+            and bool(_ASSERTION_MISMATCH.search(row["message"] or ""))
+        )
     cases.sort(key=lambda c: (-(c.get("confidence") or 0), c["id"]))
     test_cases = case_table_rows(design, requirements)
     by_id = {c["id"]: c for c in cases}
@@ -232,7 +258,7 @@ def build_qa_report(
             if not linked
             else "failing"
             if statuses & {"failed", "error"}
-            else "verified"
+            else "passed"
             if statuses == {"passed"}
             else "generation_failed"
             if statuses == {"generation_failed"}
@@ -356,6 +382,16 @@ def build_qa_report(
         "verdict": verdict,
         "generated_verdict": generated_verdict,
         "verification": generation.get("verification_summary"),
+        "review_vs_execution": review_vs_execution(cases),
+        "case_verification": {
+            row["case_id"]: {
+                "source_review": row["source_review"],
+                "confidence": row["confidence"],
+                "execution": row["execution"],
+                "review_miss": row["review_miss"],
+            }
+            for row in review_vs_execution(cases)
+        },
         "baseline_regression": baseline,
         "source_intake": {
             **requirements.get("intake", {}),
@@ -391,7 +427,8 @@ def build_qa_report(
         "warnings": list((execution or {}).get("warnings", [])),
         "limitations": [
             "Local-process execution is not a security sandbox.",
-            "A verified requirement means its linked generated tests passed; it is not proof of correctness.",
+            "A passed requirement means its linked generated tests passed execution; it is not proof of correctness.",
+            "Source-review acceptance is a static judgement of the expectation; it is not execution evidence.",
             "Test design and source were authored by a model under human review; static validation checks structure, "
             "not semantic completeness.",
         ],
@@ -472,17 +509,54 @@ def _traceability_markdown(report: dict[str, Any]) -> list[str]:
     return [*out, ""]
 
 
+def review_vs_execution(cases: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """One row per case: what the source review accepted and what execution then showed (review misses flagged)."""
+    return [
+        {
+            "case_id": c["id"],
+            "source_review": c.get("source_review", "not_reviewed"),
+            "confidence": c.get("confidence"),
+            "execution": c["status"],
+            "review_miss": bool(c.get("review_miss")),
+        }
+        for c in sorted(cases, key=lambda c: c["id"])
+    ]
+
+
 def _verification_markdown(report: dict[str, Any]) -> list[str]:
     summary = report.get("verification") or {}
     if not summary:
         return []
     lowest = "n/a" if summary.get("min_confidence") is None else summary["min_confidence"]
     basis = "full-accuracy gate" if summary.get("enforced") else "fail-soft (HARNESS_REQUIRE_FULL_ACCURACY=0)"
+    misses = sum(row["review_miss"] for row in report.get("review_vs_execution", []))
     return [
-        f"Verification: verified {summary.get('verified', 0)}/{summary.get('total', 0)} cases "
-        f"(threshold {summary.get('threshold')}, lowest verified confidence {lowest}; {basis}).",
+        f"Source review: {summary.get('verified', 0)}/{summary.get('total', 0)} cases source-review accepted "
+        f"(threshold {summary.get('threshold')}, lowest accepted confidence {lowest}; {basis}). "
+        f"Review misses (accepted, then failed an assertion): {misses}. Execution is reported separately below.",
         "",
     ]
+
+
+def _review_markdown(report: dict[str, Any]) -> list[str]:
+    rows = report.get("review_vs_execution") or []
+    if not rows:
+        return []
+    lines = [
+        "## Review vs execution",
+        "",
+        "Source review is a static judgement of the expectation against the implementation. Execution is the run result.",
+        "",
+        "| Case | Source review | Confidence | Execution | Review miss |",
+        "|---|---|---|---|---|",
+    ]
+    lines += [
+        f"| {md_cell(r['case_id'])} | {r['source_review']} | "
+        f"{'' if r['confidence'] is None else r['confidence']} | {r['execution']} | "
+        f"{'yes' if r['review_miss'] else 'no'} |"
+        for r in rows
+    ]
+    return [*lines, ""]
 
 
 def render_markdown(report: dict[str, Any]) -> str:
@@ -523,7 +597,14 @@ def render_markdown(report: dict[str, Any]) -> str:
             f"| {md_cell(c['priority'])} | {'' if c.get('confidence') is None else c['confidence']} "
             f"| {c['status']} | {md_cell(c['file'])} |"
         )
-    lines += ["", "## Test cases", "", render_case_table(report.get("test_cases") or []), ""]
+    lines += [
+        "",
+        *_review_markdown(report),
+        "## Test cases",
+        "",
+        render_case_table(report.get("test_cases") or []),
+        "",
+    ]
     lines += [
         "",
         "## Requirement traceability",
