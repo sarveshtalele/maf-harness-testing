@@ -3,6 +3,7 @@ import { useEffect, useRef, useState } from 'react';
 import { api, label, rows, text, type Row } from '@/lib/harness';
 import { Badge, DataTable, DataView, Metrics } from './data';
 import Markdown from './markdown';
+import Icon from './icons';
 
 type Skill = { name: string; description: string; role: string; primary_stages: string[]; purpose?: string; instructions: string; resources: string[]; metadata: Row; reviewed_scripts: Row; sha256: string; source?: 'repo' | 'plugin'; verified?: boolean; approved?: boolean; stages?: string[]; kind?: string; valid: boolean; locked: boolean; errors: string[]; warnings: string[]; provenance: Row; executions: Row[] };
 
@@ -53,7 +54,7 @@ export default function Skills() {
     <section><h2>Package resources</h2><ul>{skill.resources.map(resource => <li key={resource}><code>{resource}</code></li>)}</ul></section>
     <section><h2>Integrity and reviewed scripts</h2><DataView value={{ package_sha256: skill.sha256, errors: skill.errors, warnings: skill.warnings, reviewed_scripts: skill.reviewed_scripts }} /></section>
   </article> : <p role="alert">This skill is not in the installed catalog.</p>}</>;
-  return <><div className="page-header"><div><span className="eyebrow">Project skill library</span><h1>Agent skills</h1><p>Installed packages, workflow roles, instructions and integrity details.</p></div><label className="button primary">Add skill<input aria-label="Add skill (.zip)" type="file" accept=".zip,application/zip" hidden onChange={e => { void addSkill(e.target.files?.[0]); e.target.value = ''; }} /></label></div>
+  return <><div className="page-header"><div><span className="eyebrow">Project skill library</span><h1><Icon name="spark" />Agent skills</h1><p>Installed packages, workflow roles, instructions and integrity details.</p></div><label className="button primary">Add skill<input aria-label="Add skill (.zip)" type="file" accept=".zip,application/zip" hidden onChange={e => { void addSkill(e.target.files?.[0]); e.target.value = ''; }} /></label></div>
     {notice && <div className="notice" role="status">{notice}</div>}
     {error && <div className="notice bad" role="alert">{error}</div>}
     {!catalog && !error && <p role="status">Loading project skills…</p>}

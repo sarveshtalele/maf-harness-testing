@@ -1,6 +1,7 @@
 'use client';
 import { useState } from 'react';
 import { DataTable, DataView, ExportButtons, Metrics, Panel } from './data';
+import Icon, { type IconName } from './icons';
 import { label, number, record, rows, text, type Row } from '@/lib/harness';
 
 export default function Observability({ id, report }: { id: string; report: Row }) {
@@ -11,6 +12,7 @@ export default function Observability({ id, report }: { id: string; report: Row 
   const [lane, setLane] = useState('');
   const [reqState, setReqState] = useState('');
   const tabs = ['Overview', 'Skills', 'Tools', 'Automation', 'Timeline', 'Traceability', 'Integrity', 'Export'];
+  const tabIcons: Record<string, IconName> = { Overview: 'grid', Skills: 'spark', Tools: 'wrench', Automation: 'bolt', Timeline: 'clock', Traceability: 'branch', Integrity: 'lock', Export: 'download' };
   const calls = rows(report.tool_calls);
   const stageRows = rows(report.stages).filter(row => !stage || row.stage === stage);
   const timeline = rows(report.timeline);
@@ -21,7 +23,7 @@ export default function Observability({ id, report }: { id: string; report: Row 
     <Select label="Workflow step" value={stage} set={setStage} options={rows(report.stages).map(s => text(s.stage))} />
     <Metrics values={{ provider_calls: totals.provider_calls, reported_tokens: totals.tokens, tool_calls: totals.tool_calls, human_gates: totals.human_gates }} />
     {report.trace_level !== 'full' && <p className="notice">Summary trace: this saved run has no full trace file. Some timings and arguments are unavailable.</p>}
-    <div className="tabs sub-tabs" aria-label="Observability views">{tabs.map(t => <button key={t} aria-pressed={tab === t} className={tab === t ? 'selected' : ''} onClick={() => setTab(t)}>{t}</button>)}</div>
+    <div className="tabs sub-tabs" aria-label="Observability views">{tabs.map(t => <button key={t} aria-pressed={tab === t} className={tab === t ? 'selected' : ''} onClick={() => setTab(t)}><Icon name={tabIcons[t]} />{t}</button>)}</div>
     {tab === 'Overview' && <>
       <Panel title="Stage activity & token usage" storageKey={`${scope}:stages`}><div className="bars">{stageRows.map(s => <div key={text(s.stage)}><span>{label(s.stage)}</span><meter min={0} max={Math.max(1, ...rows(report.stages).map(r => Number(r.tokens) || 0))} value={Number(s.tokens) || 0} /><b>{number(s.tokens)}</b></div>)}</div><DataTable data={stageRows} columns={['stage', 'actor', 'assigned_skills', 'loaded_skills', 'execution_mode', 'script_runs', 'tokens', 'repairs', 'errors']} /></Panel>
       <Panel title="Prompt cache" storageKey={`${scope}:cache`}><DataView value={report.cache} /></Panel>

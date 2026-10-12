@@ -781,7 +781,7 @@ wheels = [
 
 [[package]]
 name = "maf-test-harness"
-version = "1.0.6"
+version = "1.0.7"
 source = { editable = "." }
 dependencies = [
     { name = "agent-framework-core" },
