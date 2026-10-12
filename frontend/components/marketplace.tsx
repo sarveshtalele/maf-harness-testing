@@ -1,32 +1,27 @@
 'use client';
-import { useEffect, useState, type KeyboardEvent } from 'react';
-import Skills from './skills';
-import McpServers from './mcp-servers';
+import Link from 'next/link';
+import { usePathname, useRouter } from 'next/navigation';
+import type { KeyboardEvent, ReactNode } from 'react';
 import Icon, { type IconName } from './icons';
 
-type Tab = 'skills' | 'mcp';
-const TABS: [Tab, string, IconName][] = [['skills', 'Agent Skills', 'spark'], ['mcp', 'MCP servers', 'plug']];
-const tabFromUrl = (): Tab => (new URLSearchParams(location.search).get('tab') === 'mcp' ? 'mcp' : 'skills');
+const TABS: [string, string, string, IconName][] = [['skills', '/marketplace/skills', 'Agent Skills', 'spark'], ['mcp', '/marketplace/mcp', 'MCP servers', 'plug']];
 
-/** Marketplace: agent skills and MCP servers. The tab lives in the URL (?tab=mcp). Old /?page=marketplace links redirect here. */
-export default function Marketplace() {
-  // Read the URL after mount: the server and the first client render both show Agent Skills (no hydration mismatch).
-  const [tab, setTab] = useState<Tab>('skills');
-  useEffect(() => { setTab(tabFromUrl()); }, []);
-  // Back and Forward move between tab entries (choose pushes them), so follow the URL
-  useEffect(() => { const sync = () => setTab(tabFromUrl()); window.addEventListener('popstate', sync); return () => window.removeEventListener('popstate', sync); }, []);
-  const choose = (next: Tab) => { setTab(next); history.pushState({}, '', next === 'mcp' ? '/marketplace?tab=mcp' : '/marketplace'); };
-  const keys = TABS.map(([key]) => key);
+/** Marketplace shell: header and the two tabs, each a route (/marketplace/skills, /marketplace/mcp). */
+export default function MarketplaceLayout({ children }: { children: ReactNode }) {
+  const pathname = usePathname();
+  const router = useRouter();
+  const selected = TABS.find(([, href]) => pathname === href || pathname.startsWith(`${href}/`))?.[0] ?? 'skills';
   const onKey = (e: KeyboardEvent) => {
     if (e.key !== 'ArrowRight' && e.key !== 'ArrowLeft') return;
     e.preventDefault();
-    const next = keys[(keys.indexOf(tab) + (e.key === 'ArrowRight' ? 1 : keys.length - 1)) % keys.length];
-    choose(next);
-    document.getElementById(`marketplace-tab-${next}`)?.focus();
+    const index = TABS.findIndex(([key]) => key === selected);
+    const [key, href] = TABS[(index + (e.key === 'ArrowRight' ? 1 : TABS.length - 1)) % TABS.length];
+    router.push(href);
+    document.getElementById(`marketplace-tab-${key}`)?.focus();
   };
   return <>
     <div className="page-header"><div><span className="eyebrow">Extensions</span><h1 className="page-title">Marketplace</h1><p>Agent skills and MCP servers for runs in this workspace.</p></div></div>
-    <div className="tabs" role="tablist" aria-label="Marketplace sections" onKeyDown={onKey}>{TABS.map(([key, name, icon]) => <button key={key} role="tab" id={`marketplace-tab-${key}`} aria-controls="marketplace-panel" tabIndex={tab === key ? 0 : -1} aria-selected={tab === key} className={tab === key ? 'selected' : ''} onClick={() => choose(key)}><Icon name={icon} />{name}</button>)}</div>
-    <div role="tabpanel" id="marketplace-panel" aria-labelledby={`marketplace-tab-${tab}`}>{tab === 'skills' ? <Skills /> : <McpServers />}</div>
+    <div className="tabs" role="tablist" aria-label="Marketplace sections" onKeyDown={onKey}>{TABS.map(([key, href, name, icon]) => <Link key={key} href={href} role="tab" id={`marketplace-tab-${key}`} aria-selected={selected === key} tabIndex={selected === key ? 0 : -1} className={selected === key ? 'selected' : ''} scroll={false}><Icon name={icon} />{name}</Link>)}</div>
+    <div id="marketplace-panel">{children}</div>
   </>;
 }
