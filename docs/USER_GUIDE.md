@@ -109,7 +109,7 @@ The **Daily usage** panel on the same page shows token use. A daily cap applies 
 1. Go to **New run**.
 2. Choose a **mode**:
    - **Brownfield repository**: an existing project. Enter its GitHub URL. A public repository needs no login. For a private repository, see [Private repositories](#private-repositories).
-   - **Greenfield specs**: new work. Upload documents (`.md`, `.txt`, `.docx`, or `.pdf`), or connect a Jira Cloud project with a site URL, a JQL query or issue keys, your email and an API token. The Jira token is used once to fetch stories and is not saved with the run.
+   - **Greenfield specs**: new work. Upload documents (`.md`, `.txt`, or `.docx`; PDF is not supported yet), or connect a Jira Cloud project with a site URL, a JQL query or issue keys, your email and an API token. The Jira token is used once to fetch stories and is not saved with the run.
 3. Choose the **test types**: **Unit**, **Integration**, or both. You need at least one.
 4. Optionally give the run a name. Set **Test cases per requirement**. Fewer cases make the run faster. You can change this until test design is approved.
 5. Select **Start repository review**.

@@ -24,9 +24,19 @@ def test_dry_run_prints_without_executing(capsys, monkeypatch):
     monkeypatch.setattr(
         build_desktop.subprocess, "run", lambda *a, **k: (_ for _ in ()).throw(AssertionError)
     )
+    monkeypatch.setattr(build_desktop.platform, "machine", lambda: "x86_64")
     assert build_desktop.main(["--dry-run", "--arch", "x64"]) == 0
     out = capsys.readouterr().out
     assert "pyinstaller packaging/backend.spec" in out and "DESKTOP_BUILD=1" in out and "--x64" in out
+
+
+def test_arch_must_match_the_machine():
+    assert build_desktop.arch_mismatch("x64", "AMD64") is None
+    assert build_desktop.arch_mismatch("x64", "x86_64") is None
+    assert build_desktop.arch_mismatch("arm64", "arm64") is None
+    assert build_desktop.arch_mismatch("arm64", "aarch64") is None
+    assert "does not match" in build_desktop.arch_mismatch("x64", "arm64")
+    assert "does not match" in build_desktop.arch_mismatch("arm64", "x86_64")
 
 
 def test_backend_delegates_port_to_api(monkeypatch):

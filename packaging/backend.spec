@@ -14,12 +14,10 @@ datas = [
 ]
 binaries = []
 hiddenimports = collect_submodules("maf_test_harness")
+# Required packages: collect_all raises when one is missing, so a broken build environment fails here, not at runtime.
 for pkg in ("agent_framework", "agent_framework_core", "agent_framework_openai", "openai", "httpx", "pydantic", "jsonschema",
             "jsonschema_specifications"):
-    try:
-        d, b, h = collect_all(pkg)
-    except Exception:  # package not installed in this env
-        continue
+    d, b, h = collect_all(pkg)
     datas += d
     binaries += b
     hiddenimports += h
@@ -27,7 +25,7 @@ hiddenimports += ["yaml", "filelock"]
 # Imports of the bundled skill scripts (skills/*/scripts/*.py), which run through `maf-backend --run-python` via runpy.
 # PyInstaller cannot see them, so stdlib modules only they use would be missing. desktop_backend.self_check() verifies this.
 hiddenimports += ["argparse", "datetime", "hashlib", "json", "pathlib", "random", "typing", "jsonschema", "yaml"]
-# optional deps, bundled when present in the build environment
+# optional deps (MCP integration only), bundled when present in the build environment
 for pkg in ("mcp",):
     try:
         d, b, h = collect_all(pkg)
