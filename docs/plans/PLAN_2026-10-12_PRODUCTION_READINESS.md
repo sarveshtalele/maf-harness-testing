@@ -68,3 +68,24 @@ The QA report for `requirement-analysis-skill` (commit `3eae93ae5b5f`) showed 13
 
 - [ ] **6.1** Full gate: pytest, ruff, map, lint-skills, typecheck, build, Playwright, desktop tests.
 - [ ] **6.2** CI on all three OSes, then an installer build with smoke tests, then a release.
+
+## 7. Accuracy v2: accurate results for any repository (same architecture)
+
+The owner wants the harness to test what a repository is FOR, not only that its functions execute. The stages stay the same; each gains the steps below.
+
+- [ ] **7.1 Two requirement tiers.** **Product requirements** come from README, SKILL.md, docs, references, CLI help and examples, and each quotes its evidence. **Component requirements** are today's callable-level ones. Planning covers product requirements first.
+- [ ] **7.2 Expected-value source on every case:** `specified` (doc quote), `derived` (source file:line), `metamorphic` (relation), `golden` (scenario fixture with an independently derived, human-approved answer) or `property`. A case without a source is rejected. Current-behaviour-only cases are labelled `characterization`, never "verified".
+- [ ] **7.3 Blind derivation plus deterministic checks** (Opus backend review, section A):
+  - the host masks assertion literals;
+  - the reviewer derives each value with verbatim source and fixture quotes;
+  - D1 `count_assumes_no_filter` and D2 pure-expression evaluation run with no exec;
+  - D3 records a `review_miss` when a case passed review and then failed at run time;
+  - the 85% anchor is removed, and the reviewer gets its own reviewer skill.
+- [ ] **7.4 Verification run before "verified".** Generated tests run once in the isolated environment, behind an approval gate. Each failure is sorted, with evidence, into a product defect (the docs state the value) or a test defect (the value was guessed; the test is regenerated).
+- [ ] **7.5 Confidence from evidence, gate at 95**, for planning, design and test review. Rubrics per kind, a runtime threshold resolver, editable reviewer prompts and a `confidence.jsonl` ledger (backend review, section D).
+- [ ] **7.6 Measured coverage**: line and branch coverage (coverage.py, then c8 and JaCoCo). Mutation testing is optional.
+- [ ] **7.7 Report split**: product behaviour, component, characterization. Failures are split into product defects and repaired test defects, and "review accepted" is kept separate from "execution passed".
+- [ ] **7.8 Harness accuracy benchmark**: seeded-bug variants of requirement-analysis-skill. Measure how many seeded bugs the harness detects and how often it fails a test that should pass; the false-fail rate must be 0 after triage.
+- [ ] **7.9 End-to-end run on requirement-analysis-skill** with the new pipeline; compare against the 2026-10-12 report.
+
+Review findings: `.watch/review-2026-10-12/{backend,frontend,desktop-ci-docs,security}.md` (outside the repository).
