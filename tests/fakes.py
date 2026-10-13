@@ -286,9 +286,6 @@ class ScriptedStageRuntime:
                 "oracle": scripted_oracle(state),
                 "steps": ["Call add(1, 2)", "Compare with 3"],
                 "traceability_links": [{"type": "requirement", "id": req}],
-                # The generator derived this expectation from source (no document states it): positive evidence for
-                # a test defect, so a failure of it may be regenerated.
-                "oracle": "derived",
             }
             negative = [
                 {

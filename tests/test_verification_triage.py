@@ -453,7 +453,7 @@ def test_characterization_is_excluded_from_verified_and_passed_counts_and_listed
     assert "### Characterization (current behaviour only)" in render_markdown(qa)
 
 
-def test_oracle_summary_fallback_uses_the_qa_oracles_keys():
+def test_report_oracle_summary_is_the_qa_oracles_summary():
     requirements = {
         "requirement_model": {
             "requirements": [
@@ -496,4 +496,16 @@ def test_oracle_summary_fallback_uses_the_qa_oracles_keys():
     assert summary["characterization_cases"] == ["TC-2"]
     assert summary["requirements_by_tier"] == {"product": 2, "component": 1}
     assert summary["cases_by_tier"] == {"product": 1, "component": 2}
-    assert summary["product_requirements"] == {"total": 2, "with_cases": 1, "without_cases": 1, "gap": 1}
+    assert summary["product_requirements"] == {
+        "total": 2,
+        "with_cases": ["REQ-2"],
+        "without_cases": [],
+        "gap": ["REQ-1"],
+    }
+
+
+def test_documented_quote_reads_the_oracle_source_quote():
+    from maf_test_harness.qa.verification import documented_quote
+
+    case = {"oracle": {"kind": "specified", "source": {"file": "README.md", "quote": "returns  3"}}}
+    assert documented_quote(case) == "returns 3"

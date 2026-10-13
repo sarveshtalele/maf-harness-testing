@@ -17,11 +17,11 @@ from ..qa.confidence import review_accepted
 from ..settings import TEST_REVIEW_MIN_CONFIDENCE, design_review_enabled
 from .controls import case_controls, plan_controls, summarize_trace, summary_text, trace_rows
 from .coverage import not_measured, summarize
+from .oracles import oracle_summary
 from .triage import build_updates
 from .verification import (
     PRODUCT_DEFECT,
     UNRESOLVED,
-    counts_as_verified,
     documented_quote,
     is_characterization,
     is_verified,
@@ -681,64 +681,6 @@ def failure_split(
                 }
             )
     return split
-
-
-ORACLE_KINDS = ("specified", "derived", "metamorphic", "golden", "property", "characterization")
-
-
-def _tier(value: Any) -> str:
-    text = str(value or "component").strip().lower()
-    return text if text in {"product", "component"} else "component"
-
-
-def oracle_summary(design: dict[str, Any], requirements: dict[str, Any]) -> dict[str, Any]:
-    """Oracle and tier counts. Uses qa.oracles.oracle_summary when that module exists.
-
-    # TODO(qa.oracles): once task-oracle is merged, qa/oracles.py provides oracle_summary; this fallback is then only the
-    # pre-merge path. The keys below match that module: total_cases, by_kind, verified_cases, characterization_cases,
-    # requirements_by_tier, cases_by_tier and product_requirements {total, with_cases, without_cases, gap}.
-    """
-    try:
-        from . import oracles
-    except ImportError:
-        oracles = None
-    if oracles is not None and hasattr(oracles, "oracle_summary"):
-        return oracles.oracle_summary(design, requirements)
-    model = (requirements or {}).get("requirement_model") or {}
-    reqs = [r for r in model.get("requirements") or [] if isinstance(r, dict) and r.get("id")]
-    tier_of_req = {str(r["id"]): _tier(r.get("tier")) for r in reqs}
-    cases = design_cases(design)
-    by_kind = dict.fromkeys((*ORACLE_KINDS, "missing"), 0)
-    cases_by_req: dict[str, int] = {}
-    cases_by_tier = {"product": 0, "component": 0}
-    for case in cases:
-        by_kind[oracle_kind(case) or "missing"] = by_kind.get(oracle_kind(case) or "missing", 0) + 1
-        linked = case_requirement_ids(case, requirements)
-        for rid in linked:
-            cases_by_req[rid] = cases_by_req.get(rid, 0) + 1
-        tier = (
-            _tier(case.get("tier"))
-            if case.get("tier")
-            else _tier(next((tier_of_req[r] for r in linked if r in tier_of_req), None))
-        )
-        cases_by_tier[tier] += 1
-    product = [r for r in reqs if tier_of_req[str(r["id"])] == "product"]
-    with_cases = sum(1 for r in product if cases_by_req.get(str(r["id"])))
-    requirements_by_tier = {"product": len(product), "component": len(reqs) - len(product)}
-    return {
-        "total_cases": len(cases),
-        "by_kind": by_kind,
-        "verified_cases": sum(counts_as_verified(c) for c in cases),
-        "characterization_cases": sorted(c["id"] for c in cases if oracle_kind(c) == "characterization"),
-        "requirements_by_tier": requirements_by_tier,
-        "cases_by_tier": cases_by_tier,
-        "product_requirements": {
-            "total": len(product),
-            "with_cases": with_cases,
-            "without_cases": len(product) - with_cases,
-            "gap": sum(1 for r in product if str(r.get("status") or "") == "gap"),
-        },
-    }
 
 
 def _behaviour_markdown(report: dict[str, Any]) -> list[str]:

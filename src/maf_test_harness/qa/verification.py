@@ -83,8 +83,11 @@ def counts_as_verified(case: dict[str, Any]) -> bool:
 
 def documented_quote(case: dict[str, Any]) -> str:
     raw = case.get("oracle")
-    if isinstance(raw, dict) and raw.get("quote"):
-        return " ".join(str(raw["quote"]).split())
+    if isinstance(raw, dict):
+        source = raw.get("source") if isinstance(raw.get("source"), dict) else {}
+        quote = raw.get("quote") or source.get("quote")
+        if quote:
+            return " ".join(str(quote).split())
     for key in QUOTE_KEYS:
         value = " ".join(str(case.get(key) or "").split())
         if value:
