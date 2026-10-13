@@ -16,7 +16,21 @@ from ..qa import ledger
 from ..qa.confidence import review_accepted
 from ..settings import TEST_REVIEW_MIN_CONFIDENCE, design_review_enabled
 from .controls import case_controls, plan_controls, summarize_trace, summary_text, trace_rows
+from .coverage import not_measured, summarize
 from .triage import build_updates
+from .verification import (
+    PRODUCT_DEFECT,
+    UNRESOLVED,
+    counts_as_verified,
+    documented_quote,
+    is_characterization,
+    is_verified,
+    oracle_kind,
+    oracle_verified,
+    repo_module_names,
+    summarize_triage,
+    triage_cases,
+)
 
 # Assertion-failure signatures of the common runners: "AssertionError", pytest's "assert a == b" rewrite, and
 # "expected X got Y" / "expected X but was Y" messages. A bare word "assert" in a traceback or a name does not count.
@@ -206,6 +220,20 @@ def confidence_summary(
     return {"ledger": ledger.LEDGER, "records": len(records), "gates": gates, "rows": rows}
 
 
+def measured_coverage(execution: dict[str, Any] | None, req_sources: dict[str, list[str]]) -> dict[str, Any]:
+    """Line and branch coverage the generated test run measured, per file and per requirement. Anything not measured
+    (other stacks, a failed install, no execution) is reported as not measured with its reason."""
+    cov = (execution or {}).get("coverage")
+    if execution is None:
+        return not_measured("coverage: not measured (no test execution)")
+    if not cov:
+        stack = str((execution or {}).get("adapter") or "").split("-")[0] or "this stack"
+        return not_measured(f"coverage: not measured for {stack}")
+    if cov.get("status") != "measured":
+        return not_measured(cov.get("reason") or "coverage: not measured", cov.get("tool"))
+    return summarize(cov.get("files") or {}, req_sources, cov.get("total_source_files"))
+
+
 def build_qa_report(
     *,
     repo: dict[str, Any],
@@ -219,7 +247,10 @@ def build_qa_report(
     generated_at: str | None = None,
     plan: dict[str, Any] | None = None,
     confidence: list[dict[str, Any]] | None = None,
+    repaired: list[str] | None = None,
+    declared_packages: list[str] | None = None,
 ) -> dict[str, Any]:
+    """``repaired`` names the cases an earlier heal round regenerated (state ``heal_history``)."""
     files = generation.get("files", [])
     controls = plan_controls(requirements, plan)
     reviews = {r["case_id"]: r for r in generation.get("case_reviews", [])}
@@ -285,6 +316,11 @@ def build_qa_report(
                     link["id"] for link in case.get("traceability_links", []) if link["type"] == "requirement"
                 ],
                 "control_ids": case_controls(case, controls),
+                # Design-case oracle fields are read defensively: runs made before they existed carry none.
+                "tier": case.get("tier"),
+                "oracle": oracle_kind(case) or None,
+                "oracle_verified": oracle_verified(case),
+                "oracle_quote": documented_quote(case),
             }
         )
         threshold = (generation.get("verification_summary") or {}).get(
@@ -304,6 +340,25 @@ def build_qa_report(
             source_review == "accepted"
             and row["status"] in {"failed", "error"}
             and bool(_ASSERTION_MISMATCH.search(row["message"] or ""))
+        )
+        # Characterization is current behaviour: never verified, and never counted in the verified or passed totals.
+        row["verified"] = is_verified(source_review, row["status"]) and not is_characterization(case)
+    adapter = str((execution or {}).get("adapter") or "")
+    # Characterization is current behaviour: no verified, review or passed counts.
+    scored_cases = [c for c in cases if c.get("oracle") != "characterization"]
+    triage_rows = triage_cases(
+        cases,
+        adapter.split("-")[0] or None,
+        {
+            "modules": repo_module_names(list(repo.get("source_files") or [])),
+            "declared": list(declared_packages or []),
+        },
+    )
+    triage_by_case = {r["case_id"]: r for r in triage_rows}
+    for row in cases:
+        record = triage_by_case.get(row["id"])
+        row["triage"] = (
+            {"classification": record["classification"], "reason": record["reason"]} if record else None
         )
     cases.sort(key=lambda c: (-(c.get("confidence") or 0), c["id"]))
     test_cases = case_table_rows(design, requirements)
@@ -364,6 +419,7 @@ def build_qa_report(
     }
     environment = {**(environment or {}), "diagnoses": (execution or {}).get("diagnoses", [])}
     updates = build_updates(cases, files, repo.get("source_files", []), coverage, req_sources, environment)
+    measured_cov = measured_coverage(execution, req_sources)
     verdict = verdict_for(execution)
     if counts.get("failed") or counts.get("error"):
         verdict = "FAIL"
@@ -432,6 +488,16 @@ def build_qa_report(
         or any(row["state"] == "untested" and row["requirement_state"] == "unexplained" for row in coverage)
     ):
         verdict = "INCONCLUSIVE"
+    # Policy: a product defect or an unresolved failure can never leave the verdict at PASS.
+    classes = summarize_triage(triage_rows)
+    if classes[PRODUCT_DEFECT]:
+        verdict = "FAIL"
+        generated_verdict = "FAIL"
+    if classes[PRODUCT_DEFECT] or classes[UNRESOLVED]:
+        if verdict.startswith("PASS"):
+            verdict = "INCONCLUSIVE"
+        if generated_verdict.startswith("PASS"):
+            generated_verdict = "INCONCLUSIVE"
     source_files = set(repo.get("source_files", []))
     represented_files = {p for sources in req_sources.values() for p in sources}
     traceability = trace_rows(controls, cases, generation, environment, design)
@@ -446,12 +512,23 @@ def build_qa_report(
         "generated_verdict": generated_verdict,
         "verification": generation.get("verification_summary"),
         "review_vs_execution": review_vs_execution(cases),
+        "verification_counts": {
+            "review_accepted": sum(c["source_review"] == "accepted" for c in scored_cases),
+            "execution_passed": sum(c["status"] == "passed" for c in scored_cases),
+            "verified": sum(bool(c.get("verified")) for c in scored_cases),
+            "characterization": len(cases) - len(scored_cases),
+        },
+        "triage": triage_rows,
+        "triage_summary": summarize_triage(triage_rows),
         "case_verification": {
             row["case_id"]: {
+                "characterization": row.get("oracle") == "characterization",
                 "source_review": row["source_review"],
                 "confidence": row["confidence"],
                 "execution": row["execution"],
                 "review_miss": row["review_miss"],
+                "verified": is_verified(row["source_review"], row["execution"])
+                and row.get("oracle") != "characterization",
             }
             for row in review_vs_execution(cases)
         },
@@ -462,7 +539,16 @@ def build_qa_report(
             "requirement_source_files": len(represented_files & source_files),
             "scope": "Discovered static declarations, not complete business requirements or runtime coverage.",
         },
-        "runtime_coverage": {"line": "not_measured", "branch": "not_measured", "mutation": "not_measured"},
+        "runtime_coverage": {
+            "line": measured_cov["totals"]["line_percent"]
+            if measured_cov["status"] == "measured"
+            else "not_measured",
+            "branch": measured_cov["totals"]["branch_percent"]
+            if measured_cov["status"] == "measured"
+            else "not_measured",
+            "mutation": "not_measured",
+        },
+        "measured_coverage": measured_cov,
         "execution_status": (execution or {}).get("status", "not_run"),
         "adapter": (execution or {}).get("adapter"),
         "case_status_counts": counts,
@@ -484,6 +570,9 @@ def build_qa_report(
             if c["status"] in {"failed", "error", "generation_failed"}
             or (c["status"] == "not_executed" and c["message"])
         ],
+        "behaviour": behaviour_sections(cases),
+        "failure_split": failure_split(cases, triage_rows, repaired or []),
+        "oracle_summary": oracle_summary(design, requirements),
         "unmapped_results": unmapped,
         "updates": updates,
         "stack": stack or {},
@@ -497,6 +586,232 @@ def build_qa_report(
             "not semantic completeness.",
         ],
     }
+
+
+BEHAVIOUR_SECTIONS = (
+    ("product", "Product behaviour", "Documented product requirements (tier product)."),
+    (
+        "component",
+        "Component behaviour",
+        "Callable-level requirements (tier component; the default for older runs).",
+    ),
+    (
+        "characterization",
+        "Characterization (current behaviour only)",
+        "Current behaviour only. These cases describe what the code does today and are never reported as verified.",
+    ),
+)
+
+
+def behaviour_sections(cases: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Product behaviour, component behaviour, then characterization. Review acceptance and execution stay separate
+    columns; ``verified`` (review accepted AND execution passed) is always False for characterization cases."""
+    buckets: dict[str, list[dict[str, Any]]] = {kind: [] for kind, _, _ in BEHAVIOUR_SECTIONS}
+    for case in sorted(cases, key=lambda c: c["id"]):
+        if oracle_kind(case) == "characterization":
+            kind = "characterization"
+        elif str(case.get("tier") or "").lower() == "product":
+            kind = "product"
+        else:
+            kind = "component"
+        verified = kind != "characterization" and bool(case.get("verified"))
+        buckets[kind].append(
+            {
+                "case_id": case["id"],
+                "title": case["title"],
+                "tier": case.get("tier"),
+                "oracle": case.get("oracle"),
+                "source_review": case.get("source_review", "not_reviewed"),
+                "execution": case["status"],
+                "verified": verified,
+                "label": "current behaviour, never verified"
+                if kind == "characterization"
+                else ("verified" if verified else "not verified"),
+            }
+        )
+    return [
+        {"id": kind, "title": title, "description": text, "cases": buckets[kind]}
+        for kind, title, text in BEHAVIOUR_SECTIONS
+    ]
+
+
+def failure_split(
+    cases: list[dict[str, Any]], triage_rows: list[dict[str, Any]], repaired: list[str]
+) -> dict[str, Any]:
+    """Product defects (with documented evidence); test defects, auto-repaired or still failing; the rest."""
+    by_id = {c["id"]: c for c in cases}
+    split: dict[str, Any] = {
+        "product_defects": [],
+        "test_defects": {"auto_repaired": [], "still_failing": []},
+        "unresolved": [],
+        "environment": [],
+    }
+    for record in triage_rows:
+        case = by_id.get(record["case_id"], {})
+        entry = {
+            "case_id": record["case_id"],
+            "title": case.get("title", ""),
+            "file": case.get("file"),
+            "status": record["status"],
+            "classification": record["classification"],
+            "reason": record["reason"],
+            "oracle": record.get("oracle"),
+            "expected": record.get("expected"),
+            "actual": record.get("actual"),
+            "documented_quote": record.get("documented_quote"),
+            "message": (case.get("message") or "")[:600],
+        }
+        if record["classification"] == "product_defect":
+            split["product_defects"].append(entry)
+        elif record["classification"] == "test_defect":
+            split["test_defects"]["still_failing"].append(entry)
+        elif record["classification"] == "environment":
+            split["environment"].append(entry)
+        else:
+            split["unresolved"].append(entry)
+    for case_id in dict.fromkeys(repaired):
+        case = by_id.get(case_id)
+        if case and case["status"] == "passed":
+            split["test_defects"]["auto_repaired"].append(
+                {
+                    "case_id": case_id,
+                    "title": case.get("title", ""),
+                    "file": case.get("file"),
+                    "status": "passed",
+                }
+            )
+    return split
+
+
+ORACLE_KINDS = ("specified", "derived", "metamorphic", "golden", "property", "characterization")
+
+
+def _tier(value: Any) -> str:
+    text = str(value or "component").strip().lower()
+    return text if text in {"product", "component"} else "component"
+
+
+def oracle_summary(design: dict[str, Any], requirements: dict[str, Any]) -> dict[str, Any]:
+    """Oracle and tier counts. Uses qa.oracles.oracle_summary when that module exists.
+
+    # TODO(qa.oracles): once task-oracle is merged, qa/oracles.py provides oracle_summary; this fallback is then only the
+    # pre-merge path. The keys below match that module: total_cases, by_kind, verified_cases, characterization_cases,
+    # requirements_by_tier, cases_by_tier and product_requirements {total, with_cases, without_cases, gap}.
+    """
+    try:
+        from . import oracles
+    except ImportError:
+        oracles = None
+    if oracles is not None and hasattr(oracles, "oracle_summary"):
+        return oracles.oracle_summary(design, requirements)
+    model = (requirements or {}).get("requirement_model") or {}
+    reqs = [r for r in model.get("requirements") or [] if isinstance(r, dict) and r.get("id")]
+    tier_of_req = {str(r["id"]): _tier(r.get("tier")) for r in reqs}
+    cases = design_cases(design)
+    by_kind = dict.fromkeys((*ORACLE_KINDS, "missing"), 0)
+    cases_by_req: dict[str, int] = {}
+    cases_by_tier = {"product": 0, "component": 0}
+    for case in cases:
+        by_kind[oracle_kind(case) or "missing"] = by_kind.get(oracle_kind(case) or "missing", 0) + 1
+        linked = case_requirement_ids(case, requirements)
+        for rid in linked:
+            cases_by_req[rid] = cases_by_req.get(rid, 0) + 1
+        tier = (
+            _tier(case.get("tier"))
+            if case.get("tier")
+            else _tier(next((tier_of_req[r] for r in linked if r in tier_of_req), None))
+        )
+        cases_by_tier[tier] += 1
+    product = [r for r in reqs if tier_of_req[str(r["id"])] == "product"]
+    with_cases = sum(1 for r in product if cases_by_req.get(str(r["id"])))
+    requirements_by_tier = {"product": len(product), "component": len(reqs) - len(product)}
+    return {
+        "total_cases": len(cases),
+        "by_kind": by_kind,
+        "verified_cases": sum(counts_as_verified(c) for c in cases),
+        "characterization_cases": sorted(c["id"] for c in cases if oracle_kind(c) == "characterization"),
+        "requirements_by_tier": requirements_by_tier,
+        "cases_by_tier": cases_by_tier,
+        "product_requirements": {
+            "total": len(product),
+            "with_cases": with_cases,
+            "without_cases": len(product) - with_cases,
+            "gap": sum(1 for r in product if str(r.get("status") or "") == "gap"),
+        },
+    }
+
+
+def _behaviour_markdown(report: dict[str, Any]) -> list[str]:
+    sections = report.get("behaviour") or []
+    if not any(s["cases"] for s in sections) or not any(
+        c.get("tier") or c.get("oracle") for s in sections for c in s["cases"]
+    ):
+        return []  # runs without tier or oracle fields keep the old layout
+    out = ["## Behaviour", ""]
+    for section in sections:
+        out += [f"### {section['title']}", "", section["description"], ""]
+        if not section["cases"]:
+            out += ["_No cases in this section._", ""]
+            continue
+        out += [
+            "| Case | Oracle | Review accepted | Execution | Verified | Note |",
+            "|---|---|---|---|---|---|",
+        ]
+        out += [
+            f"| {md_cell(c['case_id'])} {md_cell(c['title'], 60)} | {md_cell(c['oracle'] or 'missing')} "
+            f"| {'yes' if c['source_review'] == 'accepted' else c['source_review']} | {c['execution']} "
+            f"| {'yes' if c['verified'] else 'no'} | {md_cell(c['label'])} |"
+            for c in section["cases"]
+        ]
+        out.append("")
+    return out
+
+
+def _failure_split_markdown(report: dict[str, Any]) -> list[str]:
+    split = report["failure_split"]
+    out = ["## Failures", ""]
+    out += ["### Product defects (with documented evidence)", ""]
+    if split["product_defects"]:
+        out += [
+            "| Case | Expected (documented) | Actual | Documented quote | Oracle |",
+            "|---|---|---|---|---|",
+        ]
+        out += [
+            f"| {md_cell(p['case_id'])} {md_cell(p['title'], 60)} | {md_cell(p['expected'])} | {md_cell(p['actual'])} "
+            f"| {md_cell(p['documented_quote'], 200)} | {md_cell(p['oracle'])} |"
+            for p in split["product_defects"]
+        ]
+    else:
+        out.append("_None recorded._")
+    tests = split["test_defects"]
+    out += ["", "### Test defects (auto-repaired / still failing)", ""]
+    out += [
+        f"- Auto-repaired: {md_cell(t['case_id'])} {md_cell(t['title'], 80)} (now passing)"
+        for t in tests["auto_repaired"]
+    ]
+    out += [
+        f"- Still failing: {md_cell(t['case_id'])} {md_cell(t['title'], 80)}: {md_cell(t['reason'], 200)}"
+        for t in tests["still_failing"]
+    ]
+    if not tests["auto_repaired"] and not tests["still_failing"]:
+        out.append("_None recorded._")
+    out += ["", "### Unresolved and environment failures", ""]
+    out += [
+        f"- Unresolved: {md_cell(u['case_id'])} {md_cell(u['title'], 80)}: {md_cell(u['reason'], 200)}"
+        for u in split["unresolved"]
+    ]
+    out += [
+        f"- Environment: {md_cell(e['case_id'])} {md_cell(e['title'], 80)}: {md_cell(e['reason'], 200)}"
+        for e in split["environment"]
+    ]
+    if not split["unresolved"] and not split["environment"]:
+        out.append("_None recorded._")
+    out.append("")
+    for case in report["failures"]:
+        out += [
+            f"- **{case['title']}** (`{case['file'] or 'no file'}`, {case['status']})\n  ```\n  {case['message'][:600]}\n  ```"
+        ]
+    return out
 
 
 def _updates_markdown(updates: dict[str, Any]) -> list[str]:
@@ -612,6 +927,52 @@ def confidence_gates_text(report: dict[str, Any]) -> str:
     return "Confidence gates: " + "; ".join(parts) + "."
 
 
+def _coverage_line(report: dict[str, Any]) -> list[str]:
+    """States measured line and branch coverage only when a coverage run produced it; mutation is never measured."""
+    cov = report.get("measured_coverage") or {}
+    if cov.get("status") != "measured":
+        return [
+            f"Line and branch coverage: **not measured** ({cov.get('reason') or 'no coverage run'}). Mutation: not measured."
+        ]
+    totals = cov["totals"]
+    return [
+        f"Line coverage **{_pct(totals['line_percent'])}** and branch coverage **{_pct(totals['branch_percent'])}** "
+        "measured by coverage.py for the repository source executed by the generated tests. Mutation: not measured. "
+        "This is not coverage of the complete application.",
+    ]
+
+
+def _pct(value: Any) -> str:
+    return "n/a" if value is None else f"{value}%"
+
+
+def measured_coverage_markdown(report: dict[str, Any]) -> list[str]:
+    cov = report.get("measured_coverage") or {}
+    if cov.get("status") != "measured":
+        return []
+    lines = [
+        "## Measured coverage",
+        "",
+        f"{cov['scope']} Per-file percentages come from the same run; requirement rows use only the measured files "
+        "among each requirement's source files.",
+        "",
+        "| File | Line | Branch | Statements covered | Branches covered |",
+        "|---|---|---|---|---|",
+    ]
+    lines += [
+        f"| `{md_cell(row['file'])}` | {_pct(row['line_percent'])} | {_pct(row['branch_percent'])} "
+        f"| {row['covered_lines']}/{row['num_statements']} | {row['covered_branches']}/{row['num_branches']} |"
+        for row in cov["files"]
+    ]
+    lines += ["", "| Requirement | Measured files | Line | Branch |", "|---|---|---|---|"]
+    lines += [
+        f"| {md_cell(row['id'])} | {len(row['measured_files'])}/{len(row['source_files'])} "
+        f"| {_pct(row['line_percent'])} | {_pct(row['branch_percent'])} |"
+        for row in cov["requirements"]
+    ]
+    return [*lines, ""]
+
+
 def _verification_markdown(report: dict[str, Any]) -> list[str]:
     summary = report.get("verification") or {}
     if not summary:
@@ -698,7 +1059,7 @@ def render_markdown(report: dict[str, Any]) -> str:
         f"Generated suite: **{report.get('generated_verdict', report['verdict'])}**. "
         "A suite verdict does not qualify the complete application.",
         "",
-        "Line, branch and mutation coverage: **not measured**.",
+        *_coverage_line(report),
         "",
         *_verification_markdown(report),
         "| Existing regression scope | Verdict | Tests | Reason |",
@@ -708,7 +1069,9 @@ def render_markdown(report: dict[str, Any]) -> str:
             for r in report.get("baseline_regression", [])
         ],
         "",
+        *_behaviour_markdown(report),
         *_traceability_markdown(report),
+        *measured_coverage_markdown(report),
         *_confidence_markdown(report),
     ]
     for c in report["cases"]:
@@ -744,7 +1107,9 @@ def render_markdown(report: dict[str, Any]) -> str:
         "Requirement states (static traceability, not measured coverage): "
         + ", ".join(f"{k}={v}" for k, v in report["requirement_state_counts"].items()),
     ]
-    if report["failures"]:
+    if "failure_split" in report:
+        lines += [""] + _failure_split_markdown(report)
+    elif report["failures"]:
         lines += ["", "## Failures", ""]
         lines += [
             f"- **{c['title']}** (`{c['file'] or 'no file'}`, {c['status']})\n  ```\n  {c['message'][:600]}\n  ```"

@@ -80,8 +80,16 @@ class BrowserRuntime(ScriptedStageRuntime):
                     },
                     "steps": ["Call add(1, 2)", "Compare with 3"],
                     "traceability_links": [{"type": "acceptance_criterion", "id": criterion}],
+                    # A documented product expectation: its quote states the value the test asserts (3).
+                    "tier": "product",
+                    "oracle": "specified",
+                    "oracle_quote": "add(1, 2) returns 3: the documented sum of two integers",
                 }
             )
+        if stage == "test_design":  # every other case is component behaviour with a derived expectation
+            for case in result.get("artifact", {}).get("positive_tests", []) or []:
+                case.setdefault("tier", "component")
+                case.setdefault("oracle", "derived")
         return result
 
 

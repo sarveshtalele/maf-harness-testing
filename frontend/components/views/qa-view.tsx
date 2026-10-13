@@ -97,6 +97,51 @@ const failureCards = (run: { id: string }, failures: Row[], updates: Row[]) => (
   })}</div> : <div className="success-note"><span aria-hidden="true">✓</span><div><b>No failed cases in the saved QA report</b><p>Review requirement coverage and warnings before treating this run as complete coverage.</p></div></div>
 );
 
+const pct = (value: unknown) => (value == null || value === '' ? 'n/a' : `${text(value)}%`);
+const yesNo = (value: unknown) => (value ? 'yes' : 'no');
+
+/** Product behaviour, component behaviour, characterization: review acceptance and execution are separate columns. */
+const BEHAVIOUR_COLUMNS: Column[] = [
+  { key: 'case_id', label: 'Case', width: '150px', render: row => <span className="cell-id">{text(row.case_id)}</span> },
+  { key: 'title', label: 'Description' },
+  { key: 'oracle', label: 'Oracle', width: '130px', render: row => dash(row.oracle) },
+  { key: 'source_review', label: 'Review accepted', width: '150px', render: row => (row.source_review === 'accepted' ? 'yes' : dash(row.source_review)) },
+  { key: 'execution', label: 'Execution', width: '130px', render: row => <StatusBadge value={row.execution} /> },
+  { key: 'verified', label: 'Verified', width: '100px', render: row => yesNo(row.verified) },
+  { key: 'label', label: 'Note', width: '210px' },
+];
+
+const TRIAGE_COLUMNS: Column[] = [
+  { key: 'case_id', label: 'Case', width: '150px', render: row => <span className="cell-id">{text(row.case_id)}</span> },
+  { key: 'title', label: 'Description' },
+  { key: 'expected', label: 'Expected (documented)', width: '150px', render: row => dash(row.expected) },
+  { key: 'actual', label: 'Actual', width: '130px', render: row => dash(row.actual) },
+  { key: 'documented_quote', label: 'Documented quote', render: row => dash(row.documented_quote) },
+  { key: 'reason', label: 'Reason' },
+];
+
+const TEST_DEFECT_COLUMNS: Column[] = [
+  { key: 'case_id', label: 'Case', width: '150px', render: row => <span className="cell-id">{text(row.case_id)}</span> },
+  { key: 'title', label: 'Description' },
+  { key: 'state', label: 'State', width: '150px', render: row => <StatusBadge value={row.state} /> },
+  { key: 'reason', label: 'Reason' },
+];
+
+const COVERAGE_FILE_COLUMNS: Column[] = [
+  { key: 'file', label: 'File', render: row => <span className="cell-id">{text(row.file)}</span> },
+  { key: 'line_percent', label: 'Line', width: '90px', render: row => pct(row.line_percent) },
+  { key: 'branch_percent', label: 'Branch', width: '90px', render: row => pct(row.branch_percent) },
+  { key: 'lines', label: 'Lines covered', width: '130px', render: row => `${text(row.covered_lines)}/${text(row.num_statements)}` },
+  { key: 'branches', label: 'Branches covered', width: '140px', render: row => `${text(row.covered_branches)}/${text(row.num_branches)}` },
+];
+
+const COVERAGE_REQUIREMENT_COLUMNS: Column[] = [
+  { key: 'id', label: 'Requirement', width: '130px', render: row => <span className="cell-id">{text(row.id)}</span> },
+  { key: 'measured', label: 'Measured files', width: '140px', render: row => `${rows(row.measured_files).length}/${Array.isArray(row.source_files) ? row.source_files.length : 0}` },
+  { key: 'line_percent', label: 'Line', width: '90px', render: row => pct(row.line_percent) },
+  { key: 'branch_percent', label: 'Branch', width: '90px', render: row => pct(row.branch_percent) },
+];
+
 /** The QA report as structured sections, in the same order as the Markdown export (qa/report.py render_markdown). */
 export function QaView() {
   const { id, run } = useRun();
@@ -114,11 +159,19 @@ export function QaView() {
   const verification = record(qa.verification);
   const confidence = record(qa.confidence);
   const reviewMiss = rows(qa.review_miss);
+  const behaviour = rows(qa.behaviour);
+  const behaviourCount = behaviour.reduce((total, section) => total + rows(section.cases).length, 0);
+  const hasBehaviour = behaviour.some(section => rows(section.cases).some(c => c.tier || c.oracle));
+  const split = record(qa.failure_split);
+  const hasSplit = Object.keys(split).length > 0;
+  const measured = record(qa.measured_coverage);
+  const coverageMeasured = measured.status === 'measured';
+  const totals = record(measured.totals);
   const sections: SectionSpec[] = [
     { id: 'verdict', title: 'Verdict and case counts', defaultOpen: true, render: () => <>
       <VerdictBanner name={qa.verdict} meta={<>Execution: {text(qa.execution_status)} · Runner: {text(qa.adapter)}</>} label="Saved execution verdict" />
       <Metrics values={record(qa.case_status_counts)} />
-      <p className="field-help">Line, branch and mutation coverage: not measured. This verdict does not certify the complete application. Inconclusive is never a pass.</p>
+      <p className="field-help">{coverageMeasured ? <>Line coverage {pct(totals.line_percent)} and branch coverage {pct(totals.branch_percent)} measured by coverage.py for the repository source; mutation: not measured.</> : <>Line and branch coverage: not measured{measured.reason ? ` (${text(measured.reason)})` : ''}. Mutation: not measured.</>} This verdict does not certify the complete application. Inconclusive is never a pass.</p>
     </> },
     { id: 'scope', title: 'Evidence scope', defaultOpen: true, render: () => <>
       <p>Generated suite: <StatusBadge value={qa.generated_verdict || qa.verdict} />. A suite verdict does not qualify the complete application.</p>
@@ -129,6 +182,12 @@ export function QaView() {
       <Table caption="Existing regression scopes" columns={[{ key: 'scope', label: 'Scope', render: row => label(row.scope) }, { key: 'verdict', label: 'Verdict', render: row => <StatusBadge value={row.verdict} /> }, { key: 'tests', label: 'Tests', width: '90px' }, { key: 'reason', label: 'Reason' }]} rows={rows(qa.baseline_regression)} />
       {rows(qa.baseline_regression).map((scope, i) => <Section key={i} title={`${label(scope.scope)} · ${text(scope.verdict)} cases`} defaultOpen={false}><Table caption={`${label(scope.scope)} cases`} columns={[{ key: 'classname', label: 'Class' }, { key: 'name', label: 'Name' }, { key: 'status', label: 'Status', render: row => <StatusBadge value={row.status} /> }, { key: 'message', label: 'Message' }]} rows={rows(scope.cases)} searchable /></Section>)}
     </> },
+    ...(hasBehaviour ? [{ id: 'behaviour', title: 'Behaviour: product, component, characterization', count: behaviourCount, defaultOpen: true, render: () => <>
+      {behaviour.map(section => <Section key={text(section.id)} title={text(section.title)} count={rows(section.cases).length} defaultOpen={section.id !== 'characterization'}>
+        <p className="field-help">{text(section.description)}</p>
+        <Table caption={text(section.title)} columns={BEHAVIOUR_COLUMNS} rows={rows(section.cases)} searchable empty="No cases in this section." />
+      </Section>)}
+    </> }] : []),
     { id: 'traceability', title: 'End-to-end traceability', count: rows(qa.traceability).length, render: () => <>
       <p>Each control follows one requirement from planning (PLN) through design, generation, environment setup and execution. Failed at names the first step that did not pass.</p>
       <Metrics values={traceCounts(record(qa.traceability_summary))} />
@@ -149,6 +208,24 @@ export function QaView() {
       <p>Linked generated tests are not measured line, branch or complete behavior coverage. A requirement counts as passed only when its linked tests passed execution. Source-review acceptance is not execution.</p>
       <Table caption="Requirement traceability" columns={[{ key: 'id', label: 'ID', width: '120px', render: row => <span className="cell-id">{text(row.id)}</span> }, { key: 'state', label: 'State', width: '140px', render: row => <StatusBadge value={row.state} /> }, { key: 'requirement_state', label: 'Basis', width: '170px' }, { key: 'text', label: 'Description' }]} rows={rows(qa.requirement_coverage)} searchable />
     </> },
+    ...(hasSplit ? [{ id: 'product-defects', title: 'Product defects (with documented evidence)', count: rows(split.product_defects).length, defaultOpen: true, render: () => <>
+      <p className="field-help">The oracle is specified or golden, the failure shows the actual value differs from the expected one, and the documented quote states the expected value. Keep the application or the documentation under review.</p>
+      {rows(split.product_defects).length ? <Table caption="Product defects" columns={TRIAGE_COLUMNS} rows={rows(split.product_defects)} searchable /> : <p className="empty-inline">No product defects recorded.</p>}
+    </> }, { id: 'test-defects', title: 'Test defects (auto-repaired / still failing)', count: rows(record(split.test_defects).still_failing).length + rows(record(split.test_defects).auto_repaired).length, defaultOpen: true, render: () => <>
+      <p className="field-help">The expectation was derived, characterized or guessed, or the generated test cannot run. Only these are regenerated by the repair loop.</p>
+      {rows(record(split.test_defects).auto_repaired).length > 0 && <Table caption="Auto-repaired test defects" columns={TEST_DEFECT_COLUMNS} rows={rows(record(split.test_defects).auto_repaired).map(row => ({ ...row, state: 'passed' }))} />}
+      {rows(record(split.test_defects).still_failing).length > 0 && <Table caption="Test defects still failing" columns={TRIAGE_COLUMNS} rows={rows(record(split.test_defects).still_failing)} searchable />}
+      {!rows(record(split.test_defects).auto_repaired).length && !rows(record(split.test_defects).still_failing).length && <p className="empty-inline">No test defects recorded.</p>}
+    </> }, { id: 'unresolved', title: 'Unresolved and environment failures', count: rows(split.unresolved).length + rows(split.environment).length, render: () => <>
+      <p className="field-help">Failures the deterministic rules could not decide, and failures caused by the environment. Neither is repaired automatically.</p>
+      {[...rows(split.unresolved), ...rows(split.environment)].length ? <Table caption="Unresolved and environment failures" columns={TRIAGE_COLUMNS} rows={[...rows(split.unresolved), ...rows(split.environment)]} searchable /> : <p className="empty-inline">None recorded.</p>}
+    </> }] : []),
+    ...(coverageMeasured || measured.status ? [{ id: 'measured-coverage', title: 'Measured coverage', count: rows(measured.files).length || undefined, render: () => coverageMeasured ? <>
+      <p>{text(measured.scope)} Requirement rows use only the measured files among each requirement's source files.</p>
+      <Metrics values={{ line: pct(totals.line_percent), branch: pct(totals.branch_percent) }} />
+      <Table caption="Measured coverage per file" columns={COVERAGE_FILE_COLUMNS} rows={rows(measured.files)} searchable />
+      <Table caption="Measured coverage per requirement" columns={COVERAGE_REQUIREMENT_COLUMNS} rows={rows(measured.requirements)} searchable />
+    </> : <p className="field-help">Coverage was not measured{measured.reason ? `: ${text(measured.reason)}` : ''}. No percentage is shown.</p> }] : []),
     { id: 'failures', title: 'Why tests failed & what to improve', count: failures.length, defaultOpen: true, render: () => <>
       <p className="field-help">Observed output and recommendations from the saved QA report. A failing assertion needs review of both application behavior and the test expectation.</p>
       {failureCards(run, failures, [...generatedUpdates, ...repoUpdates])}

@@ -70,7 +70,7 @@ def test_python_plan_installs_into_venv_and_scopes_pytest_to_generated_files(tmp
         StackProfile(primary="python"), ws, files("tests/test_a.py"), cache_dir=tmp_path / "c"
     )
     names = [s.name for s in plan.steps]
-    assert names == ["create-venv", "install-pytest", "install-requirements", "pytest"]
+    assert names == ["create-venv", "install-pytest", "install-coverage", "install-requirements", "pytest"]
     assert plan.steps[-1].argv[-1] == "tests/test_a.py" and plan.steps[-1].parser == "junit"
     assert all(s.kind == "setup" for s in plan.steps[:-1])
 
