@@ -1,0 +1,9 @@
+{
+  "name": "agentic-qe",
+  "version": "0.1.0",
+  "description": "Source-traced E2E test planning and case generation from Jira stories, BRDs, and bounded repository changes. Includes confidence review and a Claude Code progress dashboard.",
+  "author": {
+    "name": "Sarvesh Talele"
+  },
+  "keywords": ["quality-engineering", "jira", "test-design", "e2e", "traceability"]
+}

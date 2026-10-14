@@ -1,0 +1,22 @@
+{
+  "schema_version": 1,
+  "name": "source-to-e2e",
+  "description": "Review source evidence, draft and approve stories, derive requirements, plan and design E2E cases, then gate generation.",
+  "stages": [
+    {"id": "intake", "agent": "story-intake-analyst", "mcp_servers": ["atlassian"], "tool_intents": ["search Jira issues", "read Jira issues"], "prompt": "Preserve exact source references and draft missing details as questions."},
+    {"id": "scope", "agent": "change-scope-analyst", "mcp_servers": [], "tool_intents": [], "prompt": "For brownfield, inspect only the selected Git change set and justified dependencies."},
+    {"id": "requirements", "agent": "requirements-analyst", "mcp_servers": [], "tool_intents": [], "prompt": "Separate functional and technical requirements and retain source and control links."},
+    {"id": "planning", "agent": "e2e-test-planner", "mcp_servers": [], "tool_intents": [], "prompt": "Plan E2E coverage for approved stories and both requirement classes."},
+    {"id": "design", "agent": "e2e-scenario-designer", "mcp_servers": [], "tool_intents": [], "prompt": "Write business-facing E2E steps and source-backed expected outcomes."},
+    {"id": "review", "agent": "confidence-reviewer", "mcp_servers": [], "tool_intents": [], "prompt": "Score each story, requirement, plan item and case independently against cited evidence."},
+    {"id": "generation", "agent": "test-artifact-generator", "mcp_servers": [], "tool_intents": [], "prompt": "Package approved E2E cases and traceability; do not run target tests."}
+  ],
+  "optional_observation": {
+    "enabled": false,
+    "mcp_servers": ["playwright"],
+    "tool_intents": ["observe a user-approved local application URL"],
+    "allowed_origins": []
+  },
+  "confidence_floor": 95,
+  "max_repair_rounds": 2
+}
