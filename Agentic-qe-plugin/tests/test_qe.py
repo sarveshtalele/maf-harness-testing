@@ -24,7 +24,9 @@ from qe import (
     generate,
     logged_action,
     memory_line,
+    select_impact,
     sha,
+    validate_artifacts,
     validate_reviews,
     validate_scope,
     validate_workflow,
@@ -369,11 +371,27 @@ class IntakeAndScope(unittest.TestCase):
             self.assertEqual(hashlib.sha256(b"unstaged").hexdigest(), by_group["staged"])
             self.assertEqual(hashlib.sha256(b"after-stage").hexdigest(), by_group["unstaged"])
             run = create("Brownfield", "brownfield", ROOT / "workflows" / "default.json", Path(temp))
+            write_json(
+                run / "sources.json",
+                {
+                    "sources": [{"id": "DOC-1"}],
+                    "sections": [{"source_id": "DOC-1", "locator": "line:1", "text": QUOTE}],
+                },
+            )
+            artifacts(run)
+            approval(run, "sources", "Product owner")
+            approval(run, "stories", "Product owner")
+            complete_stage(run, "intake")
             write_json(run / "scope.json", working)
+            select_impact(run, "STY-1", ["app.txt"], "Changed sign-in behavior supports this story")
             validate_scope(run)
+            approval(run, "scope", "Product owner")
             file.write_text("changed again", encoding="utf-8")
             with self.assertRaisesRegex(ValueError, "changed after capture"):
                 validate_scope(run)
+            self.assertIn("| Scope | stale |", dashboard(run))
+            with self.assertRaisesRegex(ValueError, "changed after capture"):
+                complete_stage(run, "scope")
 
     def test_brownfield_journey_to_export(self):
         with tempfile.TemporaryDirectory() as temp:
@@ -408,11 +426,52 @@ class IntakeAndScope(unittest.TestCase):
                 },
             )
             subjects = artifacts(run)
+            stories = json.loads((run / "stories.json").read_text())
+            stories["stories"].append(
+                {
+                    "id": "STY-2",
+                    "user_story": "As a manager, I want to review account access, so that I can monitor users",
+                    "source_refs": [REF],
+                    "acceptance_criteria": [
+                        {"id": "AC-2", "control_id": "CTL-2", "text": QUOTE, "source_refs": [REF]}
+                    ],
+                }
+            )
+            write_json(run / "stories.json", stories)
             write_json(run / "scope.json", capture(repo, "committed", base))
-            for gate in ("sources", "stories", "scope"):
+            for gate in ("sources", "stories"):
                 approval(run, gate, "Product owner")
-            for stage in ("intake", "scope", "requirements", "planning", "design"):
+            complete_stage(run, "intake")
+            with self.assertRaisesRegex(ValueError, "story mapped to changed files"):
+                approval(run, "scope", "Product owner")
+            impact_result = subprocess.run(
+                [
+                    sys.executable,
+                    str(ROOT / "scripts" / "qe.py"),
+                    "impact",
+                    "--run",
+                    str(run),
+                    "--story",
+                    "STY-1",
+                    "--path",
+                    "auth.py",
+                    "--reason",
+                    "Changed sign-in behavior supports this story",
+                ],
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+            self.assertIn("1 impacted stories", impact_result.stdout)
+            approval(run, "scope", "Product owner")
+            for stage in ("scope", "requirements", "planning", "design"):
                 complete_stage(run, stage)
+            unrelated = json.loads((run / "requirements.json").read_text())
+            unrelated["requirements"][0]["story_ids"] = ["STY-2"]
+            write_json(run / "requirements.json", unrelated)
+            with self.assertRaisesRegex(ValueError, "story link"):
+                validate_artifacts(run)
+            write_json(run / "requirements.json", {"requirements": [subjects["FR-1"], subjects["TR-1"]]})
             reviews = [
                 {
                     "subject_id": identifier,
@@ -432,6 +491,12 @@ class IntakeAndScope(unittest.TestCase):
             approval(run, "final", "Product owner")
             export(run, root / "export")
             self.assertTrue((root / "export" / "scope.json").exists())
+            report = (root / "export" / "REPORT.md").read_text()
+            matrix = (root / "export" / "traceability.csv").read_text()
+            self.assertIn("auth.py", report)
+            self.assertIn("auth.py", matrix)
+            self.assertNotIn("STY-2", report)
+            self.assertIn("Approved change impact", (root / "export" / "dashboard.html").read_text())
 
     def test_workflow_cannot_relax_gate(self):
         workflow = json.loads((ROOT / "workflows" / "default.json").read_text())

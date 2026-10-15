@@ -127,4 +127,5 @@ def capture(
         "include_untracked": include_untracked,
         "changed_files": entries,
         "related_files": [],
+        "impacted_stories": [],
     }

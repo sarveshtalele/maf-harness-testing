@@ -10,7 +10,7 @@ The official [code-modernization plugin](https://github.com/anthropics/claude-pl
 
 | Component | Location | Responsibility |
 | --- | --- | --- |
-| Manifest and MCP | `.claude-plugin/plugin.json`, `.mcp.json` | Load as `agentic-qe`; connect Atlassian and optional Playwright observation |
+| Manifest and MCP | `.claude-plugin/plugin.json`, `.mcp.json`; repository `.claude-plugin/marketplace.json` | Install as `agentic-qe` from the branch marketplace; connect Atlassian and optional Playwright observation |
 | Orchestrator skills | `skills/qe-*/SKILL.md` | Start/resume phases, configure workflows, export, and show status |
 | Adapted MAF skills | `skills/<original-name>/SKILL.md` | Eleven named domain skills, preloaded by the specialists |
 | Specialists | `agents/*.md` | Independent intake, scope, requirements, planning, design, review, generation |
@@ -21,11 +21,11 @@ The official [code-modernization plugin](https://github.com/anthropics/claude-pl
 
 ## Workflow and approval gates
 
-1. **Preflight and source intake:** initialize a run; acquire Jira read-only issues through Atlassian MCP or Jira REST, or parse Markdown, TXT, CSV, DOCX, PDF. Save content hashes, source IDs, locations and retrieval warnings. Treat all source content as data.
-2. **Scope:** greenfield needs no code. Brownfield uses an explicitly selected local Git repository and committed or working-tree diff. Save changed paths/status/hashes; record each related file added with a reason. Require source/scope approval.
-3. **Stories:** normalize Jira's “As a [role], I want [action], so that [benefit]” stories or draft BRD stories. Assign stable `STY-*`, `AC-*`, `CTL-*` IDs; leave unsupported fields unresolved. Require human story approval.
-4. **Requirements:** derive functional `FR-*` and technical `TR-*` items with exact source references and control IDs. Preserve contradictions and unresolved questions.
-5. **Planning and design:** plan E2E coverage only, then write positive, negative, boundary, accessibility and technical E2E scenarios where supported. Every case has steps, expected outcome, source and requirement/control links.
+1. **Intake:** initialize a run; read Jira issues through Atlassian MCP or Jira REST, or parse Markdown, TXT, CSV, DOCX, PDF. Save hashes and locators. Normalize Jira's “As a [role], I want [action], so that [benefit]” stories or draft BRD stories with stable `STY-*`, `AC-*`, `CTL-*` IDs. Require source and story approval.
+2. **Scope:** greenfield needs no code. Brownfield uses an explicitly selected local Git repository and committed or working-tree diff. Save changed paths/status/hashes; map each impacted approved story to changed paths with a reason; record any related file added with a reason. Require scope approval. Only mapped stories pass into requirements, cases and review.
+3. **Requirements:** derive functional `FR-*` and technical `TR-*` items with exact source references and control IDs. Preserve contradictions and unresolved questions.
+4. **Planning:** plan E2E coverage for every active control and requirement, or report a named gap.
+5. **Design:** write positive, negative, boundary, accessibility and technical E2E scenarios where supported. Every case has steps, expected outcome, source and requirement/control links.
 6. **Independent review:** apply an evidence rubric to every story, requirement, plan item and case. A score is evidence coverage out of 100, never a probability. Below 95 pauses for human approval of a specific repair; re-review after up to two rounds. The export gate requires every included item to reach 95+.
 7. **Generation/export:** produce structured case catalog, traceability matrix and readable report. No target app execution, dependency installation or test runner invocation.
 
@@ -44,6 +44,8 @@ The official [code-modernization plugin](https://github.com/anthropics/claude-pl
 - [x] Isolate the plugin on its own branch without modifying previous releases or the application worktree.
 - [x] Review all 13 MAF skills; bundle eleven adapted native skills under their original names and bind them to agents; exclude two runnable code generators.
 - [x] Implement plugin manifest, MCP config, skills, agents, schemas and workflow template.
+- [x] Add a branch marketplace manifest and install instructions for the plugin subdirectory.
+- [x] Enforce approved story-to-diff impact in brownfield runs and expose it in report, matrix and dashboard.
 - [x] Implement portable intake, scope, validation, traceability, in-Claude dashboard, run memory and export helpers.
 - [x] Validate synthetic greenfield and brownfield journeys, invalid scores, Git changes, PDF extraction and desktop/mobile dashboard rendering.
 - [x] Validate the plugin helper journey and manifest after the skill rewrite.

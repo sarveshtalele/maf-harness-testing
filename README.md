@@ -2,6 +2,10 @@
 
 Agentic QE Platform is an internal test-engineering tool. Give it a GitHub repository (brownfield) or specs from documents or Jira Cloud (greenfield). It analyzes the code, plans and designs tests, generates unit and integration tests, and runs them after your approval. It ends with a QA report and a ZIP of the deliverables. It runs as an unsigned desktop app, as a local web UI launched from a source checkout, or as a command-line tool. The repository is private and for the internal team only.
 
+## Agentic QE Claude Code plugin on this branch
+
+This branch includes a separate, generation-only [Agentic QE Claude Code plugin](Agentic-qe-plugin/README.md). It creates source-traced E2E cases from Jira/BRD stories and can restrict an existing repository's cases to approved stories mapped to a Git diff. The plugin guide has GitHub installation commands and the complete workflow. The desktop application documented below retains its existing behavior.
+
 ## Use the desktop app
 
 If you only want to install and use the platform, read the **[user guide](docs/USER_GUIDE.md)**. Download the installer for your system from the [latest GitHub release](https://github.com/sarveshtalele/maf-harness-testing/releases/latest) (Windows `.exe`, macOS `.dmg` for Apple silicon or Intel, Linux `.AppImage`). The guide covers the unsigned first-launch steps, setting your model API key under **Configuration**, and how to run a test.

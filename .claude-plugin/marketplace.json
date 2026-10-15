@@ -1,0 +1,12 @@
+{
+  "name": "maf-agentic-qe",
+  "description": "Agentic QE plugin for source-traced E2E test case generation",
+  "owner": {"name": "Sarvesh Talele"},
+  "plugins": [
+    {
+      "name": "agentic-qe",
+      "source": "./Agentic-qe-plugin",
+      "description": "Generate reviewed E2E cases from Jira, BRDs and approved Git changes"
+    }
+  ]
+}

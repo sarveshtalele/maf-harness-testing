@@ -12,4 +12,4 @@ Adapted from the MAF `skills/reverse-engineering` package. Use only after `qe.py
 3. Respect the captured file and byte limits. Do not follow symlinks, inspect generated or dependency trees, clone another repository, install packages or execute target code.
 4. Put parse failures, skipped files, unsupported languages and unknown runtime effects in the scope gaps. A symbol name or README assertion is not proof of a business rule.
 
-Output a short changed-path inventory, justified related files, evidence-backed effects and unresolved questions. The approved scope is the boundary for downstream requirements and cases.
+Output a short changed-path inventory, justified related files, evidence-backed effects, impacted approved story IDs and unresolved questions. Each impacted story needs a reason and at least one path in the captured diff; record it with `qe.py impact`. The approved scope is the boundary for downstream requirements and cases.

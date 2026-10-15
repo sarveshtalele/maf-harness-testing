@@ -229,6 +229,8 @@ def approved(run: Path, gate: str) -> bool:
 def validate_scope(run: Path) -> None:
     if state(run)["mode"] != "brownfield":
         return
+    if not approved(run, "stories"):
+        raise ValueError("Brownfield impact needs current story approval")
     scope = read_json(run_file(run, "scope.json"))
     if not isinstance(scope, dict) or not scope.get("changed_files"):
         raise ValueError("Brownfield run needs a captured Git change scope")
@@ -254,6 +256,51 @@ def validate_scope(run: Path) -> None:
         path = _path(repo, related["path"])
         if not path.is_file() or hashlib.sha256(path.read_bytes()).hexdigest() != related.get("sha256"):
             raise ValueError(f"Related file changed or is missing: {related['path']}")
+    impacts = scope.get("impacted_stories")
+    story_ids = _ids(items(run, "stories"), "STY-", "stories")
+    if not isinstance(impacts, list) or not impacts:
+        raise ValueError("Brownfield scope needs at least one story mapped to changed files")
+    selected = set()
+    for impact in impacts:
+        if not isinstance(impact, dict):
+            raise ValueError("Impact mapping must be an object")
+        story_id = impact.get("story_id")
+        paths = impact.get("changed_paths")
+        if (
+            story_id not in story_ids
+            or story_id in selected
+            or not isinstance(paths, list)
+            or not paths
+            or any(not isinstance(path, str) or path not in changed for path in paths)
+            or len(str(impact.get("reason", "")).strip()) < 10
+        ):
+            raise ValueError("Impact mapping needs one approved story, changed paths and a specific reason")
+        selected.add(story_id)
+
+
+def select_impact(run: Path, story_id: str, paths: list[str], reason: str) -> None:
+    if state(run)["mode"] != "brownfield" or state(run)["stages"]["intake"] != "complete":
+        raise ValueError("Impact selection needs a brownfield run with approved intake")
+    if not approved(run, "stories"):
+        raise ValueError("Impact selection needs current story approval")
+    scope = read_json(run_file(run, "scope.json"))
+    if not isinstance(scope, dict):
+        raise ValueError("Capture the Git diff before selecting impact")
+    story_ids = _ids(items(run, "stories"), "STY-", "stories")
+    changed = {entry["path"] for entry in scope.get("changed_files", [])}
+    if (
+        story_id not in story_ids
+        or not paths
+        or any(path not in changed for path in paths)
+        or len(reason.strip()) < 10
+    ):
+        raise ValueError("Select an approved story, changed paths and a specific impact reason")
+    scope["impacted_stories"] = [
+        item
+        for item in scope.get("impacted_stories", [])
+        if isinstance(item, dict) and item.get("story_id") != story_id
+    ] + [{"story_id": story_id, "changed_paths": list(dict.fromkeys(paths)), "reason": reason.strip()}]
+    write_json(run_file(run, "scope.json"), scope)
 
 
 def items(run: Path, group: str) -> list[dict]:
@@ -308,17 +355,23 @@ def validate_artifacts(run: Path) -> dict:
     sections = {
         (section["source_id"], section["locator"]): section["text"] for section in sources["sections"]
     }
-    stories = items(run, "stories")
+    all_stories = items(run, "stories")
     requirements = items(run, "requirements")
     plans = items(run, "planning")
     cases = items(run, "design")
-    story_ids = _ids(stories, "STY-", "stories")
+    all_story_ids = _ids(all_stories, "STY-", "stories")
+    story_ids = (
+        {item["story_id"] for item in read_json(run_file(run, "scope.json"))["impacted_stories"]}
+        if state(run)["mode"] == "brownfield"
+        else all_story_ids
+    )
+    stories = [story for story in all_stories if story["id"] in story_ids]
     requirement_ids = _ids(requirements, None, "requirements")
     plan_ids = _ids(plans, "PLN-", "plans")
     case_ids = _ids(cases, "TC-", "cases")
     controls = set()
     story_controls = {}
-    for story in stories:
+    for story in all_stories:
         _citations(story, sections)
         if not re.fullmatch(r"As a .+, I want to .+, so that .+", str(story.get("user_story") or ""), re.I):
             raise ValueError(f"{story['id']} is not a complete role/action/benefit user story")
@@ -333,8 +386,9 @@ def validate_artifacts(run: Path) -> dict:
             ):
                 raise ValueError(f"{story['id']} has an incomplete acceptance criterion")
             _citations(criterion, sections)
-            controls.add(criterion["control_id"])
-            story_controls.setdefault(story["id"], set()).add(criterion["control_id"])
+            if story["id"] in story_ids:
+                controls.add(criterion["control_id"])
+                story_controls.setdefault(story["id"], set()).add(criterion["control_id"])
     requirement_by_id = {item["id"]: item for item in requirements}
     plan_by_id = {item["id"]: item for item in plans}
     for requirement in requirements:
@@ -522,8 +576,10 @@ def complete_stage(run: Path, stage: str) -> None:
         items(run, "stories")
         if not approved(run, "sources") or not approved(run, "stories"):
             raise ValueError("Approve current sources and stories before completing intake")
-    elif stage == "scope" and data["mode"] == "brownfield" and not approved(run, "scope"):
-        raise ValueError("Approve current Git change scope before continuing")
+    elif stage == "scope" and data["mode"] == "brownfield":
+        validate_scope(run)
+        if not approved(run, "scope"):
+            raise ValueError("Approve current Git change scope before continuing")
     elif stage in {"requirements", "planning", "design"}:
         items(run, {"requirements": "requirements", "planning": "planning", "design": "design"}[stage])
     elif stage == "review":
@@ -549,6 +605,8 @@ def generate(run: Path) -> None:
     graph = validate_artifacts(run)
     reviews = read_json(run_file(run, "reviews.json"))["reviews"]
     scores = {entry["subject_id"]: sum(entry["scores"].values()) for entry in reviews}
+    scope = read_json(run_file(run, "scope.json"), {}) if data["mode"] == "brownfield" else {}
+    impact_paths = {item["story_id"]: item["changed_paths"] for item in scope.get("impacted_stories", [])}
     control_stories = {}
     for story in graph["stories"]:
         for criterion in story["acceptance_criteria"]:
@@ -560,6 +618,15 @@ def generate(run: Path) -> None:
                 {
                     "source_ids": ", ".join(sorted({ref["source_id"] for ref in case["source_refs"]})),
                     "story_ids": ", ".join(sorted(control_stories[control])),
+                    "changed_paths": ", ".join(
+                        sorted(
+                            {
+                                path
+                                for story_id in control_stories[control]
+                                for path in impact_paths.get(story_id, [])
+                            }
+                        )
+                    ),
                     "control_id": control,
                     "requirement_ids": ", ".join(case["requirement_ids"]),
                     "plan_ids": ", ".join(case["plan_ids"]),
@@ -573,6 +640,7 @@ def generate(run: Path) -> None:
             fieldnames=(
                 "source_ids",
                 "story_ids",
+                "changed_paths",
                 "control_id",
                 "requirement_ids",
                 "plan_ids",
@@ -593,9 +661,15 @@ def generate(run: Path) -> None:
         "",
         f"{len(graph['stories'])} stories · {len(graph['requirements'])} requirements · {len(graph['cases'])} E2E cases · confidence floor 95/100",
         "",
-        "## Sources and stories",
-        "",
     ]
+    if scope:
+        lines += ["## Approved Git change impact", ""]
+        for impact in scope["impacted_stories"]:
+            lines.append(
+                f"- **{impact['story_id']}** → {', '.join(impact['changed_paths'])}: {display(impact['reason'])}"
+            )
+        lines.append("")
+    lines += ["## Sources and stories", ""]
     for story in graph["stories"]:
         lines += [
             f"- **{story['id']} ({scores[story['id']]}/100):** {display(story['user_story'])}",
@@ -636,6 +710,17 @@ def dashboard(run: Path) -> str:
     data = state(run)
     done = sum(data["stages"].get(stage) == "complete" for stage in STAGES)
     percent = round(done / len(STAGES) * 100)
+    gate_status = {}
+    for gate in ("sources", "stories", "scope", "final"):
+        if gate == "scope" and data["mode"] != "brownfield":
+            continue
+        try:
+            current = approved(run, gate)
+            if current and gate == "scope":
+                validate_scope(run)
+        except (ValueError, OSError):
+            current = False
+        gate_status[gate] = "current" if current else "stale" if gate in data["approvals"] else "pending"
     review = None
     if run_file(run, "reviews.json").exists() and all(
         run_file(run, ARTIFACTS[group][0]).exists() for group in ARTIFACTS
@@ -646,7 +731,12 @@ def dashboard(run: Path) -> str:
             review = {"ok": False, "failures": [str(exc)], "reviewed": 0, "total": 0}
     next_stage = next((stage for stage in STAGES if data["stages"].get(stage) != "complete"), None)
     if next_stage is None:
-        next_stage = "export approved artifacts" if approved(run, "final") else "final approval and export"
+        next_stage = (
+            "export approved artifacts" if gate_status["final"] == "current" else "final approval and export"
+        )
+    stale_gate = next((gate for gate, status in gate_status.items() if status == "stale"), None)
+    if stale_gate:
+        next_stage = f"renew {stale_gate} approval"
     blockers = review["failures"] if review and not review["ok"] else []
     rows = "".join(
         f"<tr><th>{html.escape(stage.title())}</th><td>{html.escape(data['stages'].get(stage, 'pending'))}</td></tr>"
@@ -655,6 +745,27 @@ def dashboard(run: Path) -> str:
     blocker_html = "".join(f"<li>{html.escape(blocker)}</li>" for blocker in blockers) or "<li>None</li>"
     source_data = read_json(run_file(run, "sources.json"), {"sources": [], "sections": []})
     case_data = read_json(run_file(run, "cases.json"), {"cases": []})
+    scope_data = read_json(run_file(run, "scope.json"), {}) if data["mode"] == "brownfield" else {}
+    scope_summary = (
+        f"{len(scope_data.get('changed_files', []))} changed files · "
+        f"{len(scope_data.get('impacted_stories', []))} impacted stories"
+        if data["mode"] == "brownfield"
+        else "Greenfield · no Git scope"
+    )
+    impact_rows = "".join(
+        f"<li><strong>{html.escape(str(item.get('story_id', '')))}</strong> · "
+        f"<code>{html.escape(', '.join(str(path) for path in item.get('changed_paths', [])))}</code>"
+        f"<p>{html.escape(str(item.get('reason', '')))}</p></li>"
+        for item in scope_data.get("impacted_stories", [])
+        if isinstance(item, dict)
+    )
+    impact_html = (
+        f"<h2>Approved change impact</h2><ul class='impact-list'>{impact_rows}</ul>" if impact_rows else ""
+    )
+    gate_rows = "".join(
+        f"<tr><th>{html.escape(gate.title())}</th><td>{html.escape(status)}</td></tr>"
+        for gate, status in gate_status.items()
+    )
     artifact_links = (
         "".join(
             f'<li><a href="{name}">{html.escape(name)}</a></li>'
@@ -684,7 +795,7 @@ def dashboard(run: Path) -> str:
     )
     case_status = (
         "Approved for export"
-        if done == len(STAGES) and approved(run, "final")
+        if done == len(STAGES) and gate_status["final"] == "current"
         else "Reviewed, awaiting final approval"
         if done == len(STAGES)
         else "Draft until generation and final approval"
@@ -712,11 +823,14 @@ def dashboard(run: Path) -> str:
         )
         or "<li>No actions recorded yet</li>"
     )
-    page = f"""<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Agentic QE · {html.escape(data["project"])}</title><style>body{{font:16px/1.55 system-ui,sans-serif;background:#f5f7fa;color:#162235;max-width:900px;margin:0 auto;padding:32px}}main{{background:white;border:1px solid #dce3ed;border-radius:14px;padding:28px}}h1{{margin:0 0 8px}}.bar{{height:12px;border-radius:10px;background:#e6ebf2;overflow:hidden}}.fill{{height:100%;width:{percent}%;background:#126b61}}table{{border-collapse:collapse;width:100%;margin:20px 0}}th,td{{text-align:left;border-bottom:1px solid #e6ebf2;padding:10px}}.small{{color:#50627a}}a{{color:#075b83}}a:focus-visible{{outline:3px solid #075b83;outline-offset:3px}}@media(max-width:600px){{body{{padding:12px}}main{{padding:16px}}}}</style><main><p class="small">Agentic QE · {html.escape(data["mode"])}</p><h1>{html.escape(data["project"])}</h1><p><strong>{percent}%</strong> · {done} of {len(STAGES)} mandatory stages complete</p><div class="bar" role="progressbar" aria-label="Workflow progress" aria-valuenow="{percent}" aria-valuemin="0" aria-valuemax="100"><div class="fill"></div></div><p class="small">{len(source_data.get("sources", []))} sources · {len(source_data.get("sections", []))} evidence sections · {len(case_data.get("cases", []))} E2E cases<br>{html.escape(review_summary)}</p><h2>Stages</h2><table>{rows}</table><h2>Next action</h2><p>{html.escape(next_stage.title())}</p><h2>Confidence blockers</h2><ul>{blocker_html}</ul>{cases_html}<h2>Recent decisions and actions</h2><ul>{recent}</ul><h2>Artifacts</h2><ul>{artifact_links}<li><a href="memory.md">Run memory</a></li></ul><p class="small">Saved {html.escape(now())}. Progress is stage completion, not confidence or an ETA.</p></main></html>"""
+    page = f"""<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Agentic QE · {html.escape(data["project"])}</title><style>body{{font:16px/1.55 system-ui,sans-serif;background:#f5f7fa;color:#162235;max-width:900px;margin:0 auto;padding:32px}}main{{background:white;border:1px solid #dce3ed;border-radius:14px;padding:28px}}h1{{margin:0 0 8px}}.bar{{height:12px;border-radius:10px;background:#e6ebf2;overflow:hidden}}.fill{{height:100%;width:{percent}%;background:#126b61}}table{{border-collapse:collapse;width:100%;margin:20px 0}}th,td{{text-align:left;border-bottom:1px solid #e6ebf2;padding:10px;overflow-wrap:anywhere}}.impact-list{{list-style:none;padding:0}}.impact-list li{{border:1px solid #dce3ed;border-radius:10px;padding:12px 14px;margin:10px 0}}.impact-list p{{margin:6px 0 0}}.impact-list code{{overflow-wrap:anywhere}}.small{{color:#50627a}}a{{color:#075b83}}a:focus-visible{{outline:3px solid #075b83;outline-offset:3px}}@media(max-width:600px){{body{{padding:12px}}main{{padding:16px}}}}</style><main><p class="small">Agentic QE · {html.escape(data["mode"])}</p><h1>{html.escape(data["project"])}</h1><p><strong>{percent}%</strong> · {done} of {len(STAGES)} mandatory stages complete</p><div class="bar" role="progressbar" aria-label="Workflow progress" aria-valuenow="{percent}" aria-valuemin="0" aria-valuemax="100"><div class="fill"></div></div><p class="small">{len(source_data.get("sources", []))} sources · {len(source_data.get("sections", []))} evidence sections · {len(case_data.get("cases", []))} E2E cases<br>{html.escape(review_summary)}<br>{html.escape(scope_summary)}</p><h2>Stages</h2><table>{rows}</table><h2>Approval gates</h2><table>{gate_rows}</table><h2>Next action</h2><p>{html.escape(next_stage.title())}</p><h2>Confidence blockers</h2><ul>{blocker_html}</ul>{impact_html}{cases_html}<h2>Recent decisions and actions</h2><ul>{recent}</ul><h2>Artifacts</h2><ul>{artifact_links}<li><a href="memory.md">Run memory</a></li></ul><p class="small">Saved {html.escape(now())}. Progress is stage completion, not confidence or an ETA.</p></main></html>"""
     run_file(run, "dashboard.html").write_text(page, encoding="utf-8")
     summary = (
-        f"# {data['project']} · Agentic QE\n\n**Progress:** {percent}% ({done}/{len(STAGES)} stages; {len(STAGES) - done} remaining)  \n**Evidence:** {len(source_data.get('sources', []))} sources, {len(source_data.get('sections', []))} sections, {len(case_data.get('cases', []))} E2E cases  \n**Next:** {next_stage}\n\n| Stage | Status |\n| --- | --- |\n"
+        f"# {data['project']} · Agentic QE\n\n**Progress:** {percent}% ({done}/{len(STAGES)} stages; {len(STAGES) - done} remaining)  \n**Evidence:** {len(source_data.get('sources', []))} sources, {len(source_data.get('sections', []))} sections, {len(case_data.get('cases', []))} E2E cases  \n**Scope:** {scope_summary}  \n**Next:** {next_stage}\n\n| Stage | Status |\n| --- | --- |\n"
         + "".join(f"| {stage.title()} | {data['stages'].get(stage, 'pending')} |\n" for stage in STAGES)
+    )
+    summary += "\n| Approval | Status |\n| --- | --- |\n" + "".join(
+        f"| {gate.title()} | {status} |\n" for gate, status in gate_status.items()
     )
     if blockers:
         summary += "\n**Confidence blockers:** " + "; ".join(blockers[:5])
@@ -789,6 +903,11 @@ def main() -> None:
     scope_cmd.add_argument("--base")
     scope_cmd.add_argument("--target", default="HEAD")
     scope_cmd.add_argument("--include-untracked", action="store_true")
+    impact_cmd = sub.add_parser("impact")
+    impact_cmd.add_argument("--run", type=Path, required=True)
+    impact_cmd.add_argument("--story", required=True)
+    impact_cmd.add_argument("--path", action="append", required=True)
+    impact_cmd.add_argument("--reason", required=True)
     for name in ("status", "dashboard", "validate", "generate"):
         sub.add_parser(name).add_argument("--run", type=Path, required=True)
     approve_cmd = sub.add_parser("approve")
@@ -849,6 +968,11 @@ def main() -> None:
                     run_file(args.run, "scope.json"),
                     capture(args.repo, args.mode, args.base, args.target, args.include_untracked),
                 )
+            print(dashboard(args.run))
+        elif args.command == "impact":
+            state(args.run)
+            with logged_action(args.run, "story-impact", f"Map {args.story} to selected Git change paths"):
+                select_impact(args.run, args.story, args.path, args.reason)
             print(dashboard(args.run))
         elif args.command == "approve":
             state(args.run)
