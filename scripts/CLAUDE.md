@@ -12,6 +12,7 @@ Run from the repo root with `uv run python scripts/<name>.py`. Keep them cross-O
 - `desktop_smoke.py`: installs or mounts the packaged desktop installer in `desktop/release/` and runs the app with `AGENTIC_QE_SMOKE=1`; passes only on the `AGENTIC_QE_SMOKE OK` line and exit 0 (Windows silent per-machine MSI install and uninstall with msiexec, macOS DMG, Linux AppImage under `xvfb-run`). Tests: `tests/test_desktop_smoke.py` (pure parts only, never launches).
 - `json_to_markdown.py`: convert a saved harness JSON artifact to Markdown (uses `ui/artifact_presenter.py`).
 - `benchmark_generation.py`: offline scorer for generated pytest suites against `benchmarks/generation/` (baseline validity and seeded-defect kill score); no args runs reference calibration (CI), `--candidate-dir` scores submitted suites. See `docs/GENERATION_BENCHMARK.md`.
+- `benchmark_seeded.py`: replays a finished run's generated tests against seeded-bug copies of its repository (`benchmarks/seeded/<repo>.json`, exact-once find/replace mutants); reports detection rate, raw false fails on the clean copy and product defects left after triage.
 
 ## Invariants
 - `start_ui.py` requires Node 24; it invokes Next directly (no npm shims on Windows). It prints the saved setup/service log path.

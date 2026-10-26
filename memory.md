@@ -550,3 +550,4 @@ Format: `YYYY-MM-DD HH:MM | BEFORE|AFTER | actor | action | scope/risk or result
     - the Playwright fixture server needs the same scripted-derivation hook as pytest;
     - fake keys in tests must be split for the secrets scan;
     - Windows trims trailing dots in file names.
+- 2026-10-26 BEFORE plan PLAN_2026-10-26_AGENTIC_QE_DESIGN_PLATFORM approved (D1 remove generation/execution/healing, D2 web UI only, D3 rename to agentic_qe, D4 reviewer same as author). Wave 0: commit integ-v2 (oracle-shape fix, seeded benchmark, plan), run the full gate, push develop, tag v1.0.8-full as the full-pipeline fallback. Risk: the removal waves are large; the tag keeps the old pipeline recoverable.

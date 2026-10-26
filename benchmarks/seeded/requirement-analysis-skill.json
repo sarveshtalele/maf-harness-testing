@@ -1,0 +1,22 @@
+{
+  "repo": "https://github.com/sarveshtalele/requirement-analysis-skill",
+  "commit": "3eae93a",
+  "note": "Seeded bugs chosen from the source and its documented behaviour, independent of any generated test. Each find string occurs exactly once in its file.",
+  "mutants": [
+    {"id": "M01", "file": "scripts/engine/requirement_parser.py", "find": "if m and m.start() < best_pos:", "replace": "if m and m.start() > best_pos:", "bug": "action picks the wrong verb when several match"},
+    {"id": "M02", "file": "scripts/engine/requirement_parser.py", "find": "action = \"modify\"\n", "replace": "action = \"add\"\n", "bug": "default action is add instead of modify"},
+    {"id": "M03", "file": "scripts/engine/requirement_parser.py", "find": "if any(kw in lower for kw in keywords)\n        ]\n\n        entities", "replace": "if all(kw in lower for kw in keywords)\n        ]\n\n        entities", "bug": "domain tags need every keyword"},
+    {"id": "M04", "file": "scripts/engine/requirement_parser.py", "find": "r\"\\b([a-z][a-z0-9]*(?:_[a-z0-9]+)+)\\b\"", "replace": "r\"\\b([a-z][a-z0-9]*(?:_[a-z0-9]+){2,})\\b\"", "bug": "snake_case entities with one underscore are dropped"},
+    {"id": "M05", "file": "scripts/engine/security_compliance_checker.py", "find": "order = {\"security\": 0, \"compliance\": 1, \"standard\": 2}", "replace": "order = {\"security\": 1, \"compliance\": 0, \"standard\": 2}", "bug": "compliance items sorted before security"},
+    {"id": "M06", "file": "scripts/engine/security_compliance_checker.py", "find": "        add_all(_BASELINE_RULES)\n", "replace": "", "bug": "baseline rules missing"},
+    {"id": "M07", "file": "scripts/engine/security_compliance_checker.py", "find": "if key not in seen:", "replace": "if True:", "bug": "duplicate checklist items"},
+    {"id": "M08", "file": "scripts/engine/pattern_finder.py", "find": "if intent.action != \"add\" or not intent.target_types:", "replace": "if not intent.target_types:", "bug": "templates offered for non-add requirements"},
+    {"id": "M09", "file": "scripts/engine/pattern_finder.py", "find": "chosen = candidates[0]", "replace": "chosen = candidates[-1]", "bug": "template is not the first by sorted path"},
+    {"id": "M10", "file": "scripts/engine/formatting_analyzer.py", "find": "quote_style = \"single\" if single_q > double_q else \"double\"", "replace": "quote_style = \"single\" if single_q >= double_q else \"double\"", "bug": "quote-style tie reported as single"},
+    {"id": "M11", "file": "scripts/engine/formatting_analyzer.py", "find": "line_ending = \"CRLF\" if \"\\r\\n\" in content else \"LF\"", "replace": "line_ending = \"LF\"", "bug": "CRLF files reported as LF"},
+    {"id": "M12", "file": "scripts/engine/location_resolver.py", "find": "scored.sort(key=lambda c: (-c.score, c.path))", "replace": "scored.sort(key=lambda c: (c.score, c.path))", "bug": "candidates ranked lowest score first"},
+    {"id": "M13", "file": "scripts/engine/location_resolver.py", "find": "MIN_CONFIDENT_SCORE = 6", "replace": "MIN_CONFIDENT_SCORE = 60", "bug": "confident matches reported as weak"},
+    {"id": "M14", "file": "scripts/engine/location_resolver.py", "find": "return min(hits * _SCORE_CONTENT_MATCH, _SCORE_CONTENT_MATCH_CAP)", "replace": "return hits * _SCORE_CONTENT_MATCH", "bug": "content score is not capped"},
+    {"id": "M15", "file": "scripts/engine/codebase_indexer.py", "find": "if any(x in lower for x in (\"service\", \"usecase\", \"interactor\", \"business\")):\n            return \"service\"", "replace": "if any(x in lower for x in (\"service\", \"usecase\", \"interactor\", \"business\")):\n            return \"library\"", "bug": "service files classified as library"}
+  ]
+}
