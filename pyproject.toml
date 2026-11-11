@@ -24,10 +24,10 @@ maf-backend = "maf_test_harness.desktop_backend:main"
 [project.optional-dependencies]
 e2e = ["playwright>=1.58,<2", "pytest-playwright>=0.7,<1"]
 hooks = ["agent-hooks-sdk>=0.1.0a5,<0.2"]  # optional AGENT-HOOKS-0.1 backend for the hook engine (docs/HOOKS.md)
-mcp = ["mcp>=1.24,<2"]  # MCP server integration (docs/MCP.md); included by desktop and dev
-desktop = ["pyinstaller>=6.10,<7", "mcp>=1.24,<2"]  # builds the bundled desktop backend (packaging/backend.spec)
+mcp = ["mcp>=1.24,<3"]  # MCP server integration (docs/MCP.md); included by desktop and dev
+desktop = ["pyinstaller>=6.10,<7", "mcp>=1.24,<3"]  # builds the bundled desktop backend (packaging/backend.spec)
 dev = [
-  "mcp>=1.24,<2",
+  "mcp>=1.24,<3",
   "pytest>=9.0.3,<10.0",
   "ruff>=0.12,<1.0",
 ]
